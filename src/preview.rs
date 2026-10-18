@@ -1,0 +1,207 @@
+//! Prévias das janelas de um app, mostradas acima da dock quando o ponteiro fica
+//! sobre o ícone dele, como no GNOME.
+//!
+//! A dock pede (`preview <x> <ids>` no canal de controle) e o compositor desenha: só
+//! ele tem o conteúdo das janelas. O painel fica enquanto o ponteiro estiver sobre a
+//! dock ou sobre o painel. Clique numa prévia traz a janela para frente; o × da
+//! prévia sob o ponteiro fecha a janela.
+
+use smithay::{
+    backend::renderer::{
+        element::{
+            surface::WaylandSurfaceRenderElement, utils::RescaleRenderElement, AsRenderElements,
+        },
+        gles::GlesRenderer,
+    },
+    desktop::{layer_map_for_output, Window},
+    output::Output,
+    utils::{Logical, Point, Rectangle, Scale},
+};
+
+use crate::{
+    backend_winit::MideRenderElement,
+    decorations::{self, Shaders},
+    state::{window_id, State},
+    title::TitleRenderer,
+};
+
+/// Caixa máxima de cada miniatura.
+const THUMB_W: i32 = 200;
+const THUMB_H: i32 = 128;
+const GAP: i32 = 14;
+const PAD: i32 = 12;
+const TITLE_H: i32 = 24;
+const CLOSE: i32 = 20;
+
+/// Prévias pedidas pela dock.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Preview {
+    /// Números das janelas, na ordem da dock.
+    pub ids: Vec<u64>,
+    /// Centro x do ícone, em coordenadas da dock.
+    pub dock_x: i32,
+    /// Prévia sob o ponteiro e se o ponteiro está no × dela.
+    pub hovered: Option<usize>,
+    pub on_close: bool,
+}
+
+/// Uma miniatura posicionada.
+pub struct Thumb {
+    pub id: u64,
+    pub window: Window,
+    /// Caixa da miniatura (a janela fica centralizada nela).
+    pub boxed: Rectangle<i32, Logical>,
+    pub close: Rectangle<i32, Logical>,
+}
+
+/// Janela pelo número, mapeada ou minimizada.
+fn window_by_id(state: &State, id: u64) -> Option<Window> {
+    state
+        .space
+        .elements()
+        .find(|w| window_id(w) == id)
+        .cloned()
+        .or_else(|| state.minimized.iter().find(|m| window_id(&m.window) == id).map(|m| m.window.clone()))
+}
+
+/// Retângulo da camada da dock na tela.
+fn dock_rect(output: &Output) -> Option<Rectangle<i32, Logical>> {
+    let map = layer_map_for_output(output);
+    let dock = map.layers().find(|l| l.namespace() == "mide-dock")?;
+    map.layer_geometry(dock)
+}
+
+/// Painel e miniaturas, em coordenadas da saída.
+pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logical>, Vec<Thumb>)> {
+    let output = state.space.outputs().next()?;
+    let out = state.space.output_geometry(output)?;
+    let dock = dock_rect(output)?;
+    let windows: Vec<(u64, Window)> = preview.ids.iter().filter_map(|id| Some((*id, window_by_id(state, *id)?))).collect();
+    if windows.is_empty() {
+        return None;
+    }
+    let n = windows.len() as i32;
+    let w = n * THUMB_W + (n - 1) * GAP + 2 * PAD;
+    let h = THUMB_H + TITLE_H + 2 * PAD;
+    let center = dock.loc.x + preview.dock_x;
+    let x = (center - w / 2).clamp(out.loc.x + 8, out.loc.x + out.size.w - w - 8);
+    let y = dock.loc.y - 10 - h;
+    let panel = Rectangle::new((x, y).into(), (w, h).into());
+    let thumbs = windows
+        .into_iter()
+        .enumerate()
+        .map(|(i, (id, window))| {
+            let bx = x + PAD + i as i32 * (THUMB_W + GAP);
+            let boxed = Rectangle::new((bx, y + PAD).into(), (THUMB_W, THUMB_H).into());
+            let close = Rectangle::new((bx + THUMB_W - CLOSE + 6, y + PAD - 6).into(), (CLOSE, CLOSE).into());
+            Thumb { id, window, boxed, close }
+        })
+        .collect();
+    Some((panel, thumbs))
+}
+
+/// O ponto está sobre o painel ou sobre a dock? (Fora dos dois, as prévias somem.)
+pub fn keeps_open(state: &State, preview: &Preview, pos: Point<f64, Logical>) -> bool {
+    let Some(output) = state.space.outputs().next() else {
+        return false;
+    };
+    let over_panel = layout(state, preview).is_some_and(|(panel, _)| {
+        // Inclui o vão entre o painel e a dock, para o ponteiro passar de um ao outro.
+        let bridge = Rectangle::new(panel.loc, (panel.size.w, panel.size.h + 12).into());
+        bridge.to_f64().contains(pos)
+    });
+    over_panel || dock_rect(output).is_some_and(|d| d.to_f64().contains(pos))
+}
+
+/// Miniatura e × sob o ponto.
+pub fn hit(state: &State, preview: &Preview, pos: Point<f64, Logical>) -> (Option<usize>, bool) {
+    let Some((_, thumbs)) = layout(state, preview) else {
+        return (None, false);
+    };
+    for (i, thumb) in thumbs.iter().enumerate() {
+        if preview.hovered == Some(i) && thumb.close.to_f64().contains(pos) {
+            return (Some(i), true);
+        }
+        let area = Rectangle::new(thumb.boxed.loc, (thumb.boxed.size.w, thumb.boxed.size.h + TITLE_H).into());
+        if area.to_f64().contains(pos) {
+            return (Some(i), false);
+        }
+    }
+    (None, false)
+}
+
+/// Elementos das prévias, da frente para trás.
+pub fn elements(
+    renderer: &mut GlesRenderer,
+    state: &State,
+    shaders: &Shaders,
+    titles: &mut TitleRenderer,
+) -> Vec<MideRenderElement> {
+    let Some(preview) = state.preview.as_ref() else {
+        return Vec::new();
+    };
+    let Some((panel, thumbs)) = layout(state, preview) else {
+        return Vec::new();
+    };
+    let mut front: Vec<MideRenderElement> = Vec::new();
+    let mut middle: Vec<MideRenderElement> = Vec::new();
+    for (i, thumb) in thumbs.iter().enumerate() {
+        let hovered = preview.hovered == Some(i);
+        // × no canto da prévia sob o ponteiro.
+        if hovered {
+            let glyph = Rectangle::new(thumb.close.loc + Point::from((4, 4)), (CLOSE - 8, CLOSE - 8).into());
+            front.push(MideRenderElement::from(decorations::close_glyph_element(shaders, glyph)));
+            front.push(MideRenderElement::from(decorations::ring_element(shaders, thumb.close)));
+            let fill = if preview.on_close { [1.0, 0.37, 0.34, 1.0] } else { [0.96, 0.96, 0.97, 1.0] };
+            front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, thumb.close, fill, CLOSE / 2)));
+        }
+        // Título embaixo da miniatura.
+        let title = crate::backend_winit::window_title(&thumb.window);
+        let title_bar = Rectangle::new((thumb.boxed.loc.x - 40, thumb.boxed.loc.y + THUMB_H).into(), (THUMB_W + 80, TITLE_H).into());
+        if let Some(el) = crate::title::element(renderer, titles, &title, true, title_bar) {
+            middle.push(MideRenderElement::from(el));
+        }
+        // A janela reduzida, centralizada na caixa. Janelas com a barra do mide
+        // ganham uma barra em miniatura em cima, para parecer a janela de verdade.
+        let geo = thumb.window.geometry();
+        let bar_h = crate::state::bar_height_for(&thumb.window);
+        if geo.size.w > 0 && geo.size.h > 0 {
+            let full_h = geo.size.h + bar_h;
+            let scale = (THUMB_W as f64 / geo.size.w as f64).min(THUMB_H as f64 / full_h as f64).min(1.0);
+            let shown = (geo.size.w as f64 * scale, full_h as f64 * scale);
+            let frame_x = thumb.boxed.loc.x as f64 + (THUMB_W as f64 - shown.0) / 2.0;
+            let frame_y = thumb.boxed.loc.y as f64 + (THUMB_H as f64 - shown.1) / 2.0;
+            let bar_shown = bar_h as f64 * scale;
+            let target = (frame_x, frame_y + bar_shown);
+            // A superfície começa antes da área visível (sombras do app): desloca.
+            let origin: Point<i32, smithay::utils::Physical> = (
+                (target.0 - geo.loc.x as f64 * scale).round() as i32,
+                (target.1 - geo.loc.y as f64 * scale).round() as i32,
+            )
+                .into();
+            let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                thumb.window.render_elements(renderer, origin, Scale::from(1.0), 1.0);
+            for element in content {
+                middle.push(MideRenderElement::Scaled(RescaleRenderElement::from_element(element, origin, scale)));
+            }
+            if bar_h > 0 {
+                let bar = Rectangle::new(
+                    (frame_x.round() as i32, frame_y.round() as i32).into(),
+                    (shown.0.round() as i32, bar_shown.round().max(1.0) as i32).into(),
+                );
+                middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, bar, [0.90, 0.90, 0.91, 1.0], 3)));
+            }
+        }
+        if hovered {
+            let glow = Rectangle::new(thumb.boxed.loc - Point::from((6, 6)), (THUMB_W + 12, THUMB_H + TITLE_H + 8).into());
+            middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, glow, [0.0, 0.0, 0.0, 0.08], 10)));
+        }
+    }
+    let mut out = front;
+    out.extend(middle);
+    // Painel claro e translúcido, como os menus do mide, com um contorno fino.
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, [0.965, 0.965, 0.972, 0.95], 14)));
+    let border = Rectangle::new(panel.loc - Point::from((1, 1)), (panel.size.w + 2, panel.size.h + 2).into());
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, [0.0, 0.0, 0.0, 0.16], 15)));
+    out
+}

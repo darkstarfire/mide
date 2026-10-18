@@ -1,0 +1,1595 @@
+//! Barra superior do mide, como a barra de menus do macOS.
+//!
+//! Cliente Wayland com janela de camada no topo da tela e zona exclusiva (as janelas
+//! não ficam por baixo dela).
+//!
+//! - Esquerda: a marca do mide (abre o menu do sistema) e o nome do app em foco.
+//! - Direita: bateria (se houver) e relógio com data.
+//!
+//! O menu do sistema é uma segunda camada (overlay) em tela cheia e transparente: o
+//! painel do menu fica embaixo da marca, e um clique fora dele fecha o menu.
+
+use std::{
+    collections::HashMap,
+    error::Error,
+    fs,
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
+    path::PathBuf,
+    process::Command,
+    time::Duration,
+};
+
+use chrono::{Datelike, Local, Timelike};
+use mide::{
+    calendar,
+    system::{self, Status},
+    ui::{
+        draw::{fill_rounded, rgba, rounded_rect, to_argb8888, vertical_gradient},
+        text::{FontWeight, Text},
+    },
+};
+use smithay_client_toolkit::{
+    compositor::{CompositorHandler, CompositorState},
+    delegate_registry,
+    output::{OutputHandler, OutputState},
+    reexports::{
+        calloop::{
+            channel,
+            timer::{TimeoutAction, Timer},
+            EventLoop,
+        },
+        calloop_wayland_source::WaylandSource,
+        client::{
+            globals::registry_queue_init,
+            protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+            Connection, QueueHandle,
+        },
+    },
+    registry::{ProvidesRegistryState, RegistryState},
+    registry_handlers,
+    seat::{
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        Capability, SeatHandler, SeatState,
+    },
+    shell::{
+        wlr_layer::{
+            Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+            LayerSurfaceConfigure,
+        },
+        WaylandSurface,
+    },
+    shm::{slot::SlotPool, Shm, ShmHandler},
+};
+use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+
+const BAR_HEIGHT: u32 = 28;
+const FONT: f32 = 13.5;
+const BTN_LEFT: u32 = 0x110;
+
+/// Área clicável da marca do mide, à esquerda.
+const LOGO_X: f32 = 14.0;
+const LOGO_W: f32 = 22.0;
+
+/// Painéis dos menus.
+const MENU_MIN_W: f32 = 220.0;
+const ITEM_H: f32 = 24.0;
+const SEPARATOR_H: f32 = 9.0;
+const MENU_PAD: f32 = 5.0;
+/// Espaço entre os títulos dos menus na barra.
+const TITLE_GAP: f32 = 18.0;
+
+/// Ação de um item de menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MenuAction {
+    About,
+    Quit,
+    /// Abre outra janela do app em foco (pelo `Exec` do `.desktop`).
+    NewWindow,
+    /// Comando do canal de controle do compositor (`window close`, `keys ctrl+c`...).
+    Compositor(String),
+    /// Comando para todas as janelas do app em foco (`hide`, `close`).
+    AppWindows(&'static str),
+    /// Abre um painel das configurações do sistema.
+    Settings(&'static str),
+}
+
+/// Item de menu: texto, atalho mostrado à direita e ação (sem ação, desativado).
+#[derive(Debug, Clone)]
+enum MenuItem {
+    Entry(String, &'static str, Option<MenuAction>),
+    Separator,
+}
+
+fn entry(label: impl Into<String>, shortcut: &'static str, action: Option<MenuAction>) -> MenuItem {
+    MenuItem::Entry(label.into(), shortcut, action)
+}
+
+/// Qual menu: o do sistema (marca do mide) ou um dos menus do app em foco.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuId {
+    System,
+    App,
+    File,
+    Edit,
+    Window,
+    /// Painéis da direita (desenhados à parte, não são listas).
+    Calendar,
+    Sound,
+    Wifi,
+    Bluetooth,
+    /// Menu da bateria (lista).
+    Battery,
+}
+
+impl MenuId {
+    /// Painel desenhado à parte (calendário, som, Wi-Fi, Bluetooth).
+    fn custom(self) -> bool {
+        matches!(self, MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth)
+    }
+
+    /// Largura do painel desenhado à parte.
+    fn custom_width(self) -> f32 {
+        match self {
+            MenuId::Wifi => 300.0,
+            _ => 280.0,
+        }
+    }
+}
+
+/// O que um clique num painel da direita faz.
+#[derive(Debug, Clone, PartialEq)]
+enum PanelAction {
+    PrevMonth,
+    NextMonth,
+    Today,
+    /// Trilho do volume: o valor vem da posição do clique.
+    VolumeTrack,
+    ToggleMute,
+    ToggleWifi,
+    Connect(String),
+    ToggleBluetooth,
+    Device(usize),
+    Settings(&'static str),
+}
+
+/// Títulos dos menus do app, depois do nome dele.
+const APP_MENUS: &[(MenuId, &str)] = &[(MenuId::File, "Arquivo"), (MenuId::Edit, "Editar"), (MenuId::Window, "Janela")];
+
+/// Itens de cada menu. Os menus do app valem para qualquer app: as ações são feitas
+/// pelo compositor (janela, atalhos de teclado), como a barra do macOS.
+fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
+    let keys = |combo: &str| Some(MenuAction::Compositor(format!("keys {combo}")));
+    let window = |what: &str| Some(MenuAction::Compositor(format!("window {what}")));
+    match id {
+        MenuId::System => vec![
+            entry("Sobre este computador", "", Some(MenuAction::About)),
+            MenuItem::Separator,
+            entry("Configurações do sistema…", "", Some(MenuAction::Settings("wifi"))),
+            MenuItem::Separator,
+            entry("Encerrar sessão…", "", Some(MenuAction::Quit)),
+        ],
+        MenuId::App => vec![
+            entry(format!("Ocultar {app}"), "", Some(MenuAction::AppWindows("hide"))),
+            MenuItem::Separator,
+            entry(format!("Encerrar {app}"), "", Some(MenuAction::AppWindows("close"))),
+        ],
+        MenuId::File => vec![
+            entry("Nova janela", "", Some(MenuAction::NewWindow)),
+            MenuItem::Separator,
+            entry("Fechar janela", "Ctrl+Shift+Q", window("close")),
+        ],
+        MenuId::Edit => vec![
+            entry("Desfazer", "Ctrl+Z", keys("ctrl+z")),
+            entry("Refazer", "Ctrl+Shift+Z", keys("ctrl+shift+z")),
+            MenuItem::Separator,
+            entry("Recortar", "Ctrl+X", keys("ctrl+x")),
+            entry("Copiar", "Ctrl+C", keys("ctrl+c")),
+            entry("Colar", "Ctrl+V", keys("ctrl+v")),
+            entry("Selecionar tudo", "Ctrl+A", keys("ctrl+a")),
+        ],
+        MenuId::Window => vec![
+            entry("Minimizar", "", window("minimize")),
+            entry("Zoom", "", window("zoom")),
+        ],
+        MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("power")))],
+        // Painéis desenhados à parte: sem itens de lista.
+        MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth => Vec::new(),
+    }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "mide_bar=info".into()),
+        )
+        .init();
+
+    let conn = Connection::connect_to_env()?;
+    let (globals, event_queue) = registry_queue_init(&conn)?;
+    let qh = event_queue.handle();
+
+    let compositor = CompositorState::bind(&globals, &qh)?;
+    let layer_shell = LayerShell::bind(&globals, &qh)?;
+    let shm = Shm::bind(&globals, &qh)?;
+
+    let surface = compositor.create_surface(&qh);
+    let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-bar"), None);
+    layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
+    layer.set_size(0, BAR_HEIGHT);
+    layer.set_exclusive_zone(BAR_HEIGHT as i32);
+    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    layer.commit();
+
+    let pool = SlotPool::new(1920 * BAR_HEIGHT as usize * 4, &shm)?;
+    let mut bar = Bar {
+        registry_state: RegistryState::new(&globals),
+        seat_state: SeatState::new(&globals, &qh),
+        output_state: OutputState::new(&globals, &qh),
+        compositor,
+        layer_shell,
+        shm,
+        pool,
+        layer,
+        width: 0,
+        configured: false,
+        exit: false,
+        pointer: None,
+        text: Text::new(),
+        focused_name: String::new(),
+        focused_id: String::new(),
+        titles: Vec::new(),
+        over_launcher: false,
+        clock: String::new(),
+        battery: None,
+        names: AppNames::load(),
+        status: Status::default(),
+        status_now: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        cal_month: (2000, 1),
+        volume_sent: std::time::Instant::now(),
+        menu: None,
+        bar_dirty: false,
+        menu_dirty: false,
+        qh: qh.clone(),
+    };
+
+    let mut event_loop: EventLoop<Bar> = EventLoop::try_new()?;
+    WaylandSource::new(conn.clone(), event_queue)
+        .insert(event_loop.handle())
+        .map_err(|e| e.to_string())?;
+    // Som, Wi-Fi e Bluetooth: lidos numa thread (os comandos levam alguns ms) a cada
+    // 2 s, ou na hora quando a barra pede (depois de uma ação ou ao abrir um painel).
+    let (status_tx, status_rx) = channel::channel::<Status>();
+    let now_flag = bar.status_now.clone();
+    std::thread::spawn(move || loop {
+        let status = system::read_status();
+        if status_tx.send(status).is_err() {
+            break;
+        }
+        for _ in 0..20 {
+            if now_flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    event_loop
+        .handle()
+        .insert_source(status_rx, |event, _, bar: &mut Bar| {
+            if let channel::Event::Msg(status) = event {
+                if status != bar.status {
+                    // Durante o arrasto do volume, o valor local manda.
+                    let dragging = bar.menu.as_ref().is_some_and(|m| m.dragging_volume);
+                    let volume = bar.status.volume;
+                    bar.status = status;
+                    if dragging {
+                        bar.status.volume = volume;
+                    }
+                    bar.draw_bar();
+                    if bar.menu.as_ref().is_some_and(|m| m.id.custom()) {
+                        bar.draw_menu();
+                    }
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    // Relógio, bateria e app em foco: atualiza a cada meio segundo e só redesenha se
+    // mudar. O launcher é conferido mais vezes, para a barra mudar junto com ele.
+    let mut ticks = 0u32;
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_millis(50)), move |_, _, bar| {
+            bar.refresh_launcher();
+            if ticks % 3 == 0 {
+                bar.refresh();
+            }
+            ticks = ticks.wrapping_add(1);
+            TimeoutAction::ToDuration(Duration::from_millis(150))
+        })
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!("barra pronta");
+    while !bar.exit {
+        event_loop.dispatch(None, &mut bar)?;
+        if bar.bar_dirty {
+            bar.paint_bar();
+        }
+        if bar.menu_dirty {
+            bar.paint_menu();
+        }
+    }
+    Ok(())
+}
+
+/// Nomes de apps a partir dos `.desktop`, indexados pelos ids possíveis do app_id.
+struct AppNames {
+    /// Nome e comando (`Exec` sem códigos de campo) pelo app_id.
+    by_id: HashMap<String, (String, String)>,
+}
+
+impl AppNames {
+    fn load() -> Self {
+        let locales = freedesktop_desktop_entry::get_languages_from_env();
+        let mut by_id = HashMap::new();
+        for entry in freedesktop_desktop_entry::desktop_entries(&locales) {
+            let Some(name) = entry.name(&locales).map(|n| n.into_owned()) else {
+                continue;
+            };
+            let exec = mide::apps::clean_exec(entry.exec().unwrap_or(""));
+            let id = entry.id().to_string();
+            let mut ids = vec![id.to_lowercase()];
+            if let Some(last) = id.rsplit('.').next() {
+                ids.push(last.to_lowercase());
+            }
+            if let Some(class) = entry.startup_wm_class() {
+                ids.push(class.to_lowercase());
+            }
+            for key in ids {
+                by_id.entry(key).or_insert_with(|| (name.clone(), exec.clone()));
+            }
+        }
+        Self { by_id }
+    }
+
+    fn name_for(&self, app_id: &str) -> Option<String> {
+        self.by_id.get(&app_id.to_lowercase()).map(|(name, _)| name.clone())
+    }
+
+    fn exec_for(&self, app_id: &str) -> Option<String> {
+        self.by_id.get(&app_id.to_lowercase()).map(|(_, exec)| exec.clone()).filter(|e| !e.is_empty())
+    }
+}
+
+/// Envia um comando ao compositor pelo canal de controle e devolve as linhas.
+fn ask_compositor(command: &str) -> Option<Vec<String>> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let display = std::env::var("WAYLAND_DISPLAY").ok()?;
+    let path = PathBuf::from(runtime).join(format!("{display}.ctl"));
+    let mut stream = UnixStream::connect(path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(300))).ok()?;
+    stream.write_all(format!("{command}\n").as_bytes()).ok()?;
+    let mut lines = Vec::new();
+    for line in BufReader::new(stream).lines() {
+        let line = line.ok()?;
+        if line == "end" {
+            break;
+        }
+        lines.push(line);
+    }
+    Some(lines)
+}
+
+/// Data e hora no estilo do macOS em português: "sáb 17 out  20:15".
+fn clock_text() -> String {
+    const DAYS: [&str; 7] = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
+    const MONTHS: [&str; 12] = [
+        "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
+    ];
+    let now = Local::now();
+    format!(
+        "{} {} {}  {:02}:{:02}",
+        DAYS[now.weekday().num_days_from_monday() as usize],
+        now.day(),
+        MONTHS[now.month0() as usize],
+        now.hour(),
+        now.minute()
+    )
+}
+
+/// Carga da bateria (0 a 100) e se está carregando, se o computador tiver bateria.
+fn battery() -> Option<(u8, bool)> {
+    let dir = fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if !path.file_name()?.to_string_lossy().starts_with("BAT") {
+            continue;
+        }
+        let capacity = fs::read_to_string(path.join("capacity")).ok()?.trim().parse().ok()?;
+        let status = fs::read_to_string(path.join("status")).unwrap_or_default();
+        return Some((capacity, status.trim() == "Charging"));
+    }
+    None
+}
+
+/// Menu aberto: a camada em tela cheia (clique fora fecha), o menu mostrado, onde
+/// fica o painel e o item sob o ponteiro.
+struct Menu {
+    layer: LayerSurface,
+    width: u32,
+    height: u32,
+    id: MenuId,
+    items: Vec<MenuItem>,
+    x: f32,
+    panel_w: f32,
+    hovered: Option<usize>,
+    /// Painéis da direita: áreas clicáveis do último desenho, a sob o ponteiro, a
+    /// altura e se o volume está sendo arrastado.
+    regions: Vec<((f32, f32, f32, f32), PanelAction)>,
+    hover_region: Option<usize>,
+    panel_h: f32,
+    dragging_volume: bool,
+}
+
+impl Menu {
+    fn panel_height(&self) -> f32 {
+        if self.id.custom() {
+            return self.panel_h;
+        }
+        let items: f32 = self
+            .items
+            .iter()
+            .map(|i| match i {
+                MenuItem::Entry(..) => ITEM_H,
+                MenuItem::Separator => SEPARATOR_H,
+            })
+            .sum();
+        items + 2.0 * MENU_PAD
+    }
+
+    /// Índice do item sob `(x, y)`, se for um item com ação.
+    fn item_at(&self, x: f64, y: f64) -> Option<usize> {
+        let (x, y) = (x as f32, y as f32);
+        let top = BAR_HEIGHT as f32 + 4.0 + MENU_PAD;
+        if x < self.x || x > self.x + self.panel_w {
+            return None;
+        }
+        let mut cursor = top;
+        for (i, item) in self.items.iter().enumerate() {
+            let h = match item {
+                MenuItem::Entry(..) => ITEM_H,
+                MenuItem::Separator => SEPARATOR_H,
+            };
+            if y >= cursor && y < cursor + h {
+                return matches!(item, MenuItem::Entry(_, _, Some(_))).then_some(i);
+            }
+            cursor += h;
+        }
+        None
+    }
+
+    fn inside_panel(&self, x: f64, y: f64) -> bool {
+        let (x, y) = (x as f32, y as f32);
+        let top = BAR_HEIGHT as f32 + 4.0;
+        x >= self.x && x <= self.x + self.panel_w && y >= top && y <= top + self.panel_height()
+    }
+}
+
+struct Bar {
+    registry_state: RegistryState,
+    seat_state: SeatState,
+    output_state: OutputState,
+    compositor: CompositorState,
+    layer_shell: LayerShell,
+    shm: Shm,
+    pool: SlotPool,
+    layer: LayerSurface,
+    width: u32,
+    configured: bool,
+    exit: bool,
+    pointer: Option<wl_pointer::WlPointer>,
+    text: Text,
+    focused_name: String,
+    /// app_id da janela em foco (vazio sem janela em foco).
+    focused_id: String,
+    /// Títulos desenhados na barra: menu e faixa x (início, fim), para o clique.
+    titles: Vec<(MenuId, f32, f32)>,
+    /// Launcher aberto: barra transparente sobre ele, com texto branco.
+    over_launcher: bool,
+    clock: String,
+    battery: Option<(u8, bool)>,
+    names: AppNames,
+    /// Som, Wi-Fi e Bluetooth, lidos numa thread a cada 2 s.
+    status: Status,
+    /// Pede à thread uma leitura imediata (depois de uma ação).
+    status_now: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Mês mostrado no calendário (ano, mês).
+    cal_month: (i32, u32),
+    /// Última vez que o volume foi mandado durante um arrasto.
+    volume_sent: std::time::Instant,
+    menu: Option<Menu>,
+    bar_dirty: bool,
+    menu_dirty: bool,
+    qh: QueueHandle<Bar>,
+}
+
+impl Bar {
+    /// Com o launcher aberto, a barra fica transparente e com texto branco.
+    fn refresh_launcher(&mut self) {
+        let open = ask_compositor("launcher state")
+            .and_then(|lines| lines.first().cloned())
+            .is_some_and(|l| l == "open");
+        if open != self.over_launcher {
+            self.over_launcher = open;
+            if open {
+                self.close_menu();
+            }
+            self.draw_bar();
+        }
+    }
+
+    /// Atualiza relógio, bateria e app em foco; redesenha só se algo mudou.
+    fn refresh(&mut self) {
+        let clock = clock_text();
+        let battery = battery();
+        let (focused_id, focused) = ask_compositor("list")
+            .and_then(|lines| {
+                lines.into_iter().find_map(|line| {
+                    let mut parts = line.split('\t');
+                    let (app_id, title, status) = (parts.next()?, parts.next()?, parts.next()?);
+                    (status == "focused").then(|| {
+                        let name = self
+                            .names
+                            .name_for(app_id)
+                            .or_else(|| (!title.is_empty()).then(|| title.to_string()))
+                            .unwrap_or_else(|| app_id.to_string());
+                        (app_id.to_string(), name)
+                    })
+                })
+            })
+            .unwrap_or_else(|| (String::new(), "mide".to_string()));
+        if clock != self.clock || battery != self.battery || focused != self.focused_name || focused_id != self.focused_id {
+            self.clock = clock;
+            self.battery = battery;
+            self.focused_name = focused;
+            self.focused_id = focused_id;
+            self.draw_bar();
+        }
+    }
+
+    /// Pede um quadro novo da barra; o desenho sai uma vez depois dos eventos pendentes.
+    fn draw_bar(&mut self) {
+        self.bar_dirty = true;
+    }
+
+    /// Pede um quadro novo do menu aberto (mesmo agrupamento da barra).
+    fn draw_menu(&mut self) {
+        self.menu_dirty = true;
+    }
+
+    fn paint_bar(&mut self) {
+        self.bar_dirty = false;
+        if !self.configured || self.width == 0 {
+            return;
+        }
+        let (w, h) = (self.width, BAR_HEIGHT);
+        let Some(mut pixmap) = Pixmap::new(w, h) else {
+            return;
+        };
+        let (fw, fh) = (w as f32, h as f32);
+
+        // Fundo claro e translúcido, com uma linha fina embaixo, como no macOS. Com o
+        // launcher aberto, sem fundo: só o texto branco sobre o launcher.
+        let fg = if self.over_launcher { [255, 255, 255, 250] } else { [20, 20, 24, 255] };
+        if !self.over_launcher {
+            let mut paint = Paint::default();
+            paint.shader = vertical_gradient(0.0, fh, rgba(250, 250, 252, 225), rgba(238, 238, 242, 220));
+            if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, fw, fh) {
+                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+            if let Some(line) = tiny_skia::Rect::from_xywh(0.0, fh - 1.0, fw, 1.0) {
+                let mut border = Paint::default();
+                border.set_color(rgba(0, 0, 0, 34));
+                pixmap.fill_rect(line, &border, Transform::identity(), None);
+            }
+        }
+
+        // Marca do mide: um anel com um ponto, destacado quando o menu está aberto.
+        let cy = fh / 2.0;
+        let lx = LOGO_X + LOGO_W / 2.0;
+        if self.menu.as_ref().is_some_and(|m| m.id == MenuId::System) {
+            fill_rounded(&mut pixmap, LOGO_X - 4.0, 3.0, LOGO_W + 8.0, fh - 6.0, 5.0, rgba(0, 0, 0, 30));
+        }
+        if let Some(ring) = PathBuilder::from_circle(lx, cy, 6.5) {
+            let mut stroke_paint = Paint::default();
+            stroke_paint.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+            stroke_paint.anti_alias = true;
+            let stroke = Stroke {
+                width: 2.2,
+                ..Default::default()
+            };
+            pixmap.stroke_path(&ring, &stroke_paint, &stroke, Transform::identity(), None);
+        }
+        if let Some(dot) = PathBuilder::from_circle(lx + 2.0, cy - 2.0, 2.2) {
+            let mut dot_paint = Paint::default();
+            dot_paint.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+            dot_paint.anti_alias = true;
+            pixmap.fill_path(&dot, &dot_paint, FillRule::Winding, Transform::identity(), None);
+        }
+
+        // Nome do app em foco, em negrito, e os menus dele. O título do menu aberto
+        // fica destacado.
+        let text_y = (fh - FONT * 1.25) / 2.0;
+        let open = self.menu.as_ref().map(|m| m.id);
+        self.titles.clear();
+        let mut tx = LOGO_X + LOGO_W + 14.0;
+        let name = self.focused_name.clone();
+        let mut titles: Vec<(MenuId, String, FontWeight)> = vec![(MenuId::App, name, FontWeight::Bold)];
+        if !self.focused_id.is_empty() {
+            titles.extend(APP_MENUS.iter().map(|(id, t)| (*id, t.to_string(), FontWeight::Regular)));
+        }
+        for (id, title, weight) in titles {
+            let tw = self.text.measure(&title, FONT, weight);
+            if open == Some(id) {
+                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, rgba(0, 0, 0, 30));
+            }
+            self.text.draw(&mut pixmap, &title, tx, text_y, FONT, weight, fg);
+            self.titles.push((id, tx - TITLE_GAP / 2.0, tx + tw + TITLE_GAP / 2.0));
+            tx += tw + TITLE_GAP;
+        }
+        // Sem janela em foco, o nome "mide" não tem menu.
+        if self.focused_id.is_empty() {
+            self.titles.clear();
+        }
+
+        // Direita, da direita para a esquerda: relógio (abre o calendário), bateria,
+        // Bluetooth, Wi-Fi e som. Cada um abre o seu painel.
+        let highlight = |pixmap: &mut Pixmap, id: MenuId, x0: f32, x1: f32| {
+            if open == Some(id) {
+                fill_rounded(pixmap, x0, 3.0, x1 - x0, fh - 6.0, 5.0, rgba(0, 0, 0, 30));
+            }
+        };
+        let clock = self.clock.clone();
+        let clock_w = self.text.measure(&clock, FONT, FontWeight::Regular);
+        let mut x = fw - 14.0 - clock_w;
+        highlight(&mut pixmap, MenuId::Calendar, x - 7.0, x + clock_w + 7.0);
+        self.text.draw(&mut pixmap, &clock, x, text_y, FONT, FontWeight::Regular, fg);
+        self.titles.push((MenuId::Calendar, x - 7.0, x + clock_w + 7.0));
+        if let Some((level, charging)) = self.battery {
+            let label = format!("{level}%");
+            let label_w = self.text.measure(&label, FONT, FontWeight::Regular);
+            let right = x - 7.0;
+            x -= 18.0 + label_w;
+            let left = x - 30.0 - 4.0;
+            highlight(&mut pixmap, MenuId::Battery, left, right);
+            self.text.draw(&mut pixmap, &label, x, text_y, FONT, FontWeight::Regular, fg);
+            x -= 30.0;
+            draw_battery(&mut pixmap, x, cy, level, charging, fg);
+            self.titles.push((MenuId::Battery, left, right));
+        }
+        let icons: Vec<MenuId> = [
+            (self.status.bluetooth.is_some(), MenuId::Bluetooth),
+            (self.status.wifi.is_some(), MenuId::Wifi),
+            (self.status.volume.is_some(), MenuId::Sound),
+        ]
+        .into_iter()
+        .filter_map(|(present, id)| present.then_some(id))
+        .collect();
+        for id in icons {
+            let (x0, x1) = (x - 36.0, x - 8.0);
+            highlight(&mut pixmap, id, x0, x1);
+            let cx = (x0 + x1) / 2.0;
+            match id {
+                MenuId::Bluetooth => draw_bluetooth_icon(&mut pixmap, cx, cy, self.status.bluetooth.as_ref().is_some_and(|(on, _)| *on), fg),
+                MenuId::Wifi => {
+                    let level = match (&self.status.wifi, self.status.active_network()) {
+                        (Some((false, _)), _) | (None, _) => None,
+                        (_, None) => Some(0),
+                        (_, Some(n)) => Some(1 + (n.signal as u32 * 3 / 100).min(2) as u8),
+                    };
+                    draw_wifi_icon(&mut pixmap, cx, cy, level, fg);
+                }
+                _ => draw_speaker_icon(&mut pixmap, cx, cy, self.status.volume, fg),
+            }
+            self.titles.push((id, x0, x1));
+            x = x0;
+        }
+
+        self.present_layer(&pixmap, true);
+    }
+
+    fn paint_menu(&mut self) {
+        self.menu_dirty = false;
+        if self.menu.as_ref().is_some_and(|m| m.id.custom()) {
+            self.draw_custom_panel();
+            return;
+        }
+        let Some(menu) = self.menu.as_ref() else {
+            return;
+        };
+        let (w, h, hovered) = (menu.width, menu.height, menu.hovered);
+        if w == 0 || h == 0 {
+            return;
+        }
+        let Some(mut pixmap) = Pixmap::new(w, h) else {
+            return;
+        };
+        let (mx, mw, items) = (menu.x, menu.panel_w, menu.items.clone());
+        let top = BAR_HEIGHT as f32 + 4.0;
+        let ph = menu.panel_height();
+
+        // Painel: vidro claro com borda fina e sombra suave.
+        for i in 0..6 {
+            let spread = 6.0 - i as f32;
+            fill_rounded(&mut pixmap, mx - spread, top - spread + 3.0, mw + 2.0 * spread, ph + 2.0 * spread, 10.0 + spread, rgba(0, 0, 0, 6));
+        }
+        fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(246, 246, 248, 240));
+        if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, 10.0) {
+            let mut border = Paint::default();
+            border.set_color(rgba(0, 0, 0, 40));
+            border.anti_alias = true;
+            pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
+        }
+
+        let mut y = top + MENU_PAD;
+        for (i, item) in items.iter().enumerate() {
+            match item {
+                MenuItem::Separator => {
+                    if let Some(line) = tiny_skia::Rect::from_xywh(mx + 10.0, y + SEPARATOR_H / 2.0, mw - 20.0, 1.0) {
+                        let mut paint = Paint::default();
+                        paint.set_color(rgba(0, 0, 0, 30));
+                        pixmap.fill_rect(line, &paint, Transform::identity(), None);
+                    }
+                    y += SEPARATOR_H;
+                }
+                MenuItem::Entry(label, shortcut, action) => {
+                    let active = hovered == Some(i);
+                    if active {
+                        fill_rounded(&mut pixmap, mx + 5.0, y, mw - 10.0, ITEM_H, 5.0, rgba(10, 100, 225, 255));
+                    }
+                    let color = match (action.is_some(), active) {
+                        (_, true) => [255, 255, 255, 255],
+                        (true, false) => [24, 24, 28, 255],
+                        (false, false) => [150, 150, 156, 255],
+                    };
+                    let ty = y + (ITEM_H - FONT * 1.25) / 2.0;
+                    self.text.draw(&mut pixmap, label, mx + 16.0, ty, FONT, FontWeight::Regular, color);
+                    if !shortcut.is_empty() {
+                        let sw = self.text.measure(shortcut, FONT - 1.0, FontWeight::Regular);
+                        let sc = if active { [230, 236, 255, 255] } else { [140, 140, 148, 255] };
+                        self.text.draw(&mut pixmap, shortcut, mx + mw - 16.0 - sw, ty + 0.5, FONT - 1.0, FontWeight::Regular, sc);
+                    }
+                    y += ITEM_H;
+                }
+            }
+        }
+        self.present_layer(&pixmap, false);
+    }
+
+    /// Envia o pixmap para a barra (`bar = true`) ou para o menu.
+    fn present_layer(&mut self, pixmap: &Pixmap, bar: bool) {
+        let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+        let Ok((buffer, canvas)) = self.pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        to_argb8888(pixmap, canvas);
+        let layer = if bar {
+            &self.layer
+        } else {
+            match self.menu.as_ref() {
+                Some(menu) => &menu.layer,
+                None => return,
+            }
+        };
+        let surface = layer.wl_surface();
+        surface.damage_buffer(0, 0, w, h);
+        if buffer.attach_to(surface).is_ok() {
+            layer.commit();
+        }
+    }
+
+    /// Abre o menu `id`, ou troca o menu aberto por ele (passar o mouse pelos títulos
+    /// com um menu aberto troca de menu, como no macOS).
+    fn open_menu(&mut self, id: MenuId) {
+        let app = self.focused_name.clone();
+        let mut items = menu_items(id, &app);
+        if id == MenuId::Battery {
+            if let Some((level, charging)) = self.battery {
+                let state = if charging { "carregando" } else { "na bateria" };
+                items.insert(0, entry(format!("Bateria: {level}% ({state})"), "", None));
+                items.insert(1, MenuItem::Separator);
+            }
+        }
+        if id == MenuId::Calendar {
+            let today = Local::now().date_naive();
+            self.cal_month = (today.year(), today.month());
+        }
+        let title = self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (*x0, *x1));
+        let x = match (id, title) {
+            (MenuId::System, _) => 8.0,
+            // Painéis da direita: centrados no ícone, sem sair da tela.
+            (_, Some((x0, x1))) if id.custom() || id == MenuId::Battery => {
+                let w = if id.custom() { id.custom_width() } else { MENU_MIN_W };
+                ((x0 + x1) / 2.0 - w / 2.0).min(self.width as f32 - w - 8.0).max(8.0)
+            }
+            (_, Some((x0, _))) => x0 - 2.0,
+            _ => 8.0,
+        };
+        let widest = items
+            .iter()
+            .map(|i| match i {
+                MenuItem::Entry(label, shortcut, _) => {
+                    let lw = self.text.measure(label, FONT, FontWeight::Regular);
+                    let sw = if shortcut.is_empty() { 0.0 } else { self.text.measure(shortcut, FONT - 1.0, FontWeight::Regular) + 28.0 };
+                    lw + sw + 34.0
+                }
+                MenuItem::Separator => 0.0,
+            })
+            .fold(MENU_MIN_W, f32::max);
+        let widest = if id.custom() { id.custom_width() } else { widest };
+        tracing::info!("menu aberto: {id:?}");
+        if id.custom() {
+            self.request_status();
+        }
+        if let Some(menu) = self.menu.as_mut() {
+            menu.id = id;
+            menu.items = items;
+            menu.x = x;
+            menu.panel_w = widest;
+            menu.hovered = None;
+            menu.regions.clear();
+            menu.hover_region = None;
+            menu.dragging_volume = false;
+            self.draw_menu();
+            self.draw_bar();
+            return;
+        }
+        let surface = self.compositor.create_surface(&self.qh);
+        let layer = self
+            .layer_shell
+            .create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-bar-menu"), None);
+        layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+        layer.set_size(0, 0);
+        // Cobre a tela toda, inclusive a área da própria barra.
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.commit();
+        self.menu = Some(Menu {
+            layer,
+            width: 0,
+            height: 0,
+            id,
+            items,
+            x,
+            panel_w: widest,
+            hovered: None,
+            regions: Vec::new(),
+            hover_region: None,
+            panel_h: 0.0,
+            dragging_volume: false,
+        });
+        self.draw_bar();
+    }
+
+    fn close_menu(&mut self) {
+        if self.menu.take().is_some() {
+            tracing::info!("menu fechado");
+            self.draw_bar();
+        }
+    }
+
+    /// Menu cujo título fica em `x` na barra (a marca do mide é o menu do sistema).
+    fn title_at(&self, x: f64) -> Option<MenuId> {
+        let x = x as f32;
+        if x >= LOGO_X - 6.0 && x <= LOGO_X + LOGO_W + 6.0 {
+            return Some(MenuId::System);
+        }
+        self.titles.iter().find(|(_, x0, x1)| x >= *x0 && x <= *x1).map(|(id, _, _)| *id)
+    }
+
+    fn run(&mut self, action: MenuAction) {
+        self.close_menu();
+        tracing::info!("menu: {action:?}");
+        match action {
+            MenuAction::About => spawn_sibling("mide-about"),
+            MenuAction::Quit => {
+                tracing::info!("encerrando a sessão");
+                let _ = ask_compositor("quit");
+            }
+            MenuAction::NewWindow => match self.names.exec_for(&self.focused_id) {
+                Some(command) => {
+                    if let Ok(mut child) = std::process::Command::new("sh").arg("-c").arg(&command).spawn() {
+                        std::thread::spawn(move || {
+                            let _ = child.wait();
+                        });
+                    }
+                }
+                None => tracing::warn!("sem comando para abrir outra janela de {}", self.focused_id),
+            },
+            MenuAction::Compositor(command) => {
+                let _ = ask_compositor(&command);
+            }
+            MenuAction::Settings(panel) => system::open_settings(panel),
+            MenuAction::AppWindows(what) => {
+                let mut ids = vec![self.focused_id.to_lowercase()];
+                if let Some(last) = self.focused_id.rsplit('.').next() {
+                    ids.push(last.to_lowercase());
+                }
+                let _ = ask_compositor(&format!("{what} {}", ids.join(" ")));
+            }
+        }
+    }
+}
+
+impl Bar {
+    fn request_status(&self) {
+        self.status_now.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Desenha o painel da direita aberto (calendário, som, Wi-Fi ou Bluetooth).
+    fn draw_custom_panel(&mut self) {
+        let Some(menu) = self.menu.as_ref() else {
+            return;
+        };
+        let (w, h, id, px, pw, hover) = (menu.width, menu.height, menu.id, menu.x, menu.panel_w, menu.hover_region);
+        if w == 0 || h == 0 {
+            return;
+        }
+        let Some(mut pixmap) = Pixmap::new(w, h) else {
+            return;
+        };
+        let top = BAR_HEIGHT as f32 + 4.0;
+        // Conteúdo primeiro num pixmap à parte, para saber a altura do painel.
+        let mut content = Pixmap::new(pw as u32, 600).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        let mut regions = Vec::new();
+        let ph = match id {
+            MenuId::Calendar => self.panel_calendar(&mut content, pw, &mut regions, hover),
+            MenuId::Sound => self.panel_sound(&mut content, pw, &mut regions, hover),
+            MenuId::Wifi => self.panel_wifi(&mut content, pw, &mut regions, hover),
+            _ => self.panel_bluetooth(&mut content, pw, &mut regions, hover),
+        };
+        // Sombra, vidro claro e borda fina, como os menus.
+        for i in 0..6 {
+            let spread = 6.0 - i as f32;
+            fill_rounded(&mut pixmap, px - spread, top - spread + 3.0, pw + 2.0 * spread, ph + 2.0 * spread, 12.0 + spread, rgba(0, 0, 0, 6));
+        }
+        fill_rounded(&mut pixmap, px, top, pw, ph, 12.0, rgba(246, 246, 248, 242));
+        if let Some(path) = rounded_rect(px + 0.5, top + 0.5, pw - 1.0, ph - 1.0, 12.0) {
+            let mut border = Paint::default();
+            border.set_color(rgba(0, 0, 0, 40));
+            border.anti_alias = true;
+            pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
+        }
+        pixmap.draw_pixmap(px as i32, top as i32, content.as_ref(), &Default::default(), Transform::identity(), None);
+        if let Some(menu) = self.menu.as_mut() {
+            menu.panel_h = ph;
+            menu.regions = regions
+                .into_iter()
+                .map(|((rx, ry, rw, rh), a)| ((rx + px, ry + top, rw, rh), a))
+                .collect();
+        }
+        self.present_layer(&pixmap, false);
+    }
+
+    /// Linha clicável com destaque azul sob o ponteiro (coordenadas do painel).
+    #[allow(clippy::too_many_arguments)]
+    fn panel_row(&mut self, p: &mut Pixmap, pw: f32, y: f32, h: f32, label: &str, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>, action: PanelAction) -> bool {
+        let hovered = hover == Some(regions.len());
+        if hovered {
+            fill_rounded(p, 6.0, y, pw - 12.0, h, 6.0, rgba(10, 100, 225, 255));
+        }
+        let color = if hovered { [255, 255, 255, 255] } else { [24, 24, 28, 255] };
+        self.text.draw(p, label, 16.0, y + (h - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
+        regions.push(((6.0, y, pw - 12.0, h), action));
+        hovered
+    }
+
+    fn panel_separator(p: &mut Pixmap, pw: f32, y: f32) {
+        fill_rounded(p, 12.0, y + 4.0, pw - 24.0, 1.0, 0.0, rgba(0, 0, 0, 30));
+    }
+
+    /// Título do painel com um interruptor à direita.
+    fn panel_header(&mut self, p: &mut Pixmap, pw: f32, title: &str, on: Option<bool>, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, action: PanelAction) {
+        self.text.draw(p, title, 16.0, 14.0, 14.0, FontWeight::Bold, [24, 24, 28, 255]);
+        if let Some(on) = on {
+            draw_switch(p, pw - 54.0, 13.0, on);
+            regions.push(((pw - 60.0, 8.0, 50.0, 30.0), action));
+        }
+    }
+
+    fn panel_calendar(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        let today = Local::now().date_naive();
+        let (year, month) = self.cal_month;
+        self.text.draw(p, &calendar::long_date(today), 16.0, 12.0, 13.0, FontWeight::Regular, [110, 110, 118, 255]);
+        let title = calendar::month_title(year, month);
+        self.text.draw(p, &title, 16.0, 36.0, 15.0, FontWeight::Bold, [24, 24, 28, 255]);
+        // Botões: ‹  Hoje  ›.
+        let buttons = [("‹", pw - 98.0, 26.0, PanelAction::PrevMonth), ("Hoje", pw - 70.0, 40.0, PanelAction::Today), ("›", pw - 28.0, 22.0, PanelAction::NextMonth)];
+        for (label, bx, bw, action) in buttons {
+            if hover == Some(regions.len()) {
+                fill_rounded(p, bx, 34.0, bw, 24.0, 6.0, rgba(0, 0, 0, 22));
+            }
+            let size = if label.len() > 2 { 12.5 } else { 17.0 };
+            let lw = self.text.measure(label, size, FontWeight::Semibold);
+            self.text.draw(p, label, bx + (bw - lw) / 2.0, 46.0 - size * 0.62, size, FontWeight::Semibold, [10, 100, 225, 255]);
+            regions.push(((bx, 34.0, bw, 24.0), action));
+        }
+        let cell = (pw - 24.0) / 7.0;
+        for (i, wd) in calendar::WEEKDAYS.iter().enumerate() {
+            let ww = self.text.measure(wd, 11.5, FontWeight::Semibold);
+            self.text.draw(p, wd, 12.0 + i as f32 * cell + (cell - ww) / 2.0, 68.0, 11.5, FontWeight::Semibold, [130, 130, 138, 255]);
+        }
+        for (i, day) in calendar::month_grid(year, month).iter().enumerate() {
+            let (col, row) = ((i % 7) as f32, (i / 7) as f32);
+            let cx = 12.0 + col * cell + cell / 2.0;
+            let cy = 98.0 + row * 30.0;
+            let label = day.date.day().to_string();
+            let lw = self.text.measure(&label, 13.0, FontWeight::Regular);
+            let mut color = if day.in_month { [24, 24, 28, 255] } else { [180, 180, 186, 255] };
+            if day.date == today {
+                if let Some(c) = PathBuilder::from_circle(cx, cy, 13.0) {
+                    let mut paint = Paint::default();
+                    paint.set_color(rgba(10, 100, 225, 255));
+                    paint.anti_alias = true;
+                    p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+                color = [255, 255, 255, 255];
+            }
+            self.text.draw(p, &label, cx - lw / 2.0, cy - 8.5, 13.0, if day.date == today { FontWeight::Bold } else { FontWeight::Regular }, color);
+        }
+        98.0 + 5.0 * 30.0 + 26.0
+    }
+
+    fn panel_sound(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        let (volume, muted) = self.status.volume.unwrap_or((0.0, false));
+        self.panel_header(p, pw, "Som", None, regions, PanelAction::ToggleMute);
+        // Trilho do volume com o alto-falante à esquerda.
+        draw_speaker_icon(p, 24.0, 58.0, Some((volume, muted)), [60, 60, 66, 255]);
+        let (tx, tw) = (44.0, pw - 64.0);
+        fill_rounded(p, tx, 54.0, tw, 8.0, 4.0, rgba(0, 0, 0, 30));
+        let level = if muted { 0.0 } else { volume.clamp(0.0, 1.0) };
+        fill_rounded(p, tx, 54.0, tw * level, 8.0, 4.0, rgba(10, 100, 225, 255));
+        let kx = tx + tw * level;
+        if let Some(knob) = PathBuilder::from_circle(kx, 58.0, 9.0) {
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(rgba(255, 255, 255, 255));
+            p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+            paint.set_color(rgba(0, 0, 0, 60));
+            p.stroke_path(&knob, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        }
+        regions.push(((tx - 8.0, 44.0, tw + 16.0, 28.0), PanelAction::VolumeTrack));
+        // "Sem som" com interruptor.
+        self.text.draw(p, "Sem som", 16.0, 86.0, FONT, FontWeight::Regular, [24, 24, 28, 255]);
+        draw_switch(p, pw - 54.0, 84.0, muted);
+        regions.push(((pw - 60.0, 80.0, 50.0, 28.0), PanelAction::ToggleMute));
+        Self::panel_separator(p, pw, 114.0);
+        self.panel_row(p, pw, 124.0, 26.0, "Configurações de som…", regions, hover, PanelAction::Settings("sound"));
+        124.0 + 26.0 + 8.0
+    }
+
+    fn panel_wifi(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        let (on, networks) = self.status.wifi.clone().unwrap_or((false, Vec::new()));
+        self.panel_header(p, pw, "Wi-Fi", Some(on), regions, PanelAction::ToggleWifi);
+        let mut y = 46.0;
+        Self::panel_separator(p, pw, y - 6.0);
+        if on {
+            if networks.is_empty() {
+                self.text.draw(p, "Procurando redes…", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+                y += 28.0;
+            }
+            for net in networks.iter().take(7) {
+                let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Connect(net.ssid.clone()));
+                let color = if hovered { [255, 255, 255, 255] } else { [24, 24, 28, 255] };
+                let level = 1 + (net.signal as u32 * 3 / 100).min(2) as u8;
+                draw_wifi_icon(p, 26.0, y + 15.0, Some(level), color);
+                let weight = if net.active { FontWeight::Semibold } else { FontWeight::Regular };
+                self.text.draw(p, &net.ssid, 44.0, y + (30.0 - FONT * 1.25) / 2.0, FONT, weight, color);
+                if net.secure {
+                    draw_lock(p, pw - 40.0, y + 15.0, color);
+                }
+                if net.active {
+                    self.text.draw(p, "✓", pw - 24.0, y + 6.0, FONT, FontWeight::Bold, color);
+                }
+                y += 30.0;
+            }
+        } else {
+            self.text.draw(p, "Wi-Fi desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+            y += 28.0;
+        }
+        Self::panel_separator(p, pw, y);
+        y += 10.0;
+        self.panel_row(p, pw, y, 26.0, "Configurações de Wi-Fi…", regions, hover, PanelAction::Settings("wifi"));
+        y + 26.0 + 8.0
+    }
+
+    fn panel_bluetooth(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        let (on, devices) = self.status.bluetooth.clone().unwrap_or((false, Vec::new()));
+        self.panel_header(p, pw, "Bluetooth", Some(on), regions, PanelAction::ToggleBluetooth);
+        let mut y = 46.0;
+        Self::panel_separator(p, pw, y - 6.0);
+        if !on {
+            self.text.draw(p, "Bluetooth desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+            y += 28.0;
+        } else if devices.is_empty() {
+            self.text.draw(p, "Nenhum aparelho pareado", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+            y += 28.0;
+        }
+        if on {
+            for (i, device) in devices.iter().enumerate().take(7) {
+                let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Device(i));
+                let color = if hovered { [255, 255, 255, 255] } else { [24, 24, 28, 255] };
+                // Círculo azul para aparelho conectado, cinza para os outros.
+                let dot = if device.connected { rgba(10, 100, 225, 255) } else { rgba(170, 170, 176, 255) };
+                fill_rounded(p, 16.0, y + 7.0, 16.0, 16.0, 8.0, if hovered { rgba(255, 255, 255, 255) } else { dot });
+                self.text.draw(p, &device.name, 42.0, y + (30.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
+                if device.connected {
+                    let lw = self.text.measure("Conectado", 11.5, FontWeight::Regular);
+                    let dc = if hovered { [230, 236, 255, 255] } else { [130, 130, 138, 255] };
+                    self.text.draw(p, "Conectado", pw - 16.0 - lw, y + 8.0, 11.5, FontWeight::Regular, dc);
+                }
+                y += 30.0;
+            }
+        }
+        Self::panel_separator(p, pw, y);
+        y += 10.0;
+        self.panel_row(p, pw, y, 26.0, "Configurações de Bluetooth…", regions, hover, PanelAction::Settings("bluetooth"));
+        y + 26.0 + 8.0
+    }
+
+    fn region_at(&self, x: f64, y: f64) -> Option<usize> {
+        let menu = self.menu.as_ref()?;
+        let (x, y) = (x as f32, y as f32);
+        menu.regions.iter().position(|((rx, ry, rw, rh), _)| x >= *rx && x <= rx + rw && y >= *ry && y <= ry + rh)
+    }
+
+    /// Volume pela posição x no trilho do painel de som.
+    fn volume_from_x(&self, x: f64) -> Option<f32> {
+        let menu = self.menu.as_ref()?;
+        let ((rx, _, rw, _), _) = menu.regions.iter().find(|(_, a)| *a == PanelAction::VolumeTrack)?;
+        let (tx, tw) = (rx + 8.0, rw - 16.0);
+        Some(((x as f32 - tx) / tw).clamp(0.0, 1.0))
+    }
+
+    fn custom_motion(&mut self, x: f64, y: f64) {
+        // Na faixa da barra, passar por outro título troca de painel.
+        if y < BAR_HEIGHT as f64 {
+            if let Some(id) = self.title_at(x) {
+                if self.menu.as_ref().is_some_and(|m| m.id != id) {
+                    self.open_menu(id);
+                    return;
+                }
+            }
+        }
+        if self.menu.as_ref().is_some_and(|m| m.dragging_volume) {
+            if let Some(value) = self.volume_from_x(x) {
+                self.status.volume = Some((value, false));
+                if self.volume_sent.elapsed() >= Duration::from_millis(80) {
+                    system::set_volume(value);
+                    self.volume_sent = std::time::Instant::now();
+                }
+                self.draw_menu();
+                self.draw_bar();
+            }
+            return;
+        }
+        let hover = self.region_at(x, y);
+        if self.menu.as_ref().is_some_and(|m| m.hover_region != hover) {
+            if let Some(menu) = self.menu.as_mut() {
+                menu.hover_region = hover;
+            }
+            self.draw_menu();
+        }
+    }
+
+    fn custom_press(&mut self, x: f64, y: f64) {
+        let inside = self.menu.as_ref().is_some_and(|m| m.inside_panel(x, y));
+        if y < BAR_HEIGHT as f64 {
+            match self.title_at(x) {
+                Some(id) if self.menu.as_ref().is_some_and(|m| m.id == id) => self.close_menu(),
+                Some(id) => self.open_menu(id),
+                None => self.close_menu(),
+            }
+            return;
+        }
+        if !inside {
+            self.close_menu();
+            return;
+        }
+        let Some(action) = self.region_at(x, y).and_then(|i| self.menu.as_ref().map(|m| m.regions[i].1.clone())) else {
+            return;
+        };
+        tracing::info!("painel: {action:?}");
+        match action {
+            PanelAction::PrevMonth => self.cal_month = calendar::shift_month(self.cal_month.0, self.cal_month.1, -1),
+            PanelAction::NextMonth => self.cal_month = calendar::shift_month(self.cal_month.0, self.cal_month.1, 1),
+            PanelAction::Today => {
+                let today = Local::now().date_naive();
+                self.cal_month = (today.year(), today.month());
+            }
+            PanelAction::VolumeTrack => {
+                if let Some(value) = self.volume_from_x(x) {
+                    // Mexer no volume tira o mudo, como no macOS.
+                    let was_muted = self.status.volume.is_some_and(|(_, m)| m);
+                    self.status.volume = Some((value, false));
+                    system::set_volume(value);
+                    if was_muted {
+                        system::set_muted(false);
+                    }
+                    self.volume_sent = std::time::Instant::now();
+                    if let Some(menu) = self.menu.as_mut() {
+                        menu.dragging_volume = true;
+                    }
+                }
+            }
+            PanelAction::ToggleMute => {
+                if let Some((v, m)) = self.status.volume {
+                    self.status.volume = Some((v, !m));
+                    system::set_muted(!m);
+                }
+            }
+            PanelAction::ToggleWifi => {
+                if let Some((on, list)) = self.status.wifi.clone() {
+                    self.status.wifi = Some((!on, list));
+                    system::set_wifi(!on);
+                }
+            }
+            PanelAction::Connect(ssid) => {
+                system::connect_network(&ssid);
+                self.close_menu();
+            }
+            PanelAction::ToggleBluetooth => {
+                if let Some((on, list)) = self.status.bluetooth.clone() {
+                    self.status.bluetooth = Some((!on, list));
+                    system::set_bluetooth(!on);
+                }
+            }
+            PanelAction::Device(i) => {
+                if let Some(device) = self.status.bluetooth.as_ref().and_then(|(_, d)| d.get(i)).cloned() {
+                    system::toggle_device(&device);
+                }
+                self.close_menu();
+            }
+            PanelAction::Settings(panel) => {
+                system::open_settings(panel);
+                self.close_menu();
+            }
+        }
+        self.request_status();
+        if self.menu.is_some() {
+            self.draw_menu();
+        }
+        self.draw_bar();
+    }
+}
+
+/// Interruptor no estilo do macOS: pílula azul (ligado) ou cinza, com a bolinha.
+fn draw_switch(p: &mut Pixmap, x: f32, y: f32, on: bool) {
+    let fill = if on { rgba(10, 120, 240, 255) } else { rgba(0, 0, 0, 40) };
+    fill_rounded(p, x, y, 38.0, 22.0, 11.0, fill);
+    let kx = if on { x + 27.0 } else { x + 11.0 };
+    if let Some(knob) = PathBuilder::from_circle(kx, y + 11.0, 9.0) {
+        let mut paint = Paint::default();
+        paint.anti_alias = true;
+        paint.set_color(rgba(255, 255, 255, 255));
+        p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
+fn stroke_color(fg: [u8; 4], alpha: u8) -> Paint<'static> {
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.set_color(rgba(fg[0], fg[1], fg[2], alpha));
+    paint
+}
+
+/// Ícone de Wi-Fi: leque com até 3 arcos acesos (`level` 0 a 3; `None` = desligado).
+fn draw_wifi_icon(p: &mut Pixmap, cx: f32, cy: f32, level: Option<u8>, fg: [u8; 4]) {
+    let base = cy + 5.0;
+    for i in 0..3u8 {
+        let r = 4.5 + i as f32 * 3.6;
+        let lit = level.is_some_and(|l| l > i);
+        let alpha = if lit { 255 } else { 70 };
+        let mut pb = PathBuilder::new();
+        let a0 = std::f32::consts::PI * 1.25;
+        let steps = 12;
+        for k in 0..=steps {
+            let a = a0 + (std::f32::consts::PI * 0.5) * k as f32 / steps as f32;
+            let (px, py) = (cx + r * a.cos(), base + r * a.sin());
+            if k == 0 {
+                pb.move_to(px, py);
+            } else {
+                pb.line_to(px, py);
+            }
+        }
+        if let Some(path) = pb.finish() {
+            let stroke = Stroke { width: 1.9, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+            p.stroke_path(&path, &stroke_color(fg, alpha), &stroke, Transform::identity(), None);
+        }
+    }
+    if let Some(dot) = PathBuilder::from_circle(cx, base - 0.5, 1.6) {
+        let alpha = if level.is_some() { 255 } else { 70 };
+        p.fill_path(&dot, &stroke_color(fg, alpha), FillRule::Winding, Transform::identity(), None);
+    }
+    if level.is_none() {
+        let mut pb = PathBuilder::new();
+        pb.move_to(cx - 7.0, cy - 7.0);
+        pb.line_to(cx + 7.0, cy + 7.0);
+        if let Some(path) = pb.finish() {
+            p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.6, ..Default::default() }, Transform::identity(), None);
+        }
+    }
+}
+
+/// Ícone do Bluetooth (a runa), mais apagado quando desligado.
+fn draw_bluetooth_icon(p: &mut Pixmap, cx: f32, cy: f32, on: bool, fg: [u8; 4]) {
+    let (h, w) = (7.0, 3.6);
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx - w, cy - h * 0.45);
+    pb.line_to(cx + w, cy + h * 0.45);
+    pb.line_to(cx, cy + h);
+    pb.line_to(cx, cy - h);
+    pb.line_to(cx + w, cy - h * 0.45);
+    pb.line_to(cx - w, cy + h * 0.45);
+    if let Some(path) = pb.finish() {
+        let stroke = Stroke { width: 1.6, line_join: tiny_skia::LineJoin::Round, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+        p.stroke_path(&path, &stroke_color(fg, if on { 255 } else { 90 }), &stroke, Transform::identity(), None);
+    }
+}
+
+/// Alto-falante com ondas pelo volume (0, 1, 2 ou 3), ou um × se estiver mudo.
+fn draw_speaker_icon(p: &mut Pixmap, cx: f32, cy: f32, volume: Option<(f32, bool)>, fg: [u8; 4]) {
+    let x = cx - 7.0;
+    let mut pb = PathBuilder::new();
+    pb.move_to(x, cy - 2.5);
+    pb.line_to(x + 3.0, cy - 2.5);
+    pb.line_to(x + 7.0, cy - 6.0);
+    pb.line_to(x + 7.0, cy + 6.0);
+    pb.line_to(x + 3.0, cy + 2.5);
+    pb.line_to(x, cy + 2.5);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        p.fill_path(&path, &stroke_color(fg, 255), FillRule::Winding, Transform::identity(), None);
+    }
+    let (level, muted) = volume.unwrap_or((0.0, true));
+    if muted {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x + 10.0, cy - 3.0);
+        pb.line_to(x + 16.0, cy + 3.0);
+        pb.move_to(x + 16.0, cy - 3.0);
+        pb.line_to(x + 10.0, cy + 3.0);
+        if let Some(path) = pb.finish() {
+            p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, Transform::identity(), None);
+        }
+        return;
+    }
+    let waves = if level <= 0.01 { 0 } else if level < 0.34 { 1 } else if level < 0.67 { 2 } else { 3 };
+    for i in 0..3 {
+        let r = 3.5 + i as f32 * 3.0;
+        let alpha = if i < waves { 255 } else { 60 };
+        let mut pb = PathBuilder::new();
+        let steps = 10;
+        for k in 0..=steps {
+            let a = -0.9 + 1.8 * k as f32 / steps as f32;
+            let (px, py) = (x + 8.0 + r * a.cos(), cy + r * a.sin());
+            if k == 0 {
+                pb.move_to(px, py);
+            } else {
+                pb.line_to(px, py);
+            }
+        }
+        if let Some(path) = pb.finish() {
+            p.stroke_path(&path, &stroke_color(fg, alpha), &Stroke { width: 1.5, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, Transform::identity(), None);
+        }
+    }
+}
+
+/// Cadeado pequeno (rede com senha).
+fn draw_lock(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
+    fill_rounded(p, cx - 4.5, cy - 1.5, 9.0, 7.0, 1.5, rgba(fg[0], fg[1], fg[2], 200));
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx - 2.8, cy - 1.5);
+    pb.line_to(cx - 2.8, cy - 4.0);
+    pb.quad_to(cx - 2.8, cy - 6.8, cx, cy - 6.8);
+    pb.quad_to(cx + 2.8, cy - 6.8, cx + 2.8, cy - 4.0);
+    pb.line_to(cx + 2.8, cy - 1.5);
+    if let Some(path) = pb.finish() {
+        p.stroke_path(&path, &stroke_color(fg, 200), &Stroke { width: 1.4, ..Default::default() }, Transform::identity(), None);
+    }
+}
+
+/// Ícone de bateria: contorno, ponta e preenchimento proporcional à carga.
+fn draw_battery(pixmap: &mut Pixmap, x: f32, cy: f32, level: u8, charging: bool, fg: [u8; 4]) {
+    let (w, h) = (24.0, 11.0);
+    let y = cy - h / 2.0;
+    if let Some(path) = rounded_rect(x + 0.5, y + 0.5, w, h, 3.0) {
+        let mut paint = Paint::default();
+        paint.set_color(rgba(fg[0], fg[1], fg[2], 200));
+        paint.anti_alias = true;
+        pixmap.stroke_path(&path, &paint, &Stroke::default(), Transform::identity(), None);
+    }
+    fill_rounded(pixmap, x + w + 1.5, cy - 2.0, 2.0, 4.0, 1.0, rgba(fg[0], fg[1], fg[2], 200));
+    let fill_w = (w - 3.0) * (level.min(100) as f32 / 100.0);
+    let color = if charging {
+        rgba(40, 190, 70, 255)
+    } else if level <= 20 {
+        rgba(230, 60, 50, 255)
+    } else {
+        rgba(fg[0], fg[1], fg[2], 220)
+    };
+    fill_rounded(pixmap, x + 2.0, y + 2.0, fill_w, h - 3.0, 1.5, color);
+}
+
+/// Inicia um programa do mide que fica ao lado deste executável (ou no PATH).
+fn spawn_sibling(name: &str) {
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| name.into());
+    match Command::new(&program).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            tracing::info!("abrindo {name}");
+        }
+        Err(err) => tracing::warn!("falha ao abrir {name}: {err}"),
+    }
+}
+
+impl CompositorHandler for Bar {
+    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}
+    fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+}
+
+impl OutputHandler for Bar {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.output_state
+    }
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+}
+
+impl LayerShellHandler for Bar {
+    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if layer == &self.layer {
+            self.exit = true;
+        } else {
+            self.menu = None;
+        }
+    }
+
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        layer: &LayerSurface,
+        configure: LayerSurfaceConfigure,
+        _: u32,
+    ) {
+        if layer == &self.layer {
+            self.width = configure.new_size.0;
+            self.configured = true;
+            self.draw_bar();
+        } else if let Some(menu) = self.menu.as_mut() {
+            menu.width = configure.new_size.0;
+            menu.height = configure.new_size.1;
+            self.draw_menu();
+        }
+    }
+}
+
+impl SeatHandler for Bar {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+    fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
+                self.pointer = Some(pointer);
+            }
+        }
+    }
+    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Pointer {
+            if let Some(pointer) = self.pointer.take() {
+                pointer.release();
+            }
+        }
+    }
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+}
+
+impl PointerHandler for Bar {
+    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        for event in events {
+            let (x, y) = event.position;
+            let on_menu = self.menu.as_ref().is_some_and(|m| m.layer.wl_surface() == &event.surface);
+            let on_bar = self.layer.wl_surface() == &event.surface;
+            match event.kind {
+                PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } if on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
+                    self.custom_motion(x, y);
+                }
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
+                    self.custom_press(x, y);
+                }
+                PointerEventKind::Release { button, .. } if button == BTN_LEFT && on_menu => {
+                    let dragged = self.menu.as_mut().map(|m| std::mem::take(&mut m.dragging_volume)).unwrap_or(false);
+                    if dragged {
+                        if let Some((value, _)) = self.status.volume {
+                            system::set_volume(value);
+                        }
+                        self.request_status();
+                    }
+                }
+                PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } if on_menu => {
+                    // Na faixa da barra, passar por outro título troca de menu.
+                    if y < BAR_HEIGHT as f64 {
+                        if let Some(id) = self.title_at(x) {
+                            if self.menu.as_ref().is_some_and(|m| m.id != id) {
+                                self.open_menu(id);
+                            }
+                        }
+                    }
+                    let hovered = self.menu.as_ref().and_then(|m| m.item_at(x, y));
+                    if self.menu.as_ref().is_some_and(|m| m.hovered != hovered) {
+                        if let Some(menu) = self.menu.as_mut() {
+                            menu.hovered = hovered;
+                        }
+                        self.draw_menu();
+                    }
+                }
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_bar => {
+                    if let Some(id) = self.title_at(x) {
+                        if self.menu.as_ref().is_some_and(|m| m.id == id) {
+                            self.close_menu();
+                        } else {
+                            self.open_menu(id);
+                        }
+                    }
+                }
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_menu => {
+                    let item = self.menu.as_ref().and_then(|m| m.item_at(x, y).map(|i| m.items[i].clone()));
+                    let inside = self.menu.as_ref().is_some_and(|m| m.inside_panel(x, y));
+                    if let Some(MenuItem::Entry(_, _, Some(action))) = item {
+                        self.run(action);
+                    } else if y < BAR_HEIGHT as f64 && self.title_at(x).is_some() {
+                        // Clicar no título do menu aberto fecha; em outro, troca.
+                        let id = self.title_at(x);
+                        if self.menu.as_ref().map(|m| m.id) == id {
+                            self.close_menu();
+                        } else if let Some(id) = id {
+                            self.open_menu(id);
+                        }
+                    } else if !inside {
+                        self.close_menu();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl ShmHandler for Bar {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm
+    }
+}
+
+delegate_registry!(Bar);
+smithay_client_toolkit::delegate_dispatch2!(Bar);
+
+impl ProvidesRegistryState for Bar {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry_state
+    }
+
+    registry_handlers![OutputState, SeatState];
+}

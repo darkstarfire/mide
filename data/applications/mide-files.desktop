@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Arquivos
+Name[en]=Files
+Comment=Navegue pelas suas pastas, abra, renomeie e organize arquivos
+Exec=mide-files %U
+Icon=system-file-manager
+Categories=System;FileManager;Utility;Core;
+MimeType=inode/directory;
+StartupWMClass=mide-files
+OnlyShowIn=mide;

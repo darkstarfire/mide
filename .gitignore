@@ -1,0 +1,9 @@
+/target
+*.rs.bk
+*.swp
+.DS_Store
+.idea/
+.vscode/
+# Quadros e logs de depuração dos testes
+*.rgba
+perf.data*

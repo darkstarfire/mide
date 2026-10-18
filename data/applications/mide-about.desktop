@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sobre este computador
+Name[en]=About This Computer
+Comment=Versão do mide e especificações da máquina
+Exec=mide-about
+Icon=computer
+Categories=System;
+StartupWMClass=mide-about
+OnlyShowIn=mide;
+NoDisplay=true

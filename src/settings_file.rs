@@ -1,0 +1,115 @@
+//! Escrita no `~/.config/mide/config.toml` pelas Configurações do sistema,
+//! mantendo os comentários e a formatação que o usuário escreveu.
+
+use std::{fs, path::PathBuf};
+
+use toml_edit::{value, DocumentMut, Item, Table};
+
+/// Caminho de `config.toml`, respeitando `XDG_CONFIG_HOME`.
+pub fn config_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("mide").join("config.toml"))
+}
+
+/// Valor que dá para gravar.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Bool(bool),
+    Int(i64),
+    Text(String),
+}
+
+/// Grava `chave = valor` na seção, num texto TOML, sem mexer no resto. `None` em
+/// `new` apaga a chave (volta ao padrão).
+pub fn set_in_text(text: &str, section: &str, key: &str, new: Option<Value>) -> Result<String, String> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("config.toml inválido: {e}"))?;
+    if doc.get(section).is_none_or(|i| !i.is_table()) {
+        doc[section] = Item::Table(Table::new());
+    }
+    let table = doc[section].as_table_mut().ok_or("seção inválida")?;
+    match new {
+        Some(Value::Bool(b)) => table[key] = value(b),
+        Some(Value::Int(n)) => table[key] = value(n),
+        Some(Value::Text(t)) => table[key] = value(t),
+        None => {
+            table.remove(key);
+        }
+    }
+    // Seção que ficou vazia sai do arquivo.
+    if doc[section].as_table().is_some_and(|t| t.is_empty()) {
+        doc.remove(section);
+    }
+    Ok(doc.to_string())
+}
+
+/// Lê um valor da seção num texto TOML.
+pub fn get_in_text(text: &str, section: &str, key: &str) -> Option<Value> {
+    let doc: DocumentMut = text.parse().ok()?;
+    let item = doc.get(section)?.get(key)?;
+    if let Some(b) = item.as_bool() {
+        return Some(Value::Bool(b));
+    }
+    if let Some(n) = item.as_integer() {
+        return Some(Value::Int(n));
+    }
+    item.as_str().map(|s| Value::Text(s.to_string()))
+}
+
+/// Grava no arquivo do usuário (cria o arquivo se não existir).
+pub fn set(section: &str, key: &str, new: Option<Value>) -> Result<(), String> {
+    let path = config_path().ok_or("sem pasta de configuração")?;
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let updated = set_in_text(&text, section, key, new)?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, updated).map_err(|e| e.to_string())?;
+    tracing::info!("config.toml: [{section}] {key} atualizado");
+    Ok(())
+}
+
+/// Lê um valor do arquivo do usuário.
+pub fn get(section: &str, key: &str) -> Option<Value> {
+    let text = fs::read_to_string(config_path()?).ok()?;
+    get_in_text(&text, section, key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grava_mantendo_comentarios() {
+        let text = "# Meus atalhos\n[keybindings]\n\"ctrl+shift+t\" = \"launch:foot\" # terminal\n";
+        let out = set_in_text(text, "effects", "lamp", Some(Value::Bool(false))).unwrap();
+        assert!(out.contains("# Meus atalhos"));
+        assert!(out.contains("# terminal"));
+        assert!(out.contains("[effects]"));
+        assert_eq!(get_in_text(&out, "effects", "lamp"), Some(Value::Bool(false)));
+        // Trocar o valor de novo e apagar.
+        let out = set_in_text(&out, "effects", "lamp", Some(Value::Bool(true))).unwrap();
+        assert_eq!(get_in_text(&out, "effects", "lamp"), Some(Value::Bool(true)));
+        let out = set_in_text(&out, "effects", "lamp", None).unwrap();
+        assert_eq!(get_in_text(&out, "effects", "lamp"), None);
+        assert!(!out.contains("[effects]"));
+    }
+
+    #[test]
+    fn numero_inteiro() {
+        let out = set_in_text("", "dock", "icon_size", Some(Value::Int(48))).unwrap();
+        assert_eq!(get_in_text(&out, "dock", "icon_size"), Some(Value::Int(48)));
+    }
+
+    #[test]
+    fn texto_e_arquivo_vazio() {
+        let out = set_in_text("", "desktop", "wallpaper", Some(Value::Text("/img/a.jpg".into()))).unwrap();
+        assert_eq!(get_in_text(&out, "desktop", "wallpaper"), Some(Value::Text("/img/a.jpg".into())));
+    }
+
+    #[test]
+    fn toml_invalido_nao_e_sobrescrito() {
+        assert!(set_in_text("isso = = errado", "effects", "lamp", Some(Value::Bool(true))).is_err());
+    }
+}

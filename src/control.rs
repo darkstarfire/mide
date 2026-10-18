@@ -1,0 +1,368 @@
+//! Canal de controle do mide: um socket Unix ao lado do socket Wayland
+//! (`$XDG_RUNTIME_DIR/mide-0.ctl`), usado pela dock e por ferramentas.
+//!
+//! Cada conexão envia uma linha e recebe a resposta, terminada por uma linha `end`:
+//!
+//! - `list`: uma linha por janela, `app_id<TAB>título<TAB>estado`, onde o estado é
+//!   `focused`, `normal` ou `minimized`.
+//! - `activate id1 id2 ...`: restaura ou foca a janela cujo app_id casa com algum
+//!   dos ids (sem diferenciar maiúsculas). Responde `ok` ou `none`.
+//! - `icons ids:x:y:w:h;...`: a dock informa onde está cada ícone (ids separados
+//!   por vírgula, retângulo relativo à dock). Usado pelo efeito lâmpada.
+//! - `mods`: teclas modificadoras pressionadas agora (`ctrl`, `shift`, `alt`, `logo`).
+//! - `quit`: encerra o compositor (menu "Encerrar sessão" da barra).
+
+use std::{
+    io::{BufRead, BufReader, Write},
+    os::unix::net::{UnixListener, UnixStream},
+    path::PathBuf,
+    time::Duration,
+};
+
+use smithay::{
+    desktop::Window,
+    reexports::calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction},
+    wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
+};
+
+use crate::state::State;
+
+/// Caminho do socket de controle para o socket Wayland `socket_name`.
+pub fn socket_path(socket_name: &str) -> Option<PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
+    Some(PathBuf::from(runtime).join(format!("{socket_name}.ctl")))
+}
+
+/// Abre o socket de controle e registra no event loop.
+pub fn init(loop_handle: &LoopHandle<'static, State>, socket_name: &str) -> std::io::Result<()> {
+    let Some(path) = socket_path(socket_name) else {
+        return Ok(());
+    };
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+    listener.set_nonblocking(true)?;
+    loop_handle
+        .insert_source(Generic::new(listener, Interest::READ, Mode::Level), |_, listener, state| {
+            while let Ok((stream, _)) = listener.accept() {
+                if let Err(err) = serve(stream, state) {
+                    tracing::warn!("controle: falha ao responder: {err}");
+                }
+            }
+            Ok(PostAction::Continue)
+        })
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    tracing::info!("canal de controle em {}", path.display());
+    Ok(())
+}
+
+fn serve(stream: UnixStream, state: &mut State) -> std::io::Result<()> {
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_millis(200)))?;
+    let mut line = String::new();
+    BufReader::new(&stream).read_line(&mut line)?;
+    let reply = handle(state, line.trim());
+    let mut stream = stream;
+    stream.write_all(reply.as_bytes())?;
+    stream.write_all(b"end\n")?;
+    Ok(())
+}
+
+/// Executa um comando e devolve a resposta (sem a linha `end`).
+pub fn handle(state: &mut State, command: &str) -> String {
+    let mut words = command.split_whitespace();
+    match words.next() {
+        Some("list") => list(state),
+        Some("icons") => {
+            state.dock_icons = parse_icons(command.trim_start_matches("icons").trim());
+            "ok\n".into()
+        }
+        Some("mods") => mods(state),
+        Some("quit") => {
+            tracing::info!("encerrando por pedido do canal de controle");
+            state.quit_requested = true;
+            "ok\n".into()
+        }
+        Some("activate") => {
+            let ids: Vec<String> = words.map(|w| w.to_lowercase()).collect();
+            if activate(state, &ids) { "ok\n".into() } else { "none\n".into() }
+        }
+        // Todas as janelas de um app: `close <ids>` pede para fechar, `hide <ids>` minimiza.
+        Some(cmd @ ("close" | "hide")) => {
+            let ids: Vec<String> = words.map(|w| w.to_lowercase()).collect();
+            let n = app_windows(state, &ids, cmd);
+            format!("{n}\n")
+        }
+        // Janela em foco: `window close|minimize|zoom`.
+        Some("window") => {
+            let ok = focused_window_action(state, words.next().unwrap_or(""));
+            if ok { "ok\n".into() } else { "none\n".into() }
+        }
+        // Atalho para a janela em foco, como se fosse digitado: `keys ctrl+c`.
+        Some("keys") => match words.next().map(|combo| crate::input::send_combo(state, combo)) {
+            Some(true) => "ok\n".into(),
+            _ => "erro: atalho desconhecido\n".into(),
+        },
+        // `launcher` abre ou fecha; `launcher state` diz se está aberto (`open` ou
+        // `closed`); `launcher close` fecha se estiver aberto.
+        // Prévias das janelas acima da dock: `preview <x do ícone na dock> <ids...>`,
+        // ou `preview hide`.
+        Some("preview") => {
+            let first = words.next();
+            match first.and_then(|w| w.parse::<i32>().ok()) {
+                Some(dock_x) => {
+                    let ids: Vec<u64> = words.filter_map(|w| w.parse().ok()).collect();
+                    tracing::info!("prévias: {} janela(s)", ids.len());
+                    state.preview = (!ids.is_empty()).then_some(crate::preview::Preview { ids, dock_x, hovered: None, on_close: false });
+                }
+                None => state.preview = None,
+            }
+            "ok\n".into()
+        }
+        // Janelas, uma por linha: `id<TAB>app_id<TAB>título<TAB>focused|normal|minimized`.
+        Some("windows") => windows(state),
+        // Foca a janela pelo número, restaurando se estiver minimizada.
+        Some("focus") => {
+            let id = words.next().and_then(|w| w.parse::<u64>().ok()).unwrap_or(0);
+            if focus_window_id(state, id) { "ok\n".into() } else { "none\n".into() }
+        }
+        // A dock vai abrir um app: a primeira janela dele sai do ícone (efeito lâmpada).
+        Some("launching") => {
+            let ids: Vec<String> = words.map(|w| w.to_lowercase()).collect();
+            if !ids.is_empty() {
+                state.pending_open.push((ids, std::time::Instant::now()));
+            }
+            "ok\n".into()
+        }
+        // Atalhos em uso, um por linha: `combinação<TAB>ação`.
+        Some("bindings") => {
+            let mut out = String::new();
+            for b in &state.config.bindings {
+                let mut combo = Vec::new();
+                if b.logo { combo.push("super".to_string()); }
+                if b.ctrl { combo.push("ctrl".to_string()); }
+                if b.alt { combo.push("alt".to_string()); }
+                if b.shift { combo.push("shift".to_string()); }
+                combo.push(xkbcommon::xkb::keysym_get_name(b.key).to_lowercase());
+                out.push_str(&format!("{}\t{}\n", combo.join("+"), b.action));
+            }
+            out
+        }
+        // Lê de novo o `config.toml` (atalhos, efeitos, papel de parede), sem reiniciar.
+        Some("reload") => match crate::config::Config::load() {
+            Ok(config) => {
+                state.config = config;
+                tracing::info!("configuração recarregada");
+                "ok\n".into()
+            }
+            Err(err) => {
+                tracing::warn!("configuração não recarregada: {err}");
+                format!("erro: {err}\n")
+            }
+        },
+        Some("launcher") => match words.next() {
+            Some("state") => if state.launcher_open() { "open\n".into() } else { "closed\n".into() },
+            Some("close") => {
+                if state.launcher_open() {
+                    state.toggle_launcher();
+                }
+                "ok\n".into()
+            }
+            _ => {
+                state.toggle_launcher();
+                "ok\n".into()
+            }
+        },
+        _ => "erro: comando desconhecido\n".into(),
+    }
+}
+
+/// app_id e título que o app definiu para a janela.
+fn identity(window: &Window) -> (String, String) {
+    window
+        .toplevel()
+        .map(|t| {
+            with_states(t.wl_surface(), |s| {
+                s.data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|d| d.lock().ok().map(|a| (a.app_id.clone().unwrap_or_default(), a.title.clone().unwrap_or_default())))
+                    .unwrap_or_default()
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn list(state: &State) -> String {
+    let focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
+    let mut out = String::new();
+    for window in state.space.elements() {
+        let (app_id, title) = identity(window);
+        let focused = window.toplevel().map(|t| t.wl_surface().clone()) == focus;
+        let status = if focused { "focused" } else { "normal" };
+        out.push_str(&format!("{app_id}\t{title}\t{status}\n"));
+    }
+    for minimized in &state.minimized {
+        let (app_id, title) = identity(&minimized.window);
+        out.push_str(&format!("{app_id}\t{title}\tminimized\n"));
+    }
+    out
+}
+
+/// Restaura a janela minimizada do app ou, se não houver, foca a janela aberta.
+fn activate(state: &mut State, ids: &[String]) -> bool {
+    let matches = |w: &Window| {
+        let (app_id, _) = identity(w);
+        !app_id.is_empty() && ids.iter().any(|id| id == &app_id.to_lowercase())
+    };
+
+    if let Some(index) = state.minimized.iter().rposition(|m| matches(&m.window)) {
+        let entry = state.minimized.remove(index);
+        state.minimized.push(entry);
+        state.restore_minimized();
+        return true;
+    }
+
+    let found = state.space.elements().rev().find(|w| matches(w)).cloned();
+    if let Some(window) = found {
+        state.space.raise_element(&window, true);
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        crate::input::focus_window(state, &window, serial);
+        return true;
+    }
+    false
+}
+
+fn windows(state: &State) -> String {
+    let focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
+    let mut out = String::new();
+    let mapped = state.space.elements().filter(|w| !state.minimized.iter().any(|m| &m.window == *w));
+    for window in mapped {
+        let (app_id, title) = identity(window);
+        let focused = window.toplevel().map(|t| t.wl_surface().clone()) == focus;
+        let status = if focused { "focused" } else { "normal" };
+        out.push_str(&format!("{}\t{app_id}\t{title}\t{status}\n", crate::state::window_id(window)));
+    }
+    for m in &state.minimized {
+        let (app_id, title) = identity(&m.window);
+        out.push_str(&format!("{}\t{app_id}\t{title}\tminimized\n", crate::state::window_id(&m.window)));
+    }
+    out
+}
+
+fn focus_window_id(state: &mut State, id: u64) -> bool {
+    if let Some(index) = state.minimized.iter().position(|m| crate::state::window_id(&m.window) == id) {
+        let entry = state.minimized.remove(index);
+        state.minimized.push(entry);
+        state.restore_minimized();
+        return true;
+    }
+    let found = state.space.elements().find(|w| crate::state::window_id(w) == id).cloned();
+    let Some(window) = found else {
+        return false;
+    };
+    state.space.raise_element(&window, true);
+    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+    crate::input::focus_window(state, &window, serial);
+    tracing::info!("controle: janela {id} focada");
+    true
+}
+
+/// Fecha (`close`) ou minimiza (`hide`) todas as janelas do app. Devolve quantas.
+fn app_windows(state: &mut State, ids: &[String], cmd: &str) -> usize {
+    let windows: Vec<Window> = state
+        .space
+        .elements()
+        .filter(|w| {
+            let (app_id, _) = identity(w);
+            !app_id.is_empty() && ids.iter().any(|id| id == &app_id.to_lowercase())
+        })
+        .cloned()
+        .collect();
+    for window in &windows {
+        let Some(toplevel) = window.toplevel().cloned() else {
+            continue;
+        };
+        if cmd == "close" {
+            toplevel.send_close();
+        } else if !state.minimized.iter().any(|m| &m.window == window) {
+            state.minimize(toplevel.wl_surface());
+        }
+    }
+    tracing::info!("controle: {cmd} em {} janela(s)", windows.len());
+    windows.len()
+}
+
+/// Ação na janela com o foco do teclado.
+fn focused_window_action(state: &mut State, action: &str) -> bool {
+    let Some(focus) = state.seat.get_keyboard().and_then(|k| k.current_focus()) else {
+        return false;
+    };
+    let Some(window) = state.window_for(&focus) else {
+        return false;
+    };
+    let Some(toplevel) = window.toplevel().cloned() else {
+        return false;
+    };
+    match action {
+        "close" => toplevel.send_close(),
+        "minimize" => state.minimize(toplevel.wl_surface()),
+        "zoom" => crate::input::toggle_maximize(state, toplevel),
+        _ => return false,
+    }
+    tracing::info!("controle: janela em foco: {action}");
+    true
+}
+
+/// Interpreta `ids:x:y:w:h;ids:x:y:w:h`, com ids separados por vírgula.
+pub fn parse_icons(text: &str) -> Vec<(Vec<String>, smithay::utils::Rectangle<i32, smithay::utils::Logical>)> {
+    text.split(';')
+        .filter_map(|part| {
+            let fields: Vec<&str> = part.trim().split(':').collect();
+            if fields.len() != 5 {
+                return None;
+            }
+            let ids = fields[0]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_lowercase())
+                .collect();
+            let n = |i: usize| fields[i].parse::<i32>().ok();
+            let rect = smithay::utils::Rectangle::new((n(1)?, n(2)?).into(), (n(3)?, n(4)?).into());
+            Some((ids, rect))
+        })
+        .collect()
+}
+
+fn mods(state: &State) -> String {
+    let Some(keyboard) = state.seat.get_keyboard() else {
+        return "\n".into();
+    };
+    let m = keyboard.modifier_state();
+    let mut held = Vec::new();
+    if m.ctrl || state.test_ctrl {
+        held.push("ctrl");
+    }
+    if m.shift {
+        held.push("shift");
+    }
+    if m.alt {
+        held.push("alt");
+    }
+    if m.logo {
+        held.push("logo");
+    }
+    format!("{}\n", held.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_icons;
+
+    #[test]
+    fn icones_da_dock_sao_interpretados() {
+        let icons = parse_icons("org.gnome.Calculator,calculator:70:10:48:48;foot:10:10:48:48;ruim");
+        assert_eq!(icons.len(), 2);
+        assert_eq!(icons[0].0, vec!["org.gnome.calculator".to_string(), "calculator".to_string()]);
+        assert_eq!(icons[0].1.loc.x, 70);
+        assert_eq!(icons[1].1.size.w, 48);
+    }
+}

@@ -1,0 +1,650 @@
+# O que já foi implementado
+
+## Etapa 1: esqueleto do projeto Rust
+
+- Criado o projeto Cargo `mide` na raiz do repositório, como aplicação binária (edição 2024).
+- Adicionado `.gitignore` ignorando a pasta `target/`.
+- Instalado o Rust pelo rustup (versão 1.99.1 estável), porque não havia cargo na máquina.
+- Verificado: `cargo build` e `cargo run` funcionam.
+
+## Etapa 2: compositor Wayland mínimo (aceita clientes)
+
+- Adicionado o Smithay 0.7.0 com as features de Wayland, desktop, renderização GL, winit, DRM, libinput, libseat e udev. Ainda não são usadas todas, mas já ficam prontas para as próximas etapas.
+- Adicionados `tracing` e `tracing-subscriber` para os logs.
+- Verificado que as bibliotecas de sistema da seção 10 do `RECURSES.md` estão instaladas (wayland, xkbcommon, libinput, libseat, libudev, gbm, libdrm, EGL, GLES, dbus, pipewire, pixman e fontconfig).
+- `src/main.rs`: cria o display Wayland, abre o socket `mide-0` e roda o event loop (calloop). A cada 16 ms envia os eventos pendentes aos clientes.
+- `src/state.rs`: estado global do compositor e os handlers dos protocolos mínimos: `wl_compositor`, `xdg_wm_base` (janelas e popups), `wl_shm`, `wl_seat` e `wl_data_device`.
+- Teste feito: um cliente Wayland cru conectou em `mide-0`, recebeu a lista de globais e desconectou. Os logs confirmaram a conexão e a desconexão.
+- Ainda não há renderização nem entrada de teclado ou mouse. Uma janela de cliente pode ser criada, mas não aparece na tela.
+
+## Etapa 3: renderização no backend winit
+
+- `src/backend_winit.rs`: cria uma janela winit (1280x800) dentro da sessão atual, registra a saída `mide-winit` (`wl_output`) e desenha a cada frame com `render_output` e `OutputDamageTracker`. Envia os frame callbacks aos clientes e entrega o `submit` ao backend.
+- `src/state.rs`: agora há um `Space<Window>`. Cada toplevel novo entra mapeado em cascata (48 px + 32 px por janela). O commit atualiza a janela, e fechar a janela remove ela do espaço.
+- Implementado `OutputHandler` e `delegate_output!`, necessários para o `wl_output`.
+- Teste feito: o compositor abriu a janela winit sem erros nem panics. Um app GTK real (`gnome-calculator`) conectou em `mide-0`, criou uma janela (log `nova janela criada`) e fechou (log `janela fechada`).
+- Limitação: a conferência visual do conteúdo da janela não foi feita por mim, porque não tenho acesso à tela. Os logs confirmam o fluxo, mas não a aparência final.
+
+## Etapas A3, A4 e A5: teclado, ponteiro e foco por clique
+
+- `src/input.rs`: recebe os eventos do winit e os repassa ao seat. Teclado com keymap padrão (xkbcommon). Ponteiro com movimento, botões e rolagem, enviados à superfície sob o cursor.
+- Clique com o botão esquerdo traz a janela para frente, dá a ela o foco do teclado e marca só ela como ativa (configure com o estado `Activated`).
+- `src/state.rs`: `State::new` agora retorna `Result`, porque criar o teclado pode falhar. Guarda também a posição do cursor.
+- Correção visual: a janela aparecia de cabeça para baixo, porque o GL do winit tem a origem embaixo. A saída agora usa `Transform::Flipped180`.
+- Limitação: nenhum evento de entrada real foi injetado, porque não há ferramenta instalada (ydotool, wtype, xdotool) e não tenho permissão para instalar. O código compila e o compositor roda sem panics com um cliente GTK conectado. Falta confirmar teclado, clique e foco com um teste real.
+
+## Ajustes do teste no desktop: título e redesenho
+
+- A janela do winit agora tem o título "mide" e tamanho mínimo de 640x400 (`init_from_attributes`).
+- O pedido de redesenho é feito logo na criação e depois de cada evento de entrada, para o winit não deixar a janela vazia.
+- Log `frame: N janela(s) mapeada(s)` em nível debug, para ver cada frame com `RUST_LOG=mide=debug`.
+- Barra de título, botões e duplo clique para maximizar são do desktop hospedeiro, não do mide. Isso só muda quando a barra de título própria do mide entrar (A7).
+
+## Pedidos de janela: arrastar, maximizar e restaurar
+
+- Confirmado no teste: a calculadora aparece dentro do mide e responde a mouse e teclado (`10×2` resultou em `20`).
+- `src/state.rs`: tratados os pedidos xdg-shell que a calculadora envia pelos próprios botões. `move_request` inicia o arrasto. `maximize_request` ocupa a área da saída e guarda a posição anterior. `unmaximize_request` restaura essa posição.
+- `src/input.rs`: durante o arrasto, a janela segue o cursor e o cliente não recebe o movimento. Soltar o botão esquerdo encerra o arrasto.
+- Pendente: minimizar só registra no log, porque a dock (B4) ainda não existe para restaurar a janela. Redimensionar pela borda também fica para depois.
+- Pendente: barra de título do próprio mide (A7). Hoje a barra vem do app, como o GTK faz.
+
+## Popups: menus suspensos (botão ☰ da calculadora)
+
+- O mide agora rastreia popups (`PopupManager`), posiciona cada um pela geometria pedida pelo cliente e os desenha por cima das janelas.
+- Cliques vão primeiro aos popups, antes das janelas. Clicar fora de um popup fecha todos.
+- Pendente: o popup não captura o teclado nem fecha sozinho ao perder o foco (grab de popup).
+
+## Atalhos de teclado (A9 parcial) e fechar janela (A8 parcial)
+
+- `src/config.rs`: lê `~/.config/mide/config.toml` (ou `$XDG_CONFIG_HOME/mide/config.toml`) na seção `[keybindings]`. Sem arquivo, usa os atalhos padrão.
+- Padrões: `super+q` fecha a janela com foco, e `ctrl+alt+t` abre `x-terminal-emulator`.
+- Ações: `close_window` e `launch:<comando>` (binário ou script, executado pelo shell com `WAYLAND_DISPLAY=mide-0`).
+- Atalho casado é interceptado: a tecla não chega ao app.
+- Pendente: editor de atalhos e a lista completa de atalhos de desktop, janelas e apps.
+
+## Testes automatizados
+
+- `cargo test`: 11 testes unitários, para os atalhos (parsing, modificadores, substituição de padrões, erros) e para a cascata de janelas.
+- `tests/smoke.sh`: sobe o compositor, confere o socket, os globais Wayland, a criação da janela com uma calculadora real e a ausência de panics. Passou nesta máquina (7 de 7).
+- As baterias por etapa, incluindo a checklist manual, estão em `project_plain/TESTS.md`.
+
+## Correções a partir do teste manual (TESTS.md)
+
+- Configuração: atalhos soltos no topo do `config.toml` agora são aceitos, além da seção `[keybindings]`. Antes eram ignorados em silêncio.
+- Terminal padrão (`ctrl+alt+t`): troca para `foot`, com `x-terminal-emulator` como reserva. O gnome-terminal reaproveitava o servidor do desktop e abria a janela fora do mide.
+- Teste unitário novo para o formato de atalho no topo do arquivo. Total: 12 testes.
+
+## Atalhos principais: terminal e buscador de programas
+
+- Padrões novos: `ctrl+shift+t` abre o terminal (`foot`, com `x-terminal-emulator` como reserva) e `ctrl+shift+space` abre o buscador de programas (`fuzzel`, depois `wofi` e `rofi`).
+- Escolhidos porque não conflitam com os atalhos do desktop hospedeiro.
+- O buscador é externo por enquanto. O launcher próprio do mide é a etapa B6.
+- Testes: 13 unitários passando, incluindo os dois atalhos principais.
+
+## Layer-shell (A10 parcial): buscador de programas
+
+- `wlr-layer-shell` implementado. Superfícies de camada são mapeadas na saída e desenhadas acima das janelas (camadas Top e Overlay).
+- O ponteiro chega às camadas antes das janelas. A camada que pede foco de teclado recebe o foco ao abrir.
+- Confirmado com o `fuzzel`: ele cria a camada `launcher` (Top) sem erro. Antes falhava com `no layer shell interface`.
+- Pendente: camadas de fundo (Background e Bottom) e a zona exclusiva da barra, que reserva espaço para as janelas.
+- O `super+q` não chega ao mide: a tecla Super é capturada pelo desktop. Adicionado um log de debug (`tecla: ...`) para diagnosticar. Adicionado `ctrl+shift+q` como alternativa no config.
+
+## Correção do foco de camadas (buscador não recebia teclas)
+
+- Causa: o foco de teclado era dado na criação da camada, antes de o cliente ter feito o primeiro commit. Agora o foco é dado no primeiro commit, quando a camada pede foco de teclado.
+- Clicar numa camada que aceita foco também dá o foco a ela.
+- Quando a camada fecha (ex.: Esc no buscador), o foco volta para a janela do topo.
+- Teclado virtual (`zwp_virtual_keyboard_v1`) habilitado, para ferramentas como o `wtype` digitarem nos testes automáticos.
+- Confirmado: ao abrir o `fuzzel`, o log mostra `foco do teclado: camada`. Digitação e Esc ainda precisam de teste com uma ferramenta de injeção de teclas (`wtype`).
+
+## Digitação no buscador (correção do frame callback)
+
+- Causa: o buscador recebia as teclas, mas não redesenhava. O redesenho depende do frame callback do compositor, e o mide só enviava esse callback às janelas, não às camadas nem aos popups.
+- Correção: frame callbacks agora vão também para as camadas e para os popups.
+- Teste automático: `tests/smoke.sh` digita `abc` com o `wtype` no buscador e confere que ele recebe 6 eventos de tecla e faz commits depois delas. Passou (9 de 9).
+
+## A7 parcial: barra de título do mide (decoração de servidor)
+
+- `src/decorations.rs`: barra de 30 px acima do conteúdo, com botões fechar (vermelho), minimizar (amarelo) e maximizar (verde). A cor muda com o foco.
+- O protocolo `xdg-decoration` foi implementado: o mide responde sempre com decoração de servidor. Apps que pedem essa decoração (ex.: `foot`) recebem a barra do mide.
+- Clicar nos botões fecha, minimiza (só registra no log) ou maximiza. Arrastar a barra move a janela. Duplo clique alterna a maximização.
+- Maximizar agora deixa o conteúdo abaixo da barra, para ela não sair da tela.
+- Limitação: apps que sempre desenham a própria barra (GTK4 e libadwaita, como a calculadora) não pedem decoração de servidor. Para esses, a barra do mide não aparece.
+- Pendente: texto do título. Vai precisar de uma biblioteca de fontes (ex.: `cosmic-text`).
+- Testes: 17 unitários (inclui a geometria da barra e os botões). `tests/smoke.sh`: 9 de 9.
+
+## Correção: botões da barra de título invisíveis
+
+- Causa: o Smithay desenha a lista de elementos da frente para trás. O fundo da barra vinha antes dos botões e os cobria.
+- Correção: botões primeiro, fundo depois. Barras das janelas do topo e camadas do topo também vêm primeiro na lista.
+- Verificado no log: a barra é desenhada em 477 frames durante o teste com `foot`, sem pânico.
+
+## Cantos arredondados e botões redondos
+
+- `src/decorations.rs`: dois shaders de pixel compilados na inicialização. Um desenha retângulos arredondados (botões circulares e fundo da barra). O outro é uma máscara de canto, que pinta com a cor do fundo do desktop a região fora do arco.
+- Os quatro cantos da janela (barra + conteúdo) são arredondados com raio de 12 px. Janela maximizada fica sem arredondamento.
+- Botões são círculos de 12 px.
+- Limitação: a máscara usa a cor sólida do fundo do desktop. Atrás de um canto arredondado aparece essa cor, e não o que está por trás de verdade. Não há sombra.
+- Compilação dos shaders e desenho dos frames verificados no log, sem erro. A aparência final ainda depende de você conferir.
+
+## Visual mais próximo do macOS
+
+- Janela do winit sem moldura do host por padrão. A barra do próprio mide passa a ser a única. Para voltar à moldura do desktop, use `MIDE_WINIT_DECORATIONS=1`.
+- Paleta clara da barra, como no macOS. Semáforo colorido com foco (vermelho, amarelo e verde) e botões cinza sem foco. Linha fina separando a barra do conteúdo.
+- Raio dos cantos ajustado para 10 px.
+- Atalho `ctrl+shift+escape` encerra o compositor (ação `quit`). Como a moldura do host foi removida, esse é o jeito de fechar o mide sem o terminal.
+- Testes: 18 unitários. `tests/smoke.sh`: 9 de 9.
+- Ainda falta para ficar parecido com o macOS: título centralizado (precisa de texto), barra de menus superior (B1), dock (B4), sombra das janelas e papel de parede.
+
+## Correção: cantos arredondados não apareciam
+
+- Causa: as máscaras dos cantos eram desenhadas depois da barra e do conteúdo na lista de render, que vai da frente para trás. Assim, ficavam escondidas.
+- Correção: máscaras antes da barra na lista. Verificado no log: a decoração é desenhada em 417 frames com o `foot`, sem pânico.
+
+## Profundidade: sombra, borda e brilho da barra
+
+- Sombra suave em volta da janela, deslocada 8 px para baixo, com margem de 24 px. Ela só pinta fora do retângulo real, então não escurece o conteúdo. Mais forte quando a janela tem foco.
+- Traço de 1 px seguindo os cantos arredondados, com opacidade maior quando a janela tem foco.
+- Barra com brilho na metade superior e linha clara no topo, para dar volume.
+- Verificado: a decoração é desenhada em 419 frames com o `foot`, sem panics e sem erro de shader.
+
+## Botões com hover, anel e sombra limpa
+
+- Hover no grupo de botões: ao passar o ponteiro sobre eles, aparecem × (fechar), − (minimizar) e + (maximizar), como no macOS. Só com a janela focada.
+- Cada botão tem um anel fino escuro em volta do círculo, para parecer sólido.
+- Sombra: alpha abaixo de 0,02 é cortado. Isso remove o padrão pontilhado da borda, que era ruído de quantização de 8 bits sobre o fundo escuro.
+- Testes: 19 unitários (novo: hover do grupo). Decoração desenhada em 419 frames com o `foot`, sem panics.
+
+## Hover por botão e apresentação da sombra
+
+- Hover só no botão sob o ponteiro: o símbolo (× − +) aparece apenas nele, e não nos três ao mesmo tempo.
+- Apresentação: o quadro agora é apresentado inteiro (`submit(None)`). Antes, só a região "danificada" era enviada, e o buffer de trás podia conter pixels antigos, o que causava o padrão pontilhado.
+- Ferramenta de depuração: `MIDE_DUMP_FRAME=/caminho` salva o frame 120 como RGBA cru, para medir pixels. Os valores crus da sombra são um gradiente suave, sem pontilhado. O dump sai de cabeça para baixo por causa do `Flipped180`.
+- Testes: 19 unitários (inclui o hover por botão). Decoração desenhada em 418 frames, sem panics.
+
+## Sombra limpa, canto contínuo e animação ao maximizar
+
+- Pontinhos brancos: medidos no quadro salvo, a sombra tinha pixels com alfa 170 em um contorno pontilhado. A causa é a mistura de camadas translúcidas sobre o fundo escuro. A sombra agora escreve cor opaca, com o escurecimento do fundo já embutido. Os pontos caíram de 1049 para 8 pixels.
+- Canto: a máscara do canto calcula a mesma sombra da janela, em vez de pintar cor de fundo chapada. Assim a curva da sombra continua no canto inferior.
+- Animação ao maximizar: 220 ms, desaceleração cúbica. A posição e o tamanho da moldura são interpolados, e o conteúdo do app recebe zoom. Agora as janelas são desenhadas pelo próprio mide, na ordem de z, em vez de pelo `Space`.
+- Limitação: a sombra é opaca. Se outra janela estiver logo atrás, a margem de 24 px dela aparece com a cor do fundo, e não com a janela de trás. Corrigir isso exige um pipeline de sombra com fundo real.
+- Limitação: só maximizar é animado. Restaurar ainda não.
+- Verificado: 19 testes unitários, e o compositor roda sem panics com o `foot`. A animação não pode ser disparada daqui, porque precisa de clique.
+
+## Redimensionar pelas bordas e cantos
+
+- Faixa de 6 px nas bordas e cantos da janela (barra + conteúdo). Pressionar e arrastar muda o tamanho. Borda esquerda e superior também movem a janela, para o lado oposto ficar fixo.
+- Tamanho mínimo de 200x120. Janela maximizada não redimensiona.
+- Só a borda superior, sem canto, fica para o arrasto da barra de título.
+- Testes: 21 unitários (inclui detecção de borda, canto e borda superior).
+- Pendente: o cursor não muda de forma sobre a borda (ainda não há cursor próprio). Redimensionar o conteúdo é só pelo tamanho configurado, sem animação.
+
+## Animação ao restaurar e cursor de redimensionamento
+
+- Restaurar (desmaximizar) agora também é animado. O mide guarda o tamanho antes de maximizar e o pede de volta ao app, para a animação saber o destino.
+- Cursor: sobre uma borda, a forma do ponteiro muda (horizontal, vertical ou diagonal, conforme a borda ou canto). Sobre a barra e o conteúdo, volta ao padrão. Enquanto redimensiona, a forma se mantém.
+- Testes: 21 unitários. Compositor roda sem panics com o `foot`.
+- Limitação: o tamanho que o app devolve pode diferir do pedido. Nesse caso a animação termina no tamanho real, com um pequeno salto.
+
+## Estado do plano ao fechar esta etapa
+
+- A1 a A6: concluídas (socket, renderização, teclado, ponteiro, foco, arrasto).
+- A7: barra de título com botões, hover por botão, sombra, cantos arredondados, redimensionar por borda e cursor. Falta só o título em texto.
+- A8: parcial. Minimizar depende da dock (B4).
+- A9: parcial. Motor de atalhos e `config.toml` prontos; falta o editor e o conjunto completo.
+- A10: parcial. Camadas Top e Overlay com foco e ponteiro; faltam camadas de fundo e zona exclusiva.
+- A11: parcial. Sombra e animação ao maximizar e restaurar; faltam blur, transparência e efeito lâmpada.
+- Próximo passo recomendado: título em texto da barra (A7), com `cosmic-text`, que já está em `RECURSES.md`.
+
+## Título da janela em texto (completa A7)
+
+- `src/title.rs`: o título do app é composto com `cosmic-text` (fontes do sistema, SemiBold 13 px), rasterizado para RGBA premultiplicado e enviado à GPU como buffer de memória. Fica em cache por título e foco.
+- Centralizado na barra. Cinza-escuro com foco, cinza-claro sem foco, como no macOS.
+- Título vem de `XdgToplevelSurfaceData` (o que o app define). Sem título, a barra fica sem texto.
+- Verificado: o quadro salvo mostra "foot" centralizado. `tests/smoke.sh` e 21 unitários passam.
+- Limitação: títulos longos não são cortados com reticências ainda, e o texto não se ajusta ao espaço entre os botões e a borda.
+
+## Título longo com reticências
+
+- O título agora é cortado para caber entre os botões e a borda direita da barra (70 px reservados em cada ponta). Quando não cabe, termina com "…".
+- O corte é feito por medição: o texto perde caracteres do fim até caber. O resultado fica em cache por título, foco e largura.
+- Verificado: um título longo aparece cortado em "te…", sem invadir os botões. 21 unitários passam, e o compositor roda sem panics.
+
+## B4 (esqueleto): dock como cliente separado
+
+- Novo programa `mide-dock` (`src/bin/mide-dock.rs`). É um cliente Wayland com janela de camada na parte de baixo da tela, feito com `smithay-client-toolkit` 0.21.
+- Desenho com `tiny-skia`: faixa clara e translúcida com cantos arredondados, e os ícones dos apps fixados.
+- Apps fixados em `~/.config/mide/dock.toml` (`pinned = ["org.codeberg.dnkl.foot", ...]`). Padrão: foot e calculadora. Ids são o nome do arquivo `.desktop`.
+- Ícones lidos do tema (só PNG). Sem ícone, um bloco neutro.
+- Clique com botão esquerdo abre o app (campos `%` do Exec são removidos).
+- Mudança no compositor: o mide agora envia a configuração inicial das camadas no primeiro commit. Antes, a dock nunca desenhava.
+- Verificado: a dock aparece embaixo, centralizada, com o ícone do foot. 21 unitários e tests/smoke.sh passam.
+- Pendente: reordenar, fixar e desafixar arrastando; ícones SVG (exige resvg com a mesma versão de tiny-skia); lixeira e Downloads (B5); iniciar a dock sozinha com o mide.
+
+## Auditoria visual e correções (efeitos, janelas, controles e dock)
+
+Análise feita olhando quadros salvos do compositor (`MIDE_DUMP_FRAME`), com duas janelas sobrepostas e a dock.
+
+- **Sombra e máscaras de canto tapavam a janela de baixo.** Estavam pintadas com cor opaca e apareciam por cima da janela de trás. Agora cada sombra e máscara recebe até quatro retângulos das janelas de baixo e não pinta sobre eles. A janela de trás aparece inteira.
+- **Desenho em duas passadas:** primeiro calcula a moldura de cada janela, de cima para baixo; depois desenha, com as janelas de baixo disponíveis para a sombra.
+- **Minimizar:** antes só registrava no log. Agora a janela encolhe até o centro inferior da tela, perde opacidade e sai do espaço. Restaurar (`ctrl+shift+m`) faz a animação de volta, com a moldura. Testado com um teste temporário, depois removido.
+- **Ícone SVG na dock:** a calculadora aparecia como bloco cinza. Agora o SVG é renderizado com `resvg`.
+- **`cargo run` com dois programas:** definido `default-run = "mide"`.
+- **Dock iniciada pelo mide:** antes era preciso rodar `mide-dock` à parte.
+
+Limitações conhecidas, que continuam:
+- Só as quatro janelas mais próximas de baixo entram nos buracos da sombra. Com mais de quatro sobrepostas, a quinta leva sombra por cima.
+- Restaurar minimizadas só pelo atalho; a dock ainda não lista nem restaura janelas.
+- Cliques na dock e na barra não foram testados, porque não há como enviar ponteiro daqui.
+- Blur, transparência e efeito lâmpada (A11) ainda não existem.
+- A dock não tem sombra própria.
+
+## Correção: janelas de apps com decoração do cliente (GTK) e deslocamento da geometria
+
+- Causa 1: a janela da calculadora tem um deslocamento de geometria (sombra desenhada pelo próprio app). A moldura era posicionada na origem da superfície, sem esse deslocamento, e aparecia deslocada em relação ao conteúdo.
+- Correção 1: a moldura e a barra se alinham à área visível (`visible_origin`). A origem da superfície continua onde o Smithay a coloca.
+- Causa 2: o mide desenhava a própria barra também em apps que desenham a sua (calculadora), e isso criava dois cabeçalhos.
+- Correção 2: a barra do mide só existe em janelas que pediram decoração de servidor (ex.: foot). Nas demais, a moldura é só em volta do conteúdo, com cantos e sombra, e a barra, o título e o arrasto por barra não aparecem.
+- Limpeza: removido o bloco de depuração de listagem de janelas.
+- Verificado no quadro: foot com barra e calculadora com cabeçalho próprio, sem sobreposição. 21 unitários e a bateria de fumaça passam.
+
+## Autoteste de interface e correções encontradas por ele
+
+Para testar sem depender do usuário, o mide ganhou um autoteste de ponteiro (`src/selftest.rs`): a variável `MIDE_SELFTEST` define um roteiro de passos `frame ação x y` (move, press, release, click, list, restore). O tratamento de mouse foi separado do formato de evento do winit, então os cliques simulados passam pelo mesmo código dos reais.
+
+- `tests/scenario.sh`: sobe o mide com um roteiro, abre apps e mostra o log (e, opcionalmente, salva um quadro).
+- `tests/ui.sh`: 20 cenários com resultado conferido (posição, tamanho, fechamento, popups, ordem das janelas, dock). Passam todos.
+
+Bugs encontrados e corrigidos com o autoteste:
+- **Clique deslocado na calculadora (X só fechava clicando acima e à esquerda).** No `Space` do Smithay, a posição da janela é o canto da área visível, e a superfície fica em posição menos o deslocamento da geometria. A superfície era desenhada sem esse desconto. Corrigido: desenho na mesma origem que o clique usa.
+- **Janelas nascendo uma em cima da outra.** O GTK pede "desmaximizar" ao abrir, e o mide movia a janela para (48, 48). Agora desmaximizar só age em janela maximizada. A cascata voltou a funcionar.
+- **Botão amarelo da barra não minimizava.** Ainda chamava o código antigo. Corrigido.
+- **Arrasto pelo cabeçalho do app perdia o começo do movimento.** O arrasto agora é medido a partir do ponto onde o botão foi pressionado.
+- **App sem barra do mide maximizava 30 px mais baixo.** O tamanho maximizado agora usa a altura real da barra (0 para apps com cabeçalho próprio).
+- **Erro de um cliente derrubava o compositor.** O despacho de mensagens agora registra o erro e continua.
+
+## Dock conversando com o compositor
+
+- Canal de controle `$XDG_RUNTIME_DIR/mide-0.ctl` (`src/control.rs`): `list` devolve as janelas com app, título e estado; `activate <ids>` restaura a minimizada ou foca a aberta.
+- A dock agora: foca o app já aberto em vez de abrir outro; restaura a janela minimizada do app; mostra um ponto embaixo dos apps abertos (consulta a cada 0,8 s).
+- A dock deixou de redesenhar a 60 quadros por segundo: só desenha quando algo muda.
+
+## Efeitos desligáveis
+
+- Seção `[effects]` no `config.toml`, com `shadows`, `rounded_corners` e `animations` (todas `true` por padrão). Verificado: com tudo desligado, minimizar é instantâneo e não há sombra nem cantos.
+
+## B4 concluída: dock completa
+
+- Itens: os fixados (ordem salva em `~/.config/mide/dock.toml`) e, depois de um separador fino, os apps abertos que não estão fixados.
+- Clique esquerdo (ao soltar): foca ou restaura o app; se não estiver aberto, abre.
+- Arrastar um ícone fixado: reordena e salva ao soltar. Um arrasto não abre o app.
+- Clique direito: fixa um app aberto ou desafixa um fixado, e salva na hora. Desafixado e fechado, ele sai da dock.
+- A dock muda de largura sozinha conforme o número de itens.
+- O autoteste ganhou o clique direito (`rclick`), e `tests/ui.sh` tem 4 cenários novos de dock, rodados com configuração temporária (não mexem no arquivo do usuário). Total: 24 cenários, todos passando.
+
+## Sombras combinadas (corrige sombra apagada entre janelas sobrepostas)
+
+- Antes, cada janela desenhava a própria sombra com cor opaca, e a sombra de uma janela apagava a sombra da janela de baixo perto dos cantos.
+- Agora há um único fundo do desktop desenhado atrás de tudo (`desktop_element`), que calcula num shader a sombra combinada das 8 janelas de cima. As sombras se somam e nenhuma apaga outra.
+- As máscaras dos cantos usam a mesma conta, então o canto continua a sombra combinada sem entalhe.
+- Limitação: a sombra de uma janela não escurece a janela de baixo, só o desktop.
+
+## Efeito lâmpada (genie)
+
+- `src/genie.rs`: durante minimizar e restaurar, o conteúdo da janela é renderizado numa textura fora da tela e desenhado com um shader que deforma cada linha. A base afunila e desce primeiro em direção ao centro inferior (a dock); o topo vai depois.
+- Duração de 420 ms (maximizar continua com 220 ms).
+- Restaurar faz o caminho inverso, saindo da dock.
+- Desligável com `lamp = false` em `[effects]` (volta à animação de escala).
+- Verificado no quadro salvo no meio da animação: formato de funil e conteúdo na orientação certa.
+
+## Incidente: configuração real da dock alterada por teste
+
+- O `tests/ui.sh` usava `XDG_CONFIG_HOME=... check`, e no bash isso não exporta a variável para os programas chamados pela função. Os testes de fixar e reordenar gravaram `~/.config/mide/dock.toml` do usuário (o arquivo não existia antes).
+- Corrigido: o arquivo criado por engano foi removido (a dock voltou aos padrões), a variável agora é exportada só durante a seção da dock, e a bateria falha se a configuração real mudar (trava por impressão digital do diretório).
+- Total da bateria: 25 verificações, todas passando.
+
+## Correções da rodada: ponta branca, dock, lâmpada, saída redimensionada e Ctrl+clique
+
+- **Ponta branca no canto (bug):** a máscara de canto não pintava sobre janelas de baixo, e o canto quadrado da barra aparecia. Agora o conteúdo da janela é recortado de verdade no desenho (`src/clip.rs`): um shader de textura troca o padrão do Smithay (`override_default_tex_program`) e zera os pixels fora da moldura arredondada. A barra usa o mesmo recorte no shader dela. As máscaras de canto foram removidas. O canto mostra o que está atrás (desktop com sombra ou outra janela).
+- **Dock com visual do macOS:** raio de 18 px (antes era uma pílula), vidro claro translúcido com gradiente, borda fina mais escura em cima e mais clara embaixo, brilho interno de 1 px, margens mais justas e ponto de app aberto menor.
+- **Efeito lâmpada vai até o ícone do app:** a dock informa ao compositor onde está cada ícone (`icons` no canal de controle), sempre que muda. Ao minimizar e restaurar, o funil vai e volta do ícone do app naquele momento. Sem ícone, vai ao centro inferior.
+- **Efeito lâmpada mais bem feito:** a janela inteira entra na textura (barra, título, botões e conteúdo), com cantos arredondados no próprio shader; curva de aceleração e desaceleração suave (antes desacelerava logo no começo e ficava brusco).
+- **Janela do mide maximizada no host:** ao mudar o tamanho da saída, as camadas são reorganizadas (a dock volta ao centro inferior) e as janelas maximizadas acompanham a nova área.
+- **Ctrl+clique na dock:** abre uma instância nova mesmo com o app aberto. A dock pergunta ao compositor as teclas pressionadas (`mods` no canal de controle).
+- Autoteste: passos `ctrl on/off` e `resize L A`. `tests/ui.sh`: 28 verificações, todas passando.
+- Limitação mantida: a sombra de uma janela ainda não escurece a janela de baixo, só o desktop (fica como aperfeiçoamento).
+
+## Efeito lâmpada refeito
+
+- O alvo já era o ícone certo (confirmado no log, também depois de redimensionar a saída), mas o desenho cortava o funil no meio da tela.
+- Causa: o elemento de textura usava como origem o tamanho do destino (a área até a dock), maior que a textura da janela. As coordenadas passavam de 1 e o funil era cortado e distorcido. Agora a origem é a textura inteira.
+- Deformação refeita em duas fases, como no macOS: (1) a base estica até o ícone e o funil se forma, com a largura de cada linha indo da largura da janela até a do ícone conforme a altura; (2) o topo desce e a janela escorre pelo funil para dentro do ícone.
+- Verificado numa sequência de 5 quadros com a saída em 1280x800 (`MIDE_WINIT_SIZE=1280x800`): o funil encosta no ícone do app e a janela entra nele.
+- Nova variável de teste `MIDE_WINIT_SIZE=LxA`, que abre a janela do mide já nesse tamanho.
+
+## Barra superior (B1)
+
+- Novo cliente `mide-bar` (`src/bin/mide-bar.rs`), aberto pelo compositor junto com a dock. É uma camada no topo, com a largura da tela, 28 px de altura e zona exclusiva: janelas novas nascem abaixo dela e maximizar ocupa só a área livre (entre a barra e o fundo).
+- À esquerda, a marca do mide e o nome do app em foco (em negrito), lido do compositor pelo canal de controle e traduzido pelo nome do `.desktop`.
+- À direita, o relógio (ex.: "sáb 17 out  17:27") e, se houver bateria, a porcentagem.
+- Clique na marca abre o menu do sistema (camada sobreposta que fecha ao clicar fora): "Sobre este computador", "Configurações do sistema…" (desativado até B7) e "Encerrar sessão…" (encerra o mide). Itens com destaque ao passar o mouse.
+- "Sobre este computador" abre `mide-about`: janela com a barra do mide mostrando versão, sistema, kernel, processador, memória, vídeo, nome do computador e tempo ligado.
+- Código de desenho compartilhado entre os clientes em `src/ui/` (formas, gradientes e texto com cosmic-text).
+- Janela nova recebe o foco na hora em que abre.
+- Ainda não: reiniciar e desligar (não dá para testar com segurança aqui), menus do app (B2) e área de status (B3).
+
+## Papel de parede (A12)
+
+- Nova seção no `config.toml`:
+  ```toml
+  [desktop]
+  wallpaper = "~/Imagens/fundo.jpg"
+  ```
+  Aceita PNG e JPEG. A imagem cobre a tela inteira sem distorcer (corta as sobras no centro) e se ajusta quando a saída muda de tamanho.
+- Sem imagem, ou se ela não abrir, o fundo é um gradiente próprio do mide (azul profundo, violeta e um brilho quente embaixo).
+- As sombras das janelas continuam sobre o papel de parede: o fundo é uma textura desenhada por um shader que também aplica a sombra combinada (`src/wallpaper.rs`).
+
+## Janelas sempre abaixo da barra superior
+
+- Se a barra começa depois de uma janela já aberta, a janela desce para baixo dela, e as maximizadas se ajustam à área livre.
+- Arrastar uma janela para cima para na barra, como no macOS.
+
+## Dock: medidas finais (ajustadas com o usuário)
+
+- Ícones de 44 px, 3 px entre ícones, 7 px até a borda, 3 px a mais embaixo para o ponto de app aberto (altura 61 px), cantos de 15 px.
+- Cada ícone tem a margem transparente cortada e a parte visível ajustada aos 44 px, centralizada. Antes, ícones com margem própria (como o da calculadora) deixavam um lado da dock com mais espaço que o outro.
+- O separador entre fixados e abertos tem 8 px de respiro de cada lado.
+- Clicar no vão entre dois ícones conta para o ícone mais próximo.
+- Efeito lâmpada com 450 ms (antes 420 ms).
+
+## Testes
+
+- O compositor aceita `MIDE_SOCKET` (padrão `mide-0`). Os testes usam `mide-test` e `mide-smoke` e encerram só os processos com esse socket no ambiente: uma sessão do mide aberta pelo usuário não é mais fechada nem atrapalha os testes.
+- Um `mide-about` de um teste anterior podia abrir no compositor do teste seguinte; agora a limpeza também o pega.
+- `tests/ui.sh` roda tudo com uma configuração temporária. Antes, um clique numa janela de teste (clique direito na dock) gravou o `dock.toml` real do usuário.
+
+## Launcher em tela cheia (B6)
+
+- Novo programa `mide-launcher`, no estilo do Launchpad: cobre a tela com um véu escuro translúcido sobre o papel de parede e mostra todos os apps instalados numa grade (6x3 em 800x600, até 7x5 em telas grandes), com o nome embaixo de cada ícone.
+- Busca no topo: é só digitar. Não diferencia maiúsculas nem acentos ("configuracoes" acha "Configurações"), procura também no nome genérico e nas palavras-chave do app, e põe primeiro quem começa com o texto digitado.
+- Grupos por categoria abaixo da busca (Todos, Internet, Escritório, Gráficos, Multimídia, Desenvolvimento, Jogos...). Só aparecem os grupos que têm apps.
+- Teclado: Enter abre o primeiro resultado (ou o escolhido com as setas), Esc limpa a busca e, vazia, fecha; Page Up/Down trocam de página.
+- Mouse: clique num app abre e fecha o launcher; clique no vazio fecha; rolagem e os pontos embaixo trocam de página. Os pontos ficam acima da dock.
+- Apps marcados para terminal abrem no foot.
+- `ctrl+shift+space` abre e, com ele aberto, fecha (nova ação `toggle_launcher`, padrão no lugar do fuzzel).
+- Desempenho: abre em cerca de 165 ms. Os ícones carregam numa thread separada e aparecem conforme ficam prontos; várias teclas seguidas geram um quadro só.
+- O modo de desenvolvimento agora compila as dependências otimizadas (`[profile.dev.package."*"]`): abrir o launcher caiu de 5 s para menos de 0,2 s, e a dock, a barra e o compositor também ficaram mais rápidos.
+- Código compartilhado novo: `src/apps.rs` (lista de apps, grupos, busca), `src/icons.rs` (ícones do tema, usados pela dock e pelo launcher) e `src/control_client.rs` (canal de controle).
+- Autoteste: passos `key`, `type` e `combo`, que passam pelo mesmo caminho de uma tecla de verdade (inclusive os atalhos).
+- Efeito lâmpada com 650 ms.
+
+## Cliques na dock e na barra não vazam para a janela de trás
+
+- Antes, clicar na dock ou na barra por cima de uma janela também focava essa janela e, perto da borda dela, podia começar um redimensionamento. Agora barra, dock e launcher ficam com o clique só para eles.
+- Uma janela no meio da animação de minimizar não recebe mais cliques. Clicar no ícone dela na dock durante a animação já traz a janela de volta (antes o clique era perdido e a janela sumia mesmo assim).
+
+## Downloads e Lixeira na dock (B5)
+
+- No fim da dock, depois de um separador próprio, ficam **Downloads** e **Lixeira**, com os ícones do tema do usuário (ZorinBlue-Dark aqui, com Adwaita como reserva).
+- **Downloads**: clique abre um painel acima do ícone com os 8 itens mais recentes da pasta (lida de `user-dirs.dirs`), com ícone pelo tipo de arquivo, nome cortado com reticências e há quanto tempo chegou ("agora", "há 5 min", "ontem"). Clique num item abre com o app padrão; "Abrir no Gerenciador de Arquivos" abre a pasta. Clique direito: "Abrir pasta Downloads".
+- **Lixeira**: o ícone muda de vazia para cheia sozinho (conferido a cada 0,8 s). Clique abre a Lixeira no gerenciador de arquivos. Clique direito: "Abrir" e "Esvaziar Lixeira…", que pede confirmação ("N itens serão apagados para sempre. Não dá para desfazer.") com "Esvaziar Lixeira" em vermelho e "Cancelar".
+- Painéis com o visual dos menus do macOS: claros, translúcidos, cantos arredondados, sombra suave e destaque azul sob o mouse. Clique fora ou no mesmo ícone de novo fecha.
+- Código novo: `src/places.rs` (pasta de Downloads, itens recentes, Lixeira, abrir arquivos) e `load_themed_icon` em `src/icons.rs`.
+- Proteção nos testes: cada sessão de teste usa uma Lixeira própria (`XDG_DATA_HOME` temporário) e abrir arquivos só vai para o log (`MIDE_OPEN_DRY_RUN`).
+
+## Rodada de ajustes pedidos pelo usuário (launcher, dock, barra, Sobre)
+
+- **Launcher no estilo do Launchpad:** apps soltos na grade, sem a fileira de categorias. No fim ficam as pastas **Utilitários**, **Sistema** e **Outros**, como no macOS: quadrado claro translúcido com miniaturas 3x3 dos apps de dentro e o nome em negrito. Clique na pasta abre um painel no meio da tela com o nome em cima e os apps dela (com páginas, se não couberem); clique fora ou Esc fecha a pasta. Ícones maiores, que crescem com a tela (67 px em 800x600, até 96 px), véu mais leve para o papel de parede aparecer e busca arredondada. Os ícones carregam em 4 threads (todos em cerca de 0,7 s), primeiro os da primeira página e as miniaturas das pastas.
+- **Launchpad na dock:** primeiro ícone da dock (quadrado claro com a grade colorida 3x3), abre e fecha o launcher.
+- **Clique direito na dock sempre abre um menu de contexto:** "Abrir"/"Nova janela", "Manter na Dock"/"Remover da Dock" e, com o app aberto, "Ocultar" e "Encerrar". Antes o clique direito desafixava direto.
+- **Menu de contexto nos arquivos de Downloads** (clique direito num item da pilha): "Abrir", "Mostrar na pasta", "Copiar caminho" (precisa do `wl-copy`, pacote `wl-clipboard`) e "Mover para a Lixeira" (pela especificação do freedesktop, dá para restaurar pelo gerenciador de arquivos).
+- **Menus do app na barra superior (B2, parte 1):** o nome do app em foco é um menu ("Ocultar", "Encerrar") e ao lado ficam **Arquivo** ("Nova janela", "Fechar janela"), **Editar** (Desfazer, Refazer, Recortar, Copiar, Colar, Selecionar tudo, com os atalhos à direita) e **Janela** ("Minimizar", "Zoom"). Valem para qualquer app: o compositor faz a ação na janela ou envia o atalho de teclado a ela. Com um menu aberto, passar o mouse pelos títulos troca de menu.
+- **Janela "Sobre este computador" redimensionável:** sem tamanho fixo (mínimo 360x300), conteúdo centralizado e textos longos cortados com reticências. Tamanho inicial maior para o processador caber.
+- Novos comandos do canal de controle: `close <ids>`, `hide <ids>`, `window close|minimize|zoom`, `keys <atalho>` e `launcher`.
+
+## Notificações (B9)
+
+- Novo programa `mide-notifications`, iniciado pelo compositor junto com a dock e a barra. É o servidor padrão de notificações do Linux (`org.freedesktop.Notifications` no D-Bus): qualquer app que manda notificação (navegador, e-mail, `notify-send`) aparece no mide.
+- Cada notificação vira um **banner no estilo do macOS** no canto superior direito, logo abaixo da barra: claro, translúcido, cantos de 16 px e sombra suave, com o ícone do app (pelo nome no tema ou por arquivo), o título em negrito, "agora" à direita e o texto em até duas linhas (com reticências).
+- Os banners se empilham, o mais novo em cima, até 4. Somem sozinhos depois de 5 s; os críticos ficam até o usuário fechar; com o mouse em cima, o banner espera.
+- Com o mouse em cima aparece o **×** no canto para fechar. Clique no banner aciona a ação padrão do app (quando ele tem uma). Ações extras viram **botões** no banner (ex.: "Abrir", "Ignorar"), e o app recebe a ação escolhida pelo D-Bus.
+- Texto com marcação simples (`<b>`, `<i>`, links) é mostrado como texto puro.
+- Rodando o mide em janela dentro do GNOME, o GNOME já é o servidor de notificações: o do mide percebe e sai sem fazer nada. Numa sessão própria do mide, ele assume.
+- Código: `src/notify.rs` (regras de tempo, texto e ações, com testes) e `src/bin/mide-notifications.rs` (servidor D-Bus com `zbus` e os banners). Nova dependência: `zbus`.
+- Testes: `tests/scenario-dbus.sh` roda o cenário num D-Bus próprio (`dbus-run-session`); 5 verificações novas, inclusive o app recebendo a ação.
+
+## Rodada de ajustes 2 (pedido do usuário com 6 fotos)
+
+### Janela "Sobre" mais leve e apps sem `.desktop` na dock
+- O texto (`src/ui/text.rs`) guarda as larguras já medidas: medir texto é caro e as interfaces medem os mesmos textos a cada quadro. Vale para todos os programas do mide.
+- A janela "Sobre" desenha uma vez só depois de tratar os eventos pendentes: redimensionar gera muitos `configure` seguidos, e antes cada um virava um desenho.
+- Janelas de apps sem arquivo `.desktop` (como a "Sobre") agora aparecem na dock com o título da janela e um ícone do tema (o de computador, para as janelas do mide). Antes, minimizada, a janela sumia sem ícone para trazer de volta. Sem `.desktop`, o menu do ícone só tem Ocultar e Encerrar (não dá para abrir outra nem manter na dock).
+
+### Launcher com a dock e a barra por cima
+- Com o launcher aberto, a dock, a barra, os menus delas e as notificações ficam por cima do fundo escurecido, como no macOS (o compositor reordena as camadas no desenho e no clique: `front_layers` em `src/state.rs`).
+- A barra fica transparente, com o texto branco, enquanto o launcher está aberto (ela pergunta ao compositor com `launcher state`).
+- Clicar num app, em Downloads ou na Lixeira da dock fecha o launcher (`launcher close`).
+- A busca desceu (fica abaixo da barra, como na referência) e agora diz "Buscar Aplicativos".
+- Rolar a roda do mouse para baixo vai para a página da esquerda; para cima, para a da direita. Clique do meio vai para a próxima página e, da última, volta para a primeira.
+
+### Downloads e Lixeira com menu no item
+- Clique direito num arquivo da lista de Downloads abre o menu dele **no ponto do clique, por cima da lista**, sem fechar a lista (Abrir, Mostrar na pasta, Copiar caminho, Mover para a Lixeira). Clique fora do menu fecha só o menu.
+- Clique na Lixeira agora mostra a **lista dos itens apagados** (os 8 mais recentes, com há quanto tempo foram apagados), "Abrir no Gerenciador de Arquivos" e "Esvaziar Lixeira…". Clique direito num item apagado: **Restaurar** (volta para a pasta de onde veio; se já existir um com o mesmo nome, ganha " 2") ou **Apagar permanentemente**.
+- Clique direito no ícone da Lixeira continua com Abrir e Esvaziar Lixeira….
+- Por segurança, um item cujo `.trashinfo` não tem caminho absoluto não é restaurado.
+
+### Escolher a janela pelo menu da dock
+- Cada janela recebe um número fixo quando abre. Com mais de uma janela do app, o menu do clique direito lista as janelas (pelo título) no topo; escolher uma traz essa janela para frente (restaurando, se estava minimizada).
+- Novos comandos do canal de controle: `windows` (lista com número, app, título e estado) e `focus <número>`.
+
+### Prévias das janelas na dock (como no GNOME)
+- Com o ponteiro parado ~0,45 s sobre o ícone de um app aberto, aparece acima da dock um painel claro com a miniatura de cada janela do app e o título embaixo. Janelas com a barra do mide ganham uma barra em miniatura, para parecer a janela de verdade. Passando de um ícone para outro com as prévias abertas, elas trocam mais rápido (0,12 s).
+- A miniatura sob o ponteiro fica destacada e mostra o **×**: clicar no × fecha aquela janela; clicar na miniatura traz a janela para frente (restaurando se estava minimizada).
+- O painel some quando o ponteiro sai da dock e do painel, ou com um clique em outro lugar. Qualquer clique na dock também esconde as prévias.
+- Quem desenha é o compositor (`src/preview.rs`), porque só ele tem o conteúdo das janelas. A dock pede com `preview <x do ícone> <números das janelas>` e esconde com `preview hide`.
+
+### Launcher: arrastar, criar pastas e renomear
+- Segurar e arrastar um app (ou pasta) no launcher: o ícone segue o ponteiro e o lugar dele fica vazio.
+  - Soltar **no meio de outro app** (o alvo ganha um quadro claro) cria uma **pasta** com os dois, como no macOS e no GNOME. O nome é o grupo dos dois apps quando é o mesmo (ex.: "Jogos"); senão, "Pasta".
+  - Soltar **sobre uma pasta** põe o app nela.
+  - Soltar **entre itens** ou depois do último muda a ordem.
+  - Arrastando até a **borda da tela**, a página troca (no máximo uma vez a cada 0,7 s).
+- Com uma pasta aberta: arrastar um app **para fora do painel** tira o app da pasta (ele fica logo depois dela); arrastar dentro do painel muda a ordem. Pasta que fica com um app só deixa de existir.
+- **Renomear pasta:** clique no nome em cima do painel; ele vira um campo com cursor. Enter (ou clicar fora) salva, Esc cancela.
+- A organização fica salva em `~/.config/mide/launcher.toml`. Ao abrir, apps desinstalados saem e apps novos entram no fim.
+- Código: `src/launcher_layout.rs` (regras de pastas, ordem e arquivo, com testes).
+
+### Calendário no relógio
+- Clique no relógio da barra abre o calendário, no estilo do macOS: a data de hoje por extenso ("sábado, 17 de outubro"), o mês ("outubro de 2026") com os botões ‹ Hoje ›, os dias da semana (D S T Q Q S S, começando no domingo) e o dia de hoje num círculo azul. Dias de outros meses aparecem apagados.
+- Código: `src/calendar.rs` (grade do mês, troca de mês e textos em português, com testes).
+
+### Ícones de som, Wi-Fi, Bluetooth e bateria na barra (B3, parte 1)
+- À esquerda do relógio: **som** (alto-falante com ondas pelo volume, ou × no mudo), **Wi-Fi** (leque aceso pela força do sinal, riscado quando desligado), **Bluetooth** (mais apagado quando desligado) e a **bateria** (quando o computador tem). Cada ícone só aparece se o sistema tiver aquilo.
+- Clique num ícone abre um painel no estilo da Central de Controle do macOS:
+  - **Som:** trilho de volume (clicar ou arrastar), interruptor "Sem som" e "Configurações de som…". Mexer no volume tira o mudo.
+  - **Wi-Fi:** interruptor, redes vistas (sinal, cadeado nas redes com senha, ✓ e negrito na conectada), clique numa rede conecta (redes salvas ou abertas) e "Configurações de Wi-Fi…".
+  - **Bluetooth:** interruptor, aparelhos pareados (azul e "Conectado" quando conectado), clique conecta ou desconecta, e "Configurações de Bluetooth…".
+  - **Bateria:** nível, se está carregando e "Configurações de bateria…".
+- Com um painel aberto, passar o mouse pelos ícones troca de painel, como nos menus.
+- O estado vem de `wpctl` (som), `nmcli` (Wi-Fi) e `bluetoothctl` (Bluetooth), lidos numa thread a cada 2 s (ou na hora, depois de uma ação), para a barra nunca travar. As configurações abrem o `gnome-control-center`.
+- Código: `src/system.rs` (leitura e ações, com testes da leitura).
+- Nos testes, `MIDE_SYSTEM_DRY_RUN` simula o estado e as ações só vão para o log: nenhum teste mexe no som, no Wi-Fi ou no Bluetooth de verdade.
+
+## Configurações do Sistema (B7, parte 1)
+
+- Novo programa `mide-settings`, no estilo dos Ajustes do Sistema do macOS: barra lateral cinza com as seções (ícones do tema do usuário sobre quadradinhos coloridos) e, à direita, o título e cartões brancos arredondados com as opções. A janela redimensiona e o conteúdo comprido rola com a roda do mouse.
+- Seções:
+  - **Wi-Fi:** interruptor e lista de redes (sinal, com senha, conectada); clique numa rede conecta.
+  - **Bluetooth:** interruptor e aparelhos pareados; clique conecta ou desconecta.
+  - **Som:** volume de saída (trilho com porcentagem, clicar ou arrastar) e "Sem som".
+  - **Papel de parede:** miniaturas do gradiente do mide e das imagens de `/usr/share/backgrounds` (e `~/.local/share/backgrounds`), carregadas numa thread. Clique aplica **na hora**.
+  - **Efeitos:** interruptores de sombras, cantos arredondados, animações e efeito lâmpada, valendo **na hora**.
+  - **Atalhos de teclado:** os atalhos em uso, com a ação em português e as teclas ("Ctrl ⇧ Espaço").
+  - **Sobre:** as especificações da máquina e a versão do mide.
+- Abre pelo menu do mide ("Configurações do sistema…", que antes ficava desativado) e pelos links "Configurações de Wi-Fi/Bluetooth/som…" dos painéis da barra, já na seção certa (`mide-settings wifi`, `sound`...). A bateria ainda abre as configurações do GNOME.
+- **Gravar sem perder comentários:** as escolhas vão para o `~/.config/mide/config.toml` com `toml_edit`, que mantém os comentários e a formatação do usuário (`src/settings_file.rs`, com testes). Efeito ligado é o padrão: ao religar, a chave é apagada em vez de gravar `true`.
+- **Valer na hora:** novo comando `reload` no canal de controle; o compositor relê o `config.toml` (atalhos, efeitos e papel de parede) e o papel de parede troca no quadro seguinte. Novo comando `bindings` lista os atalhos em uso.
+- Código compartilhado novo: `src/backdrop.rs` (ajuste de imagem à tela e gradiente padrão, usado pelo compositor e pelas miniaturas) e `src/sysinfo.rs` (especificações da máquina, usado pelo "Sobre" e pelas Configurações).
+- Arquivos `.desktop` dos programas do mide em `data/applications/` (Configurações do Sistema e Sobre), para o instalador copiar; com eles, as Configurações aparecem no launcher. Até lá, a dock mostra o ícone de configurações do tema para a janela delas.
+
+## Rodada de ajustes 3 (lentidão, Configurações, roda do mouse, animações)
+
+### Lentidão (volume e mide maximizado)
+- O próprio código do mide agora compila com otimização leve em desenvolvimento (`[profile.dev] opt-level = 1`): os laços de desenho em tela cheia (menus da barra e da dock, launcher) ficaram várias vezes mais rápidos. Os ícones do launcher carregam em ~0,27 s (antes ~0,74 s).
+- A barra e a dock desenham uma vez por lote de eventos (antes, cada movimento do mouse redesenhava o menu inteiro, e arrastar o volume virava dezenas de desenhos de tela cheia por segundo).
+- Com a janela do mide mudando de tamanho (maximizar), o papel de parede é esticado e só é refeito no tamanho novo quando o tamanho para de mudar por 0,15 s (antes era refeito a cada passo do redimensionamento).
+
+### Configurações sempre à mão
+- Os programas abertos pelo mide recebem a pasta de dados do mide em `XDG_DATA_DIRS` e a pasta dos programas do mide no `PATH` (`child_env` em `src/main.rs`). Assim os `.desktop` do mide (em `data/applications/` no desenvolvimento, `share/mide` instalado, ou `MIDE_DATA_DIR`) aparecem no launcher e na dock, e "Manter na Dock" funciona para as Configurações.
+- As Configurações do Sistema vêm fixadas na dock por padrão, como no macOS (para quem ainda não tem `dock.toml`; quem já tem fixa com clique direito → Manter na Dock).
+- Ícones de app que só existem no tema do usuário (como o das Configurações) agora são encontrados: a busca de ícone de app tenta o tema padrão e depois o tema do usuário.
+
+### Roda do mouse no launcher
+- Causa: a roda do mouse chegava aos programas só como "passos" (v120), sem o valor contínuo que muitos programas leem; o launcher lia só o valor contínuo e não via nada. O compositor agora manda os dois (15 px por passo), e o launcher lê os passos.
+- Rolar para baixo vai para a página da direita; para cima, para a da esquerda (um passo, uma página).
+
+### Animações do launcher
+- **Abrir:** esmaece de transparente para opaco e chega levemente ampliado (1,06 → 1,0) em 0,26 s, como o Launchpad, começando no primeiro quadro desenhado. **Fechar:** esmaece em 0,16 s (também ao abrir um app pelo launcher).
+- **Carrossel ao trocar de página** (roda, botão do meio, Page Up/Down, pontos, borda ao arrastar): a página atual desliza para um lado e a nova entra pelo outro, em 0,32 s com desaceleração suave. As duas páginas são desenhadas uma vez no começo e depois só deslizam.
+- **Pasta nova:** ao soltar um app sobre outro, a pasta surge crescendo com um pequeno efeito de mola (0,34 s).
+- Os quadros da animação saem a cada ~16 ms só enquanto algo anima; parado, o launcher não redesenha.
+
+### Efeito lâmpada ao abrir pela dock
+- Abrir um app pela dock (clique ou Ctrl+clique) faz a primeira janela dele sair do ícone com o efeito lâmpada (o mesmo de restaurar). Abrir pelo launcher ou pelo atalho não tem o efeito.
+- A dock avisa o compositor (`launching <ids>`); quando a primeira janela daquele app chega com conteúdo, a animação começa (avisos expiram em 15 s; cada janela é conferida uma vez).
+
+### Autoteste
+- Passos novos: `wheel down` / `wheel up` (roda do mouse) e `mclick x y` (botão do meio).
+
+### Dock menor e configurável
+- Ícones da dock passaram de 44 para 40 px (padrão).
+- Nova seção **Dock** nas Configurações do Sistema: trilho "Tamanho dos ícones" de 32 a 64 px (Pequeno/Grande), com uma prévia da dock no tamanho escolhido. Grava `[dock] icon_size` no `config.toml` (sem a chave quando volta ao padrão de 40 px) ao soltar o trilho.
+- A dock confere o `config.toml` junto com a atualização dos apps abertos (a cada 0,8 s): com o tamanho mudado, recarrega os ícones no tamanho novo e se ajusta sozinha, sem reiniciar.
+- Clique direito no ícone do Launchpad: "Abrir o Launchpad" e "Ajustes da Dock…" (abre as Configurações na seção Dock), como o menu da dock no macOS.
+- `settings_file` agora grava e lê números inteiros (com teste).
+
+## Rodada de ajustes 4 (efeitos, desfoque, papéis de parede)
+
+### Bugs corrigidos
+- **Ligar e desligar efeitos não funcionava:** o `config.toml` do usuário tinha uma seção `[dock]` vazia (criada pelas Configurações), e o leitor do compositor tratava qualquer seção desconhecida como atalho e recusava o arquivo inteiro: o `reload` falhava e, ao reiniciar, o mide também recusaria o arquivo. Agora o compositor ignora seções de outros programas (teste com o caso exato), e as Configurações não deixam mais seções vazias quando uma opção volta ao padrão.
+- **Pasta com mais de uma página:** a roda trocava de página sem transição. Agora tem o mesmo carrossel da grade, deslizando só dentro do painel da pasta (recortado pelos cantos arredondados dele).
+- **Configurações sem barra de rolagem:** barra fina no estilo do macOS na borda direita, que só aparece quando o conteúdo não cabe, engrossa com o mouse em cima e pode ser arrastada (clique no trilho pula para o ponto).
+
+### Desfoque (blur)
+- Novo módulo `src/blur.rs` no compositor, com a técnica "dual Kawase" (a do KDE e do Hyprland): reduções pela metade e ampliações de volta, misturando vizinhos. Barato na GPU.
+- **Launcher:** o fundo é o papel de parede ativo, bem desfocado (5 passadas), por baixo do véu, como o Launchpad. Calculado uma vez por papel de parede e tamanho de tela.
+- **Dock:** desfoca o que estiver atrás dela (janelas e papel de parede) a cada quadro (3 passadas), recortado pelos cantos arredondados da dock: efeito de vidro fosco. Medido: o detalhe atrás da dock cai de 29 para 10 (desvio dos pixels).
+- **Configurações → Efeitos:** interruptores "Desfoque na dock" e "Desfoque no launcher" (`[effects] dock_blur` e `launcher_blur`), valendo na hora.
+
+### Papéis de parede do usuário
+- A lista lê `/usr/share/backgrounds` e `~/.local/share/backgrounds` (até 60 imagens), em ordem alfabética.
+- Último quadro da grade: **"+ Adicionar imagem…"**, que abre um seletor no visual do mide (folha por cima das Configurações): lugares (Imagens, Downloads, Pasta pessoal), botão "‹" para subir de pasta, pastas e miniaturas das imagens PNG/JPEG (carregadas numa thread), rolagem e Cancelar.
+- Escolher uma imagem copia ela para `~/.local/share/backgrounds` (nome repetido ganha " 2") e já aplica como papel de parede.
+- Imagens adicionadas mostram um **×** com o mouse em cima: tira da lista (apaga só a cópia; se era o papel de parede atual, volta para o gradiente do mide).
+
+## Framework mide-ui (D1, parte 1)
+
+- Novo módulo `mide::kit` (`src/kit/`): o jeito de criar apps com a interface nativa do mide, pensado para a comunidade.
+- Estilo "imediato" (como o egui): o app implementa `App::view(&mut self, ui)` descrevendo a tela a cada quadro; os componentes desenham a si mesmos e respondem se foram clicados ou mudaram. Sem eventos para ligar: o estado é o próprio `struct` do app.
+- Componentes: título, grupo, texto, nota, botão, botão de destaque, interruptor, trilho, campo de texto (foco, digitação, apagar, Enter), item de lista, ícone do tema, separador e espaço.
+- Layout: coluna (padrão), `row` (lado a lado), `card` (cartão branco com linhas entre os itens), `page` (área com margem que rola, com a barra fina do macOS) e `sidebar` (barra lateral com seções, igual às Configurações).
+- Tema (`Theme`): cores, cantos, fontes e espaçamentos num lugar só; o padrão é o tema claro do mide.
+- Janela (`Window`) e execução (`run`): abre a janela com a barra do mide, cuida de mouse, roda, teclado e desenho, e redesenha só quando algo muda (e de novo quando um clique muda o estado).
+- Exemplo `examples/mide-ui-demo.rs` (barra lateral, controles, lista de tarefas) e guia em português `docs/mide-ui.md`.
+- Testes sem tela (desenho numa imagem em memória e mouse simulado): clique, interruptor, campo de texto com Enter e layout em coluna/linha.
+
+## Launcher rápido (animações sem lentidão)
+
+Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadros por segundo). Causas e correções:
+- **Véu (gradiente de tela cheia): 63 ms por quadro.** O gradiente genérico do tiny-skia é lento em tela cheia; agora o véu é preenchido linha a linha (uma cor por linha, `fill_vertical_fast`), ~1 ms.
+- **Abrir e fechar redesenhavam e ampliavam a tela inteira na CPU a cada quadro.** Agora quem anima é o compositor, na GPU: o launcher desenha uma vez e o compositor aplica o esmaecer e o zoom (1,06 → 1,0 ao abrir em 0,26 s; esmaecer e afastar de leve ao fechar em 0,17 s). O fundo desfocado esmaece junto. Fechar (Esc, clique no vazio, abrir um app, atalho, dock) passa pelo compositor, que esmaece e só depois fecha a camada.
+- **Carrossel:** no começo da troca, a página nova é desenhada uma vez já no formato da tela (a antiga é o quadro que já estava na tela); cada quadro só copia as linhas deslocadas das duas, sem desenhar nada: **1,2–2,7 ms por quadro** (antes ~70 ms). Vale também dentro das pastas.
+- **Ícones reduzidos a cada quadro:** agora cada ícone é reduzido uma vez para o tamanho da grade (assim que chega da thread de carregamento) e guardado.
+- **Primeira troca de página:** com o launcher parado e os ícones carregados, as outras páginas são desenhadas uma vez fora da tela, para os nomes e as miniaturas já estarem prontos: a primeira troca caiu de 67 ms para ~10 ms.
+- Conversão de cor para a tela mais rápida (4 bytes de uma vez) e otimização do código do mide em desenvolvimento (`opt-level = 2`).
+- Resultado: quadro parado de 70 ms para 6–8 ms; carrossel a ~1,5 ms por quadro.
+
+## Seleção no launcher com o vidro da dock
+- O destaque do app selecionado (setas ou mouse) agora cobre o ícone **e o nome**, com o mesmo vidro da dock: preenchimento claro translúcido, borda mais escura em cima e mais clara embaixo e o brilho interno. O desenho do vidro virou uma função só (`mide::ui::draw::glass`), usada pela dock e pelo launcher.
+
+## Arquivos do mide (B8) — gerenciador de arquivos estilo Finder
+
+- Novo app `mide-files` ("Arquivos"), o primeiro app de verdade feito com o mide-ui. Atalho `data/applications/mide-files.desktop` (ícone do gerenciador de arquivos do tema; aparece no launcher e pode ser fixado na dock).
+- **Barra lateral:** Favoritos (Pasta pessoal, Área de trabalho, Documentos, Downloads, Imagens, Músicas, Vídeos, pelas pastas do `user-dirs.dirs`, só as que existem) e Lugares (Computador = `/`, Lixeira). A pasta aberta fica marcada.
+- **Barra de ferramentas:** voltar e avançar (histórico), nome da pasta, ícones ou lista (o modo escolhido fica marcado) e busca (filtra enquanto digita, sem diferenciar maiúsculas e acentos). Na Lixeira, o botão "Esvaziar".
+- **Grade de ícones** (ícones do tema por tipo de arquivo; imagens com miniatura carregada em segundo plano, sem travar a janela) e **lista** (ícone, nome, data em português e tamanho).
+- Clique seleciona (vidro do mide atrás do ícone e o nome numa pílula azul, como no Finder); duplo clique abre (pasta entra, arquivo abre no app padrão); clique no vazio tira a seleção.
+- **Menu de contexto** (botão direito): no item, "Abrir", "Renomear…", "Copiar caminho" e "Mover para a Lixeira"; no vazio da pasta, "Nova pasta", "Mostrar/Esconder arquivos ocultos" e "Copiar caminho da pasta". Na Lixeira: "Restaurar" e "Apagar para sempre" (no vazio, "Esvaziar a Lixeira").
+- **Renomear e Nova pasta:** a pasta nova já entra pedindo o nome; o campo vem com o nome todo selecionado (digitar substitui), Enter confirma, Esc cancela. Nome repetido, vazio ou com "/" mostra o erro.
+- **Teclado:** Enter abre, Delete manda para a Lixeira (na Lixeira, apaga), Backspace sobe uma pasta, setas mudam a seleção, Ctrl+N nova pasta, Ctrl+H ocultos, Ctrl+F busca, Ctrl+R renomeia.
+- O título da janela acompanha a pasta aberta (aparece na barra do mide).
+- `mide-files [pasta]` abre a pasta pedida; `mide-files trash:///` abre a Lixeira.
+- Pastas e a Lixeira abertas pela dock (Downloads, Lixeira, "Mostrar na pasta") agora abrem no Arquivos; se ele não estiver instalado, continua o app padrão do sistema.
+- Lógica sem interface em `mide::files` (listar com pastas primeiro e ordem alfabética sem acentos, filtrar, tamanho e data em português, nome livre para "Nova pasta", criar, validar nome e renomear sem sobrescrever, favoritos).
+
+## mide-ui (D1, parte 2): o que o Arquivos precisou
+
+- **Menu de contexto:** `ui.context_menu(&resposta, |m| { m.item(..), m.separator(), m.danger(..) })`. Abre com o botão direito no componente, desenhado numa camada por cima de tudo (com sombra), abre para o outro lado se não couber, bloqueia cliques no que está embaixo, fecha ao escolher, ao clicar fora ou com Esc.
+- **Respostas:** `double_clicked()` (dois cliques em até 450 ms no mesmo componente), `secondary_clicked()` (botão direito) e `id`.
+- **Fundo:** `ui.background(ui.region())` reage ao clique e ao botão direito só onde nenhum componente está (menu do vazio da pasta).
+- **Grade que quebra linha:** `ui.wrap(|ui| ...)`; **ladrilho** `ui.tile(Tile::Icon(nome) | Tile::Image(&pixmap), "nome", selecionado, tamanho)`.
+- **Linha de lista** `ui.list_row(ícone, nome, &[(coluna, largura)], selecionada)`.
+- **Barra de ferramentas** `ui.toolbar(|ui| ...)`, botões de ícone `ui.icon_button` e `ui.icon_toggle` (marcado), `ui.strong` (texto numa linha), `ui.push_right(largura)` (alinha o resto à direita) e `ui.sized(largura, ...)`.
+- **Barra lateral com títulos de grupo** (item sem ícone) e `ui.sidebar_area` (conteúdo sem margem nem rolagem, para uma barra de ferramentas fixa em cima de uma `page`).
+- **Campo de texto:** `ui.focus_next_input()` dá o foco ao próximo campo com o texto todo selecionado (digitar substitui; setas tiram a seleção); `ui.typing()` diz se há um campo com foco.
+- **Teclas e atalhos:** Delete e setas em `Key`; `ui.input().shortcut("n")` para Ctrl+letra; botão direito.
+- **Janela:** `ui.set_title(..)` troca o título; `ui.request_tick()` pede outro quadro em 40 ms (para trabalho em segundo plano, como miniaturas).
+- O autoteste do compositor ganhou a tecla `delete`.
+
+## Vidro líquido na dock (estilo Liquid Glass), leve
+
+- **Shader novo no compositor** (`src/blur.rs`, composto da dock), numa passada só, a partir da distância até a borda arredondada (calculada no shader, sem texturas extras):
+  - **Refração:** perto da borda, a imagem de trás é puxada para dentro como numa lente; a borda parece vidro grosso e curvo (as pontas da dock "entortam" o que está atrás).
+  - **Tom adaptativo:** um pouco mais de saturação e de luz, mais forte sobre fundos escuros, para os ícones continuarem legíveis.
+  - **Reflexo:** linha fina e clara na borda, mais forte do lado da luz (em cima, à esquerda), e brilho suave na faixa curva.
+- Com o vidro líquido, o desfoque fica mais leve (uma passada a menos): o fundo aparece mais nítido e distorcido, como no Liquid Glass, e custa menos.
+- A dock (cliente) desenha só um véu claro leve (`mide::ui::draw::glass_veil`); a borda e o reflexo vêm do compositor. Sem vidro líquido (ou sem desfoque), volta o vidro clássico (`glass`).
+- **Configurações → Efeitos → "Vidro líquido"** (`[effects] liquid_glass`, ligado por padrão). Depende do "Desfoque na dock".
+
+## Desfoque da dock mais leve
+
+- **Desfoque só quando o fundo muda:** cada quadro calcula uma assinatura do que está atrás da dock (posição, tamanho, opacidade e conteúdo novo de cada janela); se for igual à do quadro anterior, reaproveita o desfoque pronto. Com a tela parada: **1 desfoque em 429 quadros** (antes, um por quadro). Durante animações (lâmpada, maximizar, launcher) o desfoque é refeito a cada quadro.
+- **Texturas reaproveitadas:** o fundo da dock e as passadas do desfoque usam texturas guardadas entre quadros (antes, uma textura do tamanho da tela era criada a cada quadro), e só a região da dock é limpa.
+
+## Medição de desempenho e resposta (a cada mudança)
+
+- **`tests/perf.sh`** roda cenários típicos numa sessão de teste isolada (desktop parado, dock com menu, launcher com troca de página e busca, Arquivos navegando) e mostra mediana, p95 e máximo de: quadro do compositor (CPU), quadro da dock, menu da dock, quadro do launcher, quadro dos apps do mide-ui e **resposta** (do clique, tecla ou roda até o app enviar o quadro seguinte). Mostra também quantas vezes o vidro da dock foi refeito.
+- O compositor marca cada entrada com o cliente que a recebeu e registra `resposta (apertar|soltar|tecla|roda): N ms` no próximo commit desse cliente.
+- Logs de tempo (nível debug): `quadro do compositor`, `quadro da dock`, `menu da dock desenhado`, `quadro do app` (mide-ui), `quadro do launcher`.
+
+## Rodada de desempenho (medido antes → depois)
+
+- **mide-ui (Arquivos):** quadro de 17 ms (mediana) / 30 ms (p95) → 5 ms; resposta ao clique de 17 → 5,6 ms (p95 19,7 → 9 ms). Bancada sem tela (tela do Arquivos com 60 ícones): `view` de 6,3 → 1,0 ms.
+  - Páginas e cartões desenhavam numa imagem de 4000 px de altura por quadro (~9,6 MB) e colavam com mistura de transparência; agora a imagem cobre só a parte visível, e a página copia os pixels de/para a janela (sem misturar). Página vazia: 4,8 → 0,19 ms. Também corrige conteúdo que sumia depois de 4000 px (pastas grandes).
+  - Ícones e miniaturas colados com `mide::ui::draw::blit` (mistura própria, pixel opaco copiado, transparente pulado), em vez do `draw_pixmap` do tiny-skia: ~60 → ~13 µs por ícone de 64 px. Teste confere que o resultado é igual.
+  - **Cache de texto** (`mide::ui::text`): cada texto (conteúdo, tamanho, peso, cor) é composto uma vez e depois só colado. Vale para todos os clientes (dock, barra, launcher, Configurações, apps). 20 rótulos: 0,86 → 0,12 ms.
+  - Ícones do tema compartilhados no cache (sem cópia por desenho).
+- **Launcher:** quadro de 5,5 → 3,2 ms (cache de texto).
+- **Menu da dock:** primeira abertura de 32 → 3 ms. As fontes eram carregadas só no primeiro menu (~60 ms); agora carregam numa thread logo que a dock abre, já com os textos comuns compostos. O menu (camada de tela cheia, para o clique fora fechar) desenha e converte só a caixa dos painéis e avisa o compositor só da área que mudou.
+- **Vidro da dock:** com a tela parada, refeito 1 vez em ~550 quadros; com o launcher aberto, de 237 → 31 vezes (só nas animações e trocas de página). Quadro do compositor: ~0,25 ms de CPU.
+
+## Correção: sessão travando no primeiro quadro da dock
+
+- Em ~25% das sessões, o compositor travava no terceiro quadro (o primeiro com a dock): com a dock ainda minúscula, duas passadas do desfoque tinham o mesmo tamanho (1x1) e, com as texturas reaproveitadas, usavam a mesma textura, então a GPU lia e escrevia na mesma imagem e o driver travava. Agora cada passada tem a sua textura e áreas menores que 16 px não são desfocadas. 20 de 20 sessões seguidas sem travar. Era a causa das falhas aleatórias recentes do `ui.sh`.
+
+## Papel de parede padrão novo (formas marcadas)
+
+- O gradiente simples deu lugar a **faixas curvas sobrepostas** sobre um céu azul-noite, do índigo ao pêssego, passando por roxo, magenta e coral (inspirado nos fundos do macOS, com desenho próprio). Cada faixa faz sombra suave na de trás, tem um brilho fino na borda e clareia perto dela (volume, como seda dobrada). Bordas sem serrilhado e pontilhado leve contra faixas no degradê.
+- As formas usam a altura da tela como medida (não esticam em telas largas). Gerado uma vez por tamanho de tela, em todos os núcleos: 1920x1080 em ~77 ms. Vale para o desktop, o fundo do launcher e a miniatura nas Configurações.
+
+## Testes em 1366x768 (resolução mais comum no Brasil)
+
+- O mide aninhado (`cargo run`) abre em **1366x768** por padrão (`MIDE_WINIT_SIZE=LxA` muda).
+- Nova bateria **`tests/res1366.sh`**: barra na largura toda, dock centralizada embaixo, launcher em tela cheia, clique na dock abre o app, janela nova abaixo da barra, maximizar ocupando a área útil, Arquivos e Configurações cabendo na tela, e capturas de tela (desktop, launcher, Arquivos, Configurações, menu da dock) em `/tmp/mide-1366` para revisão.
+- `tests/perf.sh` mede em 1366x768. `tests/ui.sh` segue em 800x600 (coordenadas fixas), agora explícito no `scenario.sh`.
+- Janelas de teste com tamanho fixo (`MIDE_WINIT_FIXED`): o GNOME do anfitrião (com "auto-maximizar") maximizava a janela de 1366x768 ao abrir, e as coordenadas não valiam.
+
+## Correção: testes e apps congelando com a janela do mide escondida
+
+- O mide aninhado só desenhava quando o anfitrião pedia (`Redraw`). Com a janela coberta ou escondida (por exemplo, o usuário trabalhando enquanto os testes rodam), o anfitrião para de pedir, e o autoteste e os apps (que esperam o aviso de quadro) congelavam. Era a outra causa das falhas aleatórias do `ui.sh`.
+- Agora um relógio de reserva, depois de 100 ms sem pedido do anfitrião, avança o autoteste, termina animações e libera os apps (callbacks de quadro), sem apresentar na tela escondida. Em 10 sessões seguidas, todas completaram o roteiro, inclusive as 4 em que o anfitrião parou de pedir quadros.

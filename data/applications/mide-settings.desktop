@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Configurações do Sistema
+Name[en]=System Settings
+Comment=Wi-Fi, Bluetooth, som, papel de parede, efeitos e atalhos do mide
+Exec=mide-settings
+Icon=preferences-system
+Categories=Settings;System;
+StartupWMClass=mide-settings
+OnlyShowIn=mide;
