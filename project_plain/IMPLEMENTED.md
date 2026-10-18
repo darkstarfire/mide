@@ -648,3 +648,17 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - O mide aninhado só desenhava quando o anfitrião pedia (`Redraw`). Com a janela coberta ou escondida (por exemplo, o usuário trabalhando enquanto os testes rodam), o anfitrião para de pedir, e o autoteste e os apps (que esperam o aviso de quadro) congelavam. Era a outra causa das falhas aleatórias do `ui.sh`.
 - Agora um relógio de reserva, depois de 100 ms sem pedido do anfitrião, avança o autoteste, termina animações e libera os apps (callbacks de quadro), sem apresentar na tela escondida. Em 10 sessões seguidas, todas completaram o roteiro, inclusive as 4 em que o anfitrião parou de pedir quadros.
+
+## Vidro em barras, menus e notificações (regiões de vidro)
+
+- **Regiões de vidro no compositor:** qualquer camada pede vidro (desfoque e vidro líquido) atrás de retângulos dela pelo canal de controle: `glass <camada> raio:x,y,w,h ...` (sem regiões, limpa). O compositor desenha cada região logo atrás da camada, de trás para a frente (o vidro de um menu vê a dock já com o vidro dela), com cache e texturas próprias por região: refeito só quando o que está atrás muda.
+- O caso especial da dock virou a primeira região (`mide-dock`). Agora também têm vidro:
+  - **barra superior** (a faixa inteira; véu claro mais leve, o texto escuro continua legível; sem vidro com o launcher aberto);
+  - **menus da barra** (sistema, app, calendário, som, Wi-Fi, Bluetooth);
+  - **menus da dock** (apps, Downloads, Lixeira, submenus);
+  - **banners de notificação**.
+- Painéis translúcidos apagam a própria sombra por baixo (`mide::ui::draw::clear_rounded`), senão o vidro ficaria acinzentado.
+- No lado do cliente: `mide::control_client::Glass` (guarda o último pedido e só avisa quando muda) e `panel_glass()`; `mide::settings_file::effect(chave)` lê os efeitos com cache pela data do arquivo.
+- **Configurações → Efeitos → "Vidro em barras e menus"** (`[effects] panel_glass`, ligado por padrão). A força do vidro líquido segue a chave "Vidro líquido".
+- Desempenho: compositor ~0,27 ms por quadro (antes ~0,25); com a tela parada, cada região é refeita só ao aparecer.
+- Próximo uso: o buscador nativo (B11) e `ui.glass_panel` no mide-ui vão pedir vidro do mesmo jeito.

@@ -963,6 +963,8 @@ struct Menu {
     /// Caixa desenhada no último quadro (x, y, largura, altura), para avisar o
     /// compositor só do que mudou.
     last_box: Option<(i32, i32, i32, i32)>,
+    /// Vidro atrás dos painéis (desenhado pelo compositor).
+    glass: mide::control_client::Glass,
 }
 
 const MENU_RADIUS: f32 = 10.0;
@@ -1217,7 +1219,7 @@ impl Dock {
         let Ok(pool) = SlotPool::new(256 * 256 * 4, &self.shm) else {
             return;
         };
-        self.menu = Some(Menu { layer, pool, main, context: None, anchor_x, width, last_box: None });
+        self.menu = Some(Menu { layer, pool, main, context: None, anchor_x, width, last_box: None, glass: Default::default() });
     }
 
     /// Abre o menu de contexto de um item da lista no ponto (x, y), por cima dela.
@@ -1289,11 +1291,17 @@ impl Dock {
         };
         let (fx, fy) = (bx as f32, by as f32);
         shift(&mut menu.main, -fx, -fy);
-        draw_panel(&mut pixmap, text, &mut menu.main);
+        let glass = mide::control_client::panel_glass();
+        let mut rects = vec![(menu.main.rect.0, menu.main.rect.1, menu.main.rect.2, menu.main.rect.3, MENU_RADIUS)];
+        if let Some(c) = menu.context.as_ref() {
+            rects.push((c.rect.0, c.rect.1, c.rect.2, c.rect.3, MENU_RADIUS));
+        }
+        menu.glass.set("mide-dock-menu", if glass { &rects } else { &[] });
+        draw_panel(&mut pixmap, text, &mut menu.main, glass);
         shift(&mut menu.main, fx, fy);
         if let Some(context) = menu.context.as_mut() {
             shift(context, -fx, -fy);
-            draw_panel(&mut pixmap, text, context);
+            draw_panel(&mut pixmap, text, context, glass);
             shift(context, fx, fy);
         }
 
@@ -1619,12 +1627,17 @@ fn warm_text() -> std::sync::mpsc::Receiver<Text> {
     rx
 }
 
-fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel) {
+fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bool) {
     let (px, py, pw, ph) = panel.rect;
     for (grow, alpha) in [(6.0, 14u8), (3.0, 22), (1.0, 34)] {
         mide::ui::draw::fill_rounded(pixmap, px - grow, py - grow + 4.0, pw + 2.0 * grow, ph + 2.0 * grow, MENU_RADIUS + grow, Color::from_rgba8(0, 0, 0, alpha));
     }
-    mide::ui::draw::fill_rounded(pixmap, px, py, pw, ph, MENU_RADIUS, Color::from_rgba8(246, 246, 248, 242));
+    // Com vidro (desenhado pelo compositor atrás), o painel é translúcido: a sombra
+    // não pode ficar por baixo dele.
+    if glass {
+        mide::ui::draw::clear_rounded(pixmap, px, py, pw, ph, MENU_RADIUS);
+    }
+    mide::ui::draw::fill_rounded(pixmap, px, py, pw, ph, MENU_RADIUS, Color::from_rgba8(246, 246, 248, if glass { 200 } else { 242 }));
     if let Some(path) = rounded_rect(px + 0.5, py + 0.5, pw - 1.0, ph - 1.0, MENU_RADIUS) {
         let mut paint = Paint::default();
         paint.set_color(Color::from_rgba8(0, 0, 0, 46));

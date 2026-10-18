@@ -191,6 +191,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (globals, event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();
     let mut ui = Banners {
+        glass: Default::default(),
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
         output_state: OutputState::new(&globals, &qh),
@@ -253,6 +254,8 @@ enum Spot {
 }
 
 struct Banners {
+    /// Vidro atrás dos banners (desenhado pelo compositor).
+    glass: mide::control_client::Glass,
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -422,6 +425,9 @@ impl Banners {
         };
         let tops = self.banner_tops();
         let layer = layer.clone();
+        let glass = mide::control_client::panel_glass();
+        let rects: Vec<_> = tops.iter().zip(&self.notes).map(|(top, n)| (MARGIN, *top, BANNER_W, Self::banner_height(n), RADIUS)).collect();
+        self.glass.set("mide-notifications", if glass { &rects } else { &[] });
         for (i, top) in tops.into_iter().enumerate() {
             let (icon_name, app_name) = (self.notes[i].icon.clone(), self.notes[i].app_name.clone());
             let icon = self.icon_for(icon_name, &app_name);
@@ -455,7 +461,12 @@ impl Banners {
         for (grow, alpha) in [(8.0, 10u8), (4.0, 16), (1.5, 26)] {
             fill_rounded(pixmap, x - grow, y - grow + 3.0, BANNER_W + 2.0 * grow, bh + 2.0 * grow, RADIUS + grow, rgba(0, 0, 0, alpha));
         }
-        fill_rounded(pixmap, x, y, BANNER_W, bh, RADIUS, rgba(246, 246, 248, 238));
+        // Com vidro, o banner é translúcido e a sombra não fica por baixo dele.
+        let glass = mide::control_client::panel_glass();
+        if glass {
+            mide::ui::draw::clear_rounded(pixmap, x, y, BANNER_W, bh, RADIUS);
+        }
+        fill_rounded(pixmap, x, y, BANNER_W, bh, RADIUS, rgba(246, 246, 248, if glass { 205 } else { 238 }));
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, BANNER_W - 1.0, bh - 1.0, RADIUS - 0.5) {
             let mut paint = Paint::default();
             paint.set_color(rgba(0, 0, 0, 34));

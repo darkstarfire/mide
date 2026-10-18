@@ -152,6 +152,9 @@ pub struct State {
     /// Medição de resposta: última entrada (clique, tecla, roda), quando foi e o
     /// cliente que a recebeu. No próximo commit desse cliente, registra o tempo
     /// (`resposta: ... ms`, em nível debug, lido pelo `tests/perf.sh`).
+    /// Regiões de vidro pedidas pelas camadas (`glass` no canal de controle): pelo
+    /// nome da camada, retângulos relativos a ela e o raio dos cantos.
+    pub glass: std::collections::HashMap<String, Vec<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32)>>,
     pub input_mark: Option<(Instant, &'static str, smithay::reexports::wayland_server::backend::ClientId)>,
     /// Posição atual do cursor, em coordenadas globais.
     pub pointer_location: Point<f64, Logical>,
@@ -240,6 +243,7 @@ impl State {
             space: Space::default(),
             start_time: Instant::now(),
             input_mark: None,
+            glass: std::collections::HashMap::new(),
             pointer_location: (0.0, 0.0).into(),
             press_location: None,
             move_grab: None,

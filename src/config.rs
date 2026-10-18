@@ -90,6 +90,8 @@ pub struct Effects {
     pub launcher_blur: bool,
     /// Vidro líquido na dock (refração nas bordas, reflexo e tom), sobre o desfoque.
     pub liquid_glass: bool,
+    /// Vidro (desfoque e vidro líquido) atrás da barra, dos menus e das notificações.
+    pub panel_glass: bool,
 }
 
 impl Default for Effects {
@@ -102,6 +104,7 @@ impl Default for Effects {
             dock_blur: true,
             launcher_blur: true,
             liquid_glass: true,
+            panel_glass: true,
         }
     }
 }

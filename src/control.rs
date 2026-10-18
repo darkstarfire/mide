@@ -11,6 +11,8 @@
 //!   por vírgula, retângulo relativo à dock). Usado pelo efeito lâmpada.
 //! - `mods`: teclas modificadoras pressionadas agora (`ctrl`, `shift`, `alt`, `logo`).
 //! - `quit`: encerra o compositor (menu "Encerrar sessão" da barra).
+//! - `glass <camada> raio:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
+//!   líquido) atrás desses retângulos, relativos a ela; sem regiões, limpa.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -159,6 +161,20 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 format!("erro: {err}\n")
             }
         },
+        // Regiões de vidro de uma camada: `glass <camada> raio:x,y,w,h ...` (relativas
+        // à camada); `glass <camada>` sem regiões limpa.
+        Some("glass") => {
+            let Some(namespace) = words.next() else {
+                return "erro: falta a camada\n".into();
+            };
+            let regions: Vec<_> = words.filter_map(parse_glass).collect();
+            if regions.is_empty() {
+                state.glass.remove(namespace);
+            } else {
+                state.glass.insert(namespace.to_string(), regions);
+            }
+            "ok\n".into()
+        }
         Some("launcher") => match words.next() {
             Some("state") => if state.launcher_open() { "open\n".into() } else { "closed\n".into() },
             Some("close") => {
@@ -174,6 +190,16 @@ pub fn handle(state: &mut State, command: &str) -> String {
         },
         _ => "erro: comando desconhecido\n".into(),
     }
+}
+
+/// Uma região de vidro no formato `raio:x,y,w,h`.
+fn parse_glass(word: &str) -> Option<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32)> {
+    let (radius, rect) = word.split_once(':')?;
+    let n: Vec<i32> = rect.split(',').map(|v| v.parse::<f32>().map(|f| f.round() as i32)).collect::<Result<_, _>>().ok()?;
+    let [x, y, w, h] = n[..] else {
+        return None;
+    };
+    (w > 0 && h > 0).then(|| (smithay::utils::Rectangle::new((x, y).into(), (w, h).into()), radius.parse().unwrap_or(0.0)))
 }
 
 /// app_id e título que o app definiu para a janela.
@@ -355,7 +381,17 @@ fn mods(state: &State) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_icons;
+    use super::{parse_glass, parse_icons};
+
+    #[test]
+    fn regioes_de_vidro_sao_interpretadas() {
+        let (rect, radius) = parse_glass("10:4,30.6,200,120").unwrap();
+        assert_eq!((rect.loc.x, rect.loc.y, rect.size.w, rect.size.h), (4, 31, 200, 120));
+        assert_eq!(radius, 10.0);
+        assert!(parse_glass("10:4,30,0,120").is_none(), "sem área");
+        assert!(parse_glass("lixo").is_none());
+        assert!(parse_glass("3:1,2,3").is_none());
+    }
 
     #[test]
     fn icones_da_dock_sao_interpretados() {

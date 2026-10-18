@@ -151,9 +151,12 @@ pub struct Blur {
     /// tamanho e pelo papel (0: fundo; 16 + i: redução i; 32 + i: ampliação i). Cada
     /// passada tem a sua: em áreas pequenas, níveis vizinhos têm o mesmo tamanho, e uma
     /// textura só faria a GPU ler e escrever na mesma imagem (trava o driver).
-    pool: RefCell<HashMap<(i32, i32, u8), GlesTexture>>,
-    /// Último desfoque da dock: assinatura do que estava atrás, textura e tamanho.
-    dock: RefCell<Option<(u64, GlesTexture, Size<i32, Logical>)>>,
+    /// Também pela região de vidro dona delas: o desfoque guardado de uma região não
+    /// pode ser sobrescrito por outra do mesmo tamanho.
+    pool: RefCell<HashMap<(i32, i32, u8, String), GlesTexture>>,
+    /// Último desfoque de cada região de vidro (dock, barra, menus...): assinatura do
+    /// que estava atrás, textura e tamanho.
+    regions: RefCell<HashMap<String, (u64, GlesTexture, Size<i32, Logical>)>>,
 }
 
 /// Passadas do desfoque (cada uma reduz à metade) e o deslocamento das amostras.
@@ -180,34 +183,38 @@ impl Blur {
             composite,
             wallpaper: RefCell::new(None),
             pool: RefCell::new(HashMap::new()),
-            dock: RefCell::new(None),
+            regions: RefCell::new(HashMap::new()),
         })
     }
 
-    /// Textura do tamanho pedido: a guardada para esse papel (se `role` vier) ou nova.
-    fn target(&self, renderer: &mut GlesRenderer, size: Size<i32, Logical>, role: Option<u8>) -> Option<GlesTexture> {
-        let Some(role) = role else {
+    /// Textura do tamanho pedido: a guardada para esse papel e essa região (se `role`
+    /// vier) ou nova.
+    fn target(&self, renderer: &mut GlesRenderer, size: Size<i32, Logical>, role: Option<(u8, &str)>) -> Option<GlesTexture> {
+        let Some((role, owner)) = role else {
             return renderer.create_buffer(Fourcc::Abgr8888, (size.w, size.h).into()).ok();
         };
-        let key = (size.w, size.h, role);
+        let key = (size.w, size.h, role, owner.to_string());
         if let Some(texture) = self.pool.borrow().get(&key) {
             return Some(texture.clone());
         }
         let texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (size.w, size.h).into()).ok()?;
         let mut pool = self.pool.borrow_mut();
         // Tamanhos antigos (dock que mudou de largura) não ficam acumulando.
-        if pool.len() > 24 {
+        if pool.len() > 64 {
             pool.clear();
         }
         pool.insert(key, texture.clone());
         Some(texture)
     }
 
-    /// Desfoque da dock: refeito só quando a assinatura `key` do que está atrás muda.
-    /// `backdrop` desenha o que está atrás (numa textura do tamanho da saída).
-    pub fn dock_blur(
+    /// Desfoque de uma região de vidro (`name`: "mide-dock", "mide-bar#0"...), refeito
+    /// só quando a assinatura `key` do que está atrás muda. `backdrop` desenha o que
+    /// está atrás (numa textura do tamanho da saída).
+    #[allow(clippy::too_many_arguments)]
+    pub fn region_blur(
         &self,
         renderer: &mut GlesRenderer,
+        name: &str,
         key: u64,
         out_size: Size<i32, Logical>,
         src: Rectangle<f64, Logical>,
@@ -218,17 +225,23 @@ impl Blur {
         if src.size.w < 16.0 || src.size.h < 16.0 {
             return None;
         }
-        if let Some((k, texture, size)) = self.dock.borrow().as_ref() {
-            if *k == key ^ glass.to_bits() as u64 {
+        let key = key ^ glass.to_bits() as u64;
+        if let Some((k, texture, size)) = self.regions.borrow().get(name) {
+            if *k == key {
                 return Some((texture.clone(), *size));
             }
         }
-        let target = self.target(renderer, out_size, Some(0))?;
+        // O fundo desenhado é só a entrada das passadas: pode ser o mesmo para todas.
+        let target = self.target(renderer, out_size, Some((0, "")))?;
         let texture = backdrop(renderer, target)?;
         let (passes, offset) = if glass > 0.0 { (DOCK_PASSES - 1, 1.6) } else { (DOCK_PASSES, 2.0) };
-        let (blurred, size) = self.blur_with(renderer, &texture, out_size, src, passes, offset, true)?;
-        tracing::debug!("dock: desfoque refeito");
-        *self.dock.borrow_mut() = Some((key ^ glass.to_bits() as u64, blurred.clone(), size));
+        let (blurred, size) = self.blur_with(renderer, &texture, out_size, src, passes, offset, Some(name))?;
+        tracing::debug!("vidro: desfoque refeito ({name})");
+        let mut regions = self.regions.borrow_mut();
+        if regions.len() > 32 {
+            regions.clear();
+        }
+        regions.insert(name.to_string(), (key, blurred.clone(), size));
         Some((blurred, size))
     }
 
@@ -243,7 +256,7 @@ impl Blur {
         src: Rectangle<f64, Logical>,
         size: Size<i32, Logical>,
         offset: f32,
-        role: Option<u8>,
+        role: Option<(u8, &str)>,
     ) -> Option<GlesTexture> {
         let mut target = self.target(renderer, size, role)?;
         let inner = TextureRenderElement::from_static_texture(
@@ -288,7 +301,7 @@ impl Blur {
         passes: u32,
         offset: f32,
     ) -> Option<(GlesTexture, Size<i32, Logical>)> {
-        self.blur_with(renderer, texture, tex_size, src, passes, offset, false)
+        self.blur_with(renderer, texture, tex_size, src, passes, offset, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -300,7 +313,7 @@ impl Blur {
         src: Rectangle<f64, Logical>,
         passes: u32,
         offset: f32,
-        reuse: bool,
+        reuse: Option<&str>,
     ) -> Option<(GlesTexture, Size<i32, Logical>)> {
         let base = Size::<i32, Logical>::from((src.size.w.round() as i32, src.size.h.round() as i32));
         let level = |i: u32| -> Size<i32, Logical> { ((base.w >> i).max(1), (base.h >> i).max(1)).into() };
@@ -309,14 +322,14 @@ impl Blur {
         let mut current = (texture.clone(), tex_size, src);
         for i in 1..=passes {
             let size = level(i);
-            let out = self.pass(renderer, &self.down, &current.0, current.1, current.2, size, offset, reuse.then_some(16 + i as u8))?;
+            let out = self.pass(renderer, &self.down, &current.0, current.1, current.2, size, offset, reuse.map(|o| (16 + i as u8, o)))?;
             chain.push((out.clone(), size));
             current = (out, size, Rectangle::from_size((size.w as f64, size.h as f64).into()));
         }
         // Ampliações, de volta até a metade do tamanho original.
         for i in (1..passes).rev() {
             let size = level(i);
-            let out = self.pass(renderer, &self.up, &current.0, current.1, current.2, size, offset, reuse.then_some(32 + i as u8))?;
+            let out = self.pass(renderer, &self.up, &current.0, current.1, current.2, size, offset, reuse.map(|o| (32 + i as u8, o)))?;
             current = (out, size, Rectangle::from_size((size.w as f64, size.h as f64).into()));
         }
         Some((current.0, current.1))

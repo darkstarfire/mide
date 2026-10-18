@@ -94,6 +94,7 @@ const EFFECTS: &[(&str, &str, &str)] = &[
     ("dock_blur", "Desfoque na dock", "A dock desfoca o que está atrás dela, como vidro fosco"),
     ("launcher_blur", "Desfoque no launcher", "O fundo do launcher é o papel de parede desfocado"),
     ("liquid_glass", "Vidro líquido", "Dock com bordas que refratam a luz e reflexo, sobre o desfoque"),
+    ("panel_glass", "Vidro em barras e menus", "Barra superior, menus e notificações sobre vidro desfocado"),
 ];
 
 #[derive(Debug, Clone, PartialEq)]

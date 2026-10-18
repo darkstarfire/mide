@@ -106,5 +106,5 @@ img.save(out + "/frame.png")
 PY
 fi
 
-sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -E "autoteste|clique|tratado|janela|camada|mide_dock|mide_bar|mide_launcher|mide_notifications|mide_settings|mide::places|mide::system|lâmpada|papel de parede|configuração recarregada|abrindo pela dock|panic|ERROR|WARN" | grep -v "frame:"
+sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -E "autoteste|clique|tratado|janela|camada|mide_dock|mide_bar|mide_launcher|mide_notifications|mide_settings|mide::places|mide::system|lâmpada|papel de parede|configuração recarregada|vidro: |abrindo pela dock|panic|ERROR|WARN" | grep -v "frame:"
 cleanup

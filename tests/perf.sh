@@ -46,7 +46,7 @@ run() {
     stats "quadro do launcher" "quadro do launcher[^:]*: [0-9.]+ ms" "$log"
     stats "quadro de app mide-ui" "quadro do app: [0-9.]+ ms" "$log"
     stats "resposta a clique/tecla/roda" "resposta \([a-z]+\): [0-9.]+ ms" "$log"
-    echo "  desfoque da dock refeito: $(grep -c 'desfoque refeito' "$log") vez(es)"
+    echo "  vidro refeito (todas as regiões): $(grep -c 'desfoque refeito' "$log") vez(es)"
 }
 
 # Desktop parado: só o custo de base (vidro da dock com o fundo parado).

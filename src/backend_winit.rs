@@ -466,10 +466,10 @@ fn layer_elements(
     state: &State,
     blur: &crate::blur::Blur,
     wallpaper: &crate::wallpaper::Wallpaper,
-) -> (Vec<MideRenderElement>, Option<(usize, Rectangle<i32, Logical>)>) {
+) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
     let map = layer_map_for_output(output);
     let mut elements: Vec<MideRenderElement> = Vec::new();
-    let mut dock = None;
+    let mut glass = Vec::new();
     // Do topo para o fundo, como a lista de render.
     for layer in crate::state::front_layers(&map).iter() {
         let Some(geo) = map.layer_geometry(layer) else {
@@ -500,11 +500,32 @@ fn layer_elements(
                     elements.push(MideRenderElement::Blurred(el));
                 }
             }
-            "mide-dock" => dock = Some((elements.len(), geo)),
+            "mide-dock" if state.config.effects.dock_blur => {
+                glass.push(GlassRegion { at: elements.len(), rect: geo, radius: 15.0, name: "mide-dock".into() });
+            }
+            namespace if state.config.effects.panel_glass => {
+                // Regiões pedidas pela camada (barra, menus, notificações), relativas a ela.
+                for (i, (rect, radius)) in state.glass.get(namespace).into_iter().flatten().enumerate() {
+                    let on_screen = Rectangle::new(geo.loc + rect.loc, rect.size);
+                    if let Some(rect) = on_screen.intersection(geo) {
+                        glass.push(GlassRegion { at: elements.len(), rect, radius: *radius, name: format!("{namespace}#{i}") });
+                    }
+                }
+            }
             _ => {}
         }
     }
-    (elements, dock)
+    (elements, glass)
+}
+
+/// Vidro atrás de uma camada: posição na lista de render (logo depois dos elementos
+/// da camada, ou seja, atrás dela), retângulo na tela, raio dos cantos e nome (para
+/// o cache do desfoque).
+struct GlassRegion {
+    at: usize,
+    rect: Rectangle<i32, Logical>,
+    radius: f32,
+    name: String,
 }
 
 /// Região da dock dentro da textura da cena, nas coordenadas da textura. A cena é
@@ -595,31 +616,35 @@ fn render(
         let mut custom: Vec<MideRenderElement> = crate::preview::elements(renderer, state, shaders, titles);
         custom.extend(popup_elements(renderer, state).into_iter().map(MideRenderElement::from));
         let before_layers = custom.len();
-        let (layers, dock) = layer_elements(renderer, output, state, blur, wallpaper);
+        let (layers, glass) = layer_elements(renderer, output, state, blur, wallpaper);
         custom.extend(layers);
         let windows = window_elements(renderer, state, output, shaders, genie, wallpaper, titles);
         custom.extend(windows);
-        // Desfoque da dock: o que está atrás dela (tudo depois dela na lista) é
-        // desenhado numa textura, desfocado e posto logo atrás da dock.
-        if let Some((after_dock, dock_rect)) = dock.filter(|_| state.config.effects.dock_blur) {
-            let at = before_layers + after_dock;
-            let out_size = output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
-            let src = blur_source(dock_rect, out_size);
-            // Animações (lâmpada, maximizar, launcher) mudam shaders sem mudar a
-            // geometria: nelas o desfoque é refeito a cada quadro.
-            let animating = !state.animations.is_empty() || state.launcher_anim.is_some();
-            let key = if animating { state.start_time.elapsed().as_nanos() as u64 ^ 0x9e37_79b9 } else { backdrop_key(&custom[at..], dock_rect) };
+        // Vidro (dock, barra, menus): o que está atrás de cada região (tudo depois dela
+        // na lista) é desenhado numa textura, desfocado e posto logo atrás da camada.
+        // De trás para a frente: o vidro de um menu vê a dock já com o vidro dela.
+        let out_size = output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
+        // Animações (lâmpada, maximizar, launcher) mudam shaders sem mudar a geometria:
+        // nelas o desfoque é refeito a cada quadro.
+        let animating = !state.animations.is_empty() || state.launcher_anim.is_some();
+        let strength = if state.config.effects.liquid_glass { 1.0 } else { 0.0 };
+        let mut regions = glass;
+        regions.sort_by(|a, b| b.at.cmp(&a.at));
+        for region in regions {
+            let at = before_layers + region.at;
+            let rect = region.rect;
+            let src = blur_source(rect, out_size);
+            let key = if animating { state.start_time.elapsed().as_nanos() as u64 ^ 0x9e37_79b9 } else { backdrop_key(&custom[at..], rect) };
             let behind = &custom[at..];
-            let glass = if state.config.effects.liquid_glass { 1.0 } else { 0.0 };
-            let blurred = blur.dock_blur(renderer, key, out_size, src, glass, |renderer, target| {
-                crate::blur::render_region(renderer, behind, dock_rect, out_size, target)
+            let blurred = blur.region_blur(renderer, &region.name, key, out_size, src, strength, |renderer, target| {
+                crate::blur::render_region(renderer, behind, rect, out_size, target)
             });
             match blurred {
                 Some((blurred, size)) => {
-                    let element = blur.composite_element(renderer, blurred, size, dock_rect, 15.0, glass);
+                    let element = blur.composite_element(renderer, blurred, size, rect, region.radius, strength);
                     custom.insert(at, MideRenderElement::Textured(element));
                 }
-                None => tracing::debug!("desfoque da dock: falha ao desenhar ou desfocar o fundo"),
+                None => tracing::trace!("vidro {}: área pequena ou falha ao desfocar", region.name),
             }
         }
         let result = render_output(

@@ -415,3 +415,14 @@ Manual (o que o autoteste não cobre):
 ## Papel de parede
 
 - Prévia e tempo: `MIDE_PREVIA=/tmp/fundo.png cargo test --lib previa_papel -- --ignored --nocapture`.
+
+## Vidro em barras e menus — automáticos
+
+- `tests/ui.sh`: barra superior, menu da barra e menu da dock sobre vidro (log `vidro: desfoque refeito (<camada>#<n>)`), e sem vidro com `panel_glass = false`.
+- `cargo test`: `regioes_de_vidro_sao_interpretadas` (formato do comando `glass`).
+
+## Vidro em barras e menus — manual
+
+- Barra superior translúcida, mostrando o papel de parede desfocado; menus da barra e da dock e notificações também.
+- Janela passando atrás da barra ou de um menu aberto: o desfoque acompanha.
+- Configurações → Efeitos → desligar "Vidro em barras e menus": barra e menus voltam ao fundo claro quase opaco.

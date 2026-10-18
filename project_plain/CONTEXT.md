@@ -125,7 +125,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [x] A8. Fechar, minimizar e restaurar janelas (pela barra, pelo botão do app, pelo atalho e pela dock), com animação
 - [~] A9. (parcial: `config.toml` e motor de atalhos; faltam o editor e o conjunto completo de atalhos padrão) Atalhos globais lidos de `toml`, com os padrões de desktop, janelas e apps
 - [~] A10. (parcial: camadas Top e Overlay desenhadas e com ponteiro, zona exclusiva da barra respeitada ao abrir e maximizar janelas; camadas de fundo ainda não) Layer-shell (`wlr-layer-shell`), para barra, dock e launcher
-- [~] A11. (feito: sombra combinada de todas as janelas, cantos, animações de maximizar e restaurar, efeito lâmpada ao minimizar e restaurar, e `[effects]` no config com `shadows`, `rounded_corners`, `animations` e `lamp`; feito também o desfoque da dock e do fundo do launcher, com interruptores, e o vidro líquido na dock (refração, reflexo e tom, com desfoque refeito só quando o fundo muda); faltam o vidro líquido no launcher, barra e menus, `ui.glass_panel` no mide-ui e transparência de janelas) Efeitos: animação suave, transparência, blur e efeito lâmpada, com flag para desligar cada um
+- [~] A11. (feito: sombra combinada de todas as janelas, cantos, animações de maximizar e restaurar, efeito lâmpada ao minimizar e restaurar, e `[effects]` no config com `shadows`, `rounded_corners`, `animations` e `lamp`; feito também o desfoque da dock e do fundo do launcher, com interruptores, e o vidro líquido na dock (refração, reflexo e tom, com desfoque refeito só quando o fundo muda); feito também o vidro em barra superior, menus e notificações, por regiões de vidro pedidas pelas camadas (`glass` no canal de controle); faltam `ui.glass_panel` no mide-ui e transparência de janelas) Efeitos: animação suave, transparência, blur e efeito lâmpada, com flag para desligar cada um
 - [x] A12. (feito: `[desktop] wallpaper` em PNG ou JPEG cobrindo a tela, gradiente próprio por padrão, sombras das janelas sobre ele, escolha nas Configurações com imagens do usuário) Papel de parede, lido de configuração
 - [ ] A13. Backend DRM/udev com libseat, para rodar sem outro compositor por baixo
 
@@ -149,7 +149,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [ ] C1. Bloqueio de tela (`ext-session-lock-v1`) e inatividade (`ext-idle-notify-v1`)
 - [ ] C2. Sessão de login (entrada `.desktop` para `greetd`) e autostart
 - [ ] C3. Instalador em bash descrito em `INSTALATION.md`
-- [~] C4. (feito: 84 testes unitários, tests/smoke.sh, tests/ui.sh com 109 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
+- [~] C4. (feito: 85 testes unitários, tests/smoke.sh, tests/ui.sh com 113 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
 ---
 
 ---

@@ -251,6 +251,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         menu: None,
         bar_dirty: false,
         menu_dirty: false,
+        glass_bar: Default::default(),
+        glass_menu: Default::default(),
         qh: qh.clone(),
     };
 
@@ -476,6 +478,9 @@ impl Menu {
 }
 
 struct Bar {
+    /// Vidro atrás da barra e atrás do painel do menu aberto (desenhado pelo compositor).
+    glass_bar: mide::control_client::Glass,
+    glass_menu: mide::control_client::Glass,
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -581,9 +586,15 @@ impl Bar {
         // Fundo claro e translúcido, com uma linha fina embaixo, como no macOS. Com o
         // launcher aberto, sem fundo: só o texto branco sobre o launcher.
         let fg = if self.over_launcher { [255, 255, 255, 250] } else { [20, 20, 24, 255] };
+        // Com o vidro ligado, o compositor desfoca o que está atrás da barra e o véu
+        // claro fica mais leve (o texto escuro continua legível).
+        let glass = mide::control_client::panel_glass() && !self.over_launcher;
+        let strip = [(0.0, 0.0, fw, fh, 0.0)];
+        self.glass_bar.set("mide-bar", if glass { &strip } else { &[] });
         if !self.over_launcher {
+            let (top_a, bottom_a) = if glass { (178, 170) } else { (225, 220) };
             let mut paint = Paint::default();
-            paint.shader = vertical_gradient(0.0, fh, rgba(250, 250, 252, 225), rgba(238, 238, 242, 220));
+            paint.shader = vertical_gradient(0.0, fh, rgba(250, 250, 252, top_a), rgba(238, 238, 242, bottom_a));
             if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, fw, fh) {
                 pixmap.fill_rect(rect, &paint, Transform::identity(), None);
             }
@@ -723,7 +734,13 @@ impl Bar {
             let spread = 6.0 - i as f32;
             fill_rounded(&mut pixmap, mx - spread, top - spread + 3.0, mw + 2.0 * spread, ph + 2.0 * spread, 10.0 + spread, rgba(0, 0, 0, 6));
         }
-        fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(246, 246, 248, 240));
+        let glass = mide::control_client::panel_glass();
+        let panel = [(mx, top, mw, ph, 10.0)];
+        self.glass_menu.set("mide-bar-menu", if glass { &panel } else { &[] });
+        if glass {
+            mide::ui::draw::clear_rounded(&mut pixmap, mx, top, mw, ph, 10.0);
+        }
+        fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(246, 246, 248, if glass { 200 } else { 240 }));
         if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, 10.0) {
             let mut border = Paint::default();
             border.set_color(rgba(0, 0, 0, 40));
@@ -953,7 +970,13 @@ impl Bar {
             let spread = 6.0 - i as f32;
             fill_rounded(&mut pixmap, px - spread, top - spread + 3.0, pw + 2.0 * spread, ph + 2.0 * spread, 12.0 + spread, rgba(0, 0, 0, 6));
         }
-        fill_rounded(&mut pixmap, px, top, pw, ph, 12.0, rgba(246, 246, 248, 242));
+        let glass = mide::control_client::panel_glass();
+        let panel = [(px, top, pw, ph, 12.0)];
+        self.glass_menu.set("mide-bar-menu", if glass { &panel } else { &[] });
+        if glass {
+            mide::ui::draw::clear_rounded(&mut pixmap, px, top, pw, ph, 12.0);
+        }
+        fill_rounded(&mut pixmap, px, top, pw, ph, 12.0, rgba(246, 246, 248, if glass { 205 } else { 242 }));
         if let Some(path) = rounded_rect(px + 0.5, top + 0.5, pw - 1.0, ph - 1.0, 12.0) {
             let mut border = Paint::default();
             border.set_color(rgba(0, 0, 0, 40));

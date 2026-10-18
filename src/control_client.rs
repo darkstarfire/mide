@@ -29,3 +29,33 @@ pub fn ask_compositor(command: &str) -> Option<Vec<String>> {
     }
     Some(lines)
 }
+
+/// Regiões de vidro de uma camada (barra, menus, notificações). Cada camada guarda o
+/// último pedido aqui e só avisa o compositor quando muda.
+#[derive(Default)]
+pub struct Glass {
+    last: Option<String>,
+}
+
+impl Glass {
+    /// Pede vidro atrás de `rects` (x, y, largura, altura, raio), relativos à camada
+    /// `namespace`. Lista vazia limpa.
+    pub fn set(&mut self, namespace: &str, rects: &[(f32, f32, f32, f32, f32)]) {
+        let mut command = format!("glass {namespace}");
+        for (x, y, w, h, r) in rects {
+            command.push_str(&format!(" {r}:{},{},{},{}", x.round(), y.round(), w.round(), h.round()));
+        }
+        if self.last.as_deref() == Some(command.as_str()) {
+            return;
+        }
+        if ask_compositor(&command).is_some() {
+            self.last = Some(command);
+        }
+    }
+}
+
+/// O vidro das barras e menus está ligado nas Configurações? Sem ele, os painéis
+/// usam o fundo claro quase opaco de antes.
+pub fn panel_glass() -> bool {
+    crate::settings_file::effect("panel_glass")
+}

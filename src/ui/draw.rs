@@ -33,6 +33,17 @@ pub fn fill_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32,
     }
 }
 
+/// Apaga (deixa transparente) um retângulo de cantos arredondados: tira a sombra de
+/// baixo de um painel translúcido antes de pintá-lo (senão o vidro fica acinzentado).
+pub fn clear_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32) {
+    if let Some(path) = rounded_rect(x, y, w, h, r) {
+        let mut paint = Paint::default();
+        paint.blend_mode = tiny_skia::BlendMode::Clear;
+        paint.anti_alias = true;
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
 /// Gradiente vertical de `top` (em `y0`) até `bottom` (em `y1`).
 pub fn vertical_gradient(y0: f32, y1: f32, top: Color, bottom: Color) -> Shader<'static> {
     LinearGradient::new(

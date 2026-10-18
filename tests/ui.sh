@@ -330,6 +330,21 @@ export XDG_CONFIG_HOME="$OLD_SCFG"
 unset MIDE_WINIT_SIZE
 rm -rf "$SCFG"
 
+echo "== vidro em barras e menus"
+check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"
+check "menu da barra sobre vidro" 'vidro: desfoque refeito \(mide-bar-menu#0\)' "300 click 25 14; 360 list"
+check "menu da dock sobre vidro" 'vidro: desfoque refeito \(mide-dock-menu#0\)' "300 rclick 516 560; 360 list"
+GCFG="$(mktemp -d)"
+mkdir -p "$GCFG/mide"
+printf '[effects]\npanel_glass = false\n' >"$GCFG/mide/config.toml"
+GLOG="$(XDG_CONFIG_HOME="$GCFG" timeout 150 "$SCEN" "300 click 25 14; 360 list" 2>&1)"
+if ! echo "$GLOG" | grep -q 'camada "mide-bar"' || echo "$GLOG" | grep -q "vidro: desfoque refeito (mide-bar"; then
+    echo "FALHA sem vidro na barra e nos menus com o efeito desligado"; FAIL=$((FAIL + 1))
+else
+    echo "ok    sem vidro na barra e nos menus com o efeito desligado"; PASS=$((PASS + 1))
+fi
+rm -rf "$GCFG"
+
 # Arquivos (mide-files) numa pasta de exemplo recriada a cada cenário. Janela em
 # (48, 76): grade com Documentos antigos (345, 190), Fotos (463, 190), Projetos
 # (581, 190); na 2ª linha "por do sol.png" (345, 310), praia.jpg (463, 310) e
