@@ -330,6 +330,16 @@ export XDG_CONFIG_HOME="$OLD_SCFG"
 unset MIDE_WINIT_SIZE
 rm -rf "$SCFG"
 
+echo "== buscador (ctrl+space)"
+SEARCH="400 combo ctrl+space"
+check "ctrl+space abre o buscador em tela cheia" 'camada "mide-search" em \(0, 0\) 800x600' "$SEARCH; 460 list"
+check "buscador sobre vidro" 'vidro: desfoque refeito \(mide-search#0\)' "$SEARCH; 440 type calc; 480 list"
+check "buscar e Enter abre o app" "nova janela criada" "$SEARCH; 440 type calc; 470 key enter; 600 list"
+check_count "Esc fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 key esc; 490 list"
+check_count "o atalho de novo fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 combo ctrl+space; 490 list"
+check_count "clique fora do painel fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 click 60 560; 490 list"
+check_count "abrir um app pelo buscador fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 440 type calc; 470 key enter; 600 list"
+
 echo "== vidro em barras e menus"
 check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"
 check "menu da barra sobre vidro" 'vidro: desfoque refeito \(mide-bar-menu#0\)' "300 click 25 14; 360 list"

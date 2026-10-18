@@ -146,6 +146,34 @@ Window::new("Meu App")      // título; o id vira "meu-app"
 Para o app aparecer no launcher e poder ser fixado na dock, instale um arquivo
 `.desktop` com o mesmo id em `StartupWMClass`.
 
+## Camadas e painéis de vidro
+
+Um app pode ser uma **camada** por cima de tudo (como o buscador do mide), em vez de
+janela: transparente, na tela inteira e com o teclado só para ela.
+
+```rust
+run(Window::new("Buscar").overlay("meu-painel"), MeuPainel::default())
+```
+
+Dentro dela, `ui.glass_panel` desenha um painel com o vidro do mide (o compositor
+desfoca o que está atrás e aplica o vidro líquido) e a altura acompanha o conteúdo:
+
+```rust
+let (_, _, w, h) = ui.region();
+ui.glass_panel((w - 600.0) / 2.0, h * 0.2, 600.0, 18.0, |ui| {
+    ui.text_input(&mut self.busca, "Buscar");
+    for (i, r) in self.resultados.iter().enumerate() {
+        if ui.result_row(&r.icone, &r.titulo, &r.tipo, i == self.escolhido).clicked() {
+            ui.close();   // fecha o app
+        }
+    }
+});
+```
+
+Ícones são carregados em segundo plano: o componente aparece sem o ícone por um
+instante e o ícone surge assim que fica pronto. Para já ter os ícones na primeira
+vez, carregue numa thread e entregue com `ui.provide_icon(nome, tamanho, imagem)`.
+
 ## Tema
 
 Cores, cantos, fontes e espaçamentos ficam em `Theme`. Para mudar só a cor de
@@ -179,6 +207,7 @@ cargo run --example mide-ui-demo
 - Tema escuro pronto e troca automática com o sistema.
 - Campo de texto com cursor no meio, seleção e colar.
 - Diálogos e seletor de arquivos como componentes.
+- Vidro em janelas comuns (hoje, só em camadas).
 - Seleção múltipla e arrastar e soltar entre componentes.
 - Animações dos componentes (o interruptor deslizando).
 - Toque na tela (gestos) e acessibilidade.

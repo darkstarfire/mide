@@ -27,6 +27,7 @@ use smithay_client_toolkit::{
         Capability, SeatHandler, SeatState,
     },
     shell::{
+        wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure},
         xdg::{
             window::{Window as XdgWindow, WindowConfigure, WindowDecorations, WindowHandler},
             XdgShell,
@@ -57,6 +58,8 @@ pub struct Window {
     pub size: (u32, u32),
     pub min_size: (u32, u32),
     pub theme: Theme,
+    /// Camada por cima de tudo (`Window::overlay`), em vez de janela comum.
+    pub overlay: Option<String>,
 }
 
 impl Window {
@@ -68,7 +71,16 @@ impl Window {
             size: (640, 480),
             min_size: (360, 240),
             theme: Theme::default(),
+            overlay: None,
         }
+    }
+
+    /// Em vez de janela, uma camada transparente por cima de tudo, na tela inteira e
+    /// com o teclado só para ela (buscador, painéis). `namespace` é o nome da camada
+    /// (também usado para o vidro). O app desenha o que quiser e fecha com `ui.close()`.
+    pub fn overlay(mut self, namespace: &str) -> Self {
+        self.overlay = Some(namespace.into());
+        self
     }
 
     pub fn app_id(mut self, id: &str) -> Self {
@@ -100,15 +112,29 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     let (globals, event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();
     let compositor = CompositorState::bind(&globals, &qh)?;
-    let xdg_shell = XdgShell::bind(&globals, &qh)?;
     let shm = Shm::bind(&globals, &qh)?;
 
     let surface = compositor.create_surface(&qh);
-    let xdg = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &qh);
-    xdg.set_title(window.title.clone());
-    xdg.set_app_id(window.app_id.clone());
-    xdg.set_min_size(Some(window.min_size));
-    xdg.commit();
+    let shell = match &window.overlay {
+        Some(namespace) => {
+            let layer_shell = LayerShell::bind(&globals, &qh)?;
+            let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some(namespace.clone()), None);
+            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            layer.commit();
+            Shell::Layer(layer, namespace.clone())
+        }
+        None => {
+            let xdg_shell = XdgShell::bind(&globals, &qh)?;
+            let xdg = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &qh);
+            xdg.set_title(window.title.clone());
+            xdg.set_app_id(window.app_id.clone());
+            xdg.set_min_size(Some(window.min_size));
+            xdg.commit();
+            Shell::Xdg(xdg)
+        }
+    };
 
     let mut runner = Runner {
         registry_state: RegistryState::new(&globals),
@@ -116,7 +142,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         output_state: OutputState::new(&globals, &qh),
         pool: SlotPool::new((window.size.0 * window.size.1 * 4) as usize, &shm)?,
         shm,
-        xdg,
+        shell,
+        glass: Default::default(),
         pointer: None,
         keyboard: None,
         size: window.size,
@@ -153,13 +180,37 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+/// A superfície do app: janela comum ou camada (com o nome dela).
+enum Shell {
+    Xdg(XdgWindow),
+    Layer(LayerSurface, String),
+}
+
+impl Shell {
+    fn wl_surface(&self) -> &wl_surface::WlSurface {
+        match self {
+            Shell::Xdg(w) => w.wl_surface(),
+            Shell::Layer(l, _) => l.wl_surface(),
+        }
+    }
+
+    fn commit(&self) {
+        match self {
+            Shell::Xdg(w) => w.commit(),
+            Shell::Layer(l, _) => l.commit(),
+        }
+    }
+}
+
 struct Runner {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
     shm: Shm,
     pool: SlotPool,
-    xdg: XdgWindow,
+    shell: Shell,
+    /// Vidro pedido ao compositor (só em camadas).
+    glass: crate::control_client::Glass,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     size: (u32, u32),
@@ -183,7 +234,10 @@ impl Runner {
             let Some(mut canvas) = Pixmap::new(self.size.0, self.size.1) else {
                 return;
             };
-            canvas.fill(color(self.ctx.theme.background));
+            // Camadas são transparentes: o app desenha só os painéis.
+            if matches!(self.shell, Shell::Xdg(_)) {
+                canvas.fill(color(self.ctx.theme.background));
+            }
             self.ctx.begin_frame();
             {
                 let mut ui = Ui::root(&mut canvas, &mut self.ctx);
@@ -195,7 +249,9 @@ impl Runner {
             }
             if let Some(title) = self.ctx.title.take() {
                 if title != self.title {
-                    self.xdg.set_title(title.clone());
+                    if let Shell::Xdg(xdg) = &self.shell {
+                        xdg.set_title(title.clone());
+                    }
                     self.title = title;
                 }
             }
@@ -209,16 +265,25 @@ impl Runner {
         let Some(pixmap) = pixmap else {
             return;
         };
+        if self.ctx.close_requested {
+            self.exit = true;
+            return;
+        }
+        // Painéis de vidro (`ui.glass_panel`): o compositor desenha o vidro atrás.
+        if let Shell::Layer(_, namespace) = &self.shell {
+            let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
+            self.glass.set(namespace, &rects);
+        }
         let (w, h) = self.size;
         let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
             return;
         };
         to_argb8888(&pixmap, canvas);
         tracing::debug!("quadro do app: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
-        let surface = self.xdg.wl_surface();
+        let surface = self.shell.wl_surface();
         surface.damage_buffer(0, 0, w as i32, h as i32);
         if buffer.attach_to(surface).is_ok() {
-            self.xdg.commit();
+            self.shell.commit();
         }
     }
 }
@@ -258,6 +323,21 @@ impl WindowHandler for Runner {
     }
 }
 
+impl LayerShellHandler for Runner {
+    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
+        self.exit = true;
+    }
+
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface, configure: LayerSurfaceConfigure, _: u32) {
+        let (w, h) = configure.new_size;
+        if w > 0 && h > 0 {
+            self.size = (w, h);
+        }
+        self.configured = true;
+        self.dirty = true;
+    }
+}
+
 impl SeatHandler for Runner {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
@@ -290,7 +370,7 @@ impl PointerHandler for Runner {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
         const BTN_LEFT: u32 = 0x110;
         for event in events {
-            if &event.surface != self.xdg.wl_surface() {
+            if &event.surface != self.shell.wl_surface() {
                 continue;
             }
             let pos = (event.position.0 as f32, event.position.1 as f32);

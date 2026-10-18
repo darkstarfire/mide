@@ -188,6 +188,7 @@ fn run_action(state: &mut State, action: Action) {
         Action::Launch(command) => spawn(&command),
         Action::RestoreMinimized => state.restore_minimized(),
         Action::ToggleLauncher => state.toggle_launcher(),
+        Action::ToggleSearch => state.toggle_search(),
         Action::Quit => {
             tracing::info!("encerrando por atalho");
             state.quit_requested = true;

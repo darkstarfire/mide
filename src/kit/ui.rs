@@ -159,6 +159,12 @@ pub struct Ctx {
     next_id: u64,
     /// Ícones do tema já carregados (compartilhados: desenhar não copia a imagem).
     icons: HashMap<String, Option<std::rc::Rc<Pixmap>>>,
+    /// Carregamento de ícones numa thread: pedidos (chave, de app?, nomes, tamanho),
+    /// resultados e os que ainda estão carregando. Carregar e rasterizar um SVG leva
+    /// milissegundos; desenhar não pode esperar por isso.
+    icon_jobs: Option<std::sync::mpsc::Sender<(String, bool, Vec<String>, u32)>>,
+    icon_done: Option<std::sync::mpsc::Receiver<(String, Option<Pixmap>)>>,
+    icon_pending: std::collections::HashSet<String>,
     /// Camada por cima de tudo (menus de contexto) e o tamanho da janela.
     overlay: Option<Pixmap>,
     window: (u32, u32),
@@ -168,6 +174,10 @@ pub struct Ctx {
     pub ticking: bool,
     /// Título pedido pelo app (`Ui::set_title`), aplicado pela janela.
     pub title: Option<String>,
+    /// Painéis de vidro deste quadro (x, y, largura, altura, raio), na janela.
+    pub glass: Vec<(f32, f32, f32, f32, f32)>,
+    /// O app pediu para fechar (`Ui::close`).
+    pub close_requested: bool,
 }
 
 impl Ctx {
@@ -180,12 +190,55 @@ impl Ctx {
             repaint: false,
             next_id: 1,
             icons: HashMap::new(),
+            icon_jobs: None,
+            icon_done: None,
+            icon_pending: std::collections::HashSet::new(),
             overlay: None,
             window: (0, 0),
             hover_claimed: false,
             ticking: false,
             title: None,
+            glass: Vec::new(),
+            close_requested: false,
         }
+    }
+
+    /// Ícone pelo nome (ou o primeiro que existir de `names`), no tamanho pedido. Se
+    /// ainda não foi carregado, pede à thread de ícones e devolve `None` (o componente
+    /// desenha sem ícone e o ícone aparece num dos próximos quadros). `app`: nome de
+    /// ícone de app (procura também no tema `hicolor` e aceita caminhos de arquivo).
+    fn icon(&mut self, names: &[&str], size: u32, app: bool) -> Option<std::rc::Rc<Pixmap>> {
+        let key = format!("{}{}@{size}", if app { "app:" } else { "" }, names.first().copied().unwrap_or(""));
+        if let Some(icon) = self.icons.get(&key) {
+            return icon.clone();
+        }
+        if self.icon_pending.contains(&key) {
+            return None;
+        }
+        if self.icon_jobs.is_none() {
+            let (jobs, rx) = std::sync::mpsc::channel::<(String, bool, Vec<String>, u32)>();
+            let (tx, done) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                for (key, app, names, size) in rx {
+                    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                    let icon = if app {
+                        crate::icons::load_icon(refs[0], size).or_else(|| crate::icons::load_themed_icon(&refs[1..], size))
+                    } else {
+                        crate::icons::load_themed_icon(&refs, size)
+                    };
+                    if tx.send((key, icon)).is_err() {
+                        break;
+                    }
+                }
+            });
+            self.icon_jobs = Some(jobs);
+            self.icon_done = Some(done);
+        }
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        if self.icon_jobs.as_ref().is_some_and(|jobs| jobs.send((key.clone(), app, names, size)).is_ok()) {
+            self.icon_pending.insert(key);
+        }
+        None
     }
 
     /// Camada de cima (menus) deste quadro, se houver.
@@ -199,6 +252,15 @@ impl Ctx {
         self.repaint = false;
         self.hover_claimed = false;
         self.ticking = false;
+        self.glass.clear();
+        // Ícones que ficaram prontos; enquanto houver algum carregando, mais quadros.
+        if let Some(done) = &self.icon_done {
+            while let Ok((key, icon)) = done.try_recv() {
+                self.icon_pending.remove(&key);
+                self.icons.insert(key, icon.map(std::rc::Rc::new));
+            }
+        }
+        self.ticking = !self.icon_pending.is_empty();
         self.memory.menu_drawn = false;
         self.overlay = None;
         if self.input.key(Key::Escape) && self.memory.menu.is_some() {
@@ -397,6 +459,85 @@ impl<'a> Ui<'a> {
             id,
             ..Default::default()
         }
+    }
+
+    /// Entrega um ícone já carregado (por exemplo, numa thread do app) para os
+    /// componentes que usam `nome` nesse tamanho: assim eles não carregam o ícone na
+    /// hora de desenhar (carregar e rasterizar um SVG leva milissegundos).
+    pub fn provide_icon(&mut self, name: &str, size: u32, icon: Option<Pixmap>) {
+        let icon = icon.map(std::rc::Rc::new);
+        self.ctx.icons.insert(format!("app:{name}@{size}"), icon.clone());
+        self.ctx.icons.insert(format!("{name}@{size}"), icon);
+    }
+
+    /// Fecha o app (por exemplo, o buscador depois de abrir um resultado).
+    pub fn close(&mut self) {
+        self.ctx.close_requested = true;
+    }
+
+    /// Painel de vidro em (`x`, `y`) com `width` de largura: o conteúdo é montado no
+    /// `add` (em coluna) e a altura do painel acompanha. Atrás dele vai o vidro do
+    /// mide (desfoque e vidro líquido, desenhados pelo compositor) quando o app é uma
+    /// camada (`Window::overlay`) e o efeito está ligado; senão, só o fundo claro.
+    /// Devolve o retângulo do painel.
+    pub fn glass_panel(&mut self, x: f32, y: f32, width: f32, radius: f32, add: impl FnOnce(&mut Ui)) -> (f32, f32, f32, f32) {
+        // Margem interna de 10 px em volta do conteúdo.
+        let pad = 10.0;
+        let max_h = (self.visible.1 - y).max(1.0);
+        let (inner, used) = self.sub_area(x + pad, y + pad, width - 2.0 * pad, max_h - 2.0 * pad, y + pad, add);
+        let h = ((used - self.ctx.theme.spacing).max(0.0) + 2.0 * pad).min(max_h);
+        let glass = crate::control_client::panel_glass();
+        // Sombra só na faixa de fora e o véu escrito direto (sem misturar no miolo):
+        // painéis grandes continuam baratos.
+        crate::ui::draw::soft_shadow(self.canvas, x, y, width, h, radius, 16.0, 6.0, 60);
+        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [248, 248, 250, if glass { 196 } else { 246 }]);
+        if let Some(path) = rounded_rect(x + 0.5, y + 0.5, width - 1.0, h - 1.0, radius) {
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(color([255, 255, 255, 90]));
+            self.canvas.stroke_path(&path, &paint, &Stroke::default(), Transform::identity(), None);
+        }
+        let rows = ((h - 2.0 * pad).ceil().max(1.0) as u32).min(inner.height());
+        if let Some(part) = tiny_skia::IntRect::from_xywh(0, 0, inner.width(), rows).and_then(|r| inner.clone_rect(r)) {
+            crate::ui::draw::blit(self.canvas, &part, (x + pad) as i32, (y + pad) as i32, 1.0);
+        }
+        self.ctx.glass.push((self.offset.0 + x, self.offset.1 + y, width, h, radius));
+        self.cursor_y = self.cursor_y.max(y + h + self.ctx.theme.spacing);
+        (x, y, width, h)
+    }
+
+    /// Linha de resultado (buscador): ícone de 28 px, título, detalhe cinza à
+    /// direita; selecionada, na cor de destaque. O ícone pode ser nome do tema, de app
+    /// ou caminho de arquivo.
+    pub fn result_row(&mut self, icon: &str, title: &str, detail: &str, selected: bool) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(None, 44.0);
+        // Resultados ficam colados uns nos outros (lista do buscador).
+        if self.flow == Flow::Column {
+            self.cursor_y -= t.spacing - 2.0;
+        }
+        let r = self.interact(id, rect);
+        if !self.visible(rect) {
+            return r;
+        }
+        if selected {
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 9.0, color(t.accent));
+        } else if r.hovered {
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 9.0, color(t.hover));
+        }
+        let pix = self.ctx.icon(&[icon, "application-x-executable", "text-x-generic"], 28, true);
+        if let Some(pix) = pix {
+            crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 10.0) as i32, (rect.1 + 8.0) as i32, 1.0);
+        }
+        let (main, side) = if selected { (t.on_accent, [230, 236, 255, 255]) } else { (t.text, t.text_secondary) };
+        let dw = if detail.is_empty() { 0.0 } else { self.measure(detail, t.font_small, FontWeight::Regular) + 16.0 };
+        let shown = self.fit(title, t.font + 1.0, FontWeight::Regular, (rect.2 - 56.0 - dw).max(0.0));
+        self.draw_text(&shown, rect.0 + 48.0, rect.1 + (44.0 - (t.font + 1.0) * 1.25) / 2.0, t.font + 1.0, FontWeight::Regular, main);
+        if !detail.is_empty() {
+            self.draw_text(detail, rect.0 + rect.2 - dw + 4.0, rect.1 + (44.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, side);
+        }
+        r
     }
 
     /// Troca o título da janela (por exemplo, o nome da pasta aberta).
@@ -819,12 +960,7 @@ impl<'a> Ui<'a> {
 
     /// Ícone do tema do usuário pelo nome (por exemplo, "folder" ou "audio-volume-high").
     pub fn icon(&mut self, name: &str, size: u32) {
-        let icon = self
-            .ctx
-            .icons
-            .entry(format!("{name}@{size}"))
-            .or_insert_with(|| crate::icons::load_themed_icon(&[name], size).map(std::rc::Rc::new))
-            .clone();
+        let icon = self.ctx.icon(&[name], size, false);
         let rect = self.alloc(Some(size as f32), size as f32);
         if let Some(icon) = icon {
             crate::ui::draw::blit(self.canvas, &icon, rect.0 as i32, rect.1 as i32, 1.0);
@@ -855,8 +991,7 @@ impl<'a> Ui<'a> {
                 crate::ui::draw::blit(self.canvas, pix, dx as i32, dy as i32, 1.0);
             }
             Tile::Icon(name) => {
-                let key = format!("{name}@{size}");
-                let icon = self.ctx.icons.entry(key).or_insert_with(|| crate::icons::load_themed_icon(&[name, "text-x-generic"], size).map(std::rc::Rc::new)).clone();
+                let icon = self.ctx.icon(&[name, "text-x-generic"], size, false);
                 if let Some(icon) = icon {
                     crate::ui::draw::blit(self.canvas, &icon, ix as i32, iy as i32, 1.0);
                 }
@@ -889,8 +1024,7 @@ impl<'a> Ui<'a> {
         } else if r.hovered {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 6.0, color(t.hover));
         }
-        let key = format!("{icon}@20");
-        let pix = self.ctx.icons.entry(key).or_insert_with(|| crate::icons::load_themed_icon(&[icon, "text-x-generic"], 20).map(std::rc::Rc::new)).clone();
+        let pix = self.ctx.icon(&[icon, "text-x-generic"], 20, false);
         if let Some(pix) = pix {
             crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 4.0) as i32, 1.0);
         }
@@ -923,17 +1057,18 @@ impl<'a> Ui<'a> {
         } else if enabled && r.hovered {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.hover));
         }
-        let key = format!("{icon}@16");
-        let pix = self.ctx.icons.entry(key).or_insert_with(|| crate::icons::load_themed_icon(&[icon], 16).map(std::rc::Rc::new)).clone();
+        let pix = self.ctx.icon(&[icon], 16, false);
         match pix {
             Some(pix) => {
                 crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 6.0) as i32, if enabled { 1.0 } else { 0.35 });
             }
-            None => {
+            // Texto de reserva só se o ícone não existe (não enquanto carrega).
+            None if self.ctx.icons.contains_key(&format!("{icon}@16")) => {
                 let c = if enabled { t.text } else { t.text_secondary };
                 let fw = self.measure(fallback, 16.0, FontWeight::Semibold);
                 self.draw_text(fallback, rect.0 + (32.0 - fw) / 2.0, rect.1 + 3.0, 16.0, FontWeight::Semibold, c);
             }
+            None => {}
         }
         r
     }
@@ -1197,8 +1332,7 @@ impl<'a> Ui<'a> {
             } else if r.hovered {
                 fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.control));
             }
-            let key = format!("{icon}@20");
-            let pix = self.ctx.icons.entry(key).or_insert_with(|| crate::icons::load_themed_icon(&[icon], 20).map(std::rc::Rc::new)).clone();
+            let pix = self.ctx.icon(&[icon], 20, false);
             if let Some(pix) = pix {
                 crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 10.0) as i32, (rect.1 + 5.0) as i32, 1.0);
             }
@@ -1525,6 +1659,49 @@ mod tests {
         medir("20 textos", &mut |ui| {
             for n in names.iter().take(20) {
                 ui.strong(n);
+            }
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn bancada_painel_de_vidro() {
+        let mut ctx = Ctx::new(Theme::default());
+        let mut canvas = Pixmap::new(1366, 768).unwrap();
+        let mut q = String::from("cal");
+        let mut medir = |nome: &str, ctx: &mut Ctx, view: &mut dyn FnMut(&mut Ui)| {
+            for _ in 0..3 {
+                ctx.begin_frame();
+                view(&mut Ui::root(&mut canvas, ctx));
+                ctx.end_frame();
+            }
+            let t = std::time::Instant::now();
+            for _ in 0..10 {
+                ctx.begin_frame();
+                view(&mut Ui::root(&mut canvas, ctx));
+                ctx.end_frame();
+            }
+            println!("{nome}: {:.2} ms", t.elapsed().as_secs_f32() * 1e3 / 10.0);
+        };
+        medir("painel vazio", &mut ctx, &mut |ui| {
+            ui.glass_panel(343.0, 154.0, 680.0, 18.0, |_| {});
+        });
+        medir("painel com campo", &mut ctx, &mut |ui| {
+            ui.glass_panel(343.0, 154.0, 680.0, 18.0, |ui| {
+                ui.text_input(&mut q, "Buscar");
+            });
+        });
+        medir("painel com 8 linhas", &mut ctx, &mut |ui| {
+            ui.glass_panel(343.0, 154.0, 680.0, 18.0, |ui| {
+                ui.text_input(&mut q, "Buscar");
+                for i in 0..8 {
+                    ui.result_row("text-x-generic", &format!("Resultado {i}"), "Aplicativo", i == 0);
+                }
+            });
+        });
+        medir("8 linhas sem painel", &mut ctx, &mut |ui| {
+            for i in 0..8 {
+                ui.result_row("text-x-generic", &format!("Resultado {i}"), "Aplicativo", i == 0);
             }
         });
     }

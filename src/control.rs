@@ -11,6 +11,7 @@
 //!   por vírgula, retângulo relativo à dock). Usado pelo efeito lâmpada.
 //! - `mods`: teclas modificadoras pressionadas agora (`ctrl`, `shift`, `alt`, `logo`).
 //! - `quit`: encerra o compositor (menu "Encerrar sessão" da barra).
+//! - `search`: abre ou fecha o buscador.
 //! - `glass <camada> raio:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
 //!   líquido) atrás desses retângulos, relativos a ela; sem regiões, limpa.
 
@@ -173,6 +174,11 @@ pub fn handle(state: &mut State, command: &str) -> String {
             } else {
                 state.glass.insert(namespace.to_string(), regions);
             }
+            "ok\n".into()
+        }
+        // Abre ou fecha o buscador.
+        Some("search") => {
+            state.toggle_search();
             "ok\n".into()
         }
         Some("launcher") => match words.next() {

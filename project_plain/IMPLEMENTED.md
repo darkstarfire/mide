@@ -662,3 +662,26 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Configurações → Efeitos → "Vidro em barras e menus"** (`[effects] panel_glass`, ligado por padrão). A força do vidro líquido segue a chave "Vidro líquido".
 - Desempenho: compositor ~0,27 ms por quadro (antes ~0,25); com a tela parada, cada região é refeita só ao aparecer.
 - Próximo uso: o buscador nativo (B11) e `ui.glass_panel` no mide-ui vão pedir vidro do mesmo jeito.
+
+## Buscador do mide (B11), estilo Spotlight, sobre vidro líquido
+
+- Novo app **`mide-search`**, feito com o mide-ui: barra flutuante centralizada (a 20% do topo) sobre o vidro do mide, aberta com **`ctrl+space`** (ação `toggle_search` no `config.toml`, ou `search` no canal de controle). Substitui o buscador de terceiros.
+- Encontra, na ordem:
+  - **contas** (`2+3*4`, `(3,5*4)/2`, `2^10`; Enter copia o resultado);
+  - **apps** (os que têm uma palavra começando pela busca vêm primeiro);
+  - **seções das Configurações** (pelo nome e por palavras-chave: "volume" acha Som);
+  - apps que só casam no meio da palavra;
+  - **arquivos e pastas** das pastas pessoais (palavra começando pela busca, como o Spotlight).
+- Até 8 resultados com ícone, título e detalhe (tipo ou pasta). Setas escolhem, Enter abre, Esc fecha, o atalho de novo fecha, clique fora fecha, e abrir um resultado fecha o buscador.
+- O índice de arquivos (até 4 níveis nas pastas pessoais, 20 mil itens, sem ocultos) e os ícones dos apps são carregados em segundo plano: a barra abre na hora.
+- Lógica sem interface em `mide::search` (contas, números em português, índice e busca de arquivos, seções das Configurações), com testes.
+- Desempenho (1366x768): quadro de 7,7 ms (p95 19 ms) e resposta à tecla de 8,3 ms (p95 15 ms). Antes das otimizações abaixo: 37 ms (p95 108 ms) e 23 ms.
+
+## mide-ui (D1, parte 3)
+
+- **`Window::overlay(nome)`**: o app vira uma camada transparente por cima de tudo, na tela inteira e com o teclado só para ela (buscador, painéis).
+- **`ui.glass_panel(x, y, largura, raio, |ui| ...)`**: painel com o vidro do mide (desfoque e vidro líquido desenhados pelo compositor atrás dele, em camadas), sombra e véu claro; a altura acompanha o conteúdo.
+- **`ui.result_row(ícone, título, detalhe, selecionada)`**: linha de resultado com ícone de 28 px (nome do tema, de app ou caminho).
+- **`ui.close()`** fecha o app; **`ui.provide_icon(...)`** entrega ícones carregados pelo app.
+- **Ícones assíncronos:** os componentes pedem o ícone a uma thread e desenham sem ele até ficar pronto (carregar um SVG leva milissegundos). Vale para o Arquivos também.
+- Desenho rápido de painéis: `mide::ui::draw::paint_rounded_solid` (véu escrito linha a linha, só a borda mistura) e `soft_shadow` (sombra calculada nos pixels da faixa de fora). Painel de vidro com 8 linhas: 25 → 3,4 ms.

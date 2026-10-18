@@ -44,6 +44,122 @@ pub fn clear_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32
     }
 }
 
+/// Pinta um retângulo de cantos arredondados com uma cor sólida, *substituindo* o que
+/// havia por baixo (como `clear_rounded` seguido de `fill_rounded`, bem mais rápido em
+/// áreas grandes): cada linha é escrita direto, com a extensão calculada pelo canto, e
+/// só os pixels da borda misturam (antisserrilhado). `rgba` não premultiplicado.
+pub fn paint_rounded_solid(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, rgba: [u8; 4]) {
+    let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let k = rgba[3] as f32 / 255.0;
+    let solid = |cov: f32| {
+        let a = k * cov;
+        tiny_skia::PremultipliedColorU8::from_rgba(
+            (rgba[0] as f32 * a).round() as u8,
+            (rgba[1] as f32 * a).round() as u8,
+            (rgba[2] as f32 * a).round() as u8,
+            (255.0 * a).round() as u8,
+        )
+        .unwrap()
+    };
+    let full = solid(1.0);
+    let pixels = pixmap.pixels_mut();
+    let y0 = (y.floor() as i32).max(0);
+    let y1 = ((y + h).ceil() as i32).min(ph);
+    for row in y0..y1 {
+        // Cobertura vertical da linha (bordas de cima e de baixo fracionárias).
+        let (top, bottom) = (row as f32, row as f32 + 1.0);
+        let vcov = (bottom.min(y + h) - top.max(y)).clamp(0.0, 1.0);
+        if vcov <= 0.0 {
+            continue;
+        }
+        // Meia-largura recolhida pelo canto no centro da linha.
+        let cy = top + 0.5;
+        let dy = if cy < y + r { y + r - cy } else if cy > y + h - r { cy - (y + h - r) } else { 0.0 };
+        let inset = if dy > 0.0 { r - (r * r - dy.min(r) * dy.min(r)).sqrt() } else { 0.0 };
+        let (left, right) = (x + inset, x + w - inset);
+        let xa = (left.floor() as i32).max(0);
+        let xb = (right.ceil() as i32).min(pw);
+        let base = (row * pw) as usize;
+        for col in xa..xb {
+            let (cl, cr) = (col as f32, col as f32 + 1.0);
+            let hcov = (cr.min(right) - cl.max(left)).clamp(0.0, 1.0);
+            let cov = hcov * vcov;
+            let p = &mut pixels[base + col as usize];
+            if cov >= 0.999 {
+                *p = full;
+            } else if cov > 0.0 {
+                // Borda: substitui na proporção da cobertura (o que havia fica com o
+                // resto), como apagar e pintar com antisserrilhado.
+                let c = solid(cov);
+                let inv = ((1.0 - cov) * 255.0).round() as u32;
+                let mix = |s: u8, d: u8| (s as u32 + (d as u32 * inv + 127) / 255).min(255) as u8;
+                let a = mix(c.alpha(), p.alpha());
+                if let Some(out) = tiny_skia::PremultipliedColorU8::from_rgba(mix(c.red(), p.red()).min(a), mix(c.green(), p.green()).min(a), mix(c.blue(), p.blue()).min(a), a) {
+                    *p = out;
+                }
+            }
+        }
+    }
+}
+
+/// Sombra suave em volta de um retângulo arredondado, calculada direto nos pixels
+/// pela distância até a borda: só a faixa em volta é percorrida (o miolo, que o painel
+/// cobre, é pulado), então é barata mesmo em painéis grandes. `spread` é a largura da
+/// sombra, `drop` desce a sombra e `alpha` é a força perto da borda.
+pub fn soft_shadow(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, drop: f32, alpha: u8) {
+    let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let (hw, hh) = (w / 2.0, h / 2.0);
+    let (cx, cy) = (x + hw, y + hh + drop);
+    let sdf = |px: f32, py: f32| {
+        let (qx, qy) = ((px - cx).abs() - hw + r, (py - cy).abs() - hh + r);
+        // Fora dos cantos a distância é reta (sem raiz quadrada).
+        if qx <= 0.0 || qy <= 0.0 {
+            return qx.max(qy) - r;
+        }
+        qx.hypot(qy) - r
+    };
+    let x0 = ((x - spread).floor() as i32).max(0);
+    let x1 = ((x + w + spread).ceil() as i32).min(pw);
+    let y0 = ((y - spread + drop).floor() as i32).max(0);
+    let y1 = ((y + h + spread + drop).ceil() as i32).min(ph);
+    // O que o painel cobre (pulado): a faixa do meio na largura toda das linhas do
+    // painel, e as colunas longe dos cantos nas linhas de cima e de baixo dele.
+    let (in_x0, in_x1) = ((x + 1.0).ceil() as i32, (x + w - 1.0).floor() as i32);
+    let (mid_y0, mid_y1) = ((y + r).ceil() as i32, (y + h - r).floor() as i32);
+    let (cap_x0, cap_x1) = ((x + r).ceil() as i32, (x + w - r).floor() as i32);
+    let (cap_y0, cap_y1) = ((y + 1.0).ceil() as i32, (y + h - 1.0).floor() as i32);
+    let a = alpha as f32;
+    let pixels = pixmap.pixels_mut();
+    for row in y0..y1 {
+        let mut col = x0;
+        while col < x1 {
+            if row >= mid_y0 && row < mid_y1 && col >= in_x0 && col < in_x1 {
+                col = in_x1;
+                continue;
+            }
+            if row >= cap_y0 && row < cap_y1 && col >= cap_x0 && col < cap_x1 {
+                col = cap_x1;
+                continue;
+            }
+            let d = sdf(col as f32 + 0.5, row as f32 + 0.5);
+            let t = (1.0 - d.max(0.0) / spread).clamp(0.0, 1.0);
+            let sa = (a * t * t).round() as u32;
+            if sa > 0 {
+                let p = &mut pixels[(row * pw + col) as usize];
+                let inv = 255 - sa;
+                let k = |c: u8| ((c as u32 * inv + 127) / 255) as u8;
+                let out_a = (sa + (p.alpha() as u32 * inv + 127) / 255).min(255) as u8;
+                if let Some(c) = tiny_skia::PremultipliedColorU8::from_rgba(k(p.red()).min(out_a), k(p.green()).min(out_a), k(p.blue()).min(out_a), out_a) {
+                    *p = c;
+                }
+            }
+            col += 1;
+        }
+    }
+}
+
 /// Gradiente vertical de `top` (em `y0`) até `bottom` (em `y1`).
 pub fn vertical_gradient(y0: f32, y1: f32, top: Color, bottom: Color) -> Shader<'static> {
     LinearGradient::new(
@@ -180,6 +296,25 @@ pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pintura_solida_igual_a_apagar_e_preencher() {
+        let mut a = Pixmap::new(60, 40).unwrap();
+        a.fill(tiny_skia::Color::from_rgba8(30, 30, 30, 120));
+        let mut b = a.clone();
+        clear_rounded(&mut a, 5.0, 4.0, 48.0, 30.0, 9.0);
+        fill_rounded(&mut a, 5.0, 4.0, 48.0, 30.0, 9.0, tiny_skia::Color::from_rgba8(248, 248, 250, 196));
+        paint_rounded_solid(&mut b, 5.0, 4.0, 48.0, 30.0, 9.0, [248, 248, 250, 196]);
+        // Miolo idêntico. Nas bordas antisserrilhadas a pintura direta interpola pela
+        // cobertura; apagar e depois pintar (tiny-skia) reduz o fundo duas vezes, então
+        // ali a diferença pode chegar a ~25%.
+        let px = |p: &Pixmap, x: u32, y: u32| p.pixel(x, y).unwrap();
+        assert_eq!(px(&a, 30, 20), px(&b, 30, 20));
+        assert_eq!(px(&a, 2, 2), px(&b, 2, 2), "fora fica como estava");
+        for (p, q) in a.pixels().iter().zip(b.pixels()) {
+            assert!((p.alpha() as i32 - q.alpha() as i32).abs() <= 64, "{} vs {}", p.alpha(), q.alpha());
+        }
+    }
 
     #[test]
     fn blit_igual_ao_draw_pixmap() {

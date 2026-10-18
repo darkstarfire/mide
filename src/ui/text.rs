@@ -138,3 +138,24 @@ impl Text {
         (pixmap, -margin, -margin, width)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bancada: `cargo test --lib bancada_texto -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bancada_texto() {
+        let mut text = Text::new();
+        let mut pix = Pixmap::new(400, 40).unwrap();
+        text.draw(&mut pix, "aquecer", 0.0, 0.0, 14.0, FontWeight::Regular, [0, 0, 0, 255]);
+        let t = std::time::Instant::now();
+        for i in 0..40 {
+            let s = format!("Resultado número {i} — Configurações");
+            text.measure(&s, 14.0, FontWeight::Regular);
+            text.draw(&mut pix, &s, 0.0, 0.0, 14.0, FontWeight::Regular, [0, 0, 0, 255]);
+        }
+        println!("40 textos novos (medir + desenhar): {:.2} ms", t.elapsed().as_secs_f32() * 1e3);
+    }
+}

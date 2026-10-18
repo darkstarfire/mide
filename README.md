@@ -26,8 +26,10 @@ Configurações e Arquivos) são clientes Wayland próprios.
 - **Dock** com apps fixados e abertos, prévias das janelas, menus de contexto,
   Downloads e Lixeira, e fundo de **vidro líquido** desenhado na GPU (desfoque,
   refração nas bordas e reflexo).
-- **Barra superior** com menu do app, relógio com calendário, som, Wi-Fi e Bluetooth.
+- **Barra superior** translúcida com menu do app, relógio com calendário, som, Wi-Fi
+  e Bluetooth; menus e notificações também sobre vidro.
 - **Launcher** em tela cheia com busca, páginas, pastas e arrastar para organizar.
+- **Buscador** (`ctrl+space`): apps, ajustes, arquivos e contas, sobre vidro.
 - **Notificações** (`org.freedesktop.Notifications`).
 - **Configurações** (Wi-Fi, Bluetooth, som, papel de parede, dock, efeitos, atalhos).
 - **Arquivos**, gerenciador de arquivos com grade e lista, miniaturas, busca, menus de

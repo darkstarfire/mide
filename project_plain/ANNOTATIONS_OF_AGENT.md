@@ -169,3 +169,7 @@
 - **Anfitrião com auto-maximizar (GNOME/Zorin):** janelas grandes (1366x768 num monitor de 1920x1080) são maximizadas ao abrir. Testes usam janela fixa (`MIDE_WINIT_FIXED=1`, `with_resizable(false)`). Não mexer nas configurações do GNOME do usuário.
 - **Anfitrião para de pedir quadros com a janela escondida:** o laço do mide não pode depender só do `Redraw` do winit; o relógio de reserva (`backend_winit.rs`) cobre isso. As capturas (`MIDE_DUMP_FRAME`) ainda precisam da janela visível.
 - **Usuário tem dois monitores** (1920x1080 e 1280x1024).
+- **Atalho do buscador:** `ctrl+space` (Super é do anfitrião; alt+space é o menu de janela do GNOME). Se o anfitrião usar ctrl+space para trocar o método de entrada, mudar em `[keybindings]`.
+- **Custo dos painéis no tiny-skia:** preencher e traçar áreas grandes com antisserrilhado (sombra em anéis, apagar + pintar) custava ~20 ms num painel de 680x450. Escrever direto nos pixels (só a borda mistura) e calcular a sombra pela distância deixou em ~3 ms.
+- **Ícones na thread da interface travam a digitação:** sempre carregar em segundo plano (o mide-ui faz isso agora).
+- **Pendente no buscador:** prévia do arquivo/app à direita (como o Spotlight), grupos com títulos, histórico das últimas buscas, ícone de lupa na barra superior.

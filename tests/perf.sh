@@ -4,7 +4,7 @@
 # entradas (do clique/tecla/roda até o app enviar o quadro novo).
 #
 # Uso: tests/perf.sh            (todos os cenários)
-#      tests/perf.sh dock       (só um: desktop, dock, launcher, arquivos)
+#      tests/perf.sh dock       (só um: desktop, dock, launcher, buscador, arquivos)
 # Não rodar junto com tests/ui.sh nem durante uma compilação.
 set -u
 cd "$(dirname "$0")/.."
@@ -16,7 +16,7 @@ export MIDE_WINIT_SIZE=1366x768
 export XDG_CONFIG_HOME="$OUT/cfg"
 mkdir -p "$XDG_CONFIG_HOME"
 trap 'rm -rf "$OUT"' EXIT
-export RUST_LOG="mide=debug,mide_dock=debug,mide_launcher=debug,mide_files=debug,mide::kit=debug"
+export RUST_LOG="mide=debug,mide_dock=debug,mide_launcher=debug,mide_files=debug,mide_search=debug,mide::kit=debug"
 ONLY="${1:-}"
 
 # stats "rótulo" "regex com o número em ms": mediana, p95, máximo e quantidade.
@@ -56,6 +56,8 @@ run desktop "100 move 400 300; 400 list"
 run dock "100 move 568 728; 120 move 611 728; 140 move 654 728; 160 move 697 728; 180 move 756 728; 200 move 799 728; 260 rclick 799 728; 300 key esc; 400 list"
 # Launcher: abrir, trocar de página com a roda, buscar e fechar.
 run launcher "100 combo ctrl+shift+space; 180 wheel down; 220 wheel up; 260 type calc; 300 key esc; 330 key esc; 400 list"
+# Buscador: abrir, digitar letra a letra (cada tecla refaz a busca), descer e fechar.
+run buscador "100 combo ctrl+space; 160 type c; 170 type a; 180 type l; 190 type c; 220 key down; 240 key down; 260 key up; 300 key esc; 400 list"
 # Arquivos: navegar, menu de contexto, lista e voltar.
 FDIR="$OUT/pasta"
 mkdir -p "$FDIR"/{Fotos,Projetos,Docs}

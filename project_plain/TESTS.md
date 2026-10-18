@@ -426,3 +426,14 @@ Manual (o que o autoteste não cobre):
 - Barra superior translúcida, mostrando o papel de parede desfocado; menus da barra e da dock e notificações também.
 - Janela passando atrás da barra ou de um menu aberto: o desfoque acompanha.
 - Configurações → Efeitos → desligar "Vidro em barras e menus": barra e menus voltam ao fundo claro quase opaco.
+
+## Buscador (B11) — automáticos
+
+- `tests/ui.sh`: ctrl+space abre em tela cheia; buscador sobre vidro; buscar "calc" e Enter abre a calculadora; Esc fecha; o atalho de novo fecha; clique fora fecha; abrir um app fecha o buscador.
+- `cargo test`: `mide::search` (contas, números, índice e busca por começo de palavra, seções das Configurações, pasta curta), `ui::draw` (pintura sólida igual a apagar e pintar), `toggle_search` no config.
+- `tests/perf.sh buscador`: abrir, digitar letra a letra, setas e Esc.
+- Bancada: `cargo test --lib bancada_painel -- --ignored --nocapture`.
+
+## Buscador (B11) — manual
+
+- ctrl+space: a barra aparece sobre o vidro. Digitar "calc", "volume", "2+2", o nome de um arquivo da pasta Documentos. Setas e Enter; Esc ou clique fora fecham.

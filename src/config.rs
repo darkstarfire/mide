@@ -22,6 +22,8 @@ pub enum Action {
     RestoreMinimized,
     /// Abre o launcher em tela cheia, ou fecha se já estiver aberto.
     ToggleLauncher,
+    /// Abre o buscador (estilo Spotlight), ou fecha se já estiver aberto.
+    ToggleSearch,
 }
 
 /// Combinação de teclas já convertida, pronta para comparar com o input.
@@ -141,8 +143,9 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     // foot é nativo de Wayland e não depende de servidor compartilhado. Sem ele,
     // usa o terminal padrão do sistema.
     ("ctrl+shift+t", "launch:foot || x-terminal-emulator"),
-    // Buscador de programas externo, até o launcher próprio do mide (etapa B6).
     ("ctrl+shift+space", "toggle_launcher"),
+    // Buscador do mide (estilo Spotlight).
+    ("ctrl+space", "toggle_search"),
 ];
 
 /// Configuração carregada, com os atalhos já convertidos.
@@ -266,6 +269,9 @@ fn parse_action(action: &str) -> Result<Action, Box<dyn Error>> {
     if action == "toggle_launcher" {
         return Ok(Action::ToggleLauncher);
     }
+    if action == "toggle_search" {
+        return Ok(Action::ToggleSearch);
+    }
     if let Some(command) = action.strip_prefix("launch:") {
         if command.trim().is_empty() {
             return Err("ação launch: sem comando".into());
@@ -283,6 +289,7 @@ impl fmt::Display for Action {
             Action::Quit => write!(f, "quit"),
             Action::RestoreMinimized => write!(f, "restore_minimized"),
             Action::ToggleLauncher => write!(f, "toggle_launcher"),
+            Action::ToggleSearch => write!(f, "toggle_search"),
         }
     }
 }
@@ -330,6 +337,7 @@ mod tests {
             Some(Action::ToggleLauncher)
         );
         assert_eq!(parse_action("toggle_launcher").unwrap(), Action::ToggleLauncher);
+        assert_eq!(parse_action("toggle_search").unwrap(), Action::ToggleSearch);
     }
 
     #[test]

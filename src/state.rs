@@ -1007,6 +1007,23 @@ impl State {
     }
 
     /// Abre o launcher (`mide-launcher`) ou, se já estiver aberto, pede para fechar.
+    /// Abre o buscador (`mide-search`), ou fecha se já estiver aberto.
+    pub fn toggle_search(&mut self) {
+        let open = self.space.outputs().next().and_then(|output| {
+            layer_map_for_output(output).layers().find(|l| l.namespace() == "mide-search").cloned()
+        });
+        match open {
+            Some(layer) => {
+                tracing::info!("buscador: fechar");
+                layer.layer_surface().send_close();
+            }
+            None => {
+                tracing::info!("buscador: abrir");
+                crate::spawn_client("mide-search");
+            }
+        }
+    }
+
     pub fn toggle_launcher(&mut self) {
         let open = self.space.outputs().next().and_then(|output| {
             layer_map_for_output(output)

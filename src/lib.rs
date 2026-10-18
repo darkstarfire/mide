@@ -11,6 +11,7 @@ pub mod kit;
 pub mod launcher_layout;
 pub mod notify;
 pub mod places;
+pub mod search;
 pub mod settings_file;
 pub mod sysinfo;
 pub mod system;
