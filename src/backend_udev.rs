@@ -9,7 +9,14 @@
 //! Limites desta primeira versão: uma placa de vídeo e uma tela (a primeira conectada,
 //! no modo preferido), sem ligar e desligar monitores com o mide aberto.
 
-use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    error::Error,
+    io,
+    path::PathBuf,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     backend::{
@@ -17,22 +24,25 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
             Fourcc,
         },
-        drm::{DrmDevice, DrmDeviceFd, DrmEvent, GbmBufferedSurface},
+        drm::{DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmDeviceNotifier, GbmBufferedSurface},
         egl::{EGLContext, EGLDisplay},
         input::InputEvent,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{damage::OutputDamageTracker, gles::GlesRenderer, Bind},
-        session::{libseat::LibSeatSession, Event as SessionEvent, Session},
+        session::{
+            libseat::{LibSeatSession, LibSeatSessionNotifier},
+            Event as SessionEvent, Session,
+        },
         udev::{all_gpus, primary_gpu},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::{EventLoop, LoopHandle},
+        calloop::{Dispatcher, EventLoop, LoopHandle},
         drm::control::{connector, crtc, Device as ControlDevice, ModeTypeFlags},
         input::Libinput,
         rustix::fs::OFlags,
     },
-    utils::{DeviceFd, Size, Transform},
+    utils::{DeviceFd, Rectangle, Size, Transform},
 };
 
 use crate::{
@@ -59,6 +69,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         LibSeatSession::new().map_err(|e| format!("sem sessão (rode o mide de um console de texto, logado): {e}"))?;
     let seat = session.seat();
     tracing::info!("sessão aberta no assento {seat}");
+    let notifier = wait_active(&session, notifier)?;
 
     // Placa de vídeo: a principal do assento, ou a primeira encontrada.
     let gpu_path: PathBuf = primary_gpu(&seat)?
@@ -69,7 +80,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         .open(&gpu_path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK)
         .map_err(|e| format!("não foi possível abrir {}: {e}", gpu_path.display()))?;
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
-    let (mut drm, drm_notifier) = DrmDevice::new(fd.clone(), true)?;
+    let (mut drm, drm_notifier) = open_drm(&fd)?;
     let gbm = GbmDevice::new(fd.clone())?;
 
     // GPU: EGL sobre o GBM e o renderizador GLES (o mesmo tipo do winit, então a cena é igual).
@@ -193,6 +204,44 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     Ok(())
 }
 
+/// Vindo da tela de login, a sessão pode ainda não estar ativa (o console é trocado
+/// logo depois): sem isso a tela não é nossa. Espera ela ficar ativa, até 10 s.
+fn wait_active(session: &LibSeatSession, notifier: LibSeatSessionNotifier) -> Result<LibSeatSessionNotifier, Box<dyn Error>> {
+    if session.is_active() {
+        return Ok(notifier);
+    }
+    tracing::info!("esperando a sessão ficar ativa");
+    let mut waiting: EventLoop<()> = EventLoop::try_new()?;
+    let dispatcher = Dispatcher::new(notifier, |_, _, _: &mut ()| {});
+    let token = waiting.handle().register_dispatcher(dispatcher.clone())?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !session.is_active() && Instant::now() < deadline {
+        waiting.dispatch(Some(Duration::from_millis(100)), &mut ())?;
+    }
+    waiting.handle().remove(token);
+    drop(waiting);
+    if !session.is_active() {
+        return Err("a sessão não ficou ativa em 10 s (outro programa está com a tela?)".into());
+    }
+    tracing::info!("sessão ativa");
+    Ok(dispatcher.into_source_inner())
+}
+
+/// Assume a placa de vídeo. Quem estava com a tela antes (o servidor X da tela de
+/// login) pode demorar um instante para soltá-la: tenta de novo por até 3 s.
+fn open_drm(fd: &DrmDeviceFd) -> Result<(DrmDevice, DrmDeviceNotifier), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match DrmDevice::new(fd.clone(), true) {
+            Err(DrmError::Access(err)) if err.source.kind() == io::ErrorKind::PermissionDenied && Instant::now() < deadline => {
+                tracing::info!("a placa de vídeo ainda está ocupada, tentando de novo");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => return Ok(result?),
+        }
+    }
+}
+
 /// Desenha um quadro e o entrega à tela (aparece no próximo vblank).
 fn render(gpu: &mut Gpu, state: &mut State) {
     if gpu.pending || !gpu.drm.is_active() {
@@ -206,7 +255,10 @@ fn render(gpu: &mut Gpu, state: &mut State) {
             let mut target = renderer.bind(&mut dmabuf)?;
             scene.render(renderer, &mut target, output, damage_tracker, state)?
         };
-        surface.queue_buffer(Some(sync), None, ())?;
+        // A tela inteira como área alterada: sem isso, telas de notebook com PSR2
+        // (Intel) atualizam só uma faixa e o resto fica com o quadro antigo.
+        let size = output.current_mode().map(|m| m.size).unwrap_or_default();
+        surface.queue_buffer(Some(sync), Some(vec![Rectangle::from_size(size)]), ())?;
         Ok(())
     })();
     match result {
