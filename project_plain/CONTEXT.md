@@ -144,12 +144,13 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 
 ### Fase D: plataforma para apps
 - [~] D1. (feito: `mide::kit` com componentes, layout, tema, janela e eventos, exemplo `mide-ui-demo` e guia `docs/mide-ui.md`; menu de contexto, grade, ladrilhos, lista, barra de ferramentas, duplo clique e foco com seleção; camadas (`Window::overlay`), `glass_panel`, linhas de resultado e ícones assíncronos; faltam tema escuro, campo de texto completo (cursor no meio, colar), diálogos, seletor de arquivos e animações como componentes; as Configurações já foram passadas para ele) Framework mide-ui: criar apps com a interface nativa do mide
+- [ ] D2. Apps, widgets e extensões com o mide-ui: a comunidade cria apps e widgets com o framework, e a central de controle da barra (Wi-Fi, Bluetooth, Não perturbe, brilho, som) pode ser estendida com novos itens
 
 ### Fase C: sistema
 - [ ] C1. Bloqueio de tela (`ext-session-lock-v1`) e inatividade (`ext-idle-notify-v1`)
 - [ ] C2. Sessão de login (entrada `.desktop` para `greetd`) e autostart
 - [ ] C3. Instalador em bash descrito em `INSTALATION.md`
-- [~] C4. (feito: 98 testes unitários, tests/smoke.sh, tests/ui.sh com 137 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
+- [~] C4. (feito: 98 testes unitários, tests/smoke.sh, tests/ui.sh com 139 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
 ---
 
 ---

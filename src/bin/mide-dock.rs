@@ -107,6 +107,12 @@ fn hidden_margin() -> i32 {
     PEEK - dock_height() as i32
 }
 
+/// Espaço reservado para a dock (sem ocultar): a altura dela e um respiro de 2 px
+/// entre ela e as janelas maximizadas.
+fn reserved_zone() -> i32 {
+    dock_height() as i32 + 2
+}
+
 /// Altura da dock para o tamanho atual dos ícones.
 fn dock_height() -> u32 {
     icon_size() + 2 * PADDING + BOTTOM_EXTRA
@@ -270,7 +276,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Sem ocultar, a dock reserva o espaço dela: janelas maximizadas param acima.
     let autohide = configured_autohide();
     layer.set_margin(0, 0, if autohide { hidden_margin() } else { BOTTOM_MARGIN }, 0);
-    layer.set_exclusive_zone(if autohide { 0 } else { dock_height() as i32 });
+    layer.set_exclusive_zone(if autohide { 0 } else { reserved_zone() });
     let mut catalog = Catalog::load();
     let items: Vec<DockApp> = pinned_ids()
         .iter()
@@ -319,11 +325,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         config_mtime: mide::settings_file::config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok()),
         liquid: liquid_glass(),
         autohide,
-        shown: if autohide { 0.0 } else { 1.0 },
-        show_target: if autohide { 0.0 } else { 1.0 },
+        shown: 1.0,
+        show_target: 1.0,
         hide_at: None,
         sliding: false,
         pointer_inside: false,
+        covered: false,
     };
 
     tracing::info!("dock pronta com {} app(s) fixado(s)", dock.items.len());
@@ -342,10 +349,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             dock.watch_config();
             dock.poll_text();
             // Menu fechou com o ponteiro longe: a dock escondida volta a esconder.
-            if dock.autohide && dock.show_target > 0.0 && dock.menu.is_none() && !dock.pointer_inside && dock.hide_at.is_none() {
+            if dock.autohide && dock.covered && dock.show_target > 0.0 && dock.menu.is_none() && !dock.pointer_inside && dock.hide_at.is_none() {
                 dock.schedule_hide();
             }
             TimeoutAction::ToDuration(Duration::from_millis(800))
+        })
+        .map_err(|e| e.to_string())?;
+
+    // Ocultar inteligente: a cada 250 ms pergunta ao compositor se há janela sobre a
+    // área da dock. Sem janela por cima, a dock fica à mostra; com janela, ela some
+    // (e volta com o ponteiro na borda de baixo).
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_millis(250)), |_, _, dock| {
+            if dock.autohide {
+                dock.check_covered();
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(250))
         })
         .map_err(|e| e.to_string())?;
 
@@ -557,6 +577,8 @@ struct Dock {
     sliding: bool,
     /// O ponteiro está sobre a dock.
     pointer_inside: bool,
+    /// Há janela onde a dock aparece (só então a dock que se esconde sozinha some).
+    covered: bool,
 }
 
 impl Dock {
@@ -674,6 +696,25 @@ impl Dock {
         }
     }
 
+    /// Confere se há janela sobre a área da dock e mostra ou esconde a dock.
+    fn check_covered(&mut self) {
+        let covered = ask_compositor("dock_covered").is_some_and(|l| l.first().is_some_and(|w| w == "yes"));
+        if covered == self.covered {
+            return;
+        }
+        self.covered = covered;
+        tracing::debug!("dock: janela por cima {}", if covered { "sim" } else { "não" });
+        if covered {
+            if !self.pointer_inside && self.menu.is_none() {
+                self.schedule_hide();
+            }
+        } else {
+            self.hide_at = None;
+            self.show_target = 1.0;
+            self.slide();
+        }
+    }
+
     /// Esconde a dock daqui a pouco (com ocultar automaticamente), se o ponteiro não
     /// voltar e não houver menu aberto.
     fn schedule_hide(&mut self) {
@@ -696,7 +737,7 @@ impl Dock {
             // Hora de esconder (o ponteiro saiu e não há menu aberto)?
             if dock.hide_at.is_some_and(|at| std::time::Instant::now() >= at) {
                 dock.hide_at = None;
-                if dock.autohide && dock.menu.is_none() && dock.press.is_none() {
+                if dock.autohide && dock.covered && !dock.pointer_inside && dock.menu.is_none() && dock.press.is_none() {
                     dock.show_target = 0.0;
                 }
             }
@@ -802,6 +843,10 @@ impl Dock {
     fn resize(&mut self) {
         let width = dock_width(&self.items);
         self.layer.set_size(width, dock_height());
+        // O tamanho dos ícones muda a altura: o espaço reservado acompanha.
+        if !self.autohide {
+            self.layer.set_exclusive_zone(reserved_zone());
+        }
         self.layer.commit();
     }
 
@@ -1606,9 +1651,12 @@ impl Dock {
         if autohide != self.autohide {
             tracing::info!("dock: ocultar automaticamente {}", if autohide { "ligado" } else { "desligado" });
             self.autohide = autohide;
-            self.show_target = if autohide { 0.0 } else { 1.0 };
+            self.show_target = 1.0;
             self.hide_at = None;
-            self.layer.set_exclusive_zone(if autohide { 0 } else { dock_height() as i32 });
+            self.covered = false;
+            self.layer.set_exclusive_zone(if autohide { 0 } else { reserved_zone() });
+            // A zona nova só vale com o commit (o deslizar pode nem começar).
+            self.layer.commit();
             self.slide();
         }
         let liquid = liquid_glass();
@@ -1966,7 +2014,7 @@ impl PointerHandler for Dock {
                     self.hover_index = None;
                     self.hover_gen += 1;
                     self.pointer_inside = false;
-                    if self.autohide {
+                    if self.autohide && self.covered {
                         self.schedule_hide();
                     }
                 }

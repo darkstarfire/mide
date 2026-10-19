@@ -966,6 +966,29 @@ impl State {
 
     /// Área útil da saída: sem as zonas exclusivas das camadas (ex.: barra superior),
     /// em coordenadas globais. É onde janelas maximizadas ficam.
+    /// Alguma janela (fora as minimizadas) está onde a dock fica quando aparece?
+    /// Usado pela dock que se esconde sozinha: só some quando há janela por cima dela.
+    pub fn dock_covered(&self) -> bool {
+        let Some(output) = self.space.outputs().next() else {
+            return false;
+        };
+        let Some(screen) = self.space.output_geometry(output) else {
+            return false;
+        };
+        let map = layer_map_for_output(output);
+        let Some(geo) = map.layers().find(|l| l.namespace() == "mide-dock").and_then(|l| map.layer_geometry(l)) else {
+            return false;
+        };
+        // Onde a dock fica à mostra (margem de 8 px da borda de baixo), mesmo escondida.
+        let shown = smithay::utils::Rectangle::<i32, Logical>::new((geo.loc.x, screen.size.h - 8 - geo.size.h).into(), geo.size);
+        self.space.elements().any(|w| {
+            self.space.element_location(w).is_some_and(|loc| {
+                let rect = smithay::utils::Rectangle::new(loc, w.geometry().size);
+                rect.overlaps(shown)
+            })
+        })
+    }
+
     pub fn usable_area(&self) -> Option<smithay::utils::Rectangle<i32, Logical>> {
         let output = self.space.outputs().next()?;
         let geo = self.space.output_geometry(output)?;

@@ -31,7 +31,7 @@ const THUMB_H: i32 = 128;
 const GAP: i32 = 14;
 const PAD: i32 = 12;
 const TITLE_H: i32 = 24;
-const CLOSE: i32 = 20;
+const CLOSE: i32 = 24;
 
 /// Prévias pedidas pela dock.
 #[derive(Debug, Clone, PartialEq)]
@@ -148,12 +148,16 @@ pub fn elements(
     for (i, thumb) in thumbs.iter().enumerate() {
         let hovered = preview.hovered == Some(i);
         // × no canto da prévia sob o ponteiro.
+        // Botão de fechar no canto da prévia sob o ponteiro, como no GNOME: círculo
+        // escuro com × branco (vermelho com o ponteiro em cima).
         if hovered {
-            let glyph = Rectangle::new(thumb.close.loc + Point::from((4, 4)), (CLOSE - 8, CLOSE - 8).into());
-            front.push(MideRenderElement::from(decorations::close_glyph_element(shaders, glyph)));
-            front.push(MideRenderElement::from(decorations::ring_element(shaders, thumb.close)));
-            let fill = if preview.on_close { [1.0, 0.37, 0.34, 1.0] } else { [0.96, 0.96, 0.97, 1.0] };
+            let glyph = Rectangle::new(thumb.close.loc + Point::from((7, 7)), (CLOSE - 14, CLOSE - 14).into());
+            front.push(MideRenderElement::from(decorations::close_glyph_colored(shaders, glyph, [1.0, 1.0, 1.0, 1.0])));
+            let fill = if preview.on_close { [0.92, 0.26, 0.24, 1.0] } else { [0.16, 0.16, 0.18, 0.88] };
             front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, thumb.close, fill, CLOSE / 2)));
+            // Contorno claro fino, para o botão se destacar sobre janelas escuras.
+            let ring = Rectangle::new(thumb.close.loc - Point::from((1, 1)), (CLOSE + 2, CLOSE + 2).into());
+            front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, ring, [1.0, 1.0, 1.0, 0.7], CLOSE / 2 + 1)));
         }
         // Título embaixo da miniatura.
         let title = crate::backend_winit::window_title(&thumb.window);
@@ -192,9 +196,17 @@ pub fn elements(
                 middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, bar, [0.90, 0.90, 0.91, 1.0], 3)));
             }
         }
+        // Prévia sob o ponteiro: vidro claro, como a seleção do launcher (com o vidro
+        // desligado nas Configurações, só um véu branco). Um fundo escuro aqui fazia as
+        // bordas claras das letras do título aparecerem como pontinhos brancos.
         if hovered {
             let glow = Rectangle::new(thumb.boxed.loc - Point::from((6, 6)), (THUMB_W + 12, THUMB_H + TITLE_H + 8).into());
-            middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, glow, [0.0, 0.0, 0.0, 0.08], 10)));
+            let element = if state.config.effects.panel_glass {
+                decorations::glass_element(shaders, glow, 10)
+            } else {
+                decorations::rounded_rect_element(shaders, glow, [1.0, 1.0, 1.0, 0.6], 10)
+            };
+            middle.push(MideRenderElement::from(element));
         }
     }
     let mut out = front;

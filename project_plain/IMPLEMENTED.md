@@ -726,3 +726,14 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ### Transparência
 - Barra, menus, notificações, central de controle e buscador um pouco mais transparentes sobre o vidro.
+
+## Ajustes: dock inteligente, ícone da central, confirmações e prévias
+
+- **Ocultar inteligente** (como no GNOME): com "ocultar automaticamente" ligado, a dock só some quando há uma janela onde ela fica (ou uma janela maximizada); sem janela por cima, fica à mostra. O compositor responde `dock_covered` (`yes`/`no`) e a dock pergunta a cada 250 ms.
+- **Respiro de 2 px** entre a janela maximizada e a dock (zona reservada = altura da dock + 2). O espaço reservado agora acompanha a mudança do tamanho dos ícones.
+- **Ícone da central de controle** igual ao do macOS: em cima, pílula vazada com a bolinha cheia encostada na ponta esquerda; embaixo, pílula cheia com a bolinha vazada na ponta direita.
+- **Confirmações** (reiniciar, desligar, encerrar a sessão) no centro da tela, na horizontal e na vertical.
+- **Prévias da dock:** o destaque da miniatura sob o ponteiro virou vidro claro (o mesmo estilo da seleção do launcher), sem os pontinhos brancos (o fundo escuro antigo deixava aparecer as bordas claras das letras do título). Desliga junto com "Vidro em barras e menus" (fica um véu branco simples).
+- **Botão de fechar nas prévias** como no GNOME: círculo escuro com × branco no canto da miniatura sob o ponteiro (vermelho com o ponteiro em cima).
+- Desempenho: compositor ~0,42 ms por quadro com as prévias abertas (`tests/perf.sh previas`).
+- Plano: registrada a etapa futura **D2** (apps, widgets e extensões com o mide-ui, incluindo itens novos na central de controle).

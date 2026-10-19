@@ -179,3 +179,6 @@
 - **Teclas no estilo Mac:** troca de códigos evdev (125↔29, 126↔97) antes dos atalhos e do envio aos apps. Testável pelo autoteste (`combo super+space`); com o mide aninhado, o anfitrião pode capturar a tecla Super.
 - **Ações de energia:** sempre por `mide::system::power`, que respeita `MIDE_SYSTEM_DRY_RUN`. "Bloquear tela" usa `loginctl lock-session` (com o mide aninhado, bloqueia a sessão do anfitrião).
 - **Pendentes desta rodada:** "Abrir com…" (lista de apps por tipo), seleção múltipla e arrastar no Arquivos; mostrar as notificações silenciadas depois (central de notificações, B9).
+- **Testes da barra dependem da largura do relógio:** opções do relógio (segundos, data) gravadas num teste empurram os ícones; o `ui.sh` limpa `seconds` e `dnd` logo depois dos testes que os ligam.
+- **Capturas (`MIDE_DUMP_FRAME`) às vezes não saem:** quando a janela de teste fica escondida no anfitrião, o quadro não é apresentado; repetir.
+- **Prévias da dock com o autoteste:** as janelas levam ~2 s para abrir; passar o ponteiro no ícone depois do quadro ~450.

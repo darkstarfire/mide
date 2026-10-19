@@ -494,6 +494,8 @@ struct Menu {
     dragging_volume: bool,
     /// Arrastando o trilho do brilho (central de controle).
     dragging_brightness: bool,
+    /// Topo do painel na tela (abaixo da barra; as confirmações ficam no meio).
+    panel_top: f32,
 }
 
 impl Menu {
@@ -535,7 +537,7 @@ impl Menu {
 
     fn inside_panel(&self, x: f64, y: f64) -> bool {
         let (x, y) = (x as f32, y as f32);
-        let top = PANEL_TOP;
+        let top = self.panel_top;
         x >= self.x && x <= self.x + self.panel_w && y >= top && y <= top + self.panel_height()
     }
 }
@@ -953,6 +955,7 @@ impl Bar {
             menu.hover_region = None;
             menu.dragging_volume = false;
             menu.dragging_brightness = false;
+            menu.panel_top = PANEL_TOP;
             self.draw_menu();
             self.draw_bar();
             return;
@@ -979,6 +982,7 @@ impl Bar {
             regions: Vec::new(),
             hover_region: None,
             panel_h: 0.0,
+            panel_top: PANEL_TOP,
             dragging_volume: false,
             dragging_brightness: false,
         });
@@ -1073,6 +1077,12 @@ impl Bar {
             _ if id.confirm() => self.panel_confirm(&mut content, pw, id, &mut regions, hover),
             _ => self.panel_bluetooth(&mut content, pw, &mut regions, hover),
         };
+        // Confirmações no meio da tela (na horizontal e na vertical); o resto, abaixo
+        // da barra.
+        let top = if id.confirm() { ((h as f32 - ph) / 2.0).round().max(PANEL_TOP) } else { top };
+        if let Some(menu) = self.menu.as_mut() {
+            menu.panel_top = top;
+        }
         // Sombra, vidro claro e borda fina, como os menus.
         for i in 0..6 {
             let spread = 6.0 - i as f32;
@@ -1600,19 +1610,39 @@ fn fit_label(text: &mut Text, value: &str, size: f32, max: f32) -> String {
     "…".into()
 }
 
-/// Ícone da central de controle: duas pílulas de interruptor, uma sobre a outra.
+/// Ícone da central de controle: dois interruptores. Em cima, pílula vazada com a
+/// bolinha cheia na ponta esquerda (desligado); embaixo, pílula cheia com a bolinha
+/// vazada na ponta direita (ligado), como no macOS.
 fn draw_control_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
-    let paint = stroke_color(fg, 255);
-    for (dy, knob_x) in [(-3.5, 3.0), (3.5, -3.0)] {
-        if let Some(pill) = rounded_rect(cx - 8.0, cy + dy - 2.8, 16.0, 5.6, 2.8) {
-            p.stroke_path(&pill, &paint, &Stroke { width: 1.4, ..Default::default() }, Transform::identity(), None);
-        }
-        if let Some(dot) = PathBuilder::from_circle(cx + knob_x, cy + dy, 2.2) {
-            let mut fill = Paint::default();
-            fill.anti_alias = true;
-            fill.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
-            p.fill_path(&dot, &fill, FillRule::Winding, Transform::identity(), None);
-        }
+    let (w, h) = (17.0, 7.0);
+    let (left, r) = (cx - w / 2.0, h / 2.0);
+    let mut fill = Paint::default();
+    fill.anti_alias = true;
+    fill.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+    // Em cima: contorno e bolinha encostada na ponta esquerda.
+    let top = cy - 4.3;
+    if let Some(pill) = rounded_rect(left, top - r, w, h, r) {
+        p.stroke_path(&pill, &stroke_color(fg, 255), &Stroke { width: 1.3, ..Default::default() }, Transform::identity(), None);
+    }
+    if let Some(dot) = PathBuilder::from_circle(left + r, top, r - 0.6) {
+        p.fill_path(&dot, &fill, FillRule::Winding, Transform::identity(), None);
+    }
+    // Embaixo: pílula cheia com um furo redondo na ponta direita.
+    let bottom = cy + 4.3;
+    let mut pb = PathBuilder::new();
+    let k = 0.5523 * r;
+    let (x0, x1, y0, y1) = (left, left + w, bottom - r, bottom + r);
+    pb.move_to(x0 + r, y0);
+    pb.line_to(x1 - r, y0);
+    pb.cubic_to(x1 - r + k, y0, x1, bottom - k, x1, bottom);
+    pb.cubic_to(x1, bottom + k, x1 - r + k, y1, x1 - r, y1);
+    pb.line_to(x0 + r, y1);
+    pb.cubic_to(x0 + r - k, y1, x0, bottom + k, x0, bottom);
+    pb.cubic_to(x0, bottom - k, x0 + r - k, y0, x0 + r, y0);
+    pb.close();
+    pb.push_circle(x1 - r, bottom, r - 1.4);
+    if let Some(path) = pb.finish() {
+        p.fill_path(&path, &fill, FillRule::EvenOdd, Transform::identity(), None);
     }
 }
 

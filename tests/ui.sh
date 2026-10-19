@@ -10,7 +10,7 @@
 #   y=61: fechar x=63, minimizar x=83, maximizar x=103.
 # - Calculadora (378 px, cabeçalho próprio) em (48, 76): X em (402, 99),
 #   maximizar (364, 99), minimizar (317, 99), menu (289, 99).
-# - Maximizada: área útil de y=28 até acima da dock (zona reservada de 57+8 px).
+# - Maximizada: área útil de y=28 até 2 px acima da dock (zona reservada de 57+2+8 px).
 # - Dock padrão (ícones de 40 px) em (258, 535) 285x57: Launchpad em (285, 560),
 #   foot em (328, 560), calculadora em (371, 560), Configurações em (414, 560),
 #   Downloads em (473, 560) e Lixeira em (516, 560).
@@ -97,7 +97,7 @@ check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
 check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" foot
 check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 180 14; 440 list" foot
-check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=800x477" "400 click 238 14; 430 click 250 73; 480 list" foot
+check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=800x475" "400 click 238 14; 430 click 250 73; 480 list" foot
 check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" foot
 check "janela Sobre redimensiona" 'janela "Sobre este computador" .*visível=580x400' "400 click 25 14; 430 click 100 49; 520 list; 530 press 587 435; 535 move 607 455; 540 move 627 475; 545 release 627 475; 580 list"
 check "relógio abre o calendário" "menu aberto: Calendar" "400 click 765 14; 440 list"
@@ -110,12 +110,12 @@ check "central de controle abre" "menu aberto: Control" "400 click 727 14; 440 l
 check "central de controle: Não perturbe" "não perturbe: ligado" "400 click 727 14; 440 click 710 102; 470 list"
 sed -i '/^dnd = true/d' "$XDG_CONFIG_HOME/mide/config.toml" 2>/dev/null
 check "engrenagem abre as Configurações" "sistema \(teste\): mide-settings" "400 click 583 14; 440 list"
-# Menu do mide: Repouso em y=153, Reiniciar… em y=177; confirmação no meio (Reiniciar em
-# (470, 127), Cancelar em (331, 127)). Nada é executado de verdade (simulado).
+# Menu do mide: Repouso em y=153, Reiniciar… em y=177; confirmação no meio (no meio da tela:
+# Reiniciar em (470, 328), Cancelar em (331, 328)). Nada é executado de verdade (simulado).
 check "menu do mide: Repouso (simulado)" "sistema \(teste\): systemctl suspend" "400 click 25 14; 430 click 100 153; 460 list"
 check "menu do mide: Reiniciar pede confirmação" "menu aberto: ConfirmRestart" "400 click 25 14; 430 click 100 177; 460 list"
-check "confirmar reinicia (simulado)" "sistema \(teste\): systemctl reboot" "400 click 25 14; 430 click 100 177; 460 click 470 127; 500 list"
-CLOG="$(timeout 150 "$SCEN" "400 click 25 14; 430 click 100 177; 460 click 331 127; 500 list" 2>&1)"
+check "confirmar reinicia (simulado)" "sistema \(teste\): systemctl reboot" "400 click 25 14; 430 click 100 177; 460 click 470 328; 500 list"
+CLOG="$(timeout 150 "$SCEN" "400 click 25 14; 430 click 100 177; 460 click 331 328; 500 list" 2>&1)"
 if echo "$CLOG" | grep -q "menu aberto: ConfirmRestart" && ! echo "$CLOG" | grep -q "systemctl reboot"; then
     echo "ok    Cancelar não reinicia"; PASS=$((PASS + 1))
 else
@@ -182,7 +182,7 @@ rm -f "$ACAO"
 SCEN="$SCEN_PLAIN"
 
 echo "== janela com barra do mide (foot)"
-check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=800x477" "400 click 103 61; 450 list" foot
+check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=800x475" "400 click 103 61; 450 list" foot
 check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 103 61; 450 click 55 43; 500 list" foot
 check "duplo clique maximiza" "$FOOT posição=\(0, 58\)" "400 click 400 61; 404 click 400 61; 450 list" foot
 check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 405 move 450 111; 410 move 500 161; 415 release 500 161; 430 list" foot
@@ -195,7 +195,7 @@ check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" 
 echo "== janela com cabeçalho do app (calculadora)"
 check "fechar pelo X do app" "janela fechada" "400 click 402 99" gnome-calculator
 check "arrastar pelo cabeçalho do app" "$CALC popups=0 posição=\(108, 116\)" "400 press 200 98; 405 move 230 118; 410 move 260 138; 415 release 260 138; 450 list" gnome-calculator
-check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=800x507" "400 click 364 99; 460 list" gnome-calculator
+check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=800x505" "400 click 364 99; 460 list" gnome-calculator
 check "abrir menu do app" "$CALC popups=1" "400 click 289 99; 440 list" gnome-calculator
 check "fechar menu clicando fora" "$CALC popups=0" "400 click 289 99; 430 click 700 400; 460 list" gnome-calculator
 check "redimensionar pela borda" "$CALC .*visível=418x500" "400 press 423 330; 405 move 443 330; 410 move 463 330; 415 release 463 330; 460 list" gnome-calculator
@@ -207,7 +207,7 @@ check_last "clique traz para frente (topo = foot)" "janela \"foot\"" "400 click 
 echo "== saída redimensionada (janela do mide maximizada no host)"
 check "dock volta ao centro inferior" 'camada "mide-dock" em \(458, 735\) 285x57' "400 resize 1200 800; 420 list" foot
 check "barra acompanha a largura" 'camada "mide-bar" em \(0, 0\) 1200x28' "400 resize 1200 800; 420 list" foot
-check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x677" "400 click 103 61; 440 resize 1200 800; 460 list" foot
+check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x675" "400 click 103 61; 440 resize 1200 800; 460 list" foot
 
 echo "== dock"
 check "clique no ícone abre o app" "nova janela criada" "400 click 328 560"
@@ -347,7 +347,8 @@ fi
 # Seção Dock: arrastar o trilho até o fim grava 64 px e a dock cresce sozinha.
 check "Configurações → Dock: tamanho dos ícones muda a dock" 'camada "mide-dock" em \([0-9]+, [0-9]+\) [0-9]+x81' "400 list; 420 press 500 161; 425 move 600 161; 430 move 700 161; 435 move 790 161; 440 release 790 161; 520 list" "$SETTINGS dock"
 # Dock: "Ocultar e mostrar a Dock automaticamente" em (807, 212); a dock desce e esconde.
-check "Configurações → Dock: ocultar automaticamente esconde a dock" "dock escondida" "400 click 807 212; 700 list" "$SETTINGS dock"
+# Ocultar é inteligente: só esconde com janela sobre a dock (aqui, maximizando a janela).
+check "Configurações → Dock: ocultar automaticamente esconde a dock sob uma janela" "dock escondida" "400 click 807 212; 500 click 103 61; 800 list" "$SETTINGS dock"
 if grep -q "autohide = true" "$SCFG/mide/config.toml"; then
     echo "ok    ocultar a dock grava no config.toml"; PASS=$((PASS + 1))
 else
@@ -386,6 +387,22 @@ else
     echo "FALHA teclas no estilo Mac: Command+Espaço abre o buscador"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$MCFG"
+
+HCFG="$(mktemp -d)"
+mkdir -p "$HCFG/mide"
+printf '[dock]\nautohide = true\n' >"$HCFG/mide/config.toml"
+HLOG="$(XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "500 list" 2>&1)"
+if echo "$HLOG" | grep -q 'camada "mide-dock"' && ! echo "$HLOG" | grep -q "dock escondida"; then
+    echo "ok    ocultar inteligente: sem janela por cima, a dock fica à mostra"; PASS=$((PASS + 1))
+else
+    echo "FALHA ocultar inteligente: sem janela por cima, a dock fica à mostra"; FAIL=$((FAIL + 1))
+fi
+if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "600 list" -- foot 2>&1 | grep -q "dock escondida"; then
+    echo "ok    ocultar inteligente: janela sobre a dock a esconde"; PASS=$((PASS + 1))
+else
+    echo "FALHA ocultar inteligente: janela sobre a dock a esconde"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$HCFG"
 
 echo "== vidro em barras e menus"
 check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"

@@ -456,3 +456,13 @@ Manual (o que o autoteste não cobre):
 - Dock: maximizar uma janela para acima da dock; Configurações → Dock → ocultar automaticamente; levar o ponteiro à borda de baixo.
 - Barra: clicar no relógio → "Formato da hora…"; central de controle; menu do mide → Reiniciar… → Cancelar.
 - Configurações: digitar na busca; Teclado → Teclas no estilo Mac; Command+C/V nos apps.
+
+## Ajustes da dock e da barra — automáticos
+
+- `tests/ui.sh`: ocultar inteligente (sem janela, a dock fica; com o foot por cima, esconde); ocultar pelas Configurações esconde com a janela maximizada; maximizar com 2 px de respiro (800x475); confirmação de reiniciar no meio da tela.
+- `tests/perf.sh previas`: prévias abertas e ponteiro numa miniatura.
+
+## Ajustes da dock e da barra — manual
+
+- Configurações → Dock → ocultar: sem janela sobre a dock ela fica; maximizar uma janela a faz sumir; ponteiro na borda de baixo a traz de volta.
+- Duas janelas do mesmo app: ponteiro no ícone da dock e depois numa miniatura: vidro claro em volta e o × escuro no canto.

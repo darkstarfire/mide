@@ -194,6 +194,38 @@ void main() {
 }
 "#;
 
+/// Vidro claro (o mesmo da seleção do launcher e da dock, em `mide::ui::draw::glass`):
+/// preenchimento branco translúcido em degradê, borda mais escura em cima e mais clara
+/// embaixo, e um brilho fino por dentro, perto do topo.
+const GLASS_SRC: &str = r#"
+precision highp float;
+uniform float alpha;
+uniform vec2 size;
+uniform float radius;
+varying vec2 v_coords;
+
+float sd_round_box(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + vec2(r);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
+}
+
+void main() {
+    vec2 p = v_coords * size - size * 0.5;
+    float d = sd_round_box(p, size * 0.5, radius);
+    float cover = 1.0 - smoothstep(-0.5, 0.5, d);
+    float t = v_coords.y;
+    vec4 c = vec4(1.0, 1.0, 1.0, mix(0.62, 0.42, t));
+    // Borda de 1 px: escura em cima, clara embaixo.
+    float edge = 1.0 - smoothstep(0.0, 1.2, -d);
+    c = mix(c, mix(vec4(0.0, 0.0, 0.0, 0.24), vec4(1.0, 1.0, 1.0, 0.7), t), edge);
+    // Brilho fino logo por dentro da borda, mais forte em cima.
+    float shine = (1.0 - smoothstep(0.0, 1.0, abs(-d - 1.8))) * (1.0 - t) * 0.5;
+    c = vec4(mix(c.rgb, vec3(1.0), shine), max(c.a, shine));
+    float a = c.a * cover * alpha;
+    gl_FragColor = vec4(c.rgb * a, a);
+}
+"#;
+
 /// Programas de shader usados pela decoração. Compilados uma vez na inicialização.
 pub struct Shaders {
     rounded: GlesPixelProgram,
@@ -201,6 +233,7 @@ pub struct Shaders {
     clip_tex: GlesTexProgram,
     outline: GlesPixelProgram,
     glyph: GlesPixelProgram,
+    glass: GlesPixelProgram,
 }
 
 impl Shaders {
@@ -239,12 +272,14 @@ impl Shaders {
                 UniformName::new("fill", UniformType::_4f),
             ],
         )?;
+        let glass = renderer.compile_custom_pixel_shader(GLASS_SRC, &[UniformName::new("radius", UniformType::_1f)])?;
         Ok(Self {
             rounded,
             desktop,
             clip_tex,
             outline,
             glyph,
+            glass,
         })
     }
 }
@@ -440,15 +475,24 @@ pub fn rounded_rect_element(shaders: &Shaders, area: Rect, color: [f32; 4], radi
     rounded(shaders, area, color, radius, &no_clip)
 }
 
-/// Símbolo de fechar (×) no retângulo, como o do botão vermelho.
-pub fn close_glyph_element(shaders: &Shaders, rect: Rect) -> PixelShaderElement {
-    glyph(shaders, rect, Button::Close)
+/// Vidro claro arredondado (destaque da prévia sob o ponteiro).
+pub fn glass_element(shaders: &Shaders, area: Rect, radius: i32) -> PixelShaderElement {
+    PixelShaderElement::new(shaders.glass.clone(), area, None, 1.0, vec![Uniform::new("radius", radius as f32)], Kind::Unspecified)
+}
+
+/// × na cor pedida (botão de fechar das prévias, branco sobre o círculo escuro).
+pub fn close_glyph_colored(shaders: &Shaders, rect: Rect, color: [f32; 4]) -> PixelShaderElement {
+    PixelShaderElement::new(
+        shaders.glyph.clone(),
+        rect,
+        None,
+        1.0,
+        vec![Uniform::new("kind", 0.0f32), Uniform::new("fill", color)],
+        Kind::Unspecified,
+    )
 }
 
 /// Contorno fino arredondado.
-pub fn ring_element(shaders: &Shaders, rect: Rect) -> PixelShaderElement {
-    ring(shaders, rect)
-}
 
 impl Shaders {
     /// Programa de textura com recorte arredondado, para o conteúdo das janelas.

@@ -4,7 +4,7 @@
 # entradas (do clique/tecla/roda até o app enviar o quadro novo).
 #
 # Uso: tests/perf.sh            (todos os cenários)
-#      tests/perf.sh dock       (só um: desktop, dock, launcher, buscador, arquivos)
+#      tests/perf.sh dock       (só um: desktop, dock, launcher, buscador, previas, arquivos)
 # Não rodar junto com tests/ui.sh nem durante uma compilação.
 set -u
 cd "$(dirname "$0")/.."
@@ -58,6 +58,9 @@ run dock "100 move 568 728; 120 move 611 728; 140 move 654 728; 160 move 697 728
 run launcher "100 combo ctrl+shift+space; 180 wheel down; 220 wheel up; 260 type calc; 300 key esc; 330 key esc; 400 list"
 # Buscador: abrir, digitar letra a letra (cada tecla refaz a busca), descer e fechar.
 run buscador "100 combo ctrl+space; 160 type c; 170 type a; 180 type l; 190 type c; 220 key down; 240 key down; 260 key up; 300 key esc; 400 list"
+# Prévias da dock: duas janelas do terminal, ponteiro no ícone e depois numa miniatura.
+# (Dock padrão em 1366x768: terminal em x=611.)
+run previas "450 move 611 728; 520 move 613 728; 560 move 590 690; 566 move 560 620; 572 move 540 600; 620 list" foot foot
 # Arquivos: navegar, menu de contexto, lista e voltar.
 FDIR="$OUT/pasta"
 mkdir -p "$FDIR"/{Fotos,Projetos,Docs}
