@@ -1095,9 +1095,26 @@ impl<'a> Ui<'a> {
         if selected {
             fill_rounded(self.canvas, lx - 5.0, ly - 1.0, lw + 10.0, t.font_small * 1.4, 5.0, color(t.accent));
         }
-        let c = if selected { t.on_accent } else { t.text };
+        let c = if selected { t.on_accent } else { t.tile_text };
+        // Nome claro (sobre o papel de parede): sombra escura embaixo para ler bem.
+        let light = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
+        if light && !selected {
+            self.draw_text(&shown, lx, ly + 1.0, t.font_small, FontWeight::Regular, [0, 0, 0, 160]);
+        }
         self.draw_text(&shown, lx, ly, t.font_small, FontWeight::Regular, c);
         r
+    }
+
+    /// Monta componentes num lugar escolhido (`x`, `y`) desta área, com `width` de
+    /// largura, em coluna (para posições livres, como os ícones da área de trabalho).
+    pub fn at(&mut self, x: f32, y: f32, width: f32, add: impl FnOnce(&mut Ui)) {
+        let saved = (self.x, self.width, self.cursor_y, self.flow, self.row_x, self.row_h);
+        self.x = x;
+        self.width = width;
+        self.cursor_y = y;
+        self.flow = Flow::Column;
+        add(self);
+        (self.x, self.width, self.cursor_y, self.flow, self.row_x, self.row_h) = saved;
     }
 
     /// Cabeçalho de uma lista em colunas (como no Finder): "Nome" à esquerda e as

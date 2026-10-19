@@ -60,6 +60,8 @@ pub struct Window {
     pub theme: Theme,
     /// Camada por cima de tudo (`Window::overlay`), em vez de janela comum.
     pub overlay: Option<String>,
+    /// Camada de fundo, atrás das janelas (`Window::desktop`).
+    pub desktop: bool,
 }
 
 impl Window {
@@ -72,7 +74,17 @@ impl Window {
             min_size: (360, 240),
             theme: Theme::default(),
             overlay: None,
+            desktop: false,
         }
+    }
+
+    /// Camada de fundo, atrás das janelas e na frente do papel de parede (a área de
+    /// trabalho com ícones): transparente, entre a barra e a dock, e com o teclado só
+    /// quando clicada.
+    pub fn desktop(mut self, namespace: &str) -> Self {
+        self.overlay = Some(namespace.into());
+        self.desktop = true;
+        self
     }
 
     /// Em vez de janela, uma camada transparente por cima de tudo, na tela inteira e
@@ -118,10 +130,18 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     let shell = match &window.overlay {
         Some(namespace) => {
             let layer_shell = LayerShell::bind(&globals, &qh)?;
-            let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some(namespace.clone()), None);
+            let kind = if window.desktop { Layer::Bottom } else { Layer::Overlay };
+            let layer = layer_shell.create_layer_surface(&qh, surface, kind, Some(namespace.clone()), None);
             layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-            layer.set_exclusive_zone(-1);
-            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            if window.desktop {
+                // Fica na área útil (abaixo da barra, acima da dock) e só pega o teclado
+                // quando clicada.
+                layer.set_exclusive_zone(0);
+                layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+            } else {
+                layer.set_exclusive_zone(-1);
+                layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            }
             layer.commit();
             Shell::Layer(layer, namespace.clone())
         }
@@ -144,6 +164,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         shm,
         shell,
         glass: Default::default(),
+        last_frame: None,
         pointer: None,
         keyboard: None,
         size: window.size,
@@ -156,7 +177,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app: Box::new(app),
     };
 
-    runner.ctx.layer = matches!(runner.shell, Shell::Layer(..));
+    // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
+    runner.ctx.layer = matches!(runner.shell, Shell::Layer(..)) && !window.desktop;
     let mut event_loop: EventLoop<Runner> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
@@ -216,6 +238,8 @@ struct Runner {
     shell: Shell,
     /// Vidro pedido ao compositor (só em camadas).
     glass: crate::control_client::Glass,
+    /// Último quadro enviado (para não reenviar um igual).
+    last_frame: Option<Pixmap>,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     size: (u32, u32),
@@ -275,11 +299,16 @@ impl Runner {
             return;
         }
         // Painéis de vidro (`ui.glass_panel`): o compositor desenha o vidro atrás.
-        if let Shell::Layer(_, namespace) = &self.shell {
+        if let (Shell::Layer(_, namespace), true) = (&self.shell, self.ctx.layer) {
             let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
             self.glass.set(namespace, &rects);
         }
         let (w, h) = self.size;
+        // Quadro igual ao último enviado (por exemplo, um quadro agendado sem mudança):
+        // não manda de novo, para o compositor não refazer o que está atrás (vidro).
+        if self.last_frame.as_ref().is_some_and(|last| last.width() == w && last.height() == h && last.data() == pixmap.data()) {
+            return;
+        }
         let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
             return;
         };
@@ -290,6 +319,7 @@ impl Runner {
         if buffer.attach_to(surface).is_ok() {
             self.shell.commit();
         }
+        self.last_frame = Some(pixmap);
     }
 }
 

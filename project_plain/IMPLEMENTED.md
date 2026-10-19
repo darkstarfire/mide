@@ -751,3 +751,12 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **mide-ui:** `ui.modal(largura, |ui| ...)` (escurece a janela, painel centralizado, só o conteúdo do modal reage). Painéis de vidro ficam opacos em janelas comuns (o vidro desfocado de verdade só existe em camadas).
 - `mide::files`: `numbered_name` ("Nova pasta (1)") e `create_named` (cria pasta ou arquivo sem sobrescrever), com testes.
 - Plano: registrada a etapa **B12** (escolher nas Configurações os itens da barra superior).
+
+## Área de trabalho com ícones (B10)
+
+- Novo app **`mide-desktop`** (mide-ui), iniciado pelo compositor: os arquivos e pastas da pasta "Área de trabalho" (do `user-dirs.dirs`) aparecem como ícones sobre o papel de parede, em colunas de cima para baixo a partir do canto direito, como no macOS, com o nome em branco com sombra.
+- Clique seleciona (vidro e nome em pílula azul), duplo clique abre (pastas no Arquivos). Botão direito no ícone: Abrir, Renomear…, Duplicar, Copiar caminho, Mover para a Lixeira. No vazio: Nova pasta, Novo arquivo, Abrir no Terminal, Mostrar no Arquivos, Mudar papel de parede…. Criar e renomear usam o mesmo diálogo (modal) do Arquivos. Teclado depois de clicar: Enter abre, Delete manda para a Lixeira, Ctrl+R renomeia.
+- A pasta é conferida a cada 2 s (mudanças feitas pelo Arquivos ou pelo terminal aparecem sozinhas).
+- **Compositor: camadas de fundo** (`Bottom` e `Background`, pendência do A10) desenhadas entre as janelas e o papel de parede, e recebendo ponteiro e teclado (sob demanda) quando não há janela por cima; clicar nelas fecha popups abertos. Novo comando `workarea` (área útil sem barra e dock).
+- **mide-ui:** `Window::desktop(nome)` (camada de fundo), `ui.at(x, y, largura, ...)` (posição livre), `Theme::tile_text` (nome claro com sombra) e **quadros iguais não são reenviados** ao compositor (um redesenho agendado sem mudança não faz o compositor refazer o vidro de quem está na frente).
+- Testes usam uma pasta de área de trabalho temporária (`MIDE_DESKTOP_DIR`), nunca a do usuário.

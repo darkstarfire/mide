@@ -124,7 +124,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [x] A7. (feito: barra com botões, título em texto, hover, sombra, cantos, redimensionar pela borda, cursor) Decorações de servidor: barra de título estilo mac com botões
 - [x] A8. Fechar, minimizar e restaurar janelas (pela barra, pelo botão do app, pelo atalho e pela dock), com animação
 - [~] A9. (parcial: `config.toml` e motor de atalhos; faltam o editor e o conjunto completo de atalhos padrão) Atalhos globais lidos de `toml`, com os padrões de desktop, janelas e apps
-- [~] A10. (parcial: camadas Top e Overlay desenhadas e com ponteiro, zona exclusiva da barra respeitada ao abrir e maximizar janelas; camadas de fundo ainda não) Layer-shell (`wlr-layer-shell`), para barra, dock e launcher
+- [~] A10. (parcial: camadas Top e Overlay desenhadas e com ponteiro, zona exclusiva da barra respeitada ao abrir e maximizar janelas; camadas de fundo também, desde o B10) Layer-shell (`wlr-layer-shell`), para barra, dock e launcher
 - [~] A11. (feito: sombra combinada de todas as janelas, cantos, animações de maximizar e restaurar, efeito lâmpada ao minimizar e restaurar, e `[effects]` no config com `shadows`, `rounded_corners`, `animations` e `lamp`; feito também o desfoque da dock e do fundo do launcher, com interruptores, e o vidro líquido na dock (refração, reflexo e tom, com desfoque refeito só quando o fundo muda); feito também o vidro em barra superior, menus e notificações, por regiões de vidro pedidas pelas camadas (`glass` no canal de controle); feito `ui.glass_panel` no mide-ui (em camadas); faltam vidro em janelas comuns e transparência de janelas) Efeitos: animação suave, transparência, blur e efeito lâmpada, com flag para desligar cada um
 - [x] A12. (feito: `[desktop] wallpaper` em PNG ou JPEG cobrindo a tela, gradiente próprio por padrão, sombras das janelas sobre ele, escolha nas Configurações com imagens do usuário) Papel de parede, lido de configuração
 - [ ] A13. Backend DRM/udev com libseat, para rodar sem outro compositor por baixo
@@ -139,7 +139,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [~] B7. (feito: `mide-settings` no mide-ui, com busca, Wi-Fi, Bluetooth, Som, Papel de parede, Dock (tamanho dos ícones e ocultar automaticamente), Efeitos, Teclado (teclas no estilo Mac e atalhos) e Sobre, valendo na hora; faltam monitor, mouse, touchpad, teclado (layout), tema, localidade e apps padrão) Configurações do sistema: monitor, mouse, touchpad, teclado, tema, localidade, Wi-Fi, Bluetooth e apps padrão
 - [~] B8. (feito: app `mide-files` com favoritos, Lixeira, histórico, ícones e lista em árvore no estilo do Finder (setinhas, linhas alternadas, colunas e ordenação), miniaturas, busca, menus de contexto completos, nova pasta, novo arquivo, renomear, duplicar, copiar/colar, compactar e extrair .zip, mover para a Lixeira, restaurar e teclado; faltam seleção múltipla, arrastar e soltar e "abrir com") Gerenciador de arquivos estilo Finder
 - [x] B9. (feito: servidor `mide-notifications` com banners no estilo do macOS, ações, expiração, fechar, Não perturbe e a central de notificações com o histórico, no painel do relógio) Notificações: servidor `org.freedesktop.Notifications` com visual do DE
-- [ ] B10. Ícones e pastas na área de trabalho, com menu de contexto
+- [x] B10. (feito: `mide-desktop` com os itens da pasta Área de trabalho em colunas à direita, abrir, menus de contexto, criar e renomear com diálogo, Lixeira e teclado; pendentes: arrastar ícones e miniaturas) Ícones e pastas na área de trabalho, com menu de contexto
 - [x] B11. (feito: `mide-search` com ctrl+space, apps, Configurações, arquivos e contas, sobre o vidro líquido; pendentes: prévia, grupos e histórico) Buscador de apps nativo (estilo Spotlight), recriado no mide no lugar do buscador de terceiros que está instalado: barra flutuante com o vidro líquido da dock (mesmo componente/shader), busca de apps, arquivos e ações, abrindo por atalho, para o visual ficar integrado ao DE
 - [ ] B12. Configurações → Barra superior: escolher quais itens aparecem na barra (som, Wi-Fi, Bluetooth, bateria, central de controle, engrenagem e os ícones de apps do tray)
 
@@ -151,7 +151,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [ ] C1. Bloqueio de tela (`ext-session-lock-v1`) e inatividade (`ext-idle-notify-v1`)
 - [ ] C2. Sessão de login (entrada `.desktop` para `greetd`) e autostart
 - [ ] C3. Instalador em bash descrito em `INSTALATION.md`
-- [~] C4. (feito: 101 testes unitários, tests/smoke.sh, tests/ui.sh com 144 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
+- [~] C4. (feito: 102 testes unitários, tests/smoke.sh, tests/ui.sh com 148 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
 ---
 
 ---

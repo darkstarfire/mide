@@ -588,6 +588,23 @@ impl Launcher {
     }
 
     /// Itens da lista mostrada: a pasta aberta, o resultado da busca ou a grade principal.
+    /// Registra onde ficam as pastas da página atual (os testes clicam nelas sem
+    /// depender de quais apps estão instalados).
+    fn log_folders(&self) {
+        if self.open_folder.is_some() || !self.query.trim().is_empty() {
+            return;
+        }
+        let grid = self.grid();
+        let per_page = grid.per_page();
+        for (index, entry) in self.entries().iter().enumerate().skip(self.page * per_page).take(per_page) {
+            if let Entry::Folder(f) = entry {
+                let (cx, cy) = grid.cell(index % per_page);
+                let (x, y) = (cx + grid.cell_w / 2, cy + 8 + grid.icon / 2);
+                tracing::info!("pasta {} na página {} em ({x}, {y})", self.folders[*f].name, self.page);
+            }
+        }
+    }
+
     fn entries(&self) -> Vec<Entry> {
         if let Some(f) = self.open_folder {
             return self.folders[f].apps.iter().map(|i| Entry::App(*i)).collect();
@@ -662,6 +679,7 @@ impl Launcher {
             tracing::info!("página {} → {}", self.page, page);
             self.page_anim = Some(PageAnim { from: self.page, to: page, folder: false, start: std::time::Instant::now(), frames: None });
             self.page = page;
+            self.log_folders();
             self.redraw();
         }
     }

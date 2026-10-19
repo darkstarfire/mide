@@ -182,3 +182,6 @@
 - **Testes da barra dependem da largura do relógio:** opções do relógio (segundos, data) gravadas num teste empurram os ícones; o `ui.sh` limpa `seconds` e `dnd` logo depois dos testes que os ligam.
 - **Capturas (`MIDE_DUMP_FRAME`) às vezes não saem:** quando a janela de teste fica escondida no anfitrião, o quadro não é apresentado; repetir.
 - **Prévias da dock com o autoteste:** as janelas levam ~2 s para abrir; passar o ponteiro no ícone depois do quadro ~450.
+- **Camada que ignora zonas de outras camadas:** o Smithay arruma as camadas na ordem em que foram criadas; a área de trabalho, criada antes da barra, ocupa a tela toda. Por isso ela pergunta a área útil ao compositor (`workarea`).
+- **Redesenhos agendados:** apps do mide-ui que acordam sozinhos (área de trabalho, Configurações) não reenviam quadros iguais; antes, cada quadro igual fazia o compositor refazer o vidro da dock.
+- **Pendente na área de trabalho:** arrastar ícones para reorganizar, miniaturas de imagens, seleção com retângulo e soltar arquivos.

@@ -12,6 +12,7 @@
 //! - `mods`: teclas modificadoras pressionadas agora (`ctrl`, `shift`, `alt`, `logo`).
 //! - `quit`: encerra o compositor (menu "Encerrar sessão" da barra).
 //! - `search`: abre ou fecha o buscador.
+//! - `workarea`: área útil da tela (`x y largura altura`), sem a barra e a dock.
 //! - `dock_covered`: `yes` se alguma janela está onde a dock aparece.
 //! - `force_quit`: termina o processo do app em foco (menu do mide).
 //! - `glass <camada> raio:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
@@ -185,6 +186,11 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // Há janela sobre a área da dock? (`yes`/`no`; a dock que se esconde sozinha
         // só some nesse caso.)
         Some("dock_covered") => if state.dock_covered() { "yes\n".into() } else { "no\n".into() },
+        // Área útil (sem a barra e a dock reservada): `x y largura altura`.
+        Some("workarea") => match state.usable_area() {
+            Some(r) => format!("{} {} {} {}\n", r.loc.x, r.loc.y, r.size.w, r.size.h),
+            None => "none\n".into(),
+        },
         // Abre ou fecha o buscador.
         Some("search") => {
             state.toggle_search();

@@ -48,6 +48,13 @@ if [ -z "${XDG_DATA_HOME:-}" ]; then
     mkdir -p "$XDG_DATA_HOME"
 fi
 export MIDE_OPEN_DRY_RUN=1
+# Área de trabalho de teste (vazia, a menos que o teste ponha arquivos): os cliques
+# dos testes nunca chegam aos arquivos da área de trabalho de verdade.
+if [ -z "${MIDE_DESKTOP_DIR:-}" ]; then
+    export MIDE_DESKTOP_DIR="$OUT/desktop"
+    rm -rf "$MIDE_DESKTOP_DIR"
+    mkdir -p "$MIDE_DESKTOP_DIR"
+fi
 # Som, Wi-Fi e Bluetooth simulados: nenhum teste mexe no áudio ou na rede de verdade.
 export MIDE_SYSTEM_DRY_RUN=1
 

@@ -59,6 +59,20 @@ pub fn pictures_dir() -> PathBuf {
         .unwrap_or_else(|| home.clone())
 }
 
+/// Pasta da área de trabalho (os ícones na tela). `MIDE_DESKTOP_DIR` troca a pasta
+/// (os testes usam uma pasta temporária). Sem pasta, `None` (não há o que mostrar).
+pub fn desktop_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("MIDE_DESKTOP_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    let home = home();
+    fs::read_to_string(config_home().join("user-dirs.dirs"))
+        .ok()
+        .and_then(|text| parse_user_dir(&text, "DESKTOP", &home))
+        .or_else(|| [home.join("Área de trabalho"), home.join("Desktop")].into_iter().find(|p| p.is_dir()))
+        .filter(|p| *p != home && p.is_dir())
+}
+
 /// Pasta pessoal do usuário.
 pub fn home_dir() -> PathBuf {
     home()

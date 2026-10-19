@@ -20,6 +20,9 @@ pub struct Theme {
     /// Texto principal e secundário.
     pub text: Rgba,
     pub text_secondary: Rgba,
+    /// Nome embaixo dos ladrilhos (`tile`). Claro (sobre o papel de parede), ganha uma
+    /// sombra para ser lido em qualquer fundo.
+    pub tile_text: Rgba,
     /// Cor de destaque (botão principal, interruptor ligado, seleção).
     pub accent: Rgba,
     /// Texto sobre a cor de destaque.
@@ -51,6 +54,7 @@ impl Default for Theme {
             line: [0, 0, 0, 24],
             text: [24, 24, 28, 255],
             text_secondary: [130, 130, 138, 255],
+            tile_text: [24, 24, 28, 255],
             accent: [10, 110, 235, 255],
             on_accent: [255, 255, 255, 255],
             control: [0, 0, 0, 16],

@@ -481,3 +481,13 @@ Manual (o que o autoteste não cobre):
 
 - `tests/ui.sh`: Esc no diálogo não cria nada; Cancelar não cria nada; Criar sem mudar o nome cria "Nova pasta" e depois "Nova pasta (1)"; com nome digitado cria com ele.
 - `cargo test`: `nomes_numerados_e_criar_com_nome`, `pixels_premultiplicados_validos`.
+
+## Área de trabalho (B10) — automáticos
+
+- `tests/ui.sh`: camada de fundo aparece; duplo clique no ícone abre o arquivo (simulado); Delete manda para a Lixeira; menu do fundo → Nova pasta.
+- `cargo test --bin mide-desktop`: ícones em colunas a partir da direita, dentro da área útil.
+- `tests/perf.sh desktop`: com a área de trabalho, o vidro da dock continua refeito só ao aparecer (2 vezes).
+
+## Área de trabalho (B10) — manual
+
+- Pôr arquivos na pasta "Área de trabalho": aparecem à direita; duplo clique abre; botão direito no vazio → Nova pasta (diálogo); arrastar janelas por cima: os ícones ficam atrás.

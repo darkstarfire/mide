@@ -356,7 +356,13 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
         }
         match surface_under(state, pos) {
             None => dismiss_popups(state),
-            Some((surface, _)) => state.focus_layer_if_allowed(&surface),
+            Some((surface, _)) => {
+                // Clique na área de trabalho também fecha os popups abertos.
+                if back_layer_under(state, pos).is_some_and(|(s, _)| s == surface) {
+                    dismiss_popups(state);
+                }
+                state.focus_layer_if_allowed(&surface);
+            }
         }
         if let Some(window) = window_under(state, pos) {
             state.space.raise_element(&window, true);
@@ -462,6 +468,21 @@ fn top_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface
     None
 }
 
+/// Camada de fundo (área de trabalho) sob `pos`, quando não há janela por cima.
+fn back_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    let output = state.space.outputs().next()?;
+    let map = layer_map_for_output(output);
+    for layer in crate::state::back_layers(&map).iter() {
+        let Some(geo) = map.layer_geometry(layer) else {
+            continue;
+        };
+        if let Some((surface, p)) = layer.surface_under(pos - geo.loc.to_f64(), WindowSurfaceType::ALL) {
+            return Some((surface, (p + geo.loc).to_f64()));
+        }
+    }
+    None
+}
+
 /// Superfície sob `pos`, com a origem dela em coordenadas globais.
 /// Popups são testados antes das janelas, porque ficam por cima delas.
 fn surface_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
@@ -486,11 +507,13 @@ fn surface_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, 
         }
     }
 
-    window_with_origin_under(state, pos).and_then(|(window, loc)| {
-        window
+    if let Some((window, loc)) = window_with_origin_under(state, pos) {
+        return window
             .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
-            .map(|(surface, p)| (surface, (p + loc).to_f64()))
-    })
+            .map(|(surface, p)| (surface, (p + loc).to_f64()));
+    }
+    // Sem janela: a área de trabalho (ícones), se houver.
+    back_layer_under(state, pos)
 }
 
 /// Fecha todos os popups abertos. Chamado quando o clique cai fora deles.

@@ -143,7 +143,10 @@ check "roda para baixo vai para a página da direita" "página 0 → 1" "$LAUNCH
 check "roda para cima volta para a página da esquerda" "página 1 → 0" "$LAUNCH; 450 move 400 300; 460 wheel down; 500 wheel up; 540 list"
 check "clique do meio vai para a próxima página" "página 0 → 1" "$LAUNCH; 450 mclick 400 300; 490 list"
 # Pasta Utilitários (2 páginas) na página 2 da grade, em (346, 397).
-check "roda dentro da pasta troca de página (carrossel)" "página da pasta 0 → 1" "$LAUNCH; 440 key pagedown; 470 click 346 397; 500 move 400 300; 510 wheel down; 550 list"
+# A pasta (Utilitários) muda de lugar conforme os apps instalados: o launcher
+# registra onde ela fica na página 2, e o teste clica lá.
+UPOS="$(timeout 150 "$SCEN" "$LAUNCH; 440 key pagedown; 480 list" 2>&1 | grep -oE "pasta Utilitários na página 1 em \([0-9]+, [0-9]+\)" | head -1 | grep -oE "[0-9]+, [0-9]+" | tr -d ',')"
+check "roda dentro da pasta troca de página (carrossel)" "página da pasta 0 → 1" "$LAUNCH; 440 key pagedown; 470 click ${UPOS:-346 397}; 500 move 400 300; 510 wheel down; 550 list"
 check "Configurações aparecem no launcher" 'janela "Configurações do Sistema"' "$LAUNCH; 440 type configuracoes_do_sistema; 450 key enter; 560 list"
 check_count "clicar num app da dock fecha o launcher" 'camada "mide-launcher"' 0 "$LAUNCH; 460 click 371 560; 520 list"
 
@@ -431,6 +434,33 @@ else
     echo "FALHA ocultar inteligente: janela sobre a dock a esconde"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$HCFG"
+
+echo "== área de trabalho (ícones)"
+# Pasta de teste com um arquivo: o ícone fica na coluna da direita, em (732, 76)
+# (área útil abaixo da barra e acima da dock). Fundo vazio em (400, 300): menu com
+# "Nova pasta" em (450, 326).
+DESK="$(mktemp -d)"
+reset_desk() { rm -rf "$DESK"/* ; echo oi >"$DESK/notas.txt"; }
+reset_desk
+export MIDE_DESKTOP_DIR="$DESK"
+check "área de trabalho aparece como camada de fundo" 'camada "mide-desktop"' "300 list"
+check "duplo clique no ícone abre o arquivo" "abrir \(teste\): .*notas.txt" "300 click 732 76; 306 click 732 76; 340 list"
+unset MIDE_DESKTOP_DIR
+reset_desk
+MIDE_DESKTOP_DIR="$DESK" timeout 150 "$SCEN" "300 click 732 76; 330 key delete; 380 list" >/dev/null 2>&1
+if [ ! -e "$DESK/notas.txt" ]; then
+    echo "ok    Delete manda o ícone da área de trabalho para a Lixeira"; PASS=$((PASS + 1))
+else
+    echo "FALHA Delete manda o ícone da área de trabalho para a Lixeira"; FAIL=$((FAIL + 1))
+fi
+reset_desk
+MIDE_DESKTOP_DIR="$DESK" timeout 150 "$SCEN" "300 rclick 400 300; 330 click 450 326; 370 key enter; 420 list" >/dev/null 2>&1
+if [ -d "$DESK/Nova pasta" ]; then
+    echo "ok    menu da área de trabalho → Nova pasta"; PASS=$((PASS + 1))
+else
+    echo "FALHA menu da área de trabalho → Nova pasta"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$DESK"
 
 echo "== vidro em barras e menus"
 check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"

@@ -1026,6 +1026,15 @@ pub fn front_layers(map: &smithay::desktop::LayerMap) -> Vec<smithay::desktop::L
     layers
 }
 
+/// Camadas de fundo (área de trabalho com ícones), da frente para trás: `Bottom` e
+/// depois `Background`. Ficam atrás das janelas e na frente do papel de parede.
+pub fn back_layers(map: &smithay::desktop::LayerMap) -> Vec<smithay::desktop::LayerSurface> {
+    use smithay::wayland::shell::wlr_layer::Layer;
+    let mut layers: Vec<smithay::desktop::LayerSurface> = map.layers().rev().filter(|l| l.layer() == Layer::Bottom).cloned().collect();
+    layers.extend(map.layers().rev().filter(|l| l.layer() == Layer::Background).cloned());
+    layers
+}
+
 impl State {
     /// O launcher está aberto?
     pub fn launcher_open(&self) -> bool {

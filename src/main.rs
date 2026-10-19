@@ -95,6 +95,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         tracing::warn!("canal de controle indisponível: {err}");
     }
 
+    // Área de trabalho (ícones) primeiro: fica atrás de tudo.
+    spawn_client("mide-desktop");
     spawn_client("mide-dock");
     spawn_client("mide-bar");
     spawn_client("mide-notifications");

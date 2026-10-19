@@ -442,6 +442,21 @@ fn window_elements(
 
     }
 
+    // Camadas de fundo (ícones da área de trabalho): atrás das janelas e na frente
+    // do papel de parede.
+    {
+        let map = layer_map_for_output(output);
+        for layer in crate::state::back_layers(&map) {
+            let Some(geo) = map.layer_geometry(&layer) else {
+                continue;
+            };
+            let location: Point<i32, Physical> = geo.loc.to_physical(1);
+            let surface: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                render_elements_from_surface_tree(renderer, layer.wl_surface(), location, 1.0, 1.0, Kind::Unspecified);
+            elements.extend(surface.into_iter().map(MideRenderElement::from));
+        }
+    }
+
     // Fundo do desktop (papel de parede) com as sombras de todas as janelas, atrás
     // de tudo (fim da lista). Se a textura falhar, usa a cor lisa.
     // A configuração pode ter mudado (comando `reload`): segue o papel de parede dela.
