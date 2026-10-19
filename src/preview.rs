@@ -19,7 +19,7 @@ use smithay::{
 };
 
 use crate::{
-    backend_winit::MideRenderElement,
+    render::MideRenderElement,
     decorations::{self, Shaders},
     state::{window_id, State},
     title::TitleRenderer,
@@ -160,7 +160,7 @@ pub fn elements(
             front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, ring, [1.0, 1.0, 1.0, 0.7], CLOSE / 2 + 1)));
         }
         // Título embaixo da miniatura.
-        let title = crate::backend_winit::window_title(&thumb.window);
+        let title = crate::render::window_title(&thumb.window);
         let title_bar = Rectangle::new((thumb.boxed.loc.x - 40, thumb.boxed.loc.y + THUMB_H).into(), (THUMB_W + 80, TITLE_H).into());
         if let Some(el) = crate::title::element(renderer, titles, &title, true, title_bar) {
             middle.push(MideRenderElement::from(el));

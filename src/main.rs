@@ -13,9 +13,11 @@ mod genie;
 mod input;
 mod selftest;
 mod preview;
+mod render;
 mod state;
 mod title;
 mod wallpaper;
+mod wm;
 
 use std::{error::Error, sync::Arc, time::Duration};
 

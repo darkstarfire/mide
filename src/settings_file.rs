@@ -70,6 +70,24 @@ pub fn set(section: &str, key: &str, new: Option<Value>) -> Result<(), String> {
     Ok(())
 }
 
+/// Apaga a seção inteira do arquivo do usuário (volta tudo dela ao padrão).
+pub fn clear_section(section: &str) -> Result<(), String> {
+    let path = config_path().ok_or("sem pasta de configuração")?;
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    fs::write(&path, clear_section_in_text(&text, section)?).map_err(|e| e.to_string())?;
+    tracing::info!("config.toml: [{section}] voltou ao padrão");
+    Ok(())
+}
+
+/// Tira a seção de um texto TOML, sem mexer no resto.
+pub fn clear_section_in_text(text: &str, section: &str) -> Result<String, String> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("config.toml inválido: {e}"))?;
+    doc.remove(section);
+    Ok(doc.to_string())
+}
+
 /// Lê um valor do arquivo do usuário.
 pub fn get(section: &str, key: &str) -> Option<Value> {
     let text = fs::read_to_string(config_path()?).ok()?;
@@ -138,6 +156,14 @@ mod tests {
         let out = set_in_text(&out, "effects", "lamp", None).unwrap();
         assert_eq!(get_in_text(&out, "effects", "lamp"), None);
         assert!(!out.contains("[effects]"));
+    }
+
+    #[test]
+    fn limpar_secao_mantem_o_resto() {
+        let text = "[effects]\nlamp = false\n\n[keybindings]\n\"ctrl+shift+q\" = \"none\"\n";
+        let out = clear_section_in_text(text, "keybindings").unwrap();
+        assert!(!out.contains("keybindings"));
+        assert_eq!(get_in_text(&out, "effects", "lamp"), Some(Value::Bool(false)));
     }
 
     #[test]

@@ -2,57 +2,32 @@
 //!
 //! É o backend de desenvolvimento. Nele, as janelas dos apps aparecem dentro
 //! de uma janela do mide, sem precisar de DRM nem de sair da sessão gráfica.
+//! Aqui ficam só a janela do anfitrião, a saída, os eventos e a apresentação do
+//! quadro; o que é desenhado vem da cena (`crate::render`).
 
 use std::{error::Error, time::Duration};
 
-use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
 use smithay::{
     backend::{
-        renderer::{
-            damage::OutputDamageTracker,
-            element::{
-                surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
-                utils::RescaleRenderElement,
-                Kind,
-            },
-            gles::GlesRenderer,
-        },
+        renderer::{damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent},
     },
-    desktop::{
-        layer_map_for_output, space::render_output, utils::send_frames_surface_tree, PopupManager,
-        Space, Window,
-    },
     output::{Mode, Output, PhysicalProperties, Subpixel},
-    reexports::calloop::{EventLoop, LoopHandle, LoopSignal},
-    utils::{Logical, Physical, Point, Rectangle, Scale, Transform},
+    reexports::{
+        calloop::{EventLoop, LoopHandle, LoopSignal},
+        winit::window::CursorIcon,
+    },
+    utils::Transform,
 };
 
 use crate::{
-    decorations::{self},
+    input::CursorShape,
+    render::{send_frames, Scene},
     state::State,
 };
 
-smithay::backend::renderer::element::render_elements! {
-    /// Elementos desenhados por cima das janelas: conteúdo de apps, camadas e barras.
-    pub MideRenderElement<=GlesRenderer>;
-    Surface=WaylandSurfaceRenderElement<GlesRenderer>,
-    Shader=smithay::backend::renderer::gles::element::PixelShaderElement,
-    Scaled=RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
-    Title=smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<GlesRenderer>,
-    /// Texturas com shader próprio: efeito lâmpada e papel de parede.
-    Textured=smithay::backend::renderer::gles::element::TextureShaderElement,
-    /// Textura pronta, sem shader próprio (fundo desfocado do launcher).
-    Blurred=smithay::backend::renderer::element::texture::TextureRenderElement<smithay::backend::renderer::gles::GlesTexture>,
-    ClippedSurface=crate::clip::Clipped<WaylandSurfaceRenderElement<GlesRenderer>>,
-    ClippedScaled=crate::clip::Clipped<RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>,
-}
-
 /// Taxa de atualização assumida para o modo da saída virtual (em mHz).
 const REFRESH_MHZ: i32 = 60_000;
-
-/// Cor de fundo do desktop se o papel de parede não puder ser desenhado.
-const BACKGROUND: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
 
 /// Cria a janela winit, registra a saída e agenda o desenho contínuo.
 pub fn init(
@@ -88,18 +63,10 @@ pub fn init(
         attributes
     };
     let (mut backend, winit_source) = winit::init_from_attributes::<GlesRenderer>(attributes)?;
-    let mut titles = crate::title::TitleRenderer::new();
     let selftest = std::rc::Rc::new(std::cell::RefCell::new(crate::selftest::SelfTest::from_env()));
     // Quando o anfitrião pede o último quadro (para o relógio de reserva abaixo).
     let last_redraw = std::rc::Rc::new(std::cell::Cell::new(std::time::Instant::now()));
-    let shaders = decorations::Shaders::compile(backend.renderer())
-        .map_err(|e| format!("falha ao compilar shaders da decoração: {e}"))?;
-    let genie = crate::genie::Genie::compile(backend.renderer())
-        .map_err(|e| format!("falha ao compilar o shader do efeito lâmpada: {e}"))?;
-    let blur = crate::blur::Blur::compile(backend.renderer())
-        .map_err(|e| format!("falha ao compilar os shaders do desfoque: {e}"))?;
-    let wallpaper = crate::wallpaper::Wallpaper::new(backend.renderer(), state.config.desktop.wallpaper_path())
-        .map_err(|e| format!("falha ao compilar o shader do papel de parede: {e}"))?;
+    let mut scene = Scene::new(backend.renderer(), state)?;
 
     let size = backend.window_size();
     let output = Output::new(
@@ -194,16 +161,12 @@ pub fn init(
                     test.tick(state);
                 }
                 state.redraw = false;
-                if let Err(err) = render(&mut backend, &output, &mut damage_tracker, state, &shaders, &genie, &blur, &wallpaper, &mut titles) {
+                if let Err(err) = render(&mut backend, &output, &mut damage_tracker, state, &mut scene) {
                     tracing::warn!("falha ao desenhar frame: {err}");
                 }
                 // Só continua desenhando com algo em movimento (animações, papel de parede
                 // trocando, janela fechando) ou no autoteste; senão espera algo mudar.
-                let moving = !state.animations.is_empty()
-                    || state.launcher_anim.is_some()
-                    || wallpaper.busy()
-                    || !state.ghosts.is_empty();
-                if moving || continuous {
+                if scene.moving(state) || continuous {
                     backend.window().request_redraw();
                     state.redraw = true;
                 }
@@ -217,7 +180,7 @@ pub fn init(
                 let physical = backend.window_size();
                 let size = (physical.w, physical.h).into();
                 crate::input::handle_event(state, event, size);
-                backend.window().set_cursor(state.cursor_icon);
+                backend.window().set_cursor(winit_cursor(state.cursor));
                 backend.window().request_redraw();
             }
             WinitEvent::Focus(_) => {}
@@ -228,665 +191,32 @@ pub fn init(
     Ok(())
 }
 
-/// Elementos de render dos popups de todas as janelas, para ficarem acima delas.
-fn popup_elements(
-    renderer: &mut GlesRenderer,
-    state: &State,
-) -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
-    let mut elements = Vec::new();
-    for window in state.space.elements() {
-        let (Some(toplevel), Some(loc)) = (window.toplevel(), state.space.element_location(window))
-        else {
-            continue;
-        };
-        for (popup, popup_offset) in PopupManager::popups_for_surface(toplevel.wl_surface()) {
-            let offset = popup_offset - popup.geometry().loc;
-            let location: Point<i32, Physical> = (loc + offset).to_physical(1);
-            elements.extend(render_elements_from_surface_tree(
-                renderer,
-                popup.wl_surface(),
-                location,
-                1.0,
-                1.0,
-                Kind::Unspecified,
-            ));
-        }
+/// Forma do ponteiro do mide na janela do anfitrião.
+fn winit_cursor(shape: CursorShape) -> CursorIcon {
+    match shape {
+        CursorShape::Default => CursorIcon::Default,
+        CursorShape::ResizeHorizontal => CursorIcon::EwResize,
+        CursorShape::ResizeVertical => CursorIcon::NsResize,
+        CursorShape::ResizeNwse => CursorIcon::NwseResize,
+        CursorShape::ResizeNesw => CursorIcon::NeswResize,
     }
-    elements
 }
 
-/// Elementos de todas as janelas, da frente para trás: contorno, máscaras dos
-/// cantos, barra, conteúdo do app e sombra. Durante a animação de maximizar, o
-/// conteúdo e a moldura seguem a interpolação entre o estado antigo e o novo.
-fn window_elements(
-    renderer: &mut GlesRenderer,
-    state: &State,
-    output: &Output,
-    shaders: &decorations::Shaders,
-    genie: &crate::genie::Genie,
-    wallpaper: &crate::wallpaper::Wallpaper,
-    titles: &mut crate::title::TitleRenderer,
-) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
-    use smithay::backend::renderer::element::AsRenderElements;
-    let mut glass = Vec::new();
-
-    let now = std::time::Instant::now();
-
-    // Primeira passada, de cima para baixo: posição, zoom e moldura de cada janela.
-    struct Placed {
-        window: Window,
-        /// Origem da superfície: posição da janela menos o deslocamento da geometria,
-        /// a mesma conta do `render_location` do Smithay, usada também no clique.
-        surface_origin: Point<i32, Logical>,
-        zoom: f64,
-        alpha: f32,
-        frame: Rectangle<i32, Logical>,
-        focused: bool,
-        maximized: bool,
-        animating: bool,
-        /// Efeito lâmpada em andamento: área da janela, alvo e progresso (0 a 1).
-        genie: Option<(Rectangle<i32, Logical>, Rectangle<i32, Logical>, f32)>,
-    }
-    let mut placed: Vec<Placed> = Vec::new();
-    // `elements()` vai do fundo para o topo; aqui percorremos do topo para o fundo.
-    for window in state.space.elements().rev() {
-        let (Some(toplevel), Some(loc)) = (window.toplevel(), state.space.element_location(window))
-        else {
-            continue;
-        };
-        let state_flags = toplevel.current_state().states;
-        let focused = state_flags.contains(XdgState::Activated);
-        let maximized = state_flags.contains(XdgState::Maximized);
-        let geo = window.geometry();
-
-        // Posição, tamanho e zoom do conteúdo, interpolados se houver animação.
-        let (draw_loc, zoom, frame_w, frame_h, alpha) = match state.animation_for(toplevel.wl_surface()) {
-            Some(anim) => {
-                let e = anim.eased(now);
-                let lerp = |a: f32, b: f32| a + (b - a) * e;
-                let loc = (
-                    lerp(anim.from_loc.x as f32, anim.to_loc.x as f32).round() as i32,
-                    lerp(anim.from_loc.y as f32, anim.to_loc.y as f32).round() as i32,
-                );
-                let zoom = lerp(anim.zoom_from, anim.zoom_to) as f64;
-                let w = lerp(anim.from_size.w as f32, anim.to_size.w as f32).round() as i32;
-                let h = lerp(anim.from_size.h as f32, anim.to_size.h as f32).round() as i32;
-                (loc.into(), zoom, w, h, lerp(anim.alpha_from, anim.alpha_to))
-            }
-            None => (loc, 1.0, geo.size.w, geo.size.h, 1.0),
-        };
-        // A área visível começa no deslocamento da geometria (sombra do cliente, p. ex.).
-        // No Space, a posição da janela já é o canto da área visível. A moldura e a
-        // barra (se a janela usa decoração de servidor) se alinham a ela.
-        let visible = draw_loc;
-        let bar_h = crate::state::bar_height_for(window);
-        let frame = Rectangle::new((visible.x, visible.y - bar_h).into(), (frame_w, bar_h + frame_h).into());
-        let genie_info = state.animation_for(toplevel.wl_surface()).filter(|a| a.genie).map(|a| {
-            let e = a.eased(now);
-            let from = Rectangle::new(a.from_loc, a.from_size);
-            let to = Rectangle::new(a.to_loc, a.to_size);
-            // Minimizar: da janela ao alvo. Restaurar: do alvo à janela (progresso invertido).
-            if a.hide_at_end { (from, to, e) } else { (to, from, 1.0 - e) }
-        });
-        placed.push(Placed {
-            window: window.clone(),
-            genie: genie_info,
-            surface_origin: draw_loc - geo.loc,
-            zoom,
-            frame,
-            focused,
-            maximized,
-            animating: state.animation_for(toplevel.wl_surface()).is_some(),
-        alpha,
-        });
-    }
-
-    // Janelas que projetam sombra no desktop: as 8 de cima, com moldura (não
-    // maximizadas e visíveis). Com sombras desligadas, a lista fica vazia.
-    let casters: Vec<decorations::Caster> = if state.config.effects.shadows {
-        placed
-            .iter()
-            .filter(|p| (!p.maximized || p.animating) && p.alpha > 0.99 && p.genie.is_none())
-            .take(8)
-            .map(|p| decorations::Caster {
-                frame: p.frame,
-                strength: decorations::shadow_strength(p.focused),
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let output_rect = state
-        .space
-        .output_geometry(output)
-        .unwrap_or_else(|| Rectangle::new((0, 0).into(), (800, 600).into()));
-    let output_height = output_rect.size.h as f32;
-
-    // Segunda passada, de cima para baixo: cada janela desenha sobre as de baixo.
-    // Sombra e máscaras recebem as molduras das janelas de baixo para não cobri-las.
-    let mut elements = Vec::new();
-
-    // Janelas que acabaram de fechar: a foto delas encolhe um pouco e esmaece, por
-    // cima das outras.
-    {
-        let snapshots = genie.snapshots.borrow();
-        for (id, frame, start) in &state.ghosts {
-            let Some((texture, size)) = snapshots.get(id) else {
-                continue;
-            };
-            let t = (start.elapsed().as_secs_f32() / crate::state::CLOSE_FADE.as_secs_f32()).clamp(0.0, 1.0);
-            let ease = t * t * (3.0 - 2.0 * t);
-            let scale = 1.0 - 0.06 * ease;
-            // O tamanho vem da foto: na hora em que a janela some, a geometria dela já
-            // está zerada.
-            let (w, h) = ((size.w as f32 * scale).round() as i32, (size.h as f32 * scale).round() as i32);
-            let x = frame.loc.x + (size.w - w) / 2;
-            let y = frame.loc.y + (size.h - h) / 2;
-            use smithay::backend::renderer::Renderer as _;
-            elements.push(MideRenderElement::Blurred(smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
-                smithay::backend::renderer::element::Id::new(),
-                renderer.context_id(),
-                (x as f64, y as f64),
-                texture.clone(),
-                1,
-                Transform::Normal,
-                Some(1.0 - ease),
-                Some(Rectangle::from_size((size.w as f64, size.h as f64).into())),
-                Some((w, h).into()),
-                None,
-                Kind::Unspecified,
-            )));
-        }
-    }
-    // Fotos que não servem mais (janela fechou e esmaeceu, ou não fechou).
-    genie.snapshots.borrow_mut().retain(|id, _| {
-        state.close_requests.iter().any(|(w, _)| w == id) || state.ghosts.iter().any(|(w, _, _)| w == id)
-    });
-    for p in placed.iter() {
-        // A barra fica no topo da moldura, que já está na área visível.
-        let bar_h = crate::state::bar_height_for(&p.window);
-        let bar = Rectangle::new(p.frame.loc, (p.frame.size.w, bar_h).into());
-        // Com a janela quase invisível (minimizando ou restaurando), a moldura não aparece.
-        let decorated = (!p.maximized || p.animating) && p.alpha > 0.99 && p.genie.is_none();
-        let phys: Point<i32, smithay::utils::Physical> = p.surface_origin.to_physical(1);
-
-        // Janela maximizada ocupa a tela inteira: sem cantos, contorno nem sombra.
-        // Cada efeito pode ser desligado em `[effects]` no config.toml.
-        let effects = state.config.effects;
-        if decorated && effects.rounded_corners {
-            elements.push(MideRenderElement::from(decorations::outline_element(
-                shaders, p.frame, p.focused,
-            )));
-        }
-        // Recorte arredondado pela moldura: vale para a barra e para o conteúdo, e os
-        // cantos mostram o que está de fato atrás (desktop com sombra ou outra janela).
-        let radius = if decorated && effects.rounded_corners {
-            decorations::CORNER_RADIUS as f32
-        } else {
-            0.0
-        };
-        let clip_uniforms = crate::clip::uniforms(p.frame, radius, output_height);
-
-        // Barra e título só existem nas janelas com decoração de servidor. Vêm antes do
-        // conteúdo na lista, para ficarem na frente dele.
-        if bar_h > 0 && p.genie.is_none() {
-            let title = toplevel_title_of(&p.window);
-            if let Some(text) = crate::title::element(renderer, titles, &title, p.focused, bar) {
-                elements.push(MideRenderElement::Title(text));
-            }
-            elements.extend(
-                decorations::bar_elements(
-                    shaders,
-                    bar,
-                    p.focused,
-                    decorations::button_at(bar, state.pointer_location),
-                    &clip_uniforms,
-                )
-                .into_iter()
-                .map(MideRenderElement::from),
-            );
-        }
-
-        // Efeito lâmpada: a janela inteira (barra, título e conteúdo) deformada
-        // substitui o desenho normal durante a animação.
-        if let Some((content_rect, target, progress)) = p.genie {
-            let bar_h = crate::state::bar_height_for(&p.window);
-            let frame_rect = Rectangle::new(
-                (content_rect.loc.x, content_rect.loc.y - bar_h).into(),
-                (content_rect.size.w, content_rect.size.h + bar_h).into(),
-            );
-            // Barra e título em coordenadas da textura (origem no canto da moldura).
-            let local_bar = Rectangle::new((0, 0).into(), (content_rect.size.w, bar_h).into());
-            let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
-            let bar_parts = if bar_h > 0 {
-                decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip)
-            } else {
-                Vec::new()
-            };
-            let title = if bar_h > 0 {
-                crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar)
-            } else {
-                None
-            };
-            let mut overlays: Vec<&dyn smithay::backend::renderer::element::RenderElement<GlesRenderer>> =
-                Vec::new();
-            if let Some(t) = title.as_ref() {
-                overlays.push(t);
-            }
-            for part in &bar_parts {
-                overlays.push(part);
-            }
-            let corner = if state.config.effects.rounded_corners {
-                decorations::CORNER_RADIUS as f32
-            } else {
-                0.0
-            };
-            if let Some(element) = genie.element(
-                renderer,
-                &p.window,
-                frame_rect,
-                bar_h,
-                &overlays,
-                corner,
-                target,
-                progress,
-                1.0,
-            ) {
-                elements.push(MideRenderElement::Textured(element));
-            }
-            continue;
-        }
-
-        // Fechamento pedido: fotografa a janela (barra, título e conteúdo) para a
-        // transição, até ela fechar.
-        let id = crate::state::window_id(&p.window);
-        if state.config.effects.animations && state.close_requests.iter().any(|(w, _)| *w == id) {
-            let local_bar = Rectangle::new((0, 0).into(), (p.frame.size.w, bar_h).into());
-            let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
-            let bar_parts = if bar_h > 0 { decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip) } else { Vec::new() };
-            let title = if bar_h > 0 { crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar) } else { None };
-            let mut overlays: Vec<&dyn smithay::backend::renderer::element::RenderElement<GlesRenderer>> = Vec::new();
-            if let Some(t) = title.as_ref() {
-                overlays.push(t);
-            }
-            for part in &bar_parts {
-                overlays.push(part);
-            }
-            if let Some(texture) = crate::genie::snapshot(renderer, &p.window, p.frame.size, bar_h, &overlays) {
-                genie.snapshots.borrow_mut().insert(id, (texture, p.frame.size));
-            }
-        }
-
-        // Conteúdo do app, com zoom durante a animação.
-        let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            p.window.render_elements(renderer, phys, Scale::from(1.0), p.alpha);
-        let program = shaders.clip_program();
-        for element in content {
-            if (p.zoom - 1.0).abs() > f64::EPSILON {
-                let scaled = RescaleRenderElement::from_element(element, phys, p.zoom);
-                elements.push(MideRenderElement::ClippedScaled(crate::clip::Clipped::new(
-                    scaled,
-                    program.clone(),
-                    clip_uniforms.clone(),
-                )));
-            } else {
-                elements.push(MideRenderElement::ClippedSurface(crate::clip::Clipped::new(
-                    element,
-                    program.clone(),
-                    clip_uniforms.clone(),
-                )));
-            }
-        }
-
-        // Vidro pedido pela janela (a barra lateral do Arquivos), logo atrás do
-        // conteúdo dela. Cobre também a faixa da barra de título acima e avança um raio
-        // para dentro do conteúdo: os cantos arredondados do vidro coincidem com os da
-        // janela ou ficam escondidos atrás das partes opacas.
-        if effects.panel_glass && p.alpha > 0.99 && (p.zoom - 1.0).abs() < f64::EPSILON {
-            let app_id = p
-                .window
-                .toplevel()
-                .and_then(|t| {
-                    smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
-                        s.data_map
-                            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
-                            .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
-                    })
-                })
-                .unwrap_or_default();
-            let content_top = p.surface_origin.y + p.window.geometry().loc.y;
-            for (i, (rect, _)) in state.glass.get(&format!("app:{app_id}")).into_iter().flatten().enumerate() {
-                let mut r = Rectangle::new(p.surface_origin + rect.loc, rect.size);
-                let pad = radius.ceil() as i32;
-                if r.loc.y <= content_top {
-                    r.size.h += r.loc.y - p.frame.loc.y;
-                    r.loc.y = p.frame.loc.y;
-                } else {
-                    r.loc.y -= pad;
-                    r.size.h += pad;
-                }
-                if r.loc.x > p.frame.loc.x {
-                    r.loc.x -= pad;
-                    r.size.w += pad;
-                }
-                r.size.w += pad;
-                r.size.h += pad;
-                if let Some(r) = r.intersection(p.frame) {
-                    glass.push(GlassRegion { at: elements.len(), rect: r, radius, name: format!("app:{app_id}:{id}#{i}") });
-                }
-            }
-        }
-    }
-
-    // Camadas de fundo (ícones da área de trabalho): atrás das janelas e na frente
-    // do papel de parede.
-    {
-        let map = layer_map_for_output(output);
-        for layer in crate::state::back_layers(&map) {
-            let Some(geo) = map.layer_geometry(&layer) else {
-                continue;
-            };
-            let location: Point<i32, Physical> = geo.loc.to_physical(1);
-            let surface: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                render_elements_from_surface_tree(renderer, layer.wl_surface(), location, 1.0, 1.0, Kind::Unspecified);
-            elements.extend(surface.into_iter().map(MideRenderElement::from));
-        }
-    }
-
-    // Fundo do desktop (papel de parede) com as sombras de todas as janelas, atrás
-    // de tudo (fim da lista). Se a textura falhar, usa a cor lisa.
-    // A configuração pode ter mudado (comando `reload`): segue o papel de parede dela.
-    wallpaper.follow(state.config.desktop.wallpaper_path());
-    let layers = wallpaper.element(renderer, output_rect, &casters);
-    if layers.is_empty() {
-        elements.push(MideRenderElement::from(decorations::desktop_element(shaders, output_rect, BACKGROUND, &casters)));
-    }
-    elements.extend(layers.into_iter().map(MideRenderElement::Textured));
-    (elements, glass)
-}
-
-/// Superfícies de camada (barra, dock, buscador) que ficam acima das janelas.
-/// As camadas de fundo ainda não são desenhadas: ficam para quando o desktop tiver papel de parede.
-fn layer_elements(
-    renderer: &mut GlesRenderer,
-    output: &Output,
-    state: &State,
-    blur: &crate::blur::Blur,
-    wallpaper: &crate::wallpaper::Wallpaper,
-) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
-    let map = layer_map_for_output(output);
-    let mut elements: Vec<MideRenderElement> = Vec::new();
-    let mut glass = Vec::new();
-    // Do topo para o fundo, como a lista de render.
-    for layer in crate::state::front_layers(&map).iter() {
-        let Some(geo) = map.layer_geometry(layer) else {
-            continue;
-        };
-        let location: Point<i32, Physical> = geo.loc.to_physical(1);
-        // O launcher abre e fecha com esmaecer e zoom feitos aqui (GPU).
-        let (alpha, zoom) = if layer.namespace() == "mide-launcher" { state.launcher_look() } else { (1.0, 1.0) };
-        let surface: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(
-            renderer,
-            layer.wl_surface(),
-            location,
-            1.0,
-            alpha,
-            Kind::Unspecified,
-        );
-        if (zoom - 1.0).abs() > f64::EPSILON {
-            let center: Point<i32, Physical> = (geo.loc.x + geo.size.w / 2, geo.loc.y + geo.size.h / 2).into();
-            elements.extend(surface.into_iter().map(|e| MideRenderElement::Scaled(RescaleRenderElement::from_element(e, center, zoom))));
-        } else {
-            elements.extend(surface.into_iter().map(MideRenderElement::from));
-        }
-        match layer.namespace() {
-            // Atrás do launcher, o papel de parede desfocado (como o Launchpad).
-            "mide-launcher" if state.config.effects.launcher_blur => {
-                let out = Rectangle::new((0, 0).into(), geo.size);
-                if let Some(el) = blur.wallpaper_element(renderer, wallpaper.texture(), out, state.launcher_look().0) {
-                    elements.push(MideRenderElement::Blurred(el));
-                }
-            }
-            "mide-dock" if state.config.effects.dock_blur => {
-                // Só a parte na tela (a dock que se esconde desliza para fora); a faixa
-                // escondida, pequena demais, fica sem vidro.
-                let screen = output.current_mode().map(|m| Rectangle::from_size(m.size.to_logical(1))).unwrap_or(geo);
-                if let Some(rect) = geo.intersection(screen) {
-                    glass.push(GlassRegion { at: elements.len(), rect, radius: 15.0, name: "mide-dock".into() });
-                }
-            }
-            namespace if state.config.effects.panel_glass => {
-                // Regiões pedidas pela camada (barra, menus, notificações), relativas a ela.
-                for (i, (rect, radius)) in state.glass.get(namespace).into_iter().flatten().enumerate() {
-                    let on_screen = Rectangle::new(geo.loc + rect.loc, rect.size);
-                    if let Some(rect) = on_screen.intersection(geo) {
-                        glass.push(GlassRegion { at: elements.len(), rect, radius: *radius, name: format!("{namespace}#{i}") });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    (elements, glass)
-}
-
-/// Vidro atrás de uma camada ou janela: posição na lista de render (logo depois dos
-/// elementos dela, ou seja, atrás dela), retângulo na tela, raio dos cantos e nome (para
-/// o cache do desfoque).
-struct GlassRegion {
-    at: usize,
-    rect: Rectangle<i32, Logical>,
-    radius: f32,
-    name: String,
-}
-
-/// Região da dock dentro da textura da cena, nas coordenadas da textura. A cena é
-/// desenhada com a mesma orientação da tela (invertida no eixo y no OpenGL).
-/// Assinatura do que está atrás da dock: muda quando algo ali muda (posição, tamanho,
-/// opacidade, conteúdo novo de uma janela). Elementos de shader são recriados a cada
-/// quadro com id novo, então deles entra só a geometria e a opacidade (por isso, com
-/// uma animação em curso, quem chama não usa o cache).
-fn backdrop_key(elements: &[MideRenderElement], area: Rectangle<i32, Logical>) -> u64 {
-    use smithay::backend::renderer::element::Element;
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (area.loc.x, area.loc.y, area.size.w, area.size.h).hash(&mut h);
-    let region: Rectangle<i32, smithay::utils::Physical> = Rectangle::new((area.loc.x, area.loc.y).into(), (area.size.w, area.size.h).into());
-    for element in elements {
-        let g = element.geometry(smithay::utils::Scale::from(1.0));
-        if !g.overlaps(region) {
-            continue;
-        }
-        (g.loc.x, g.loc.y, g.size.w, g.size.h, element.alpha().to_bits()).hash(&mut h);
-        match element {
-            MideRenderElement::Shader(_) | MideRenderElement::Textured(_) | MideRenderElement::Blurred(_) => 0u8.hash(&mut h),
-            other => {
-                other.id().hash(&mut h);
-                format!("{:?}", other.current_commit()).hash(&mut h);
-            }
-        }
-    }
-    h.finish()
-}
-
-fn blur_source(area: Rectangle<i32, Logical>, out: smithay::utils::Size<i32, Logical>) -> Rectangle<f64, Logical> {
-    let flip = std::env::var("MIDE_BLUR_FLIP").map(|v| v != "0").unwrap_or(true);
-    let y = if flip { out.h - area.loc.y - area.size.h } else { area.loc.y };
-    Rectangle::new((area.loc.x as f64, y as f64).into(), (area.size.w as f64, area.size.h as f64).into())
-}
-
-/// Depuração: com `MIDE_DUMP_FRAME=/caminho`, salva o frame `MIDE_DUMP_AT` (padrão 120)
-/// como bytes RGBA crus, com a largura e altura no nome do arquivo.
-fn dump_frame_if_requested(
-    renderer: &mut GlesRenderer,
-    framebuffer: &smithay::backend::renderer::gles::GlesTarget<'_>,
-    output: &Output,
-) -> Result<(), Box<dyn Error>> {
-    use smithay::backend::renderer::ExportMem;
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static FRAMES: AtomicU32 = AtomicU32::new(0);
-
-    let Ok(path) = std::env::var("MIDE_DUMP_FRAME") else {
-        return Ok(());
-    };
-    let at: u32 = std::env::var("MIDE_DUMP_AT").ok().and_then(|v| v.parse().ok()).unwrap_or(120);
-    if FRAMES.fetch_add(1, Ordering::Relaxed) != at {
-        return Ok(());
-    }
-    let Some(mode) = output.current_mode() else {
-        return Ok(());
-    };
-    let (w, h) = (mode.size.w, mode.size.h);
-    let region = Rectangle::from_size((w, h).into());
-    let mapping = renderer.copy_framebuffer(framebuffer, region, smithay::backend::allocator::Fourcc::Abgr8888)?;
-    let bytes = renderer.map_texture(&mapping)?;
-    std::fs::write(format!("{path}.{w}x{h}.rgba"), bytes)?;
-    tracing::info!("frame salvo para depuração ({w}x{h})");
-    Ok(())
-}
-
-/// Desenha um quadro: fundo, camadas, janelas, e envia os frame callbacks.
+/// Desenha um quadro da cena na janela do anfitrião, apresenta e envia os frame callbacks.
 fn render(
     backend: &mut winit::WinitGraphicsBackend<GlesRenderer>,
     output: &Output,
     damage_tracker: &mut OutputDamageTracker,
     state: &mut State,
-    shaders: &decorations::Shaders,
-    genie: &crate::genie::Genie,
-    blur: &crate::blur::Blur,
-    wallpaper: &crate::wallpaper::Wallpaper,
-    titles: &mut crate::title::TitleRenderer,
+    scene: &mut Scene,
 ) -> Result<(), Box<dyn Error>> {
-    state.popups.cleanup();
-    let now = std::time::Instant::now();
-    state.finish_animations(now);
-    tracing::debug!("frame: {} janela(s) mapeada(s)", state.space.elements().count());
     {
         let (renderer, mut framebuffer) = backend.bind()?;
-        // Da frente para trás: prévias das janelas, popups, camadas (barra, dock) e
-        // depois as janelas.
-        let mut custom: Vec<MideRenderElement> = crate::preview::elements(renderer, state, shaders, titles);
-        custom.extend(popup_elements(renderer, state).into_iter().map(MideRenderElement::from));
-        let before_layers = custom.len();
-        let (layers, mut glass) = layer_elements(renderer, output, state, blur, wallpaper);
-        for region in &mut glass {
-            region.at += before_layers;
-        }
-        custom.extend(layers);
-        let before_windows = custom.len();
-        let (windows, window_glass) = window_elements(renderer, state, output, shaders, genie, wallpaper, titles);
-        custom.extend(windows);
-        glass.extend(window_glass.into_iter().map(|mut region| {
-            region.at += before_windows;
-            region
-        }));
-        // Vidro (dock, barra, menus): o que está atrás de cada região (tudo depois dela
-        // na lista) é desenhado numa textura, desfocado e posto logo atrás da camada.
-        // De trás para a frente: o vidro de um menu vê a dock já com o vidro dela.
-        let out_size = output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
-        // Animações (lâmpada, maximizar, launcher) mudam shaders sem mudar a geometria:
-        // nelas o desfoque é refeito a cada quadro.
-        // O papel de parede trocando (esmaecer) também: o vidro acompanha a transição.
-        let animating = !state.animations.is_empty() || state.launcher_anim.is_some() || wallpaper.busy() || !state.ghosts.is_empty();
-        let strength = if state.config.effects.liquid_glass { 1.0 } else { 0.0 };
-        let mut regions = glass;
-        regions.sort_by(|a, b| b.at.cmp(&a.at));
-        for region in regions {
-            let at = region.at;
-            let rect = region.rect;
-            let src = blur_source(rect, out_size);
-            // A geração do papel de parede entra na assinatura: trocar a imagem refaz o vidro.
-            let key = if animating {
-                state.start_time.elapsed().as_nanos() as u64 ^ 0x9e37_79b9
-            } else {
-                backdrop_key(&custom[at..], rect) ^ wallpaper.generation().wrapping_mul(0x9e37_79b9_7f4a_7c15)
-            };
-            let behind = &custom[at..];
-            let blurred = blur.region_blur(renderer, &region.name, key, out_size, src, strength, |renderer, target| {
-                crate::blur::render_region(renderer, behind, rect, out_size, target)
-            });
-            match blurred {
-                Some((blurred, size)) => {
-                    let element = blur.composite_element(renderer, blurred, size, rect, region.radius, strength);
-                    custom.insert(at, MideRenderElement::Textured(element));
-                }
-                None => tracing::trace!("vidro {}: área pequena ou falha ao desfocar", region.name),
-            }
-        }
-        let result = render_output(
-            output,
-            renderer,
-            &mut framebuffer,
-            1.0,
-            0,
-            Vec::<&Space<Window>>::new(),
-            &custom,
-            damage_tracker,
-            BACKGROUND,
-        )?;
-        tracing::debug!("quadro do compositor: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
-        dump_frame_if_requested(renderer, &framebuffer, output)?;
-        drop(result);
+        scene.render(renderer, &mut framebuffer, output, damage_tracker, state)?;
     }
     // Apresenta o quadro inteiro. Com dano parcial, o buffer de trás pode ter pixels
     // de quadros antigos, e a diferença aparece como padrão pontilhado nas sombras.
     backend.submit(None)?;
 
     send_frames(state, output)
-}
-
-/// Avisa os clientes (janelas, camadas e popups) que podem desenhar o próximo quadro.
-fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Error>> {
-    let elapsed = state.start_time.elapsed();
-    for window in state.space.elements() {
-        window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
-    }
-    // Camadas e popups também precisam do frame callback para redesenhar depois de
-    // receber teclas ou cliques.
-    for layer in layer_map_for_output(output).layers() {
-        layer.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
-    }
-    for window in state.space.elements() {
-        let Some(toplevel) = window.toplevel() else {
-            continue;
-        };
-        for (popup, _) in PopupManager::popups_for_surface(toplevel.wl_surface()) {
-            send_frames_surface_tree(
-                popup.wl_surface(),
-                output,
-                elapsed,
-                Some(Duration::ZERO),
-                |_, _| Some(output.clone()),
-            );
-        }
-    }
-    state.space.refresh();
-    state.display_handle.flush_clients()?;
-    Ok(())
-}
-
-/// Título da janela (vazio se o app não definiu um).
-pub fn window_title(window: &Window) -> String {
-    toplevel_title_of(window)
-}
-
-fn toplevel_title_of(window: &Window) -> String {
-    window
-        .toplevel()
-        .map(|t| toplevel_title(t))
-        .unwrap_or_default()
-}
-
-/// Título que o app definiu para a janela (vazio se não definiu).
-fn toplevel_title(toplevel: &smithay::wayland::shell::xdg::ToplevelSurface) -> String {
-    use smithay::wayland::compositor::with_states;
-    use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
-    with_states(toplevel.wl_surface(), |states| {
-        states
-            .data_map
-            .get::<XdgToplevelSurfaceData>()
-            .and_then(|data| data.lock().ok().and_then(|attrs| attrs.title.clone()))
-    })
-    .unwrap_or_default()
 }

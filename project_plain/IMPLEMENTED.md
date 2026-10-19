@@ -785,3 +785,24 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - O relógio de reserva (anfitrião sem pedir quadros) só age com algo pendente; parado, confere a cada 100 ms.
 - Com autoteste (testes), continua desenhando sem parar, porque os roteiros contam quadros. Roteiro vazio (`tests/scenario.sh ""`) é uma sessão sem autoteste, para medir o consumo parado.
 - Medido (1366x768, Arquivos aberto, 10 s parado): compositor de 60 para **0–2 quadros**; sessão inteira de **4,4% para 1,0%** de um núcleo; RAM total ~158 MB (compositor ~99 MB).
+
+## Separação da cena, da política de janelas e do backend (preparo do A13)
+
+- Refatoração sem mudança de comportamento, para o backend DRM (A13) reaproveitar tudo sem duplicar código.
+- **`src/render.rs` (cena):** o que estava em `backend_winit.rs` e não era do winit foi para cá: `MideRenderElement`, montagem das janelas, decorações, efeito lâmpada, fotos de fechar, camadas, vidro, papel de parede, `send_frames` e títulos. `Scene` guarda os recursos de GPU (shaders, lâmpada, desfoque, papel de parede, títulos); `Scene::render` desenha num alvo qualquer do `GlesRenderer`, e `Scene::moving` diz se algo está em movimento.
+- **`src/backend_winit.rs`** ficou só com a janela do anfitrião, a saída, os relógios, os eventos e a apresentação (`bind`, `Scene::render`, `submit`, `send_frames`). De 892 para 222 linhas.
+- **`src/wm.rs` (política de janelas):** janela nova em cascata (`map_new_window`), fechar (`request_close`, `window_closed`), arrastar (`begin_move`), maximizar e restaurar (`maximize`, `unmaximize`), minimizar e restaurar minimizada, abrir saindo da dock, alvo na dock, área útil e ajuste à área. Os handlers do `XdgShellHandler` em `state.rs` só chamam essas funções.
+- **Cursor sem tipo do winit:** `input::CursorShape` (padrão e quatro formas de redimensionar) no lugar do `CursorIcon` do winit em `State`; o backend winit traduz. No DRM, o compositor vai desenhar a imagem correspondente.
+- **Entrada genérica:** `input::handle_event` aceita eventos de qualquer `InputBackend` do Smithay (winit hoje, libinput no A13).
+- Testes: `cargo test` (102) passando, build sem avisos.
+
+## Editor de atalhos nas Configurações (A9)
+
+- Regra nova do projeto: tudo é configurável pela interface; o usuário não edita arquivo. A tela Teclado deixou de mandar "editar o config.toml".
+- **Configurações → Teclado → Atalhos:** clicar num atalho abre um diálogo com a combinação atual e **Gravar…**, **Remover** e **Cancelar**. Gravar: o usuário aperta a combinação nova e ela vale na hora. Combinação de outra ação: aviso "… já é usado por …" com **Substituir** ou **Gravar outra**. Sem Ctrl, Alt ou Super a combinação é recusada (tomaria uma tecla de digitar); F1–F24 podem ficar sozinhas.
+- **Novo atalho…:** escolhe uma ação do mide (buscador, launcher, fechar janela, restaurar minimizada, encerrar) ou, digitando na busca, um app instalado; depois grava a combinação. Atalhos de app aparecem com o nome do app ("Abrir Foot").
+- **Restaurar os padrões:** tira a seção `[keybindings]` (`settings_file::clear_section`).
+- **Gravação pelo compositor:** `shortcuts capture` no canal de controle faz a próxima combinação apertada ser guardada no formato que o compositor casa (`config::combo_name`, mesma tecla sem Shift e mesma troca do modo Mac), sem disparar atalhos nem chegar ao app; Esc sozinho cancela; `shortcuts captured` devolve `waiting`, a combinação, `cancel` ou `none`; expira em 20 s (o teclado nunca fica preso). As Configurações perguntam a cada 80 ms enquanto gravam.
+- **Desligar um atalho:** a ação `none` remove a combinação, inclusive um atalho padrão (trocar a combinação de um atalho grava a antiga como `none` e a nova com a ação).
+- Diálogo desenhado fora da área de conteúdo (`ui.modal` no `view`), centralizado na janela.
+- Testes: 5 unitários novos (107 no total) e 6 verificações novas no `tests/ui.sh` (gravar, vale no compositor, antiga desligada, gravando não dispara atalho, conflito pede confirmação, restaurar padrões).

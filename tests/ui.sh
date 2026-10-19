@@ -404,6 +404,30 @@ else
     echo "FALHA busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; FAIL=$((FAIL + 1))
 fi
 sed -i '/mac_style = true/d' "$SCFG/mide/config.toml"
+# Teclado → Atalhos (A9): "Fechar a janela" é o 3º atalho (500, 340); no diálogo,
+# "Gravar…" em (525, 315). O compositor grava a combinação apertada.
+timeout 150 "$SCEN" "400 click 500 340; 430 click 525 315; 460 combo ctrl+alt+k; 520 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+if grep -q '"ctrl+alt+k" = "close_window"' "$SCFG/mide/config.toml" && grep -q '"ctrl+shift+q" = "none"' "$SCFG/mide/config.toml"; then
+    echo "ok    gravar atalho nas Configurações troca a combinação"; PASS=$((PASS + 1))
+else
+    echo "FALHA gravar atalho nas Configurações troca a combinação"; FAIL=$((FAIL + 1))
+fi
+check "atalho gravado vale no compositor" "fechar janela pedido pelo atalho" "400 combo ctrl+alt+k; 460 list" "$SETTINGS keyboard"
+check_count "combinação antiga desligada (a janela continua aberta)" 'janela "Configurações do Sistema"' 1 "400 combo ctrl+shift+q; 460 list" "$SETTINGS keyboard"
+# Combinação já usada (Ctrl+Espaço é do buscador): pede confirmação, não grava nem abre o buscador.
+check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 500 256; 430 click 525 315; 460 combo ctrl+space; 520 list" "$SETTINGS keyboard"
+if ! grep -q '"ctrl+space" = "close_window"' "$SCFG/mide/config.toml"; then
+    echo "ok    combinação de outra ação pede confirmação"; PASS=$((PASS + 1))
+else
+    echo "FALHA combinação de outra ação pede confirmação"; FAIL=$((FAIL + 1))
+fi
+# "Restaurar os padrões" em (511, 514): a seção de atalhos sai do arquivo.
+timeout 150 "$SCEN" "400 click 511 514; 460 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+if ! grep -q "keybindings" "$SCFG/mide/config.toml"; then
+    echo "ok    restaurar os atalhos padrão"; PASS=$((PASS + 1))
+else
+    echo "FALHA restaurar os atalhos padrão"; FAIL=$((FAIL + 1))
+fi
 export XDG_CONFIG_HOME="$OLD_SCFG"
 unset MIDE_WINIT_SIZE
 rm -rf "$SCFG"

@@ -5,12 +5,9 @@
 //! que estiver sob o cursor.
 
 use smithay::{
-    backend::{
-        input::{
-            AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputEvent, KeyState,
-            KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
-        },
-        winit::WinitInput,
+    backend::input::{
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyState,
+        KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
     desktop::{layer_map_for_output, utils::under_from_surface_tree, PopupManager, Window, WindowSurfaceType},
     input::{
@@ -29,8 +26,6 @@ use smithay::{
     utils::Rectangle,
 };
 
-use smithay::wayland::shell::xdg::XdgShellHandler;
-
 use crate::{
     config::{Action, Modifiers},
     decorations::{self, Button},
@@ -45,9 +40,22 @@ pub const BTN_LEFT: u32 = 0x110;
 /// Botão direito do mouse, no formato evdev.
 pub const BTN_RIGHT: u32 = 0x111;
 
-/// Trata um evento de entrada vindo do backend winit.
-/// `size` é o tamanho atual da janela do mide, usado para converter coordenadas.
-pub fn handle_event(state: &mut State, event: InputEvent<WinitInput>, size: Size<i32, Logical>) {
+/// Forma do ponteiro pedida pelo mide (bordas de redimensionar). Cada backend a
+/// traduz: o winit muda o cursor da janela do anfitrião; no DRM, o compositor
+/// desenha a imagem correspondente.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CursorShape {
+    #[default]
+    Default,
+    ResizeHorizontal,
+    ResizeVertical,
+    ResizeNwse,
+    ResizeNesw,
+}
+
+/// Trata um evento de entrada vindo do backend (winit hoje, libinput depois).
+/// `size` é o tamanho atual da saída, usado para converter posições absolutas.
+pub fn handle_event<B: InputBackend>(state: &mut State, event: InputEvent<B>, size: Size<i32, Logical>) {
     match event {
         InputEvent::Keyboard { event } => keyboard_key(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
@@ -60,7 +68,7 @@ pub fn handle_event(state: &mut State, event: InputEvent<WinitInput>, size: Size
     }
 }
 
-fn keyboard_key(state: &mut State, event: impl KeyboardKeyEvent<WinitInput>) {
+fn keyboard_key<B: InputBackend>(state: &mut State, event: impl KeyboardKeyEvent<B>) {
     key_input(state, event.key_code(), event.state(), event.time_msec());
 }
 
@@ -145,8 +153,9 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
     }
     let serial = SERIAL_COUNTER.next_serial();
 
-    // Um atalho casado é interceptado: a tecla não chega ao app com foco.
-    let action = keyboard.input::<Action, _>(
+    // Um atalho casado é interceptado: a tecla não chega ao app com foco. Gravando um
+    // atalho (Configurações), a combinação é guardada e também não chega ao app.
+    let action = keyboard.input::<Option<Action>, _>(
         state,
         keycode,
         key_state,
@@ -172,13 +181,28 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             };
             // Usa a tecla sem o efeito do Shift, para que `ctrl+shift+e` case com `e`.
             let key = keysym.raw_latin_sym_or_raw_current_sym().unwrap_or_else(|| keysym.modified_sym());
+            if let Some(capture) = state.shortcut_capture.as_mut().filter(|c| !c.expired() && c.combo.is_none()) {
+                // Só modificador ainda (Ctrl, Shift...): espera a tecla da combinação.
+                if keysym.modified_sym().is_modifier_key() {
+                    return FilterResult::Forward;
+                }
+                let plain = !(mods.logo || mods.ctrl || mods.alt || mods.shift);
+                let combo = if plain && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape {
+                    "cancel".to_string()
+                } else {
+                    crate::config::combo_name(modifiers, key)
+                };
+                tracing::info!("atalhos: combinação gravada: {combo}");
+                capture.combo = Some(combo);
+                return FilterResult::Intercept(None);
+            }
             match state.config.match_binding(modifiers, key) {
-                Some(action) => FilterResult::Intercept(action),
+                Some(action) => FilterResult::Intercept(Some(action)),
                 None => FilterResult::Forward,
             }
         },
     );
-    if let Some(action) = action {
+    if let Some(Some(action)) = action {
         run_action(state, action);
     }
 }
@@ -248,7 +272,7 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     }
 
     // Forma do ponteiro: arraste de borda mantém a forma da borda; fora delas, padrão.
-    state.cursor_icon = match (&state.resize_grab, resize_target(state, pos)) {
+    state.cursor = match (&state.resize_grab, resize_target(state, pos)) {
         (Some(grab), _) => cursor_for(grab.edges),
         (None, Some((_, edges, _, _))) if state.move_grab.is_none() => cursor_for(edges),
         _ => Default::default(),
@@ -286,7 +310,7 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     pointer.frame(state);
 }
 
-fn pointer_button(state: &mut State, event: impl PointerButtonEvent<WinitInput>) {
+fn pointer_button<B: InputBackend>(state: &mut State, event: impl PointerButtonEvent<B>) {
     button(state, event.button_code(), event.state(), event.time_msec());
 }
 
@@ -385,7 +409,7 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
     pointer.frame(state);
 }
 
-fn pointer_axis(state: &mut State, event: impl PointerAxisEvent<WinitInput>) {
+fn pointer_axis<B: InputBackend>(state: &mut State, event: impl PointerAxisEvent<B>) {
     let Some(pointer) = state.seat.get_pointer() else {
         return;
     };
@@ -622,9 +646,9 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
 pub fn toggle_maximize(state: &mut State, toplevel: smithay::wayland::shell::xdg::ToplevelSurface) {
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
     if toplevel.current_state().states.contains(XdgState::Maximized) {
-        state.unmaximize_request(toplevel);
+        state.unmaximize(&toplevel);
     } else {
-        state.maximize_request(toplevel);
+        state.maximize(&toplevel);
     }
 }
 
@@ -654,15 +678,14 @@ fn resize_target(
 }
 
 /// Forma do ponteiro para uma borda ou canto.
-fn cursor_for(edges: decorations::Edges) -> smithay::reexports::winit::window::CursorIcon {
-    use smithay::reexports::winit::window::CursorIcon;
+fn cursor_for(edges: decorations::Edges) -> CursorShape {
     let horizontal = edges.left || edges.right;
     let vertical = edges.top || edges.bottom;
     match (horizontal, vertical) {
-        (true, false) => CursorIcon::EwResize,
-        (false, true) => CursorIcon::NsResize,
-        _ if (edges.left && edges.top) || (edges.right && edges.bottom) => CursorIcon::NwseResize,
-        _ => CursorIcon::NeswResize,
+        (true, false) => CursorShape::ResizeHorizontal,
+        (false, true) => CursorShape::ResizeVertical,
+        _ if (edges.left && edges.top) || (edges.right && edges.bottom) => CursorShape::ResizeNwse,
+        _ => CursorShape::ResizeNesw,
     }
 }
 

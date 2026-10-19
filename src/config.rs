@@ -2,7 +2,9 @@
 //!
 //! Seções: `[keybindings]`, `[effects]` e `[desktop]`. Cada atalho liga uma combinação, como
 //! `super+shift+q`, a uma ação. As ações são `close_window` ou
-//! `launch:<comando>`, que executa um binário ou script.
+//! `launch:<comando>`, que executa um binário ou script; `none` desliga a combinação
+//! (inclusive um atalho padrão). Quem grava os atalhos é a tela Teclado das
+//! Configurações: o usuário não edita o arquivo.
 
 use std::{collections::BTreeMap, error::Error, fmt, fs, path::PathBuf};
 
@@ -198,6 +200,8 @@ impl Config {
         for (combo, action) in user {
             merged.insert(combo.clone(), action.clone());
         }
+        // `none` desliga a combinação (um atalho padrão removido nas Configurações).
+        merged.retain(|_, action| action.trim() != "none");
 
         let bindings = merged
             .iter()
@@ -228,6 +232,19 @@ impl Config {
             })
             .map(|b| b.action.clone())
     }
+}
+
+/// Combinação no formato do arquivo (`super+ctrl+alt+shift+tecla`), a partir dos
+/// modificadores e da tecla sem o efeito do Shift (a mesma usada para casar atalhos).
+pub fn combo_name(mods: Modifiers, key: Keysym) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (on, name) in [(mods.logo, "super"), (mods.ctrl, "ctrl"), (mods.alt, "alt"), (mods.shift, "shift")] {
+        if on {
+            parts.push(name.into());
+        }
+    }
+    parts.push(xkb::keysym_get_name(key).to_lowercase());
+    parts.join("+")
 }
 
 /// Caminho de `config.toml`, respeitando `XDG_CONFIG_HOME`.
@@ -336,6 +353,25 @@ mod tests {
         let c = cfg(&[]).unwrap();
         let mods = Modifiers { ctrl: true, shift: true, ..Default::default() };
         assert_eq!(c.match_binding(mods, sym("escape")), Some(Action::Quit));
+    }
+
+    #[test]
+    fn none_desliga_um_atalho_padrao() {
+        let c = cfg(&[("ctrl+shift+q", "none"), ("ctrl+alt+q", "close_window")]).unwrap();
+        let ctrl_shift = Modifiers { ctrl: true, shift: true, ..Default::default() };
+        let ctrl_alt = Modifiers { ctrl: true, alt: true, ..Default::default() };
+        assert_eq!(c.match_binding(ctrl_shift, sym("q")), None);
+        assert_eq!(c.match_binding(ctrl_alt, sym("q")), Some(Action::CloseWindow));
+    }
+
+    #[test]
+    fn nome_da_combinacao_volta_a_ser_lido() {
+        let mods = Modifiers { logo: true, shift: true, ..Default::default() };
+        let name = combo_name(mods, sym("t"));
+        assert_eq!(name, "super+shift+t");
+        let c = cfg(&[(name.as_str(), "close_window")]).unwrap();
+        assert_eq!(c.match_binding(mods, sym("t")), Some(Action::CloseWindow));
+        assert_eq!(combo_name(Modifiers { ctrl: true, ..Default::default() }, sym("space")), "ctrl+space");
     }
 
     #[test]

@@ -18,7 +18,7 @@ use std::{
 
 use mide::{
     control_client::ask_compositor,
-    kit::{run, App, Tile, Ui, Window},
+    kit::{run, App, Key, Tile, Ui, Window},
     settings_file::{self, Value},
     system::{self, Status},
 };
@@ -86,6 +86,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Vidro em barras e menus", "efeitos vidro barra menus notificacoes transparencia", Section::Effects),
     ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
     ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
+    ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
     ("Sobre este computador", "sistema versao memoria processador", Section::About),
 ];
 
@@ -117,6 +118,10 @@ struct Settings {
     thumbs_rx: Receiver<Thumb>,
     picker: Option<Picker>,
     bindings: Vec<(String, String)>,
+    /// Apps instalados (para criar atalhos que abrem um app e mostrar o nome deles).
+    apps: Vec<mide::apps::App>,
+    /// Diálogo de mudar ou criar um atalho.
+    shortcut: Option<ShortcutEditor>,
     info: Vec<(&'static str, String)>,
     volume: f32,
     dock_size: f32,
@@ -148,6 +153,8 @@ impl Settings {
             thumbs_rx,
             picker: None,
             bindings: Vec::new(),
+            apps: Vec::new(),
+            shortcut: None,
             info: mide::sysinfo::system_info(),
             query_reset: false,
             volume: 0.0,
@@ -161,6 +168,9 @@ impl Settings {
     }
 
     fn load_bindings(&mut self) {
+        if self.apps.is_empty() {
+            self.apps = mide::apps::load();
+        }
         self.bindings = ask_compositor("bindings")
             .unwrap_or_default()
             .iter()
@@ -525,15 +535,232 @@ impl Settings {
         });
         ui.heading("Atalhos");
         let bindings = self.bindings.clone();
+        let mut chosen = None;
         ui.card(|ui| {
             if bindings.is_empty() {
                 ui.note("Nenhum atalho.");
             }
             for (combo, action) in &bindings {
-                ui.list_item(&describe_action(action), &pretty_combo(combo, mac));
+                if ui.list_item(&describe_action(action, &self.apps), &pretty_combo(combo, mac)).clicked() {
+                    chosen = Some((combo.clone(), action.clone()));
+                }
             }
         });
-        ui.note("Para mudar um atalho, edite a seção [keybindings] de ~/.config/mide/config.toml.");
+        let (mut add, mut reset) = (false, false);
+        ui.row(|ui| {
+            ui.sized(170.0, |ui| add = ui.button("Novo atalho…").clicked());
+            ui.sized(200.0, |ui| reset = ui.button("Restaurar os padrões").clicked());
+        });
+        ui.note("Clique num atalho para mudar a combinação ou removê-lo. As mudanças valem na hora.");
+        if let Some((combo, action)) = chosen {
+            self.shortcut = Some(ShortcutEditor::edit(combo, action));
+            ui.request_repaint();
+        }
+        if add {
+            self.shortcut = Some(ShortcutEditor::new());
+            ui.request_repaint();
+        }
+        if reset {
+            match settings_file::clear_section("keybindings") {
+                Ok(()) => self.apply_bindings(),
+                Err(err) => tracing::warn!("atalhos não restaurados: {err}"),
+            }
+            ui.request_repaint();
+        }
+    }
+
+    /// Avisa o compositor e relê os atalhos em uso.
+    fn apply_bindings(&mut self) {
+        ask_compositor("reload");
+        self.load_bindings();
+    }
+
+    /// Grava a combinação nova da ação do diálogo. A combinação antiga é desligada
+    /// (`none`, que também desliga um atalho padrão); a nova substitui o que houver nela.
+    fn save_shortcut(&mut self, new: &str) {
+        let Some(editor) = self.shortcut.as_ref() else {
+            return;
+        };
+        let Some(action) = editor.action.clone() else {
+            return;
+        };
+        let old = editor.old.clone();
+        let result = old
+            .filter(|old| old != new)
+            .map_or(Ok(()), |old| settings_file::set("keybindings", &old, Some(Value::Text("none".into()))))
+            .and_then(|()| settings_file::set("keybindings", new, Some(Value::Text(action.clone()))));
+        match result {
+            Ok(()) => {
+                tracing::info!("atalho gravado: {new} = {action}");
+                self.shortcut = None;
+                self.apply_bindings();
+            }
+            Err(err) => {
+                tracing::warn!("atalho não gravado: {err}");
+                if let Some(editor) = self.shortcut.as_mut() {
+                    editor.error = Some(format!("Não foi possível gravar: {err}"));
+                }
+            }
+        }
+    }
+
+    /// Diálogo do atalho: escolher a ação (atalho novo), gravar a combinação apertando
+    /// as teclas, avisar se ela já é usada por outra ação, ou remover o atalho.
+    fn shortcut_dialog(&mut self, ui: &mut Ui, mac: bool) {
+        let Some(mut editor) = self.shortcut.take() else {
+            return;
+        };
+        // Gravando: pergunta ao compositor se a combinação já foi apertada.
+        if editor.capturing {
+            match ask_compositor("shortcuts captured").and_then(|l| l.into_iter().next()).as_deref() {
+                Some("waiting") => ui.wake_after(Duration::from_millis(80)),
+                Some(combo) if combo != "cancel" && combo != "none" => {
+                    editor.capturing = false;
+                    editor.error = None;
+                    match combo_problem(combo) {
+                        Some(problem) => editor.error = Some(problem.into()),
+                        None => {
+                            let other = self
+                                .bindings
+                                .iter()
+                                .find(|(c, a)| c == combo && Some(c) != editor.old.as_ref() && Some(a) != editor.action.as_ref());
+                            match other {
+                                Some((_, a)) => {
+                                    editor.conflict = Some((combo.to_string(), describe_action(a, &self.apps)));
+                                }
+                                None => {
+                                    self.shortcut = Some(editor);
+                                    self.save_shortcut(combo);
+                                    ui.request_repaint();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    ui.request_repaint();
+                }
+                _ => {
+                    editor.capturing = false;
+                    ui.request_repaint();
+                }
+            }
+        }
+
+        let title = match editor.action.as_deref() {
+            Some(action) => describe_action(action, &self.apps),
+            None => "Novo atalho".to_string(),
+        };
+        let mut close = !editor.capturing && ui.input().key(Key::Escape);
+        let (mut record, mut remove, mut replace) = (false, false, false);
+        let mut pick: Option<String> = None;
+        let mut query = editor.query.clone();
+        ui.modal(420.0, |ui| {
+            ui.strong(&title);
+            if editor.action.is_none() {
+                // Sem busca, as ações do mide; buscando, os apps encontrados no lugar delas
+                // (o diálogo cabe na janela).
+                ui.note("O que o atalho faz? Uma ação do mide ou abrir um app:");
+                ui.text_input(&mut query, "Buscar app");
+                ui.card(|ui| {
+                    if query.trim().is_empty() {
+                        for action in FIXED_ACTIONS {
+                            if ui.list_item(&describe_action(action, &[]), "").clicked() {
+                                pick = Some(action.to_string());
+                            }
+                        }
+                        return;
+                    }
+                    let found = mide::apps::filter(&self.apps, &query, None);
+                    if found.is_empty() {
+                        ui.note("Nenhum app encontrado.");
+                    }
+                    for app in found.into_iter().take(5) {
+                        if ui.list_item(&app.name, "App").clicked() {
+                            pick = Some(format!("launch:{}", app_command(app)));
+                        }
+                    }
+                });
+                ui.row(|ui| {
+                    ui.push_right(110.0);
+                    ui.sized(110.0, |ui| close |= ui.button("Cancelar").clicked());
+                });
+                return;
+            }
+            if let Some((combo, used_by)) = &editor.conflict {
+                ui.label(&format!("{} já é usado por \"{used_by}\".", pretty_combo(combo, mac)));
+                ui.note("Substituir faz essa combinação passar para este atalho.");
+                ui.row(|ui| {
+                    ui.push_right(2.0 * 150.0 + 8.0);
+                    ui.sized(150.0, |ui| record = ui.button("Gravar outra").clicked());
+                    ui.sized(150.0, |ui| replace = ui.primary_button("Substituir").clicked());
+                });
+                return;
+            }
+            if editor.capturing {
+                ui.label("Aperte a nova combinação de teclas…");
+                ui.note("Use Ctrl, Alt ou Super junto com a tecla. Esc cancela.");
+                return;
+            }
+            let current = editor.old.as_deref().map(|c| pretty_combo(c, mac)).unwrap_or_else(|| "Nenhuma".into());
+            ui.list_item("Combinação", &current);
+            if let Some(err) = &editor.error {
+                ui.note(err);
+            }
+            ui.row(|ui| {
+                let buttons = if editor.old.is_some() { 3.0 } else { 2.0 };
+                ui.push_right(buttons * 120.0 + (buttons - 1.0) * 8.0);
+                if editor.old.is_some() {
+                    ui.sized(120.0, |ui| remove = ui.button("Remover").clicked());
+                }
+                ui.sized(120.0, |ui| close |= ui.button("Cancelar").clicked());
+                ui.sized(120.0, |ui| record = ui.primary_button("Gravar…").clicked());
+            });
+        });
+        editor.query = query;
+        if let Some(action) = pick {
+            editor.action = Some(action);
+            ui.request_repaint();
+        }
+        if record {
+            editor.conflict = None;
+            editor.error = None;
+            if ask_compositor("shortcuts capture").is_some() {
+                editor.capturing = true;
+                ui.wake_after(Duration::from_millis(80));
+            } else {
+                editor.error = Some("O compositor não respondeu.".into());
+            }
+            ui.request_repaint();
+        }
+        if close {
+            if editor.capturing {
+                ask_compositor("shortcuts stop");
+            }
+            ui.request_repaint();
+            return;
+        }
+        if remove {
+            if let Some(old) = editor.old.clone() {
+                match settings_file::set("keybindings", &old, Some(Value::Text("none".into()))) {
+                    Ok(()) => {
+                        tracing::info!("atalho removido: {old}");
+                        self.apply_bindings();
+                    }
+                    Err(err) => tracing::warn!("atalho não removido: {err}"),
+                }
+            }
+            ui.request_repaint();
+            return;
+        }
+        if replace {
+            if let Some((combo, _)) = editor.conflict.take() {
+                self.shortcut = Some(editor);
+                self.save_shortcut(&combo);
+                ui.request_repaint();
+                return;
+            }
+        }
+        self.shortcut = Some(editor);
     }
 
     fn about(&mut self, ui: &mut Ui) {
@@ -608,6 +835,11 @@ impl App for Settings {
                 Section::About => self.about(ui),
             }
         });
+        // Diálogo de atalho por cima da janela inteira (fora da área de conteúdo).
+        if self.shortcut.is_some() {
+            let mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
+            self.shortcut_dialog(ui, mac);
+        }
         // Escolher um resultado limpa a busca: aí o que estava no campo não volta.
         if std::mem::take(&mut self.query_reset) {
             ui.request_repaint();
@@ -716,8 +948,56 @@ fn pretty_combo(combo: &str, mac: bool) -> String {
         .join(" ")
 }
 
-/// Ação de um atalho em português.
-fn describe_action(action: &str) -> String {
+/// Diálogo de mudar ou criar um atalho.
+#[derive(Default)]
+struct ShortcutEditor {
+    /// Combinação atual (`None`: atalho novo).
+    old: Option<String>,
+    /// Ação do atalho (`None`: atalho novo, ainda escolhendo).
+    action: Option<String>,
+    /// Busca de apps, ao escolher a ação.
+    query: String,
+    /// Esperando o usuário apertar a combinação (o compositor grava).
+    capturing: bool,
+    /// Combinação apertada que já é de outra ação: a combinação e o nome da outra.
+    conflict: Option<(String, String)>,
+    error: Option<String>,
+}
+
+impl ShortcutEditor {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn edit(combo: String, action: String) -> Self {
+        Self { old: Some(combo), action: Some(action), ..Self::default() }
+    }
+}
+
+/// Ações do mide que um atalho novo pode fazer (além de abrir um app).
+const FIXED_ACTIONS: &[&str] = &["toggle_search", "toggle_launcher", "close_window", "restore_minimized", "quit"];
+
+/// Combinação que não serve para atalho global: sem Ctrl, Alt ou Super ela tomaria
+/// uma tecla usada para digitar. Teclas de função (F1 a F24) podem ficar sozinhas.
+fn combo_problem(combo: &str) -> Option<&'static str> {
+    let parts: Vec<&str> = combo.split('+').collect();
+    let key = parts.last().copied().unwrap_or("");
+    let function_key = key.strip_prefix('f').is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    let held = parts.iter().any(|p| matches!(*p, "ctrl" | "alt" | "super"));
+    (!held && !function_key).then_some("Use Ctrl, Alt ou Super junto com a tecla, para não tomar uma tecla de digitar.")
+}
+
+/// Comando que abre o app (apps de terminal abrem no terminal).
+fn app_command(app: &mide::apps::App) -> String {
+    if app.terminal {
+        format!("foot -e {0} || x-terminal-emulator -e {0}", app.command)
+    } else {
+        app.command.clone()
+    }
+}
+
+/// Ação de um atalho em português. Atalhos que abrem um app mostram o nome dele.
+fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
     match action {
         "close_window" => "Fechar a janela".into(),
         "quit" => "Encerrar a sessão do mide".into(),
@@ -725,7 +1005,10 @@ fn describe_action(action: &str) -> String {
         "toggle_launcher" => "Abrir ou fechar o launcher".into(),
         "toggle_search" => "Abrir ou fechar o buscador".into(),
         other => match other.strip_prefix("launch:") {
-            Some(cmd) => format!("Abrir: {cmd}"),
+            Some(cmd) => match apps.iter().find(|a| a.command == cmd || app_command(a) == cmd) {
+                Some(app) => format!("Abrir {}", app.name),
+                None => format!("Abrir: {cmd}"),
+            },
             None => other.into(),
         },
     }
@@ -760,9 +1043,34 @@ mod tests {
         assert_eq!(pretty_combo("ctrl+shift+space", false), "Ctrl ⇧ Espaço");
         assert_eq!(pretty_combo("ctrl+shift+t", false), "Ctrl ⇧ T");
         assert_eq!(pretty_combo("ctrl+space", true), "⌘ Espaço");
-        assert_eq!(describe_action("toggle_launcher"), "Abrir ou fechar o launcher");
-        assert_eq!(describe_action("toggle_search"), "Abrir ou fechar o buscador");
-        assert_eq!(describe_action("launch:foot"), "Abrir: foot");
+        assert_eq!(describe_action("toggle_launcher", &[]), "Abrir ou fechar o launcher");
+        assert_eq!(describe_action("toggle_search", &[]), "Abrir ou fechar o buscador");
+        assert_eq!(describe_action("launch:foot", &[]), "Abrir: foot");
+    }
+
+    #[test]
+    fn atalho_de_app_mostra_o_nome() {
+        let app = mide::apps::App {
+            id: "org.codeberg.dnkl.foot".into(),
+            name: "Foot".into(),
+            command: "foot".into(),
+            icon: None,
+            group: "Utilitários",
+            terminal: false,
+            keywords: String::new(),
+        };
+        assert_eq!(describe_action("launch:foot", &[app]), "Abrir Foot");
+    }
+
+    #[test]
+    fn combinacao_precisa_de_modificador() {
+        assert!(combo_problem("ctrl+shift+t").is_none());
+        assert!(combo_problem("super+e").is_none());
+        assert!(combo_problem("alt+f4").is_none());
+        assert!(combo_problem("f5").is_none());
+        assert!(combo_problem("a").is_some());
+        assert!(combo_problem("shift+a").is_some());
+        assert!(combo_problem("space").is_some());
     }
 
     #[test]

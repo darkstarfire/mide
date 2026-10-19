@@ -514,3 +514,21 @@ Manual (o que o autoteste não cobre):
 
 - Sessão sem autoteste (`tests/scenario.sh "" -- "target/debug/mide-files /usr/share"`), 10 s parado: quadros do compositor e CPU por processo (`/proc/<pid>/stat`). Resultado: 0–2 quadros, 1,0% de um núcleo no total.
 - Mesma sessão, `launcher` pelo canal de controle: o compositor desenha a animação (23 quadros ao abrir, 30 ao fechar) e volta a parar.
+
+## Refatoração da cena e da política de janelas — automáticos
+
+- `tests/ui.sh` (153 verificações) rodado antes e depois da refatoração, no Xvfb (`xvfb-run -a -s "-screen 0 1920x1080x24" tests/ui.sh`), numa máquina sem `foot` e `gnome-calculator`: resultado idêntico item por item (82 ok, as mesmas 71 falhas de ambiente). O Xvfb roda a bateria sem abrir janelas na tela de quem está usando o PC.
+
+## Editor de atalhos (A9) — automáticos
+
+- `cargo test`: `none` desliga um atalho padrão; `combo_name` gera o nome que volta a ser lido; combinações sem Ctrl/Alt/Super recusadas; atalho de app mostra o nome do app; limpar seção mantém o resto.
+- `tests/ui.sh` (Configurações): gravar Ctrl+Alt+K para "Fechar a janela" grava `"ctrl+alt+k" = "close_window"` e `"ctrl+shift+q" = "none"`; Ctrl+Alt+K fecha a janela; Ctrl+Shift+Q não fecha mais; gravando Ctrl+Espaço o buscador não abre e nada é gravado sem confirmar; "Restaurar os padrões" tira `[keybindings]`.
+
+## Editor de atalhos (A9) — manual
+
+- [ ] Configurações → Teclado: clicar em "Fechar a janela" → Gravar… → apertar Ctrl+Alt+K: a lista mostra "Ctrl Alt K" e o atalho fecha janelas.
+- [ ] Gravar uma combinação usada por outro atalho (ex.: Ctrl+Espaço): aparece o aviso com Substituir e Gravar outra.
+- [ ] Gravar só uma letra (sem Ctrl/Alt/Super): aparece o aviso para usar um modificador.
+- [ ] Novo atalho… → digitar o nome de um app → escolher → Gravar… → apertar a combinação: o atalho abre o app.
+- [ ] Esc durante a gravação cancela; fechar as Configurações no meio não prende o teclado (expira em 20 s).
+- [ ] Restaurar os padrões volta tudo ao original.

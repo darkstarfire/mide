@@ -80,7 +80,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
     let query = matches!(
         command.split_whitespace().next(),
         Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea")
-    ) || command.trim() == "launcher state";
+    ) || matches!(command.trim(), "launcher state" | "shortcuts captured");
     if !query {
         state.wake();
     }
@@ -152,16 +152,39 @@ pub fn handle(state: &mut State, command: &str) -> String {
         Some("bindings") => {
             let mut out = String::new();
             for b in &state.config.bindings {
-                let mut combo = Vec::new();
-                if b.logo { combo.push("super".to_string()); }
-                if b.ctrl { combo.push("ctrl".to_string()); }
-                if b.alt { combo.push("alt".to_string()); }
-                if b.shift { combo.push("shift".to_string()); }
-                combo.push(xkbcommon::xkb::keysym_get_name(b.key).to_lowercase());
-                out.push_str(&format!("{}\t{}\n", combo.join("+"), b.action));
+                let mods = crate::config::Modifiers { logo: b.logo, ctrl: b.ctrl, alt: b.alt, shift: b.shift };
+                out.push_str(&format!("{}\t{}\n", crate::config::combo_name(mods, b.key), b.action));
             }
             out
         }
+        // Gravação de atalho pelas Configurações: `shortcuts capture` faz a próxima
+        // combinação apertada ser guardada (sem disparar atalhos nem chegar ao app);
+        // `shortcuts captured` responde `waiting`, a combinação, `cancel` (Esc) ou
+        // `none` (sem gravação ou expirou); `shortcuts stop` desiste.
+        Some("shortcuts") => match words.next() {
+            Some("capture") => {
+                state.shortcut_capture = Some(crate::state::ShortcutCapture { started: std::time::Instant::now(), combo: None });
+                tracing::info!("atalhos: gravando a próxima combinação");
+                "ok\n".into()
+            }
+            Some("captured") => match state.shortcut_capture.as_ref().filter(|c| !c.expired()) {
+                None => {
+                    state.shortcut_capture = None;
+                    "none\n".into()
+                }
+                Some(crate::state::ShortcutCapture { combo: None, .. }) => "waiting\n".into(),
+                Some(crate::state::ShortcutCapture { combo: Some(combo), .. }) => {
+                    let reply = format!("{combo}\n");
+                    state.shortcut_capture = None;
+                    reply
+                }
+            },
+            Some("stop") => {
+                state.shortcut_capture = None;
+                "ok\n".into()
+            }
+            _ => "erro: use shortcuts capture|captured|stop\n".into(),
+        },
         // Lê de novo o `config.toml` (atalhos, efeitos, papel de parede), sem reiniciar.
         Some("reload") => match crate::config::Config::load() {
             Ok(config) => {

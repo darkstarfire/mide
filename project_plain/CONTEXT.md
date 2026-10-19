@@ -16,11 +16,16 @@ deve-se seguir nesta ordem
 - Repositório público: https://github.com/fabioaacarneiro/mide (branch `master`). Versionar ao fim de cada passo, com os testes passando.
 - O mide é criado do zero: sem engenharia reversa de nada da Apple/macOS e sem usar código, imagens, ícones ou fontes deles. O macOS é só inspiração visual; o mide não é concorrente nem cópia. Manter isso no README e em qualquer texto público.
 - Testes e prints na resolução 1366x768 (a mais comum no Brasil), além dos 800x600 da bateria de interface.
+- **Tudo configurável pela interface** (decisão do usuário, 2026-10-19): o usuário nunca precisa editar arquivo de configuração. Toda opção (atalhos inclusive) tem tela nas Configurações ou no próprio app, e nenhum texto da interface manda "editar o arquivo". Arquivo de configuração é detalhe interno: o mide pode usá-lo se for necessário, alimentado pela interface, sem o usuário precisar saber dele.
+- **Sem sessão X11** (decisão do usuário, 2026-10-19): o mide é um compositor Wayland e não terá backend nem modo para rodar como sessão X11, para não ter de reescrever e manter tudo em dobro. **Apps X11 dentro do mide, pelo XWayland, são desejados** (A14). Rodar o backend winit dentro de uma sessão X11 (desenvolvimento) não é suporte a X11 e não exige código nosso.
+- **Arquitetura do compositor (camadas):** o Smithay cuida da base (protocolos, backends, renderizador) e não é reimplementado; o código do mide fica separado dele: cena em `render.rs`, política de janelas em `wm.rs`, entrada em `input.rs`. Backends (`backend_winit.rs`, futuro DRM) só criam a saída, tratam eventos e apresentam o quadro da cena.
 ---
 
 ---
 ## Propostas
 ter um visual moderno, limpo, inspirado no macos e construído no wayland, performático com os recursos necessários para ser um ambiente desktop completo e ao mesmo tempo minimalista para uso geral
+
+**Foco atual (decisão do usuário, 2026-10-19):** terminar o mide como desktop completo para qualquer usuário. Ferramentas de público específico (como as de desenvolvedor) ficam para depois, feitas com o framework de apps (mide-ui) como produtos à parte. Prioridade sugerida: A13 (rodar sem outro desktop por baixo), A14 (XWayland), melhorias do mide-ui que servem a todos os apps (D1), depois o que falta das fases B e C.
 ---
 
 ---
@@ -104,6 +109,8 @@ ter um visual moderno, limpo, inspirado no macos e construído no wayland, perfo
 - dock de aplicativos
 - barra superior
 - apps que compõem o ambiente desktop
+- terminal nativo e próprio do mide, inspirado no iTerm2, com menus gráficos para configurar tudo (sem editar arquivo à mão): abas, divisão de painéis, perfis (cores, fonte, transparência/vidro), busca no histórico. Substitui o `foot` como terminal padrão (`ctrl+shift+t`)
+- editor de texto nativo e mínimo: abrir arquivos, fazer ajustes simples e salvar (o editor de programação completo é um produto à parte, ver "Produtos à parte")
 ---
 
 ---
@@ -123,11 +130,12 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [x] A6. Mover janelas arrastando (provisório, sem barra de título ainda)
 - [x] A7. (feito: barra com botões, título em texto, hover, sombra, cantos, redimensionar pela borda, cursor) Decorações de servidor: barra de título estilo mac com botões
 - [x] A8. Fechar, minimizar e restaurar janelas (pela barra, pelo botão do app, pelo atalho e pela dock), com animação
-- [~] A9. (parcial: `config.toml` e motor de atalhos; faltam o editor e o conjunto completo de atalhos padrão) Atalhos globais lidos de `toml`, com os padrões de desktop, janelas e apps
+- [~] A9. (feito: motor de atalhos e editor de atalhos nas Configurações → Teclado — mudar a combinação gravando as teclas apertadas, criar (ação do mide ou abrir um app), remover e restaurar os padrões, com aviso de conflito, valendo na hora; falta o conjunto completo de atalhos padrão) Atalhos globais lidos de `toml`, com os padrões de desktop, janelas e apps
 - [~] A10. (parcial: camadas Top e Overlay desenhadas e com ponteiro, zona exclusiva da barra respeitada ao abrir e maximizar janelas; camadas de fundo também, desde o B10) Layer-shell (`wlr-layer-shell`), para barra, dock e launcher
 - [~] A11. (feito: sombra combinada de todas as janelas, cantos, animações de maximizar e restaurar, efeito lâmpada ao minimizar e restaurar, e `[effects]` no config com `shadows`, `rounded_corners`, `animations` e `lamp`; feito também o desfoque da dock e do fundo do launcher, com interruptores, e o vidro líquido na dock (refração, reflexo e tom, com desfoque refeito só quando o fundo muda); feito também o vidro em barra superior, menus e notificações, por regiões de vidro pedidas pelas camadas (`glass` no canal de controle); feito `ui.glass_panel` no mide-ui (em camadas); feito vidro em janelas comuns por regiões (barra lateral do Arquivos), papel de parede trocando com esmaecer e fechar janela com transição; falta transparência de janelas inteiras) Efeitos: animação suave, transparência, blur e efeito lâmpada, com flag para desligar cada um
 - [x] A12. (feito: `[desktop] wallpaper` em PNG ou JPEG cobrindo a tela, gradiente próprio por padrão, sombras das janelas sobre ele, escolha nas Configurações com imagens do usuário) Papel de parede, lido de configuração
 - [ ] A13. Backend DRM/udev com libseat, para rodar sem outro compositor por baixo
+- [ ] A14. Apps X11 dentro do mide pelo XWayland. Preferência: `xwayland-satellite` (como o niri), que roda o XWayland como cliente Wayland comum e mantém o compositor sem código X11; alternativa: o recurso `xwayland` do Smithay (gerenciador de janelas X11 dentro do compositor), se o satellite não bastar. Validar com um app só-X11 (ex.: IDE da JetBrains sem Wayland ativado)
 
 ### Fase B: shell (clientes)
 - [~] B1. (feito: barra `mide-bar` no topo com zona exclusiva, marca do mide com menu do sistema, nome do app focado, relógio, bateria e janela "Sobre este computador"; faltam Configurações (depende de B7), reiniciar/desligar e os menus do app de B2) Barra superior como cliente layer-shell, com menu Apple e relógio
@@ -144,8 +152,21 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [x] B12. (feito: seção "Barra superior" nas Configurações com engrenagem, som, Wi-Fi, Bluetooth, bateria e central de controle, gravando em `[bar]` e valendo em meio segundo; falta incluir os ícones do tray de terceiros quando o StatusNotifierWatcher (B3) existir) Configurações → Barra superior: escolher quais itens aparecem na barra (som, Wi-Fi, Bluetooth, bateria, central de controle, engrenagem e os ícones de apps do tray)
 
 ### Fase D: plataforma para apps
-- [~] D1. (feito: `mide::kit` com componentes, layout, tema, janela e eventos, exemplo `mide-ui-demo` e guia `docs/mide-ui.md`; menu de contexto, grade, ladrilhos, lista, barra de ferramentas, duplo clique e foco com seleção; camadas (`Window::overlay`), `glass_panel`, linhas de resultado e ícones assíncronos; faltam tema escuro, campo de texto completo (cursor no meio, colar), diálogos, seletor de arquivos e animações como componentes; as Configurações já foram passadas para ele) Framework mide-ui: criar apps com a interface nativa do mide
+- [~] D1. (feito: `mide::kit` com componentes, layout, tema, janela e eventos, exemplo `mide-ui-demo` e guia `docs/mide-ui.md`; menu de contexto, grade, ladrilhos, lista, barra de ferramentas, duplo clique e foco com seleção; camadas (`Window::overlay`), `glass_panel`, linhas de resultado e ícones assíncronos; faltam tema escuro, campo de texto completo (cursor no meio, colar, seleção, teclas mortas e composição como `´`+`a`=`á`), área de transferência (copiar e colar entre apps), desenho só do que é visível e redesenho parcial com cache de glifos (o desenho é na CPU, com tiny-skia: necessário para listas longas e máquinas modestas), diálogos, seletor de arquivos e animações como componentes; as Configurações já foram passadas para ele) Framework mide-ui: criar apps com a interface nativa do mide
 - [ ] D2. Apps, widgets e extensões com o mide-ui: a comunidade cria apps e widgets com o framework, e a central de controle da barra (Wi-Fi, Bluetooth, Não perturbe, brilho, som) pode ser estendida com novos itens
+
+### Fase E: apps nativos (depois)
+Apps do dia a dia feitos com o mide-ui, com o visual e o comportamento do resto do DE. Ficam para depois das fases A a D.
+- [ ] E1. Terminal nativo (`mide-terminal`), inspirado no iTerm2: emulação de terminal sobre PTY, abas, divisão de painéis, perfis (cores, fonte, transparência/vidro), busca no histórico e menus gráficos de configuração (as preferências do terminal ficam em telas, não em arquivo). Vira o terminal padrão do `ctrl+shift+t` no lugar do `foot`. A decidir no início: escrever o interpretador de sequências de escape do zero ou usar um crate de base (ex.: `vte`), mantendo o terminal e a interface próprios
+- [ ] E2. Editor de texto mínimo (`mide-text`): abrir, editar e salvar arquivos de texto, desfazer/refazer, buscar e substituir, aviso de alterações não salvas, abrir pelo Arquivos ("Abrir com")
+
+### Planos futuros (fora do foco atual)
+- Uma ISO de instalação de um Linux com o mide.
+- Na instalação (ou depois), a pessoa escolhe apps extras do ecossistema do mide para instalar direto do GitHub (ex.: o editor de código P1 e outras ferramentas de público específico).
+
+### Produtos à parte (por último, fora do mide)
+Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depois de o mide estar completo.
+- [ ] P1. Editor de código completo, em Rust, nativo do mide (mide-ui). Decisões já tomadas: núcleo sem interface (texto em `ropey`, desfazer, seleções e múltiplos cursores, `tree-sitter`, cliente LSP próprio) testável só com testes unitários, separado do app; marcos com metas medidas: M1 abrir/editar/salvar com segurança, M2 tree-sitter, árvore de pastas, abrir por nome e busca no projeto, M3 LSP (diagnósticos, completar, ir para definição, formatar), M4 renomear, ações de código, Git na margem e terminal embutido (E1), M5 opcional depuração (DAP). Sem sistema de extensões no começo; Rust primeiro. Atenção ao LSP: posições em UTF-16 por padrão (negociar UTF-8), respostas atrasadas descartadas, servidores detectados no sistema e não embutidos. Pré-requisito: mide-ui com campo de texto completo, composição de teclas mortas, área de transferência, desenho só das linhas visíveis e cache de glifos
 
 ### Fase C: sistema
 - [ ] C1. Bloqueio de tela (`ext-session-lock-v1`) e inatividade (`ext-idle-notify-v1`)
