@@ -125,15 +125,40 @@ pub fn init(
     let stop: LoopSignal = event_loop.get_signal();
     // Sem o primeiro pedido, o winit pode nunca enviar `Redraw` e a janela fica vazia.
     backend.window().request_redraw();
+    // Com autoteste (testes), desenha sem parar: os roteiros contam quadros.
+    let continuous = selftest.borrow().is_some();
+    // A janela do anfitrião é usada também pelo relógio de reserva (pedir quadros).
+    let backend = std::rc::Rc::new(std::cell::RefCell::new(backend));
+    {
+        let (ping, source) = smithay::reexports::calloop::ping::make_ping()?;
+        let host = backend.clone();
+        loop_handle.insert_source(source, move |_, _, state: &mut State| {
+            if state.redraw {
+                if let Ok(backend) = host.try_borrow() {
+                    backend.window().request_redraw();
+                }
+            }
+        })?;
+        state.waker = Some(ping);
+    }
 
     // Relógio de reserva: o anfitrião (GNOME etc.) para de pedir quadros quando a
     // janela do mide fica escondida ou coberta. Sem isso, o autoteste e os apps
-    // congelavam (os apps esperam o aviso de quadro). Passados 100 ms sem pedido, o
-    // relógio avança o autoteste e libera os apps, sem apresentar na tela escondida.
+    // congelavam (os apps esperam o aviso de quadro). Com algo pendente e 100 ms sem
+    // pedido, o relógio avança o autoteste e libera os apps, sem apresentar na tela
+    // escondida. Sem nada pendente, só confere a cada 100 ms (quase sem custo).
     {
         let (selftest, last_redraw, output) = (selftest.clone(), last_redraw.clone(), output.clone());
-        let tick = Duration::from_millis(16);
-        loop_handle.insert_source(smithay::reexports::calloop::timer::Timer::from_duration(tick), move |_, _, state| {
+        let host = backend.clone();
+        let (busy_tick, idle_tick) = (Duration::from_millis(16), Duration::from_millis(100));
+        loop_handle.insert_source(smithay::reexports::calloop::timer::Timer::from_duration(busy_tick), move |_, _, state| {
+            if !state.redraw && !continuous {
+                return smithay::reexports::calloop::timer::TimeoutAction::ToDuration(idle_tick);
+            }
+            // Pedido que ficou sem resposta: pede de novo ao anfitrião.
+            if let Ok(backend) = host.try_borrow() {
+                backend.window().request_redraw();
+            }
             if last_redraw.get().elapsed() > Duration::from_millis(100) {
                 tracing::trace!("anfitrião sem pedir quadros: seguindo pelo relógio");
                 if let Some(test) = selftest.borrow_mut().as_mut() {
@@ -143,44 +168,60 @@ pub fn init(
                 if let Err(err) = send_frames(state, &output) {
                     tracing::debug!("relógio de reserva: {err}");
                 }
+                // Continua só com algo em movimento; um commit novo acorda de novo.
+                state.redraw = !state.animations.is_empty() || state.launcher_anim.is_some() || !state.ghosts.is_empty();
             }
-            smithay::reexports::calloop::timer::TimeoutAction::ToDuration(tick)
+            smithay::reexports::calloop::timer::TimeoutAction::ToDuration(busy_tick)
         })?;
     }
     let (test_redraw, redraw_seen) = (selftest.clone(), last_redraw.clone());
-    loop_handle.insert_source(winit_source, move |event, _, state| match event {
-        WinitEvent::Resized { size, .. } => {
-            let mode = Mode {
-                size,
-                refresh: REFRESH_MHZ,
-            };
-            output.change_current_state(Some(mode), None, None, None);
-            output.set_preferred(mode);
-            state.output_resized();
-        }
-        WinitEvent::Redraw => {
-            redraw_seen.set(std::time::Instant::now());
-            if let Some(test) = test_redraw.borrow_mut().as_mut() {
-                test.tick(state);
+    loop_handle.insert_source(winit_source, move |event, _, state| {
+        let mut backend = backend.borrow_mut();
+        match event {
+            WinitEvent::Resized { size, .. } => {
+                let mode = Mode {
+                    size,
+                    refresh: REFRESH_MHZ,
+                };
+                output.change_current_state(Some(mode), None, None, None);
+                output.set_preferred(mode);
+                state.output_resized();
+                state.wake();
             }
-            if let Err(err) = render(&mut backend, &output, &mut damage_tracker, state, &shaders, &genie, &blur, &wallpaper, &mut titles) {
-                tracing::warn!("falha ao desenhar frame: {err}");
+            WinitEvent::Redraw => {
+                redraw_seen.set(std::time::Instant::now());
+                if let Some(test) = test_redraw.borrow_mut().as_mut() {
+                    test.tick(state);
+                }
+                state.redraw = false;
+                if let Err(err) = render(&mut backend, &output, &mut damage_tracker, state, &shaders, &genie, &blur, &wallpaper, &mut titles) {
+                    tracing::warn!("falha ao desenhar frame: {err}");
+                }
+                // Só continua desenhando com algo em movimento (animações, papel de parede
+                // trocando, janela fechando) ou no autoteste; senão espera algo mudar.
+                let moving = !state.animations.is_empty()
+                    || state.launcher_anim.is_some()
+                    || wallpaper.busy()
+                    || !state.ghosts.is_empty();
+                if moving || continuous {
+                    backend.window().request_redraw();
+                    state.redraw = true;
+                }
             }
-            backend.window().request_redraw();
+            WinitEvent::CloseRequested => {
+                tracing::info!("janela do mide fechada, encerrando");
+                stop.stop();
+            }
+            WinitEvent::Input(event) => {
+                // A saída tem escala 1, então pixels físicos e lógicos coincidem.
+                let physical = backend.window_size();
+                let size = (physical.w, physical.h).into();
+                crate::input::handle_event(state, event, size);
+                backend.window().set_cursor(state.cursor_icon);
+                backend.window().request_redraw();
+            }
+            WinitEvent::Focus(_) => {}
         }
-        WinitEvent::CloseRequested => {
-            tracing::info!("janela do mide fechada, encerrando");
-            stop.stop();
-        }
-        WinitEvent::Input(event) => {
-            // A saída tem escala 1, então pixels físicos e lógicos coincidem.
-            let physical = backend.window_size();
-            let size = (physical.w, physical.h).into();
-            crate::input::handle_event(state, event, size);
-            backend.window().set_cursor(state.cursor_icon);
-            backend.window().request_redraw();
-        }
-        WinitEvent::Focus(_) => {}
     })?;
 
     tracing::info!("saída winit criada ({}x{})", size.w, size.h);
@@ -225,8 +266,9 @@ fn window_elements(
     genie: &crate::genie::Genie,
     wallpaper: &crate::wallpaper::Wallpaper,
     titles: &mut crate::title::TitleRenderer,
-) -> Vec<MideRenderElement> {
+) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
     use smithay::backend::renderer::element::AsRenderElements;
+    let mut glass = Vec::new();
 
     let now = std::time::Instant::now();
 
@@ -324,6 +366,43 @@ fn window_elements(
     // Segunda passada, de cima para baixo: cada janela desenha sobre as de baixo.
     // Sombra e máscaras recebem as molduras das janelas de baixo para não cobri-las.
     let mut elements = Vec::new();
+
+    // Janelas que acabaram de fechar: a foto delas encolhe um pouco e esmaece, por
+    // cima das outras.
+    {
+        let snapshots = genie.snapshots.borrow();
+        for (id, frame, start) in &state.ghosts {
+            let Some((texture, size)) = snapshots.get(id) else {
+                continue;
+            };
+            let t = (start.elapsed().as_secs_f32() / crate::state::CLOSE_FADE.as_secs_f32()).clamp(0.0, 1.0);
+            let ease = t * t * (3.0 - 2.0 * t);
+            let scale = 1.0 - 0.06 * ease;
+            // O tamanho vem da foto: na hora em que a janela some, a geometria dela já
+            // está zerada.
+            let (w, h) = ((size.w as f32 * scale).round() as i32, (size.h as f32 * scale).round() as i32);
+            let x = frame.loc.x + (size.w - w) / 2;
+            let y = frame.loc.y + (size.h - h) / 2;
+            use smithay::backend::renderer::Renderer as _;
+            elements.push(MideRenderElement::Blurred(smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
+                smithay::backend::renderer::element::Id::new(),
+                renderer.context_id(),
+                (x as f64, y as f64),
+                texture.clone(),
+                1,
+                Transform::Normal,
+                Some(1.0 - ease),
+                Some(Rectangle::from_size((size.w as f64, size.h as f64).into())),
+                Some((w, h).into()),
+                None,
+                Kind::Unspecified,
+            )));
+        }
+    }
+    // Fotos que não servem mais (janela fechou e esmaeceu, ou não fechou).
+    genie.snapshots.borrow_mut().retain(|id, _| {
+        state.close_requests.iter().any(|(w, _)| w == id) || state.ghosts.iter().any(|(w, _, _)| w == id)
+    });
     for p in placed.iter() {
         // A barra fica no topo da moldura, que já está na área visível.
         let bar_h = crate::state::bar_height_for(&p.window);
@@ -419,6 +498,26 @@ fn window_elements(
             continue;
         }
 
+        // Fechamento pedido: fotografa a janela (barra, título e conteúdo) para a
+        // transição, até ela fechar.
+        let id = crate::state::window_id(&p.window);
+        if state.config.effects.animations && state.close_requests.iter().any(|(w, _)| *w == id) {
+            let local_bar = Rectangle::new((0, 0).into(), (p.frame.size.w, bar_h).into());
+            let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
+            let bar_parts = if bar_h > 0 { decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip) } else { Vec::new() };
+            let title = if bar_h > 0 { crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar) } else { None };
+            let mut overlays: Vec<&dyn smithay::backend::renderer::element::RenderElement<GlesRenderer>> = Vec::new();
+            if let Some(t) = title.as_ref() {
+                overlays.push(t);
+            }
+            for part in &bar_parts {
+                overlays.push(part);
+            }
+            if let Some(texture) = crate::genie::snapshot(renderer, &p.window, p.frame.size, bar_h, &overlays) {
+                genie.snapshots.borrow_mut().insert(id, (texture, p.frame.size));
+            }
+        }
+
         // Conteúdo do app, com zoom durante a animação.
         let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
             p.window.render_elements(renderer, phys, Scale::from(1.0), p.alpha);
@@ -440,6 +539,44 @@ fn window_elements(
             }
         }
 
+        // Vidro pedido pela janela (a barra lateral do Arquivos), logo atrás do
+        // conteúdo dela. Cobre também a faixa da barra de título acima e avança um raio
+        // para dentro do conteúdo: os cantos arredondados do vidro coincidem com os da
+        // janela ou ficam escondidos atrás das partes opacas.
+        if effects.panel_glass && p.alpha > 0.99 && (p.zoom - 1.0).abs() < f64::EPSILON {
+            let app_id = p
+                .window
+                .toplevel()
+                .and_then(|t| {
+                    smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+                        s.data_map
+                            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                            .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
+                    })
+                })
+                .unwrap_or_default();
+            let content_top = p.surface_origin.y + p.window.geometry().loc.y;
+            for (i, (rect, _)) in state.glass.get(&format!("app:{app_id}")).into_iter().flatten().enumerate() {
+                let mut r = Rectangle::new(p.surface_origin + rect.loc, rect.size);
+                let pad = radius.ceil() as i32;
+                if r.loc.y <= content_top {
+                    r.size.h += r.loc.y - p.frame.loc.y;
+                    r.loc.y = p.frame.loc.y;
+                } else {
+                    r.loc.y -= pad;
+                    r.size.h += pad;
+                }
+                if r.loc.x > p.frame.loc.x {
+                    r.loc.x -= pad;
+                    r.size.w += pad;
+                }
+                r.size.w += pad;
+                r.size.h += pad;
+                if let Some(r) = r.intersection(p.frame) {
+                    glass.push(GlassRegion { at: elements.len(), rect: r, radius, name: format!("app:{app_id}:{id}#{i}") });
+                }
+            }
+        }
     }
 
     // Camadas de fundo (ícones da área de trabalho): atrás das janelas e na frente
@@ -461,16 +598,12 @@ fn window_elements(
     // de tudo (fim da lista). Se a textura falhar, usa a cor lisa.
     // A configuração pode ter mudado (comando `reload`): segue o papel de parede dela.
     wallpaper.follow(state.config.desktop.wallpaper_path());
-    match wallpaper.element(renderer, output_rect, &casters) {
-        Some(element) => elements.push(MideRenderElement::Textured(element)),
-        None => elements.push(MideRenderElement::from(decorations::desktop_element(
-            shaders,
-            output_rect,
-            BACKGROUND,
-            &casters,
-        ))),
+    let layers = wallpaper.element(renderer, output_rect, &casters);
+    if layers.is_empty() {
+        elements.push(MideRenderElement::from(decorations::desktop_element(shaders, output_rect, BACKGROUND, &casters)));
     }
-    elements
+    elements.extend(layers.into_iter().map(MideRenderElement::Textured));
+    (elements, glass)
 }
 
 /// Superfícies de camada (barra, dock, buscador) que ficam acima das janelas.
@@ -538,8 +671,8 @@ fn layer_elements(
     (elements, glass)
 }
 
-/// Vidro atrás de uma camada: posição na lista de render (logo depois dos elementos
-/// da camada, ou seja, atrás dela), retângulo na tela, raio dos cantos e nome (para
+/// Vidro atrás de uma camada ou janela: posição na lista de render (logo depois dos
+/// elementos dela, ou seja, atrás dela), retângulo na tela, raio dos cantos e nome (para
 /// o cache do desfoque).
 struct GlassRegion {
     at: usize,
@@ -636,25 +769,39 @@ fn render(
         let mut custom: Vec<MideRenderElement> = crate::preview::elements(renderer, state, shaders, titles);
         custom.extend(popup_elements(renderer, state).into_iter().map(MideRenderElement::from));
         let before_layers = custom.len();
-        let (layers, glass) = layer_elements(renderer, output, state, blur, wallpaper);
+        let (layers, mut glass) = layer_elements(renderer, output, state, blur, wallpaper);
+        for region in &mut glass {
+            region.at += before_layers;
+        }
         custom.extend(layers);
-        let windows = window_elements(renderer, state, output, shaders, genie, wallpaper, titles);
+        let before_windows = custom.len();
+        let (windows, window_glass) = window_elements(renderer, state, output, shaders, genie, wallpaper, titles);
         custom.extend(windows);
+        glass.extend(window_glass.into_iter().map(|mut region| {
+            region.at += before_windows;
+            region
+        }));
         // Vidro (dock, barra, menus): o que está atrás de cada região (tudo depois dela
         // na lista) é desenhado numa textura, desfocado e posto logo atrás da camada.
         // De trás para a frente: o vidro de um menu vê a dock já com o vidro dela.
         let out_size = output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
         // Animações (lâmpada, maximizar, launcher) mudam shaders sem mudar a geometria:
         // nelas o desfoque é refeito a cada quadro.
-        let animating = !state.animations.is_empty() || state.launcher_anim.is_some();
+        // O papel de parede trocando (esmaecer) também: o vidro acompanha a transição.
+        let animating = !state.animations.is_empty() || state.launcher_anim.is_some() || wallpaper.busy() || !state.ghosts.is_empty();
         let strength = if state.config.effects.liquid_glass { 1.0 } else { 0.0 };
         let mut regions = glass;
         regions.sort_by(|a, b| b.at.cmp(&a.at));
         for region in regions {
-            let at = before_layers + region.at;
+            let at = region.at;
             let rect = region.rect;
             let src = blur_source(rect, out_size);
-            let key = if animating { state.start_time.elapsed().as_nanos() as u64 ^ 0x9e37_79b9 } else { backdrop_key(&custom[at..], rect) };
+            // A geração do papel de parede entra na assinatura: trocar a imagem refaz o vidro.
+            let key = if animating {
+                state.start_time.elapsed().as_nanos() as u64 ^ 0x9e37_79b9
+            } else {
+                backdrop_key(&custom[at..], rect) ^ wallpaper.generation().wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            };
             let behind = &custom[at..];
             let blurred = blur.region_blur(renderer, &region.name, key, out_size, src, strength, |renderer, target| {
                 crate::blur::render_region(renderer, behind, rect, out_size, target)

@@ -194,10 +194,8 @@ fn run_action(state: &mut State, action: Action) {
                 return;
             };
             if let Some(window) = state.window_for(&focus) {
-                if let Some(toplevel) = window.toplevel() {
-                    toplevel.send_close();
-                    tracing::info!("fechar janela pedido pelo atalho");
-                }
+                state.request_close(&window);
+                tracing::info!("fechar janela pedido pelo atalho");
             }
         }
         Action::Launch(command) => spawn(&command),
@@ -313,10 +311,8 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
             if let Some((panel, thumbs)) = thumbs {
                 if let Some((id, window)) = hit.and_then(|i| thumbs.get(i).cloned()) {
                     if on_close {
-                        if let Some(toplevel) = window.toplevel() {
-                            tracing::info!("prévia: fechar janela {id}");
-                            toplevel.send_close();
-                        }
+                        tracing::info!("prévia: fechar janela {id}");
+                        state.request_close(&window);
                     } else {
                         tracing::info!("prévia: janela {id} escolhida");
                         crate::control::handle(state, &format!("focus {id}"));
@@ -592,7 +588,7 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
 
     match decorations::button_at(bar, pos) {
         Some(Button::Close) => {
-            toplevel.send_close();
+            state.request_close(&window);
             tracing::info!("fechar janela pedido pela barra de título");
         }
         Some(Button::Minimize) => {

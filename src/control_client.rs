@@ -41,6 +41,10 @@ impl Glass {
     /// Pede vidro atrás de `rects` (x, y, largura, altura, raio), relativos à camada
     /// `namespace`. Lista vazia limpa.
     pub fn set(&mut self, namespace: &str, rects: &[(f32, f32, f32, f32, f32)]) {
+        // Nunca pediu vidro e continua sem: nada a avisar.
+        if rects.is_empty() && self.last.is_none() {
+            return;
+        }
         let mut command = format!("glass {namespace}");
         for (x, y, w, h, r) in rects {
             command.push_str(&format!(" {r}:{},{},{},{}", x.round(), y.round(), w.round(), h.round()));

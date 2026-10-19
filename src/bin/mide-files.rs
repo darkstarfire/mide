@@ -238,8 +238,8 @@ impl Files {
     /// Novo arquivo: diálogo com "Novo arquivo.txt" todo selecionado (digitar
     /// "notas.md" já define a extensão).
     fn new_file(&mut self) {
-        if self.target_dir().is_some() {
-            self.open_dialog(DialogKind::NewFile, "Novo arquivo.txt".into());
+        if let Some(dir) = self.target_dir() {
+            self.open_dialog(DialogKind::NewFile(dir), "Novo arquivo.txt".into());
         }
     }
 
@@ -369,8 +369,8 @@ impl Files {
 
     /// Nova pasta: abre o diálogo com o nome sugerido (nada é criado ainda).
     fn new_folder(&mut self) {
-        if self.target_dir().is_some() {
-            self.open_dialog(DialogKind::NewFolder, "Nova pasta".into());
+        if let Some(dir) = self.target_dir() {
+            self.open_dialog(DialogKind::NewFolder(dir), "Nova pasta".into());
         }
     }
 
@@ -393,11 +393,9 @@ impl Files {
         };
         let result = match &dialog.kind {
             DialogKind::Rename(path) => files::rename(path, &dialog.name),
-            kind => {
-                let Some(dir) = self.target_dir() else {
-                    return;
-                };
-                let folder = matches!(kind, DialogKind::NewFolder);
+            DialogKind::NewFolder(dir) | DialogKind::NewFile(dir) => {
+                let dir = dir.clone();
+                let folder = matches!(dialog.kind, DialogKind::NewFolder(_));
                 let name = if dialog.name.trim() == dialog.suggestion {
                     if folder { files::numbered_name(&dir, "Nova pasta", "") } else { files::numbered_name(&dir, "Novo arquivo", "txt") }
                 } else {
@@ -410,6 +408,10 @@ impl Files {
             Ok(path) => {
                 tracing::info!("pronto: {}", path.display());
                 self.dialog = None;
+                // Criado dentro de uma pasta da lista: ela abre para mostrar o item novo.
+                if let Some(parent) = path.parent().filter(|p| Some(p.to_path_buf()) != self.target_dir()) {
+                    self.expanded.insert(parent.to_path_buf());
+                }
                 self.reload();
                 self.selected = Some(path);
                 self.message = None;
@@ -601,8 +603,8 @@ impl Files {
             return;
         };
         let (title, action) = match dialog.kind {
-            DialogKind::NewFolder => ("Nova pasta", "Criar"),
-            DialogKind::NewFile => ("Novo arquivo", "Criar"),
+            DialogKind::NewFolder(_) => ("Nova pasta", "Criar"),
+            DialogKind::NewFile(_) => ("Novo arquivo", "Criar"),
             DialogKind::Rename(_) => ("Renomear", "Renomear"),
         };
         let focus = std::mem::take(&mut self.focus_rename);
@@ -731,6 +733,15 @@ impl Files {
                         }
                         if entry.is_dir && m.item("Abrir no Terminal") {
                             chosen = Some(Action::Terminal);
+                        }
+                        if entry.is_dir {
+                            m.separator();
+                            if m.item("Nova pasta aqui dentro") {
+                                chosen = Some(Action::NewFolderIn);
+                            }
+                            if m.item("Novo arquivo aqui dentro") {
+                                chosen = Some(Action::NewFileIn);
+                            }
                         }
                         m.separator();
                         if m.item("Renomear…") {
@@ -862,6 +873,8 @@ impl Files {
                 Action::CopyPath => places::copy_text(&entry.path.to_string_lossy()),
                 Action::Terminal => places::open_terminal(&entry.path),
                 Action::Duplicate => self.duplicate(&entry.path),
+                Action::NewFolderIn => self.open_dialog(DialogKind::NewFolder(entry.path.clone()), "Nova pasta".into()),
+                Action::NewFileIn => self.open_dialog(DialogKind::NewFile(entry.path.clone()), "Novo arquivo.txt".into()),
                 Action::Compress => self.run_job(entry.path.clone(), false),
                 Action::Extract => self.run_job(entry.path.clone(), true),
                 Action::Copy => {
@@ -919,15 +932,18 @@ struct Dialog {
     error: Option<String>,
 }
 
+/// O que o diálogo faz; criar leva a pasta onde criar.
 enum DialogKind {
-    NewFolder,
-    NewFile,
+    NewFolder(PathBuf),
+    NewFile(PathBuf),
     Rename(PathBuf),
 }
 
 #[derive(Clone, Copy)]
 enum Action {
     Open,
+    NewFolderIn,
+    NewFileIn,
     Terminal,
     Rename,
     Duplicate,
@@ -961,6 +977,7 @@ impl App for Files {
             Place::Dir(dir) => self.favorites.iter().position(|(_, p, _)| p == dir).map(|i| i + 1).unwrap_or(usize::MAX),
         };
         let refs: Vec<(&str, &str)> = items.iter().map(|(n, i)| (n.as_str(), *i)).collect();
+        ui.glass_sidebar();
         let chosen = ui.sidebar_area(&refs, current, |ui, _| self.content(ui));
         // Diálogo por cima de tudo (a janela inteira escurece atrás).
         self.dialog_view(ui);

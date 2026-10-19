@@ -75,6 +75,15 @@ fn serve(stream: UnixStream, state: &mut State) -> std::io::Result<()> {
 
 /// Executa um comando e devolve a resposta (sem a linha `end`).
 pub fn handle(state: &mut State, command: &str) -> String {
+    // Consultas (a barra, a dock e o launcher perguntam o tempo todo) não mudam a
+    // tela; os outros comandos pedem um quadro.
+    let query = matches!(
+        command.split_whitespace().next(),
+        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea")
+    ) || command.trim() == "launcher state";
+    if !query {
+        state.wake();
+    }
     let mut words = command.split_whitespace();
     match words.next() {
         Some("list") => list(state),
@@ -329,7 +338,7 @@ fn app_windows(state: &mut State, ids: &[String], cmd: &str) -> usize {
             continue;
         };
         if cmd == "close" {
-            toplevel.send_close();
+            state.request_close(window);
         } else if !state.minimized.iter().any(|m| &m.window == window) {
             state.minimize(toplevel.wl_surface());
         }
@@ -350,7 +359,7 @@ fn focused_window_action(state: &mut State, action: &str) -> bool {
         return false;
     };
     match action {
-        "close" => toplevel.send_close(),
+        "close" => state.request_close(&window),
         "minimize" => state.minimize(toplevel.wl_surface()),
         "zoom" => crate::input::toggle_maximize(state, toplevel),
         // Forçar encerrar: termina o processo do app (quando ele não responde).

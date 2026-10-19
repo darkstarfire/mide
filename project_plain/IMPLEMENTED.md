@@ -760,3 +760,28 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Compositor: camadas de fundo** (`Bottom` e `Background`, pendência do A10) desenhadas entre as janelas e o papel de parede, e recebendo ponteiro e teclado (sob demanda) quando não há janela por cima; clicar nelas fecha popups abertos. Novo comando `workarea` (área útil sem barra e dock).
 - **mide-ui:** `Window::desktop(nome)` (camada de fundo), `ui.at(x, y, largura, ...)` (posição livre), `Theme::tile_text` (nome claro com sombra) e **quadros iguais não são reenviados** ao compositor (um redesenho agendado sem mudança não faz o compositor refazer o vidro de quem está na frente).
 - Testes usam uma pasta de área de trabalho temporária (`MIDE_DESKTOP_DIR`), nunca a do usuário.
+
+## Ajustes: menus, vidro na janela, papel de parede e transições
+
+- **Ponta dos menus de contexto embaixo do item** (no Arquivos e na área de trabalho): o menu nasce logo abaixo do nome do item, com a ponta encostada nele, sem a linha da borda cortando a ponta. Sem espaço embaixo, abre para cima com a ponta no topo do item.
+- **Criar dentro da pasta:** clique direito numa pasta (na grade ou na lista) mostra "Nova pasta aqui dentro" e "Novo arquivo aqui dentro"; o diálogo cria dentro dela e, na lista, a pasta se abre para mostrar o item novo.
+- **Volume e brilho na central de controle:** a parte cheia da barra virou azul do mide (antes, cinza claro sobre o vidro, quase invisível).
+- **Vidro da dock acompanha o papel de parede:** o papel de parede tem uma "geração" que entra na assinatura do desfoque; trocar a imagem refaz o vidro. A imagem nova é lida numa thread (sem travar quadros) e entra esmaecendo sobre a antiga em 450 ms; o vidro acompanha a transição.
+- **Barra lateral de vidro no Arquivos** (acesso rápido), com a mesma transparência dos menus da barra: o compositor ganhou **vidro em janelas comuns** (`glass app:<app_id> ...` no canal de controle; a região fica logo atrás do conteúdo da janela, com os cantos coincidindo com os da janela). Com "Vidro em barras e menus" desligado nas Configurações, a barra lateral fica opaca (a janela confere a opção uma vez por segundo, sem redesenhar). Os ícones da barra lateral agora têm a cor dos ícones da barra superior (escuros; brancos no item escolhido). mide-ui: `ui.glass_sidebar()`.
+- **Barra superior esmaece junto com o launcher** ao abrir e fechar (antes, trocava de uma vez).
+- **Fechar janela com transição:** o compositor fotografa a janela ao pedir o fechamento e, quando ela some, a foto encolhe 6% e esmaece em 180 ms.
+- **Ícones do Arquivos aparecem logo:** o pedido de ícone em segundo plano agenda quadros até o ícone chegar (antes, os ícones das pastas só apareciam ao mexer o mouse).
+
+## Itens da barra superior (B12)
+
+- Nova seção **Barra superior** nas Configurações (também pela busca: "barra", "ícones", "bateria"...): interruptores para Configurações (engrenagem), Som, Wi-Fi, Bluetooth, Bateria e Central de controle. O relógio fica sempre.
+- Grava em `[bar]` no `config.toml` (só o que está escondido, como `gear = false`); a barra relê a cada meio segundo (o arquivo só é lido de novo quando muda) e redesenha; se o painel de um item escondido estiver aberto, ele fecha.
+- `mide::settings_file`: `BAR_ITEMS`, `bar_item` e `flag` (opção ligada/desligada com padrão e cache pela data do arquivo; `effect` passou a usar ela).
+
+## Compositor parado não desenha
+
+- Antes, o compositor pedia um quadro novo ao anfitrião depois de cada quadro: ~60 quadros/s mesmo sem nada mudando (~4% de um núcleo com a sessão parada).
+- Agora desenha só quando algo muda: pedido de um cliente (commit, janela nova ou fechada), comando no canal de controle (as consultas `list`, `dock_covered`, `launcher state` etc. não contam), entrada (mouse, teclado) ou algo em movimento (animações, launcher, papel de parede trocando, janela fechando). `State::wake` marca e acorda o laço na hora por um `ping` do calloop (sem esperar relógio).
+- O relógio de reserva (anfitrião sem pedir quadros) só age com algo pendente; parado, confere a cada 100 ms.
+- Com autoteste (testes), continua desenhando sem parar, porque os roteiros contam quadros. Roteiro vazio (`tests/scenario.sh ""`) é uma sessão sem autoteste, para medir o consumo parado.
+- Medido (1366x768, Arquivos aberto, 10 s parado): compositor de 60 para **0–2 quadros**; sessão inteira de **4,4% para 1,0%** de um núcleo; RAM total ~158 MB (compositor ~99 MB).

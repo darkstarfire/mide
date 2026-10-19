@@ -157,3 +157,22 @@ fn icon_from_svg(path: &Path, size: u32) -> Option<Pixmap> {
     pixmap.data_mut().copy_from_slice(rendered.data());
     Some(pixmap)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bancada: `cargo test --lib bancada_icones -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bancada_icones() {
+        for (names, size) in [(&["user-home-symbolic"][..], 18), (&["folder", "text-x-generic"][..], 18), (&["folder", "text-x-generic"][..], 64), (&["text-x-generic"][..], 18), (&["application-pdf", "text-x-generic"][..], 18), (&["folder-download-symbolic"][..], 18)] {
+            let t = std::time::Instant::now();
+            let found = load_themed_icon(names, size).is_some();
+            let first = t.elapsed();
+            let t = std::time::Instant::now();
+            load_themed_icon(names, size);
+            println!("{:?}@{size}: {found} primeira {:.1} ms, de novo {:.1} ms", names[0], first.as_secs_f32() * 1e3, t.elapsed().as_secs_f32() * 1e3);
+        }
+    }
+}

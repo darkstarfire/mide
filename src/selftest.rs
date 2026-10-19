@@ -59,7 +59,9 @@ pub struct SelfTest {
 impl SelfTest {
     /// Lê o roteiro de `MIDE_SELFTEST`. Sem a variável, não há autoteste.
     pub fn from_env() -> Option<Self> {
-        let script = std::env::var("MIDE_SELFTEST").ok()?;
+        // Roteiro vazio é o mesmo que sem autoteste (sessão de teste comum, por
+        // exemplo para medir o consumo parado).
+        let script = std::env::var("MIDE_SELFTEST").ok().filter(|s| !s.trim().is_empty())?;
         let steps = parse(&script);
         tracing::info!("autoteste com {} passo(s)", steps.len());
         Some(Self { steps, frame: 0 })

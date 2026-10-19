@@ -172,6 +172,11 @@ pub struct State {
     pub resize_grab: Option<ResizeGrab>,
     /// Animações em andamento (ex.: maximizar).
     pub animations: Vec<WindowAnimation>,
+    /// Pedidos de fechar feitos pelo mide (janela e quando): enquanto o app não fecha,
+    /// o compositor fotografa a janela para a transição de fechar.
+    pub close_requests: Vec<(u64, Instant)>,
+    /// Janelas que acabaram de fechar: a foto delas esmaece (número, moldura, início).
+    pub ghosts: Vec<(u64, smithay::utils::Rectangle<i32, Logical>, Instant)>,
     /// Janelas minimizadas, da mais antiga para a mais recente.
     pub minimized: Vec<MinimizedWindow>,
     /// Ícones da dock informados por ela: ids do app e retângulo relativo à dock.
@@ -188,6 +193,11 @@ pub struct State {
     /// O launcher terminou de esmaecer ao fechar e fica invisível até a camada sumir
     /// (sem isso, ele reaparecia inteiro por alguns quadros: uma piscada).
     pub launcher_gone: bool,
+    /// Algo pode ter mudado na tela (commit de um cliente, comando, entrada): pede um
+    /// quadro. Parado, sem nada mudando, o compositor não desenha.
+    pub redraw: bool,
+    /// Acorda o laço de desenho na hora (`wake`), sem esperar o relógio.
+    pub waker: Option<smithay::reexports::calloop::ping::Ping>,
     /// Autoteste: finge o Ctrl pressionado (o teste não tem teclado real).
     pub test_ctrl: bool,
     /// Popups (menus, listas) rastreados até serem mapeados e destruídos.
@@ -254,6 +264,8 @@ impl State {
             restore_sizes: Vec::new(),
             cursor_icon: Default::default(),
             animations: Vec::new(),
+            close_requests: Vec::new(),
+            ghosts: Vec::new(),
             minimized: Vec::new(),
             dock_icons: Vec::new(),
             preview: None,
@@ -261,6 +273,8 @@ impl State {
             launcher_anim: None,
             launcher_seen: false,
             launcher_gone: false,
+            redraw: true,
+            waker: None,
             test_ctrl: false,
             resize_grab: None,
             popups: PopupManager::default(),
@@ -451,6 +465,18 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(window) = self.window_for(surface.wl_surface()) {
+            // Fechamento pedido pelo mide: a foto da janela esmaece (transição de fechar).
+            // Guarda só a posição: o tamanho vem da foto (a geometria aqui já zerou).
+            let id = window_id(&window);
+            if self.config.effects.animations && self.close_requests.iter().any(|(w, _)| *w == id) {
+                if let Some(loc) = self.space.element_location(&window) {
+                    let bar_h = bar_height_for(&window);
+                    let size = window.geometry().size;
+                    let frame = smithay::utils::Rectangle::new((loc.x, loc.y - bar_h).into(), (size.w, size.h + bar_h).into());
+                    self.ghosts.push((id, frame, Instant::now()));
+                }
+            }
+            self.close_requests.retain(|(w, _)| *w != id);
             self.space.unmap_elem(&window);
             tracing::info!("janela fechada");
         }
@@ -769,6 +795,9 @@ fn set_server_side(toplevel: &ToplevelSurface) {
 
 /// Marca de superfície que pediu decoração de servidor (o mide desenha a barra).
 pub struct SsdMarker;
+
+/// Duração do esmaecer ao fechar uma janela.
+pub const CLOSE_FADE: std::time::Duration = std::time::Duration::from_millis(180);
 
 /// Número da janela, dado quando ela abre e único na sessão.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1170,7 +1199,32 @@ impl State {
     }
 
     /// Encerra as animações que terminaram. As de minimizar tiram a janela do espaço.
+    /// Pede para a janela fechar (botão, atalho, menus) e marca o pedido: enquanto o
+    /// app não fecha, ela é fotografada para esmaecer quando sumir.
+    /// Algo mudou na tela: pede um quadro ao anfitrião já.
+    pub fn wake(&mut self) {
+        if !self.redraw {
+            self.redraw = true;
+            if let Some(waker) = &self.waker {
+                waker.ping();
+            }
+        }
+    }
+
+    pub fn request_close(&mut self, window: &Window) {
+        let Some(toplevel) = window.toplevel() else {
+            return;
+        };
+        let id = window_id(window);
+        self.close_requests.retain(|(w, _)| *w != id);
+        self.close_requests.push((id, Instant::now()));
+        toplevel.send_close();
+    }
+
     pub fn finish_animations(&mut self, now: Instant) {
+        // Pedido de fechar sem resposta em 2 s (o app perguntou "salvar?"): esquece.
+        self.close_requests.retain(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(2));
+        self.ghosts.retain(|(_, _, at)| now.duration_since(*at) < CLOSE_FADE);
         match self.launcher_anim {
             Some((start, true)) if now.duration_since(start) >= LAUNCHER_OPEN => self.launcher_anim = None,
             Some((start, false)) if now.duration_since(start) >= LAUNCHER_CLOSE => {

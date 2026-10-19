@@ -31,6 +31,7 @@ enum Section {
     Sound,
     Wallpaper,
     Dock,
+    Bar,
     Effects,
     Keyboard,
     About,
@@ -45,6 +46,7 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Sound), "Som", "audio-volume-high", [255, 55, 95]),
     (Some(Section::Wallpaper), "Papel de parede", "preferences-desktop-wallpaper", [100, 210, 255]),
     (Some(Section::Dock), "Dock", "user-desktop", [52, 199, 89]),
+    (Some(Section::Bar), "Barra superior", "gnome-panel", [88, 86, 214]),
     (Some(Section::Effects), "Efeitos", "preferences-desktop-theme", [191, 90, 242]),
     (None, "", "", [0, 0, 0]),
     (Some(Section::Keyboard), "Teclado", "preferences-desktop-keyboard", [142, 142, 147]),
@@ -73,6 +75,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Adicionar imagem de fundo", "papel de parede imagem foto", Section::Wallpaper),
     ("Tamanho dos ícones da dock", "dock icones tamanho", Section::Dock),
     ("Ocultar e mostrar a Dock automaticamente", "dock esconder ocultar automatico", Section::Dock),
+    ("Itens da barra superior", "barra menu topo icones som wifi bluetooth bateria central controle engrenagem", Section::Bar),
     ("Sombras das janelas", "efeitos sombra", Section::Effects),
     ("Cantos arredondados", "efeitos cantos bordas", Section::Effects),
     ("Animações", "efeitos animacao transicao", Section::Effects),
@@ -465,6 +468,25 @@ impl Settings {
         ui.note("Sem ocultar, as janelas maximizadas ficam acima da dock. Para fixar um app, clique com o botão direito no ícone dele e escolha \"Manter na Dock\".");
     }
 
+    /// Itens da direita da barra superior (`[bar]`): todos à mostra por padrão.
+    fn bar(&mut self, ui: &mut Ui) {
+        ui.title("Barra superior");
+        ui.card(|ui| {
+            for (key, label, detail) in settings_file::BAR_ITEMS {
+                let mut on = settings_file::bar_item(key);
+                if ui.switch_detail(label, detail, &mut on).changed() {
+                    // À mostra é o padrão: grava só quando esconde.
+                    let value = if on { None } else { Some(Value::Bool(false)) };
+                    match settings_file::set("bar", key, value) {
+                        Ok(()) => tracing::info!("barra superior: {label} {}", if on { "à mostra" } else { "escondido" }),
+                        Err(err) => tracing::warn!("item da barra não gravado: {err}"),
+                    }
+                }
+            }
+        });
+        ui.note("O relógio fica sempre na barra. Itens escondidos continuam nas Configurações e na central de controle.");
+    }
+
     fn effects(&mut self, ui: &mut Ui) {
         ui.title("Efeitos");
         ui.card(|ui| {
@@ -580,6 +602,7 @@ impl App for Settings {
                 Section::Sound => self.sound(ui),
                 Section::Wallpaper => self.wallpaper(ui),
                 Section::Dock => self.dock(ui),
+                Section::Bar => self.bar(ui),
                 Section::Effects => self.effects(ui),
                 Section::Keyboard => self.keyboard(ui),
                 Section::About => self.about(ui),
@@ -717,6 +740,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("sound") => Section::Sound,
         Some("wallpaper") => Section::Wallpaper,
         Some("dock") => Section::Dock,
+        Some("bar") => Section::Bar,
         Some("effects") => Section::Effects,
         Some("keyboard") => Section::Keyboard,
         Some("about") => Section::About,

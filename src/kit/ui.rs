@@ -81,6 +81,8 @@ struct MenuState {
     owner: u64,
     pos: (f32, f32),
     height: f32,
+    /// Topo do item clicado (para o menu que abre para cima não cobrir o item).
+    item_top: Option<f32>,
 }
 
 /// Itens de um menu de contexto, montados dentro de `Ui::context_menu`.
@@ -181,6 +183,9 @@ pub struct Ctx {
     pub title: Option<String>,
     /// Painéis de vidro deste quadro (x, y, largura, altura, raio), na janela.
     pub glass: Vec<(f32, f32, f32, f32, f32)>,
+    /// Este quadro desenhou algo que usa vidro quando ligado (barra lateral de vidro):
+    /// a janela acompanha a opção nas Configurações.
+    pub glass_capable: bool,
     /// O app pediu para fechar (`Ui::close`).
     pub close_requested: bool,
     /// Quadro agendado pelo app (`Ui::wake_after`).
@@ -209,6 +214,7 @@ impl Ctx {
             ticking: false,
             title: None,
             glass: Vec::new(),
+            glass_capable: false,
             close_requested: false,
             wake_at: None,
             layer: false,
@@ -249,6 +255,8 @@ impl Ctx {
         let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
         if self.icon_jobs.as_ref().is_some_and(|jobs| jobs.send((key.clone(), app, names, size)).is_ok()) {
             self.icon_pending.insert(key);
+            // Redesenha quando o ícone chegar (sem isso, só no próximo movimento do mouse).
+            self.ticking = true;
         }
         None
     }
@@ -265,6 +273,7 @@ impl Ctx {
         self.hover_claimed = false;
         self.ticking = false;
         self.glass.clear();
+        self.glass_capable = false;
         // Ícones que ficaram prontos; enquanto houver algum carregando, mais quadros.
         if let Some(done) = &self.icon_done {
             while let Ok((key, icon)) = done.try_recv() {
@@ -345,6 +354,8 @@ pub struct Ui<'a> {
     card_first: bool,
     /// Próxima `sidebar` entrega a área sem página (usado por `sidebar_area`).
     sidebar_raw: bool,
+    /// A próxima barra lateral é de vidro (`Ui::glass_sidebar`).
+    sidebar_glass: bool,
     /// Largura forçada para os componentes dentro de `sized`.
     next_width: Option<f32>,
     /// O próximo `icon_button` aparece marcado (usado por `icon_toggle`).
@@ -370,6 +381,7 @@ impl<'a> Ui<'a> {
             in_card: false,
             card_first: true,
             sidebar_raw: false,
+            sidebar_glass: false,
             next_width: None,
             toggled: false,
         }
@@ -674,8 +686,13 @@ impl<'a> Ui<'a> {
     /// ```
     pub fn context_menu(&mut self, response: &Response, build: impl FnOnce(&mut Menu)) {
         if response.secondary_clicked {
-            if let Some(pos) = self.ctx.input.pointer {
-                self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, height: 0.0 });
+            // Num item (linha, ladrilho), a ponta sai da borda de baixo dele, sem cobrir
+            // o nome; numa área grande (fundo), sai do ponto do clique.
+            let small = response.rect.3 < 200.0;
+            let item_bottom = small.then(|| self.offset.1 + response.rect.1 + response.rect.3);
+            let item_top = small.then(|| self.offset.1 + response.rect.1);
+            if let Some(pos) = self.ctx.input.pointer.map(|(x, y)| (x, item_bottom.unwrap_or(y))) {
+                self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, height: 0.0, item_top });
                 self.ctx.memory.menu_rect = None;
                 self.ctx.repaint = true;
             }
@@ -692,7 +709,8 @@ impl<'a> Ui<'a> {
         let arrow = crate::ui::draw::ARROW_H;
         let x = (state.pos.0 - 24.0).clamp(4.0, (ww - w - 4.0).max(4.0));
         let up = state.pos.1 + arrow + state.height + 6.0 > wh;
-        let y0 = if up { (state.pos.1 - arrow - state.height).max(4.0) } else { state.pos.1 + arrow };
+        let top_anchor = state.item_top.unwrap_or(state.pos.1);
+        let y0 = if up { (top_anchor - arrow - state.height).max(4.0) } else { state.pos.1 + arrow };
         let mut menu = Menu { ctx: &mut *self.ctx, x: x + 5.0, y: y0 + 5.0, w: w - 10.0, rows: Vec::new() };
         build(&mut menu);
         let (rows, end) = (std::mem::take(&mut menu.rows), menu.y);
@@ -1401,6 +1419,7 @@ impl<'a> Ui<'a> {
                 in_card: false,
                 card_first: true,
                 sidebar_raw: false,
+            sidebar_glass: false,
                 next_width: None,
                 toggled: false,
             };
@@ -1547,7 +1566,20 @@ impl<'a> Ui<'a> {
         let side_w = 220.0;
         let (x, y0) = (self.x, self.cursor_y);
         let h = self.visible.1 - y0;
-        fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));
+        // Barra lateral de vidro (como o acesso rápido do Finder): o mesmo véu dos
+        // menus da barra, com o compositor desfocando o que está atrás da janela.
+        // Com o vidro desligado nas Configurações, fica opaca.
+        if std::mem::take(&mut self.sidebar_glass) {
+            self.ctx.glass_capable = true;
+            if crate::control_client::panel_glass() {
+                crate::ui::draw::paint_rounded_solid(self.canvas, x, y0, side_w, h, 0.0, [248, 248, 250, 178]);
+                self.ctx.glass.push((self.offset.0 + x, self.offset.1 + y0, side_w, h, 0.0));
+            } else {
+                fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));
+            }
+        } else {
+            fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));
+        }
         fill_rounded(self.canvas, x + side_w - 1.0, y0, 1.0, h, 0.0, color(t.line));
         let mut row_y = y0 + 16.0;
         if let Some((query, placeholder)) = search {
@@ -1593,15 +1625,15 @@ impl<'a> Ui<'a> {
             if let Some([r_, g, b]) = tint {
                 fill_rounded(self.canvas, rect.0 + 8.0, rect.1 + 3.0, 24.0, 24.0, 6.0, color([*r_, *g, *b, 255]));
             }
-            // Ícones "symbolic" (de uma cor só) ficam na cor de destaque, como os da
-            // barra lateral do Finder; na linha escolhida, brancos.
+            // Ícones "symbolic" (de uma cor só) ficam na cor do texto, como os da
+            // barra superior; na linha escolhida, brancos.
             let symbolic = icon.ends_with("-symbolic");
             let size = if symbolic { 18 } else { 20 };
             let pix = self.ctx.icon(&[icon], size, false);
             if let Some(pix) = pix {
                 let (ix, iy) = ((rect.0 + 10.0) as i32, (rect.1 + (30.0 - size as f32) / 2.0) as i32);
                 if symbolic {
-                    let tint = if is_sel { t.on_accent } else { t.accent };
+                    let tint = if is_sel { t.on_accent } else { t.text };
                     crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [tint[0], tint[1], tint[2]]);
                 } else {
                     crate::ui::draw::blit(self.canvas, &pix, ix, iy, 1.0);
@@ -1626,6 +1658,11 @@ impl<'a> Ui<'a> {
 
     /// Como `sidebar`, mas o conteúdo recebe a área inteira à direita, sem margem nem
     /// rolagem (para montar uma barra de ferramentas fixa em cima de uma `page`).
+    /// A próxima barra lateral (`sidebar`, `sidebar_area`) é de vidro.
+    pub fn glass_sidebar(&mut self) {
+        self.sidebar_glass = true;
+    }
+
     pub fn sidebar_area(&mut self, items: &[(&str, &str)], selected: usize, content: impl FnOnce(&mut Ui, usize)) -> usize {
         self.sidebar_raw = true;
         self.sidebar(items, selected, content)
@@ -1803,9 +1840,13 @@ mod tests {
         view(&mut Ui::root(&mut canvas, &mut ctx));
         assert!(ctx.take_overlay().is_some(), "menu desenhado por cima");
         ctx.end_frame();
-        // O menu abre no ponteiro: "Abrir" na primeira linha (y 15..41). O item é
-        // escolhido ao apertar, e o clique não chega ao botão que está embaixo.
-        ctx.input.pointer = Some((40.0, 28.0));
+        // O menu abre embaixo do botão (a ponta encosta na borda de baixo dele):
+        // "Abrir" é a primeira linha. O item é escolhido ao apertar, e o clique não
+        // chega ao botão que está embaixo.
+        let (_, menu_y, _, _) = ctx.memory.menu_rect.expect("menu aberto");
+        let button_bottom = ctx.memory.menu.map(|m| m.pos.1).unwrap();
+        assert!(menu_y >= button_bottom, "menu abaixo do item");
+        ctx.input.pointer = Some((40.0, menu_y + 18.0));
         ctx.input.pressed = true;
         ctx.input.down = true;
         assert_eq!(frame(&mut ctx, view), Some("Abrir"));

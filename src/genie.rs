@@ -121,6 +121,9 @@ void main() {
 /// Programa de shader do efeito lâmpada.
 pub struct Genie {
     program: GlesTexProgram,
+    /// Fotos das janelas com fechamento pedido (número da janela, textura e tamanho),
+    /// usadas na transição de fechar.
+    pub snapshots: std::cell::RefCell<std::collections::HashMap<u64, (smithay::backend::renderer::gles::GlesTexture, smithay::utils::Size<i32, Logical>)>>,
 }
 
 impl Genie {
@@ -137,7 +140,7 @@ impl Genie {
                 UniformName::new("corner", UniformType::_1f),
             ],
         )?;
-        Ok(Self { program })
+        Ok(Self { program, snapshots: Default::default() })
     }
 
     /// Elemento da janela deformada. `window_rect` é a área visível da janela e
@@ -161,41 +164,7 @@ impl Genie {
             return None;
         }
 
-        // A janela inteira numa textura: barra em cima (se houver) e o conteúdo logo
-        // abaixo. A superfície começa antes da área visível pelo deslocamento da geometria.
-        let origin: Point<i32, Logical> = (
-            -window.geometry().loc.x,
-            bar_height - window.geometry().loc.y,
-        )
-            .into();
-        let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            window.render_elements(renderer, origin.to_physical(1), Scale::from(1.0), 1.0);
-        let mut texture = renderer
-            .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
-            .ok()?;
-        {
-            let mut target_fb = renderer.bind(&mut texture).ok()?;
-            let mut frame = renderer
-                .render(&mut target_fb, (size.w, size.h).into(), Transform::Normal)
-                .ok()?;
-            let full = Rectangle::from_size((size.w, size.h).into());
-            frame.clear(Color32F::new(0.0, 0.0, 0.0, 0.0), &[full]).ok()?;
-            // A lista vai da frente para trás; o desenho vai de trás para a frente.
-            for element in content.iter().rev() {
-                let src = element.src();
-                let dst = element.geometry(Scale::from(1.0));
-                let damage = [Rectangle::from_size(dst.size)];
-                let _ = element.draw(&mut frame, src, dst, &damage, &[]);
-            }
-            // Barra e título por cima, também de trás para a frente.
-            for element in overlays.iter().rev() {
-                let src = element.src();
-                let dst = element.geometry(Scale::from(1.0));
-                let damage = [Rectangle::from_size(dst.size)];
-                let _ = element.draw(&mut frame, src, dst, &damage, &[]);
-            }
-            let _ = frame.finish();
-        }
+        let texture = snapshot(renderer, window, size, bar_height, overlays)?;
 
         // Área que contém a janela e o alvo: é onde o funil é desenhado.
         let area = window_rect.merge(target);
@@ -245,4 +214,52 @@ fn genie_flip() -> f32 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0)
+}
+
+/// A janela inteira numa textura do tamanho `size` (moldura): barra e título por cima
+/// (`overlays`, em coordenadas da textura) e o conteúdo logo abaixo da barra. Usada
+/// pelo efeito lâmpada e pela foto que esmaece ao fechar a janela.
+pub fn snapshot(
+    renderer: &mut GlesRenderer,
+    window: &Window,
+    size: smithay::utils::Size<i32, Logical>,
+    bar_height: i32,
+    overlays: &[&dyn RenderElement<GlesRenderer>],
+) -> Option<smithay::backend::renderer::gles::GlesTexture> {
+        // A janela inteira numa textura: barra em cima (se houver) e o conteúdo logo
+        // abaixo. A superfície começa antes da área visível pelo deslocamento da geometria.
+        let origin: Point<i32, Logical> = (
+            -window.geometry().loc.x,
+            bar_height - window.geometry().loc.y,
+        )
+            .into();
+        let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+            window.render_elements(renderer, origin.to_physical(1), Scale::from(1.0), 1.0);
+        let mut texture: smithay::backend::renderer::gles::GlesTexture = renderer
+            .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
+            .ok()?;
+        {
+            let mut target_fb = renderer.bind(&mut texture).ok()?;
+            let mut frame = renderer
+                .render(&mut target_fb, (size.w, size.h).into(), Transform::Normal)
+                .ok()?;
+            let full = Rectangle::from_size((size.w, size.h).into());
+            frame.clear(Color32F::new(0.0, 0.0, 0.0, 0.0), &[full]).ok()?;
+            // A lista vai da frente para trás; o desenho vai de trás para a frente.
+            for element in content.iter().rev() {
+                let src = element.src();
+                let dst = element.geometry(Scale::from(1.0));
+                let damage = [Rectangle::from_size(dst.size)];
+                let _ = element.draw(&mut frame, src, dst, &damage, &[]);
+            }
+            // Barra e título por cima, também de trás para a frente.
+            for element in overlays.iter().rev() {
+                let src = element.src();
+                let dst = element.geometry(Scale::from(1.0));
+                let damage = [Rectangle::from_size(dst.size)];
+                let _ = element.draw(&mut frame, src, dst, &damage, &[]);
+            }
+            let _ = frame.finish();
+        }
+    Some(texture)
 }

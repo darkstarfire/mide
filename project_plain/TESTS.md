@@ -491,3 +491,26 @@ Manual (o que o autoteste não cobre):
 ## Área de trabalho (B10) — manual
 
 - Pôr arquivos na pasta "Área de trabalho": aparecem à direita; duplo clique abre; botão direito no vazio → Nova pasta (diálogo); arrastar janelas por cima: os ícones ficam atrás.
+
+## Menus, vidro na janela e criar dentro da pasta — automáticos
+
+- `tests/ui.sh`: coordenadas dos menus do Arquivos recalibradas (menu embaixo do item); "Nova pasta aqui dentro" e "Novo arquivo aqui dentro" criam dentro de "Projetos"; "clique fora fecha o menu" agora clica onde estava "Mover para a Lixeira"; a barra lateral do Arquivos aparece com vidro (`app:mide-files:N#0`).
+
+## Menus, vidro na janela e criar dentro da pasta — manual
+
+- Arquivos sobre o papel de parede: a barra lateral deixa ver o fundo desfocado; desligar "Vidro em barras e menus" nas Configurações: fica opaca em até 1 s.
+- Trocar o papel de parede: a imagem nova esmaece sobre a antiga e o vidro da dock acompanha (não fica a imagem antiga).
+- Abrir e fechar o launcher: a barra superior esmaece junto. Fechar uma janela: ela encolhe um pouco e some.
+
+## Itens da barra superior (B12) — automáticos
+
+- `tests/ui.sh`: Configurações → Barra superior → desligar "Configurações" grava `gear = false` e a barra passa a mostrar só `sound wifi bluetooth battery control`.
+
+## Itens da barra superior (B12) — manual
+
+- Configurações → Barra superior: desligar Som e Bluetooth; os ícones somem da barra em meio segundo e os outros se ajeitam; religar traz de volta.
+
+## Compositor parado — medição
+
+- Sessão sem autoteste (`tests/scenario.sh "" -- "target/debug/mide-files /usr/share"`), 10 s parado: quadros do compositor e CPU por processo (`/proc/<pid>/stat`). Resultado: 0–2 quadros, 1,0% de um núcleo no total.
+- Mesma sessão, `launcher` pelo canal de controle: o compositor desenha a animação (23 quadros ao abrir, 30 ao fechar) e volta a parar.

@@ -77,22 +77,47 @@ pub fn get(section: &str, key: &str) -> Option<Value> {
 }
 
 /// Um efeito de `[effects]` está ligado? (Os efeitos vêm ligados quando faltam.)
-/// Guarda o arquivo lido e só relê quando ele muda: pode ser chamado a cada quadro.
+/// Pode ser chamado a cada quadro (ver `flag`).
 pub fn effect(key: &str) -> bool {
+    flag("effects", key, true)
+}
+
+/// Itens da direita da barra superior que podem ser escondidos (`[bar]` no
+/// `config.toml`): chave, nome e explicação. O relógio fica sempre.
+pub const BAR_ITEMS: &[(&str, &str, &str)] = &[
+    ("gear", "Configurações", "Engrenagem que abre as Configurações do Sistema"),
+    ("sound", "Som", "Volume e saída de som"),
+    ("wifi", "Wi-Fi", "Redes sem fio"),
+    ("bluetooth", "Bluetooth", "Aparelhos sem fio"),
+    ("battery", "Bateria", "Carga e tempo restante (só em notebooks)"),
+    ("control", "Central de controle", "Wi-Fi, Bluetooth, Não perturbe, brilho e som num painel só"),
+];
+
+/// Um item da barra superior está à mostra? (Todos aparecem quando faltam.)
+pub fn bar_item(key: &str) -> bool {
+    flag("bar", key, true)
+}
+
+/// Opção ligada/desligada de `[section]`, com o valor padrão quando falta. Guarda o
+/// arquivo lido e só relê quando ele muda: pode ser chamado a cada quadro.
+pub fn flag(section: &str, key: &str, default: bool) -> bool {
     use std::sync::Mutex;
     type Cache = Option<(Option<std::time::SystemTime>, String)>;
     static CACHE: Mutex<Cache> = Mutex::new(None);
     let path = config_path();
     let mtime = path.as_ref().and_then(|p| fs::metadata(p).ok()?.modified().ok());
     let Ok(mut cache) = CACHE.lock() else {
-        return true;
+        return default;
     };
     if cache.as_ref().is_none_or(|(m, _)| *m != mtime) {
         let text = path.and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
         *cache = Some((mtime, text));
     }
     let text = cache.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
-    !matches!(get_in_text(text, "effects", key), Some(Value::Bool(false)))
+    match get_in_text(text, section, key) {
+        Some(Value::Bool(on)) => on,
+        _ => default,
+    }
 }
 
 #[cfg(test)]

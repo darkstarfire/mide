@@ -81,6 +81,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Err(err) = unsafe { display.get_mut().dispatch_clients(state) } {
                 tracing::warn!("erro ao despachar clientes: {err}");
             }
+            // Pedido de um cliente (commit, popup, janela nova ou fechada): um quadro.
+            state.wake();
             Ok(PostAction::Continue)
         },
     )?;

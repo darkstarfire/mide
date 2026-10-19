@@ -164,6 +164,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         shm,
         shell,
         glass: Default::default(),
+        glass_on: None,
+        glass_checks: 0,
+        app_id: window.app_id.clone(),
         last_frame: None,
         pointer: None,
         keyboard: None,
@@ -190,6 +193,14 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         .insert_source(Timer::from_duration(TICK), |_, _, runner: &mut Runner| {
             if runner.ctx.ticking {
                 runner.dirty = true;
+            }
+            // Janela com vidro: a opção mudou nas Configurações? Redesenha (opaca ou
+            // translúcida). Uma consulta por segundo (o arquivo só é lido se mudou).
+            if let Some(on) = runner.glass_on {
+                runner.glass_checks = (runner.glass_checks + 1) % 25;
+                if runner.glass_checks == 0 && crate::control_client::panel_glass() != on {
+                    runner.dirty = true;
+                }
             }
             if runner.ctx.wake_at.is_some_and(|at| std::time::Instant::now() >= at) {
                 runner.ctx.wake_at = None;
@@ -238,6 +249,10 @@ struct Runner {
     shell: Shell,
     /// Vidro pedido ao compositor (só em camadas).
     glass: crate::control_client::Glass,
+    /// Estado do vidro no último quadro, se a janela usa vidro (`None` se não usa).
+    glass_on: Option<bool>,
+    glass_checks: u32,
+    app_id: String,
     /// Último quadro enviado (para não reenviar um igual).
     last_frame: Option<Pixmap>,
     pointer: Option<wl_pointer::WlPointer>,
@@ -302,7 +317,12 @@ impl Runner {
         if let (Shell::Layer(_, namespace), true) = (&self.shell, self.ctx.layer) {
             let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
             self.glass.set(namespace, &rects);
+        } else if matches!(self.shell, Shell::Xdg(_)) {
+            // Janela: vidro só onde o app pediu (barra lateral de vidro), pelo app_id.
+            let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
+            self.glass.set(&format!("app:{}", self.app_id), &rects);
         }
+        self.glass_on = self.ctx.glass_capable.then(crate::control_client::panel_glass);
         let (w, h) = self.size;
         // Quadro igual ao último enviado (por exemplo, um quadro agendado sem mudança):
         // não manda de novo, para o compositor não refazer o que está atrás (vidro).

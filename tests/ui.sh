@@ -386,6 +386,15 @@ else
     echo "FALHA ocultar a dock grava no config.toml"; FAIL=$((FAIL + 1))
 fi
 sed -i '/autohide = true/d' "$SCFG/mide/config.toml"
+# Barra superior (B12): "Configurações" (engrenagem) é o primeiro interruptor, em
+# (807, 169). Escondido, some da barra na hora (a barra relê a cada meio segundo).
+RUST_LOG="mide=debug,mide_bar=info" check "Configurações → Barra superior: esconder a engrenagem tira o item da barra" "itens da barra: sound wifi bluetooth battery control$" "400 click 807 169; 520 list" "$SETTINGS bar"
+if grep -q "gear = false" "$SCFG/mide/config.toml"; then
+    echo "ok    esconder item da barra grava no config.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA esconder item da barra grava no config.toml"; FAIL=$((FAIL + 1))
+fi
+sed -i '/gear = false/d' "$SCFG/mide/config.toml"
 # Busca na barra lateral (campo em (158, 104)): "teclas" acha "Teclas no estilo Mac"; o
 # resultado (primeira linha, y=158) abre a seção Teclado, com o interruptor em (807, 169).
 timeout 150 "$SCEN" "400 click 158 104; 420 type teclas; 460 click 500 158; 500 click 807 169; 560 list" -- "$SETTINGS" >/dev/null 2>&1
@@ -521,9 +530,9 @@ file_check "Esc no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ] && [ ! 
 # Botão Cancelar do diálogo em (495, 306).
 file_check "Cancelar no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 311; 470 click 495 306; 510 list"
 file_check "Criar sem mudar o nome: Nova pasta, depois Nova pasta (1)" '[ -d "$FDIR/Nova pasta" ] && [ -d "$FDIR/Nova pasta (1)" ]' "400 rclick 600 450; 430 click 650 311; 460 key enter; 500 rclick 600 450; 530 click 650 311; 560 key enter; 600 list"
-file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 293; 460 click 550 502; 500 list"
-file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 277; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
-file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 415; 500 list"
+file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 293; 460 click 550 515; 500 list"
+file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 410; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
+file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 281; 500 list"
 # Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
 # dentro aparece na linha seguinte (y=241).
 file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 694 106; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
@@ -531,8 +540,13 @@ file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a 
 # y=311 e "Novo arquivo" em y=337. O nome vem todo selecionado e
 # digitar define a extensão.
 file_check "menu do fundo → Novo arquivo com a extensão digitada" '[ -f "$FDIR/leiame.md" ] && [ ! -e "$FDIR/Novo arquivo.txt" ]' "400 rclick 600 450; 430 click 650 337; 470 type leiame.md; 490 key enter; 530 list"
-# Menu de "Projetos" (pasta, em (581, 190)): "Comprimir" é a 6ª linha (y=329).
-file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 329; 560 list"
+# Menu de "Projetos" (pasta, em (581, 190)), aberto embaixo do item: "Nova pasta aqui
+# dentro" em y=349, "Novo arquivo aqui dentro" em y=375, "Comprimir" em y=462.
+file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 462; 560 list"
+file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 349; 470 type rascunhos; 490 key enter; 530 list"
+file_check "menu da pasta → Novo arquivo aqui dentro" '[ -f "$FDIR/Projetos/ideias.md" ] && [ ! -e "$FDIR/ideias.md" ]' "400 rclick 581 190; 430 click 630 375; 470 type ideias.md; 490 key enter; 530 list"
+# Barra lateral de vidro (acesso rápido): o compositor desfoca atrás da janela.
+check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \(app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
 file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581 310; 430 combo ctrl+d; 470 list"
 file_check "Ctrl+C e Ctrl+V copiam para outra pasta" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ -f "$FDIR/relatorio.pdf" ]' "400 click 581 310; 420 combo ctrl+c; 440 click 463 190; 446 click 463 190; 480 combo ctrl+v; 520 list"
 rm -rf "$(dirname "$FDIR")"

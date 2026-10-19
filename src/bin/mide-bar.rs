@@ -285,7 +285,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         focused_id: String::new(),
         titles: Vec::new(),
         over_launcher: false,
+        launcher_k: 0.0,
         clock: String::new(),
+        items: Vec::new(),
         battery: None,
         names: AppNames::load(),
         status: Status::default(),
@@ -345,16 +347,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map_err(|e| e.to_string())?;
     // Relógio, bateria e app em foco: atualiza a cada meio segundo e só redesenha se
     // mudar. O launcher é conferido mais vezes, para a barra mudar junto com ele.
-    let mut ticks = 0u32;
+    // Relógio adaptativo: 50 ms normalmente (o launcher é percebido logo) e 16 ms
+    // durante a transição da barra ao abrir ou fechar o launcher.
+    let mut last_refresh = std::time::Instant::now();
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(50)), move |_, _, bar| {
             bar.refresh_launcher();
-            if ticks % 3 == 0 {
+            if last_refresh.elapsed() >= Duration::from_millis(450) {
                 bar.refresh();
+                last_refresh = std::time::Instant::now();
             }
-            ticks = ticks.wrapping_add(1);
-            TimeoutAction::ToDuration(Duration::from_millis(150))
+            let animating = bar.step_launcher_fade();
+            TimeoutAction::ToDuration(Duration::from_millis(if animating { 16 } else { 50 }))
         })
         .map_err(|e| e.to_string())?;
 
@@ -570,7 +575,11 @@ struct Bar {
     titles: Vec<(MenuId, f32, f32)>,
     /// Launcher aberto: barra transparente sobre ele, com texto branco.
     over_launcher: bool,
+    /// Transição para o launcher: 0 barra normal, 1 sem fundo e com texto branco.
+    launcher_k: f32,
     clock: String,
+    /// Quais itens de `BAR_ITEMS` estão à mostra (para redesenhar quando mudam).
+    items: Vec<bool>,
     battery: Option<(u8, bool)>,
     names: AppNames,
     /// Som, Wi-Fi e Bluetooth, lidos numa thread a cada 2 s.
@@ -595,6 +604,19 @@ struct Bar {
 
 impl Bar {
     /// Com o launcher aberto, a barra fica transparente e com texto branco.
+    /// Um passo da transição da barra (fundo some e texto clareia sobre o launcher).
+    /// Devolve se ainda está animando.
+    fn step_launcher_fade(&mut self) -> bool {
+        let target = if self.over_launcher { 1.0 } else { 0.0 };
+        if (self.launcher_k - target).abs() < f32::EPSILON {
+            return false;
+        }
+        let step = 16.0 / 250.0;
+        self.launcher_k = if target > self.launcher_k { (self.launcher_k + step).min(1.0) } else { (self.launcher_k - step).max(0.0) };
+        self.draw_bar();
+        true
+    }
+
     fn refresh_launcher(&mut self) {
         let open = ask_compositor("launcher state")
             .and_then(|lines| lines.first().cloned())
@@ -628,6 +650,16 @@ impl Bar {
                 })
             })
             .unwrap_or_else(|| (String::new(), "mide".to_string()));
+        let items: Vec<bool> = mide::settings_file::BAR_ITEMS.iter().map(|(key, ..)| mide::settings_file::bar_item(key)).collect();
+        if items != self.items {
+            // Um item sumiu da barra: o painel dele (se aberto) fecha junto.
+            if !self.items.is_empty() {
+                tracing::info!("itens da barra: {}", mide::settings_file::BAR_ITEMS.iter().zip(&items).filter(|(_, on)| **on).map(|((k, ..), _)| *k).collect::<Vec<_>>().join(" "));
+                self.close_menu();
+            }
+            self.items = items;
+            self.draw_bar();
+        }
         if clock != self.clock || battery != self.battery || focused != self.focused_name || focused_id != self.focused_id {
             self.clock = clock;
             self.battery = battery;
@@ -660,14 +692,23 @@ impl Bar {
 
         // Fundo claro e translúcido, com uma linha fina embaixo, como no macOS. Com o
         // launcher aberto, sem fundo: só o texto branco sobre o launcher.
-        let fg = if self.over_launcher { [255, 255, 255, 250] } else { [20, 20, 24, 255] };
+        // Com o launcher aberto, o fundo some e o texto fica branco, numa transição
+        // suave (`launcher_k`), junto com o esmaecer do launcher.
+        let k = self.launcher_k;
+        let ease = k * k * (3.0 - 2.0 * k);
+        // Cor do texto em 8 níveis: o cache de texto (por cor) guarda poucas versões.
+        let level = (ease * 8.0).round() / 8.0;
+        let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
+        let fg = [mix(20, 255), mix(20, 255), mix(24, 255), mix(255, 250)];
         // Com o vidro ligado, o compositor desfoca o que está atrás da barra e o véu
         // claro fica mais leve (o texto escuro continua legível).
-        let glass = mide::control_client::panel_glass() && !self.over_launcher;
+        let glass = mide::control_client::panel_glass() && ease < 0.5;
         let strip = [(0.0, 0.0, fw, fh, 0.0)];
         self.glass_bar.set("mide-bar", if glass { &strip } else { &[] });
-        if !self.over_launcher {
-            let (top_a, bottom_a) = if glass { (158, 150) } else { (225, 220) };
+        if ease < 1.0 {
+            let (top_a, bottom_a) = if mide::control_client::panel_glass() { (158.0, 150.0) } else { (225.0, 220.0) };
+            let fade = 1.0 - ease;
+            let (top_a, bottom_a) = ((top_a * fade) as u8, (bottom_a * fade) as u8);
             let mut paint = Paint::default();
             paint.shader = vertical_gradient(0.0, fh, rgba(250, 250, 252, top_a), rgba(238, 238, 242, bottom_a));
             if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, fw, fh) {
@@ -675,7 +716,7 @@ impl Bar {
             }
             if let Some(line) = tiny_skia::Rect::from_xywh(0.0, fh - 1.0, fw, 1.0) {
                 let mut border = Paint::default();
-                border.set_color(rgba(0, 0, 0, 34));
+                border.set_color(rgba(0, 0, 0, (34.0 * fade) as u8));
                 pixmap.fill_rect(line, &border, Transform::identity(), None);
             }
         }
@@ -741,15 +782,17 @@ impl Bar {
         highlight(&mut pixmap, MenuId::Calendar, x - 7.0, x + clock_w + 7.0);
         self.text.draw(&mut pixmap, &clock, x, text_y, FONT, FontWeight::Regular, fg);
         self.titles.push((MenuId::Calendar, x - 7.0, x + clock_w + 7.0));
+        // Itens escondidos nas Configurações (`[bar]`) ficam de fora; o relógio fica.
+        let shown = |key: &str| mide::settings_file::bar_item(key);
         // Central de controle logo à esquerda do relógio, como no macOS.
-        {
+        if shown("control") {
             let (x0, x1) = (x - 36.0, x - 8.0);
             highlight(&mut pixmap, MenuId::Control, x0, x1);
             draw_control_icon(&mut pixmap, (x0 + x1) / 2.0, cy, fg);
             self.titles.push((MenuId::Control, x0, x1));
             x = x0;
         }
-        if let Some((level, charging)) = self.battery {
+        if let (Some((level, charging)), true) = (self.battery, shown("battery")) {
             let label = format!("{level}%");
             let label_w = self.text.measure(&label, FONT, FontWeight::Regular);
             let right = x - 7.0;
@@ -762,9 +805,9 @@ impl Bar {
             self.titles.push((MenuId::Battery, left, right));
         }
         let icons: Vec<MenuId> = [
-            (self.status.bluetooth.is_some(), MenuId::Bluetooth),
-            (self.status.wifi.is_some(), MenuId::Wifi),
-            (self.status.volume.is_some(), MenuId::Sound),
+            (self.status.bluetooth.is_some() && shown("bluetooth"), MenuId::Bluetooth),
+            (self.status.wifi.is_some() && shown("wifi"), MenuId::Wifi),
+            (self.status.volume.is_some() && shown("sound"), MenuId::Sound),
         ]
         .into_iter()
         .filter_map(|(present, id)| present.then_some(id))
@@ -789,7 +832,7 @@ impl Bar {
             x = x0;
         }
         // Engrenagem (abre as Configurações), à esquerda dos outros.
-        {
+        if shown("gear") {
             let (x0, x1) = (x - 36.0, x - 8.0);
             highlight(&mut pixmap, MenuId::Gear, x0, x1);
             draw_gear_icon(&mut pixmap, (x0 + x1) / 2.0, cy, fg);
@@ -1416,7 +1459,9 @@ impl Bar {
             this.text.draw(p, title, gap + 14.0, y + 9.0, FONT, FontWeight::Semibold, dark);
             let (tx, tw, ty) = (gap + 16.0, pw - 2.0 * gap - 32.0, y + 40.0);
             fill_rounded(p, tx, ty - 5.0, tw, 10.0, 5.0, rgba(0, 0, 0, 30));
-            fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, rgba(255, 255, 255, 255));
+            // Parte preenchida no azul de destaque (como os trilhos das Configurações):
+            // branco sumia sobre o ladrilho claro.
+            fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, rgba(10, 120, 240, 255));
             if let Some(knob) = PathBuilder::from_circle(tx + tw * value, ty, 9.0) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
