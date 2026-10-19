@@ -817,3 +817,10 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Escolha do backend:** `MIDE_BACKEND=drm` ou `winit`; sem ele, DRM quando não há `WAYLAND_DISPLAY` nem `DISPLAY` (iniciado de um console de texto).
 - `Scene::render` passou a devolver o ponto de sincronização (`SyncPoint`) do quadro.
 - Limites: uma placa e uma tela, sem hotplug de monitor, cursor desenhado na cena (sem plano de hardware), tela redesenhada inteira a cada quadro.
+
+## Ajustes do teste do usuário: menu de contexto, cantos ao fechar e desempenho
+
+- **Menu de contexto sem espaço em cima nem embaixo do item** (no Arquivos, item no meio de uma lista longa): antes, o menu subia até o topo da janela, cobria o item e a ponta apontava para outra linha. Agora abre **ao lado do clique** (à direita, ou à esquerda perto da borda), centralizado na altura do clique e dentro da janela, com a ponta na lateral apontando para o item (`ui::draw::menu_arrow_side`). Com espaço, continua embaixo ou em cima. A regra ficou numa função pura (`menu_place`) com testes.
+- **Cantos vivos ao fechar janela:** a foto que esmaece na transição de fechar era desenhada como textura retangular. Agora passa pelo mesmo recorte arredondado das janelas (`Clipped` sobre a textura), com o raio acompanhando a escala da animação.
+- **Lentidão ao arrastar o Arquivos (investigação):** medido na GPU real do usuário (Intel Alder Lake, sessão Cinnamon/X11): o desenho de cada quadro do arraste leva 0,7 ms (mediana) e 1,9 ms (p95), com o vidro refeito a cada quadro. O compositor não é o gargalo. No modo janela, cada quadro espera ~16 ms o driver/anfitrião liberar a apresentação, e o Cinnamon ainda compõe a janela do mide no quadro seguinte: são 2 a 3 quadros entre o mouse e a tela, o que dá a sensação de arraste "pesado". No backend DRM (A13) essa camada do anfitrião não existe. No llvmpipe (sem GPU), o vidro é o efeito mais caro (p95 28 ms contra 10 ms sem vidro), relevante para máquinas sem aceleração.
+- **Medição de GPU:** `MIDE_GPU_TIMING=1` espera a GPU terminar o quadro e registra "quadro na GPU"; o `tests/perf.sh` passou a usar e mostrar.

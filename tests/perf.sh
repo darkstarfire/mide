@@ -16,6 +16,9 @@ export MIDE_WINIT_SIZE=1366x768
 export XDG_CONFIG_HOME="$OUT/cfg"
 mkdir -p "$XDG_CONFIG_HOME"
 trap 'rm -rf "$OUT"' EXIT
+# Espera a GPU terminar cada quadro e registra o tempo real de desenho
+# ("quadro na GPU"); o "quadro do compositor" é só o tempo de CPU para montar a cena.
+export MIDE_GPU_TIMING=1
 export RUST_LOG="mide=debug,mide_dock=debug,mide_launcher=debug,mide_files=debug,mide_search=debug,mide::kit=debug"
 ONLY="${1:-}"
 
@@ -41,6 +44,7 @@ run() {
     cat "$OUT"/app.log >>"$log" 2>/dev/null
     rm -f "$OUT"/app.log
     stats "quadro do compositor (CPU)" "quadro do compositor: [0-9.]+ ms" "$log"
+    stats "quadro do compositor (GPU)" "quadro na GPU: [0-9.]+ ms" "$log"
     stats "quadro da dock" "quadro da dock: [0-9.]+ ms" "$log"
     stats "menu da dock" "menu da dock desenhado: [0-9.]+ ms" "$log"
     stats "quadro do launcher" "quadro do launcher[^:]*: [0-9.]+ ms" "$log"

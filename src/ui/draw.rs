@@ -274,12 +274,34 @@ pub const ARROW_H: f32 = 8.0;
 /// do painel (`rgba`, não premultiplicado) e cobre a borda dele na emenda; o contorno
 /// fica só nos dois lados inclinados.
 pub fn menu_arrow(pixmap: &mut Pixmap, cx: f32, edge: f32, down: bool, rgba_fill: [u8; 4]) {
-    let half = 9.0;
     let dir = if down { 1.0 } else { -1.0 };
+    arrow(pixmap, |u, v| (cx + u, edge + v * dir), rgba_fill);
+}
+
+/// Ponta na lateral do painel: bico em (`edge` ± `ARROW_H`, `cy`), para a esquerda
+/// (`left`, o painel está à direita de quem o abriu) ou para a direita.
+pub fn menu_arrow_side(pixmap: &mut Pixmap, cy: f32, edge: f32, left: bool, rgba_fill: [u8; 4]) {
+    let dir = if left { -1.0 } else { 1.0 };
+    arrow(pixmap, |u, v| (edge + v * dir, cy + u), rgba_fill);
+}
+
+/// Desenha a ponta em coordenadas locais: `u` ao longo da borda do painel, `v` para
+/// fora dele; `at` leva para a tela.
+fn arrow(pixmap: &mut Pixmap, at: impl Fn(f32, f32) -> (f32, f32), rgba_fill: [u8; 4]) {
+    let half = 9.0;
+    let point = |pb: &mut PathBuilder, u: f32, v: f32| {
+        let (x, y) = at(u, v);
+        pb.line_to(x, y);
+    };
+    let quad = |pb: &mut PathBuilder, (u1, v1): (f32, f32), (u2, v2): (f32, f32)| {
+        let ((x1, y1), (x2, y2)) = (at(u1, v1), at(u2, v2));
+        pb.quad_to(x1, y1, x2, y2);
+    };
     let sides = |pb: &mut PathBuilder| {
-        pb.move_to(cx - half, edge);
-        pb.quad_to(cx - 2.0, edge + 1.5 * dir, cx, edge + ARROW_H * dir);
-        pb.quad_to(cx + 2.0, edge + 1.5 * dir, cx + half, edge);
+        let (x, y) = at(-half, 0.0);
+        pb.move_to(x, y);
+        quad(pb, (-2.0, 1.5), (0.0, ARROW_H));
+        quad(pb, (2.0, 1.5), (half, 0.0));
     };
     let mut paint = Paint::default();
     paint.anti_alias = true;
@@ -292,8 +314,8 @@ pub fn menu_arrow(pixmap: &mut Pixmap, cx: f32, edge: f32, down: bool, rgba_fill
     // O corpo entra 2 px no painel: apaga a borda ali e pinta com a cor do painel.
     let mut pb = PathBuilder::new();
     sides(&mut pb);
-    pb.line_to(cx + half - 0.5, edge - 2.0 * dir);
-    pb.line_to(cx - half + 0.5, edge - 2.0 * dir);
+    point(&mut pb, half - 0.5, -2.0);
+    point(&mut pb, -half + 0.5, -2.0);
     pb.close();
     if let Some(body) = pb.finish() {
         let mut clear = Paint::default();

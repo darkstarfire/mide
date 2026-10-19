@@ -44,6 +44,8 @@ smithay::backend::renderer::element::render_elements! {
     Blurred=smithay::backend::renderer::element::texture::TextureRenderElement<smithay::backend::renderer::gles::GlesTexture>,
     ClippedSurface=crate::clip::Clipped<WaylandSurfaceRenderElement<GlesRenderer>>,
     ClippedScaled=crate::clip::Clipped<RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>,
+    /// Foto de uma janela (transição de fechar) com os cantos arredondados dela.
+    ClippedTexture=crate::clip::Clipped<smithay::backend::renderer::element::texture::TextureRenderElement<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
 /// Cor de fundo do desktop se o papel de parede não puder ser desenhado.
@@ -168,6 +170,12 @@ impl Scene {
             BACKGROUND,
         )?;
         tracing::debug!("quadro do compositor: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
+        // Medição (`MIDE_GPU_TIMING=1`, tests/perf.sh): espera a GPU terminar o quadro
+        // para saber o custo real do desenho (o tempo acima é só o da CPU).
+        if std::env::var_os("MIDE_GPU_TIMING").is_some() {
+            let _ = renderer.with_context(|gl| unsafe { gl.Finish() });
+            tracing::debug!("quadro na GPU: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
+        }
         dump_frame_if_requested(renderer, framebuffer, output)?;
         Ok(result.sync)
     }
@@ -313,7 +321,7 @@ fn window_elements(
     let mut elements = Vec::new();
 
     // Janelas que acabaram de fechar: a foto delas encolhe um pouco e esmaece, por
-    // cima das outras.
+    // cima das outras, com os mesmos cantos arredondados da janela.
     {
         let snapshots = genie.snapshots.borrow();
         for (id, frame, start) in &state.ghosts {
@@ -329,7 +337,9 @@ fn window_elements(
             let x = frame.loc.x + (size.w - w) / 2;
             let y = frame.loc.y + (size.h - h) / 2;
             use smithay::backend::renderer::Renderer as _;
-            elements.push(MideRenderElement::Blurred(smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
+            let radius = if state.config.effects.rounded_corners { decorations::CORNER_RADIUS as f32 * scale } else { 0.0 };
+            let clip = crate::clip::uniforms(Rectangle::new((x, y).into(), (w, h).into()), radius, output_rect.size.h as f32);
+            let photo = smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
                 smithay::backend::renderer::element::Id::new(),
                 renderer.context_id(),
                 (x as f64, y as f64),
@@ -341,7 +351,8 @@ fn window_elements(
                 Some((w, h).into()),
                 None,
                 Kind::Unspecified,
-            )));
+            );
+            elements.push(MideRenderElement::ClippedTexture(crate::clip::Clipped::new(photo, shaders.clip_program(), clip)));
         }
     }
     // Fotos que não servem mais (janela fechou e esmaeceu, ou não fechou).

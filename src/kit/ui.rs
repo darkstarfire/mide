@@ -80,9 +80,44 @@ pub enum Tile<'p> {
 struct MenuState {
     owner: u64,
     pos: (f32, f32),
+    /// Ponto do clique (o menu que abre ao lado aponta para ele).
+    click: (f32, f32),
     height: f32,
     /// Topo do item clicado (para o menu que abre para cima não cobrir o item).
     item_top: Option<f32>,
+}
+
+/// Onde o menu de contexto fica: canto de cima à esquerda, se abre ao lado do clique
+/// (`Some(true)` à direita, `Some(false)` à esquerda) e, se não, se abre para cima.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MenuPlace {
+    x: f32,
+    y: f32,
+    side: Option<bool>,
+    up: bool,
+}
+
+/// Posição do menu de largura `w` numa janela `window`: embaixo do item, em cima se
+/// não couber, e ao lado do clique se não couber em nenhum dos dois (sem cobrir o item).
+fn menu_place(state: &MenuState, w: f32, window: (f32, f32)) -> MenuPlace {
+    let (ww, wh) = window;
+    let arrow = crate::ui::draw::ARROW_H;
+    let top_anchor = state.item_top.unwrap_or(state.pos.1);
+    let below = state.pos.1 + arrow + state.height + 6.0 <= wh;
+    let above = top_anchor - arrow - state.height >= 4.0;
+    let side = (!below && !above).then(|| state.click.0 + arrow + w + 4.0 <= ww || state.click.0 - arrow - w < 4.0);
+    let (x, y) = match side {
+        Some(right) => {
+            let x = if right { state.click.0 + arrow } else { state.click.0 - arrow - w };
+            let y = (state.click.1 - state.height / 2.0).clamp(4.0, (wh - state.height - 4.0).max(4.0));
+            (x.clamp(4.0, (ww - w - 4.0).max(4.0)), y)
+        }
+        None => {
+            let x = (state.pos.0 - 24.0).clamp(4.0, (ww - w - 4.0).max(4.0));
+            (x, if below { state.pos.1 + arrow } else { top_anchor - arrow - state.height })
+        }
+    };
+    MenuPlace { x, y, side, up: side.is_none() && !below }
 }
 
 /// Itens de um menu de contexto, montados dentro de `Ui::context_menu`.
@@ -691,8 +726,9 @@ impl<'a> Ui<'a> {
             let small = response.rect.3 < 200.0;
             let item_bottom = small.then(|| self.offset.1 + response.rect.1 + response.rect.3);
             let item_top = small.then(|| self.offset.1 + response.rect.1);
-            if let Some(pos) = self.ctx.input.pointer.map(|(x, y)| (x, item_bottom.unwrap_or(y))) {
-                self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, height: 0.0, item_top });
+            if let Some(click) = self.ctx.input.pointer {
+                let pos = (click.0, item_bottom.unwrap_or(click.1));
+                self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, click, height: 0.0, item_top });
                 self.ctx.memory.menu_rect = None;
                 self.ctx.repaint = true;
             }
@@ -706,11 +742,9 @@ impl<'a> Ui<'a> {
         let w = 220.0;
         // A ponta do menu fica no ponto do clique (como os menus da dock e da barra):
         // o menu abre para baixo, ou para cima se não couber, e um pouco à esquerda.
-        let arrow = crate::ui::draw::ARROW_H;
-        let x = (state.pos.0 - 24.0).clamp(4.0, (ww - w - 4.0).max(4.0));
-        let up = state.pos.1 + arrow + state.height + 6.0 > wh;
-        let top_anchor = state.item_top.unwrap_or(state.pos.1);
-        let y0 = if up { (top_anchor - arrow - state.height).max(4.0) } else { state.pos.1 + arrow };
+        // Sem espaço em cima nem embaixo do item, abre ao lado do clique (à direita, ou
+        // à esquerda perto da borda), com a ponta na lateral apontando para o item.
+        let MenuPlace { x, y: y0, side, up } = menu_place(&state, w, (ww, wh));
         let mut menu = Menu { ctx: &mut *self.ctx, x: x + 5.0, y: y0 + 5.0, w: w - 10.0, rows: Vec::new() };
         build(&mut menu);
         let (rows, end) = (std::mem::take(&mut menu.rows), menu.y);
@@ -729,8 +763,16 @@ impl<'a> Ui<'a> {
             fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, 10.0 + grow, color([0, 0, 0, alpha]));
         }
         fill_rounded(overlay, x, y0, w, h, 10.0, color([246, 246, 248, 245]));
-        let tip_x = state.pos.0.clamp(x + 18.0, x + w - 18.0);
-        crate::ui::draw::menu_arrow(overlay, tip_x, if up { y0 + h } else { y0 }, up, [246, 246, 248, 245]);
+        match side {
+            Some(right) => {
+                let tip_y = state.click.1.clamp(y0 + 18.0, (y0 + h - 18.0).max(y0 + 18.0));
+                crate::ui::draw::menu_arrow_side(overlay, tip_y, if right { x } else { x + w }, right, [246, 246, 248, 245]);
+            }
+            None => {
+                let tip_x = state.pos.0.clamp(x + 18.0, x + w - 18.0);
+                crate::ui::draw::menu_arrow(overlay, tip_x, if up { y0 + h } else { y0 }, up, [246, 246, 248, 245]);
+            }
+        }
         let mut y = y0 + 5.0;
         let text = &mut self.ctx.text;
         for (label, kind, hovered) in rows {
@@ -1700,6 +1742,39 @@ fn copy_back(inner: &Pixmap, dst: &mut Pixmap, x: i32, y: i32) {
 mod tests {
     use super::*;
     use crate::kit::theme::Theme;
+
+    fn menu(click: (f32, f32), item: (f32, f32), height: f32) -> MenuState {
+        MenuState { owner: 1, pos: (click.0, item.1), click, height, item_top: Some(item.0) }
+    }
+
+    #[test]
+    fn menu_abre_embaixo_do_item_quando_cabe() {
+        let place = menu_place(&menu((100.0, 50.0), (40.0, 60.0), 200.0), 220.0, (900.0, 520.0));
+        assert_eq!(place.side, None);
+        assert!(!place.up);
+        assert!(place.y >= 60.0);
+    }
+
+    #[test]
+    fn menu_abre_em_cima_quando_nao_cabe_embaixo() {
+        let place = menu_place(&menu((100.0, 450.0), (440.0, 460.0), 200.0), 220.0, (900.0, 520.0));
+        assert_eq!(place.side, None);
+        assert!(place.up);
+        assert!(place.y + 200.0 <= 440.0);
+    }
+
+    #[test]
+    fn menu_abre_ao_lado_sem_espaco_em_cima_e_embaixo() {
+        // Item no meio de uma janela baixa: o menu fica à direita do clique, dentro da janela.
+        let place = menu_place(&menu((400.0, 280.0), (270.0, 290.0), 320.0), 220.0, (900.0, 520.0));
+        assert_eq!(place.side, Some(true));
+        assert!(place.x > 400.0);
+        assert!(place.y >= 4.0 && place.y + 320.0 <= 520.0);
+        // Perto da borda direita, à esquerda do clique.
+        let place = menu_place(&menu((800.0, 280.0), (270.0, 290.0), 320.0), 220.0, (900.0, 520.0));
+        assert_eq!(place.side, Some(false));
+        assert!(place.x + 220.0 < 800.0);
+    }
 
     /// Roda um quadro do `view` numa imagem de 400x300 e devolve o resultado dele.
     fn frame<R>(ctx: &mut Ctx, view: impl FnOnce(&mut Ui) -> R) -> R {

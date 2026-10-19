@@ -557,3 +557,14 @@ O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de s
 
 - `cargo test`: 109 (cursor: nomes do tema e reservas; teclado do sistema lido de `/etc/default/keyboard`).
 - `tests/ui.sh` no Xvfb depois do A13: os mesmos resultados da referência mais os 6 do editor de atalhos (87 ok); a única diferença ("tamanho dos ícones muda a dock") passou ao repetir (instável, ver anotações). O DRM em si só roda num console de texto: teste manual acima.
+
+## Menu ao lado e cantos ao fechar — automáticos
+
+- `cargo test` (`kit::ui`): menu embaixo quando cabe, em cima quando não cabe embaixo, ao lado (direita, ou esquerda perto da borda) quando não cabe em nenhum, sempre dentro da janela.
+- `tests/ui.sh` (área de trabalho, vidro e Arquivos): mesmos resultados de antes.
+- Conferido em quadro salvo: a foto da janela fechando mantém os cantos arredondados; o menu de um item no meio da lista abre à direita do clique com a ponta na lateral.
+
+## Menu ao lado e cantos ao fechar — manual
+
+- [ ] Arquivos com uma pasta de muitos itens, janela baixa: clique direito num item do meio; o menu abre ao lado, sem cobrir o item, com a ponta apontando para ele. Perto da borda direita da janela, abre à esquerda.
+- [ ] Fechar uma janela: ela encolhe e esmaece com os cantos arredondados (sem cantos vivos).
