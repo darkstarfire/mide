@@ -737,3 +737,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Botão de fechar nas prévias** como no GNOME: círculo escuro com × branco no canto da miniatura sob o ponteiro (vermelho com o ponteiro em cima).
 - Desempenho: compositor ~0,42 ms por quadro com as prévias abertas (`tests/perf.sh previas`).
 - Plano: registrada a etapa futura **D2** (apps, widgets e extensões com o mide-ui, incluindo itens novos na central de controle).
+
+## Central de notificações (B9)
+
+- O servidor de notificações guarda cada notificação recebida num histórico (as 50 mais novas, em `$XDG_RUNTIME_DIR/<socket>-notificacoes`, separado por sessão), inclusive as silenciadas pelo **Não perturbe**.
+- Clicar no relógio abre o calendário e, embaixo, a **central de notificações**: as mais recentes em cartões (app, hora, título e a primeira linha do texto), quantas couberem na tela (até 5, com "e mais N"), e **Limpar**.
+- Lógica do histórico em `mide::notify` (gravar, ler, limpar e o formato da linha, com escape), com teste.

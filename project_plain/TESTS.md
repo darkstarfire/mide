@@ -466,3 +466,13 @@ Manual (o que o autoteste não cobre):
 
 - Configurações → Dock → ocultar: sem janela sobre a dock ela fica; maximizar uma janela a faz sumir; ponteiro na borda de baixo a traz de volta.
 - Duas janelas do mesmo app: ponteiro no ícone da dock e depois numa miniatura: vidro claro em volta e o × escuro no canto.
+
+## Central de notificações — automáticos
+
+- `tests/ui.sh` (barramento D-Bus de teste): notificação vai para o histórico; "Limpar" no painel do relógio apaga o histórico; com Não perturbe, o banner não aparece e a notificação fica no histórico.
+- `cargo test`: formato do histórico (`historico_guarda_e_le_de_volta`).
+
+## Central de notificações — manual
+
+- `notify-send "Teste" "Olá"` algumas vezes; clicar no relógio: as notificações aparecem embaixo do calendário; "Limpar" apaga.
+- Ligar o Não perturbe na central de controle, mandar uma notificação: não aparece banner, mas ela está no relógio.

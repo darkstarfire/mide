@@ -185,6 +185,8 @@ enum PanelAction {
     /// Calendário: abrir/fechar as opções do relógio e ligar uma parte dele.
     ClockOptions,
     ClockPart(usize),
+    /// Central de notificações: apagar o histórico.
+    ClearNotifications,
 }
 
 /// Títulos dos menus do app, depois do nome dele.
@@ -290,6 +292,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         status_now: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         cal_month: (2000, 1),
         clock_options: false,
+        history: Vec::new(),
+        panel_room: 600.0,
         volume_sent: std::time::Instant::now(),
         menu: None,
         bar_dirty: false,
@@ -577,6 +581,10 @@ struct Bar {
     cal_month: (i32, u32),
     /// O calendário mostra as opções do formato da hora.
     clock_options: bool,
+    /// Notificações recentes (central de notificações, embaixo do calendário).
+    history: Vec<mide::notify::Entry>,
+    /// Altura disponível para o painel aberto (da barra até embaixo da tela).
+    panel_room: f32,
     /// Última vez que o volume foi mandado durante um arrasto.
     volume_sent: std::time::Instant,
     menu: Option<Menu>,
@@ -915,6 +923,7 @@ impl Bar {
             let today = Local::now().date_naive();
             self.cal_month = (today.year(), today.month());
             self.clock_options = false;
+            self.history = mide::notify::read_history();
         }
         let title = self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (*x0, *x1));
         let x = match (id, title) {
@@ -1067,7 +1076,9 @@ impl Bar {
         };
         let top = PANEL_TOP;
         // Conteúdo primeiro num pixmap à parte, para saber a altura do painel.
-        let mut content = Pixmap::new(pw as u32, 600).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        let mut content = Pixmap::new(pw as u32, 900).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        // Altura que o painel pode usar (para a central de notificações caber na tela).
+        self.panel_room = h as f32 - PANEL_TOP - 12.0;
         let mut regions = Vec::new();
         let ph = match id {
             MenuId::Calendar => self.panel_calendar(&mut content, pw, &mut regions, hover),
@@ -1191,7 +1202,54 @@ impl Bar {
         let y = 98.0 + 5.0 * 30.0 + 14.0;
         Self::panel_separator(p, pw, y);
         self.panel_row(p, pw, y + 10.0, 26.0, "Formato da hora…", regions, hover, PanelAction::ClockOptions);
-        y + 10.0 + 26.0 + 8.0
+        let y = y + 10.0 + 26.0 + 8.0;
+        self.panel_notifications(p, pw, y, regions, hover)
+    }
+
+    /// Central de notificações: as mais recentes (também as silenciadas pelo Não
+    /// perturbe), com "Limpar".
+    fn panel_notifications(&mut self, p: &mut Pixmap, pw: f32, y: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        Self::panel_separator(p, pw, y);
+        let mut y = y + 12.0;
+        self.text.draw(p, "Notificações", 16.0, y, 13.5, FontWeight::Bold, [24, 24, 28, 255]);
+        if !self.history.is_empty() {
+            let lw = self.text.measure("Limpar", 12.5, FontWeight::Semibold);
+            let bx = pw - 16.0 - lw;
+            if hover == Some(regions.len()) {
+                fill_rounded(p, bx - 6.0, y - 2.0, lw + 12.0, 22.0, 6.0, rgba(0, 0, 0, 22));
+            }
+            self.text.draw(p, "Limpar", bx, y + 1.0, 12.5, FontWeight::Semibold, [10, 100, 225, 255]);
+            regions.push(((bx - 6.0, y - 2.0, lw + 12.0, 22.0), PanelAction::ClearNotifications));
+        }
+        y += 26.0;
+        if self.history.is_empty() {
+            self.text.draw(p, "Nenhuma notificação", 16.0, y, 12.5, FontWeight::Regular, [130, 130, 138, 255]);
+            return y + 26.0;
+        }
+        let now = std::time::SystemTime::now();
+        // Só as que cabem na tela (até 5).
+        let fits = (((self.panel_room - y - 30.0) / 62.0).floor().max(1.0) as usize).min(5);
+        for entry in self.history.clone().iter().take(fits) {
+            // Cartão claro com app e hora, título e a primeira linha do texto.
+            fill_rounded(p, 10.0, y, pw - 20.0, 56.0, 10.0, rgba(255, 255, 255, 140));
+            let when = mide::files::date_text(std::time::UNIX_EPOCH + Duration::from_secs(entry.time), now);
+            let ww = self.text.measure(&when, 11.0, FontWeight::Regular);
+            let app = fit_label(&mut self.text, &entry.app, 11.0, pw - 52.0 - ww);
+            self.text.draw(p, &app, 20.0, y + 6.0, 11.0, FontWeight::Regular, [110, 110, 118, 255]);
+            self.text.draw(p, &when, pw - 20.0 - ww, y + 6.0, 11.0, FontWeight::Regular, [130, 130, 138, 255]);
+            let summary = fit_label(&mut self.text, &entry.summary, 13.0, pw - 40.0);
+            self.text.draw(p, &summary, 20.0, y + 21.0, 13.0, FontWeight::Semibold, [24, 24, 28, 255]);
+            let first = entry.body.lines().next().unwrap_or("");
+            let body = fit_label(&mut self.text, first, 12.0, pw - 40.0);
+            self.text.draw(p, &body, 20.0, y + 37.0, 12.0, FontWeight::Regular, [80, 80, 88, 255]);
+            y += 62.0;
+        }
+        if self.history.len() > fits {
+            let more = format!("e mais {}", self.history.len() - fits);
+            self.text.draw(p, &more, 16.0, y, 11.5, FontWeight::Regular, [130, 130, 138, 255]);
+            y += 20.0;
+        }
+        y + 6.0
     }
 
     /// Opções do relógio da barra: o que aparece além da hora.
@@ -1557,6 +1615,11 @@ impl Bar {
                 }
             }
             PanelAction::ClockOptions => self.clock_options = !self.clock_options,
+            PanelAction::ClearNotifications => {
+                mide::notify::clear_history();
+                self.history.clear();
+                tracing::info!("notificações limpas");
+            }
             PanelAction::ClockPart(i) => {
                 let (key, label) = CLOCK_PARTS[i];
                 let on = !clock_part(key);

@@ -179,6 +179,34 @@ else
     echo "FALHA app recebe a ação pelo D-Bus (recebeu: '$(cat "$ACAO")')"; FAIL=$((FAIL + 1))
 fi
 rm -f "$ACAO"
+# Central de notificações: histórico em $XDG_RUNTIME_DIR/mide-test-notificacoes.
+HIST="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mide-test-notificacoes"
+rm -f "$HIST"
+timeout 150 "$SCEN" "250 list" -- "$NOTE1" >/dev/null 2>&1
+if grep -q "Download concluído" "$HIST" 2>/dev/null; then
+    echo "ok    notificação vai para o histórico"; PASS=$((PASS + 1))
+else
+    echo "FALHA notificação vai para o histórico"; FAIL=$((FAIL + 1))
+fi
+# Painel do relógio (x 512..792): "Limpar" da central em (755, 364).
+timeout 150 "$SCEN" "300 click 765 14; 340 click 755 364; 380 list" -- "$NOTE1" >/dev/null 2>&1
+if [ ! -s "$HIST" ]; then
+    echo "ok    Limpar apaga o histórico de notificações"; PASS=$((PASS + 1))
+else
+    echo "FALHA Limpar apaga o histórico de notificações"; FAIL=$((FAIL + 1))
+fi
+# Não perturbe: o banner não aparece, mas a notificação fica no histórico.
+NCFG="$(mktemp -d)"
+mkdir -p "$NCFG/mide"
+printf '[notifications]\ndnd = true\n' >"$NCFG/mide/config.toml"
+rm -f "$HIST"
+NLOG="$(XDG_CONFIG_HOME="$NCFG" timeout 150 "$SCEN" "250 list" -- "$NOTE1" 2>&1)"
+if ! echo "$NLOG" | grep -q 'camada "mide-notifications"' && grep -q "Download concluído" "$HIST" 2>/dev/null; then
+    echo "ok    Não perturbe silencia o banner e guarda no histórico"; PASS=$((PASS + 1))
+else
+    echo "FALHA Não perturbe silencia o banner e guarda no histórico"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$NCFG" "$HIST"
 SCEN="$SCEN_PLAIN"
 
 echo "== janela com barra do mide (foot)"

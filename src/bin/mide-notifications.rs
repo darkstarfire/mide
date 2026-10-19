@@ -127,6 +127,15 @@ impl Server {
     ) -> u32 {
         let id = if replaces_id != 0 { replaces_id } else { self.next_id.fetch_add(1, Ordering::Relaxed) };
         let urgency = hints.get("urgency").and_then(|v| u8::try_from(v).ok()).unwrap_or(1);
+        // Toda notificação vai para o histórico (central de notificações, no relógio),
+        // inclusive as silenciadas pelo Não perturbe.
+        let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        mide::notify::add_to_history(&mide::notify::Entry {
+            time,
+            app: app_name.clone(),
+            summary: notify::plain_text(&summary),
+            body: notify::plain_text(&body),
+        });
         // Não perturbe (central de controle): só as urgentes aparecem.
         let dnd = matches!(mide::settings_file::get("notifications", "dnd"), Some(mide::settings_file::Value::Bool(true)));
         if dnd && urgency < 2 {

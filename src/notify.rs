@@ -67,6 +67,87 @@ pub fn actions(list: &[String]) -> (bool, Vec<(String, String)>) {
     (has_default, buttons)
 }
 
+/// Uma notificação no histórico (central de notificações): quando chegou (segundos
+/// desde 1970), app, título e texto.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Entry {
+    pub time: u64,
+    pub app: String,
+    pub summary: String,
+    pub body: String,
+}
+
+/// Quantas notificações o histórico guarda.
+pub const HISTORY_MAX: usize = 50;
+
+/// Arquivo do histórico, na pasta de execução e separado por sessão (socket):
+/// `$XDG_RUNTIME_DIR/<socket>-notificacoes`.
+pub fn history_path() -> Option<std::path::PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "mide-0".into());
+    Some(std::path::PathBuf::from(runtime).join(format!("{display}-notificacoes")))
+}
+
+/// Uma linha do arquivo: campos separados por tabulação, com `\`, tabulação e
+/// quebra de linha escapados.
+pub fn encode(entry: &Entry) -> String {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n");
+    format!("{}\t{}\t{}\t{}", entry.time, esc(&entry.app), esc(&entry.summary), esc(&entry.body))
+}
+
+pub fn decode(line: &str) -> Option<Entry> {
+    let unesc = |s: &str| {
+        let mut out = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('t') => out.push('\t'),
+                    Some('n') => out.push('\n'),
+                    Some(other) => out.push(other),
+                    None => {}
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    };
+    let mut parts = line.split('\t');
+    let time = parts.next()?.parse().ok()?;
+    Some(Entry { time, app: unesc(parts.next()?), summary: unesc(parts.next()?), body: unesc(parts.next().unwrap_or("")) })
+}
+
+/// Histórico, da mais nova para a mais antiga.
+pub fn read_history() -> Vec<Entry> {
+    let Some(path) = history_path() else {
+        return Vec::new();
+    };
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut list: Vec<Entry> = text.lines().filter_map(decode).collect();
+    list.reverse();
+    list
+}
+
+/// Junta uma notificação ao histórico (guarda só as `HISTORY_MAX` mais novas).
+pub fn add_to_history(entry: &Entry) {
+    let Some(path) = history_path() else {
+        return;
+    };
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    lines.push(encode(entry));
+    let start = lines.len().saturating_sub(HISTORY_MAX);
+    let _ = std::fs::write(&path, lines[start..].join("\n") + "\n");
+}
+
+/// Apaga o histórico (botão "Limpar" da central de notificações).
+pub fn clear_history() {
+    if let Some(path) = history_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +175,13 @@ mod tests {
         assert!(default);
         assert_eq!(buttons, vec![("reply".to_string(), "Responder".to_string())]);
         assert_eq!(actions(&[]), (false, vec![]));
+    }
+
+    #[test]
+    fn historico_guarda_e_le_de_volta() {
+        let entry = Entry { time: 1_700_000_000, app: "Correio".into(), summary: "Nova\tmensagem".into(), body: "linha 1\nlinha 2 \\ fim".into() };
+        assert_eq!(decode(&encode(&entry)), Some(entry));
+        assert_eq!(decode("lixo"), None);
+        assert_eq!(decode("12\tApp\tTítulo").unwrap().body, "");
     }
 }
