@@ -250,6 +250,61 @@ pub fn blit(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
     }
 }
 
+/// Como `blit`, mas pinta a imagem toda numa cor só (mantendo a transparência):
+/// ícones "symbolic" na cor de destaque.
+pub fn blit_tinted(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, rgb: [u8; 3]) {
+    let mut tinted = src.clone();
+    for p in tinted.pixels_mut() {
+        let a = p.alpha() as u32;
+        if a > 0 {
+            let c = |v: u8| (v as u32 * a / 255) as u8;
+            if let Some(t) = tiny_skia::PremultipliedColorU8::from_rgba(c(rgb[0]), c(rgb[1]), c(rgb[2]), p.alpha()) {
+                *p = t;
+            }
+        }
+    }
+    blit(dst, &tinted, x, y, 1.0);
+}
+
+/// Altura da ponta dos menus e painéis.
+pub const ARROW_H: f32 = 8.0;
+
+/// Ponta de menu/painel mostrando de onde ele vem: bico em (`cx`, `edge` ± `ARROW_H`),
+/// para baixo (`down`) ou para cima, saindo da borda `edge` do painel. Pinta com a cor
+/// do painel (`rgba`, não premultiplicado) e cobre a borda dele na emenda; o contorno
+/// fica só nos dois lados inclinados.
+pub fn menu_arrow(pixmap: &mut Pixmap, cx: f32, edge: f32, down: bool, rgba_fill: [u8; 4]) {
+    let half = 9.0;
+    let dir = if down { 1.0 } else { -1.0 };
+    let sides = |pb: &mut PathBuilder| {
+        pb.move_to(cx - half, edge);
+        pb.quad_to(cx - 2.0, edge + 1.5 * dir, cx, edge + ARROW_H * dir);
+        pb.quad_to(cx + 2.0, edge + 1.5 * dir, cx + half, edge);
+    };
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    let mut pb = PathBuilder::new();
+    sides(&mut pb);
+    if let Some(edge_path) = pb.finish() {
+        paint.set_color(Color::from_rgba8(0, 0, 0, 40));
+        pixmap.stroke_path(&edge_path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+    }
+    // O corpo entra 2 px no painel: apaga a borda ali e pinta com a cor do painel.
+    let mut pb = PathBuilder::new();
+    sides(&mut pb);
+    pb.line_to(cx + half - 0.5, edge - 2.0 * dir);
+    pb.line_to(cx - half + 0.5, edge - 2.0 * dir);
+    pb.close();
+    if let Some(body) = pb.finish() {
+        let mut clear = Paint::default();
+        clear.anti_alias = true;
+        clear.blend_mode = tiny_skia::BlendMode::Clear;
+        pixmap.fill_path(&body, &clear, FillRule::Winding, Transform::identity(), None);
+        paint.set_color(Color::from_rgba8(rgba_fill[0], rgba_fill[1], rgba_fill[2], rgba_fill[3]));
+        pixmap.fill_path(&body, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
 /// Copia o pixmap (RGBA premultiplicado) para um buffer wl_shm Argb8888 (B, G, R, A).
 /// Troca R e B de 4 em 4 bytes como um número só (bem mais rápido que byte a byte).
 pub fn to_argb8888(pixmap: &Pixmap, canvas: &mut [u8]) {

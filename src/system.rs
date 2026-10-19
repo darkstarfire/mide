@@ -33,6 +33,9 @@ pub struct Status {
     pub wifi: Option<(bool, Vec<Network>)>,
     /// Bluetooth ligado e os aparelhos pareados. `None` sem adaptador.
     pub bluetooth: Option<(bool, Vec<Device>)>,
+    /// Brilho da tela de 0.0 a 1.0. `None` sem controle de brilho (`brightnessctl`)
+    /// ou sem tela com luz de fundo (monitores de mesa).
+    pub brightness: Option<f32>,
 }
 
 impl Status {
@@ -136,7 +139,15 @@ fn fake_status() -> Status {
                 Device { address: "66:77:88:99:AA:BB".into(), name: "Teclado".into(), connected: false },
             ],
         )),
+        brightness: Some(0.7),
     }
+}
+
+/// Brilho pela saída de `brightnessctl -m` (`aparelho,classe,atual,70%,máximo`).
+pub fn parse_brightness(text: &str) -> Option<f32> {
+    let line = text.lines().next()?;
+    let percent = line.split(',').nth(3)?.trim().trim_end_matches('%');
+    percent.parse::<f32>().ok().map(|p| (p / 100.0).clamp(0.0, 1.0))
 }
 
 /// Lê o estado atual (alguns comandos externos; rode fora da thread da interface).
@@ -165,7 +176,8 @@ pub fn read_status() -> Status {
         }
         (on, devices)
     });
-    Status { volume, wifi, bluetooth }
+    let brightness = output("brightnessctl", &["-m", "-c", "backlight"]).and_then(|t| parse_brightness(&t));
+    Status { volume, wifi, bluetooth, brightness }
 }
 
 /// Executa uma ação em segundo plano (ou só registra, nos testes).
@@ -191,6 +203,30 @@ fn run(program: &str, args: &[&str]) {
 pub fn set_volume(value: f32) {
     let value = format!("{:.2}", value.clamp(0.0, 1.0));
     run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &value]);
+}
+
+pub fn set_brightness(value: f32) {
+    let value = format!("{}%", (value.clamp(0.01, 1.0) * 100.0).round() as i32);
+    run("brightnessctl", &["-c", "backlight", "set", &value]);
+}
+
+/// Ações de energia e sessão do menu do mide (com confirmação na barra). Nos testes
+/// só são registradas, nunca executadas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Power {
+    Sleep,
+    Restart,
+    Shutdown,
+    Lock,
+}
+
+pub fn power(action: Power) {
+    match action {
+        Power::Sleep => run("systemctl", &["suspend"]),
+        Power::Restart => run("systemctl", &["reboot"]),
+        Power::Shutdown => run("systemctl", &["poweroff"]),
+        Power::Lock => run("loginctl", &["lock-session"]),
+    }
 }
 
 pub fn set_muted(muted: bool) {
@@ -219,7 +255,8 @@ pub fn toggle_device(device: &Device) {
 /// seções que o mide tem abrem nas Configurações do mide (`mide-settings`, ao lado do
 /// programa atual ou no PATH); as outras, nas do GNOME.
 pub fn open_settings(panel: &str) {
-    const OWN: &[&str] = &["wifi", "bluetooth", "sound", "wallpaper", "dock", "effects", "keyboard", "about"];
+    // Vazio: abre as Configurações na seção inicial.
+    const OWN: &[&str] = &["", "wifi", "bluetooth", "sound", "wallpaper", "dock", "effects", "keyboard", "about"];
     if OWN.contains(&panel) {
         let sibling = std::env::current_exe()
             .ok()
@@ -230,7 +267,11 @@ pub fn open_settings(panel: &str) {
             tracing::info!("sistema (teste): mide-settings {panel}");
             return;
         }
-        match Command::new(&program).arg(panel).spawn() {
+        let mut command = Command::new(&program);
+        if !panel.is_empty() {
+            command.arg(panel);
+        }
+        match command.spawn() {
             Ok(mut child) => {
                 std::thread::spawn(move || {
                     let _ = child.wait();
@@ -247,6 +288,13 @@ pub fn open_settings(panel: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brilho_do_brightnessctl() {
+        assert_eq!(parse_brightness("intel_backlight,backlight,750,75%,1000\n"), Some(0.75));
+        assert_eq!(parse_brightness(""), None);
+        assert_eq!(parse_brightness("lixo"), None);
+    }
 
     #[test]
     fn volume_e_mudo() {

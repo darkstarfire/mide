@@ -127,6 +127,12 @@ impl Server {
     ) -> u32 {
         let id = if replaces_id != 0 { replaces_id } else { self.next_id.fetch_add(1, Ordering::Relaxed) };
         let urgency = hints.get("urgency").and_then(|v| u8::try_from(v).ok()).unwrap_or(1);
+        // Não perturbe (central de controle): só as urgentes aparecem.
+        let dnd = matches!(mide::settings_file::get("notifications", "dnd"), Some(mide::settings_file::Value::Bool(true)));
+        if dnd && urgency < 2 {
+            tracing::info!("notificação {id} silenciada (não perturbe): {summary}");
+            return id;
+        }
         let icon = Some(app_icon)
             .filter(|s| !s.is_empty())
             .or_else(|| hint_str(&hints, "image-path"))
@@ -466,7 +472,7 @@ impl Banners {
         if glass {
             mide::ui::draw::clear_rounded(pixmap, x, y, BANNER_W, bh, RADIUS);
         }
-        fill_rounded(pixmap, x, y, BANNER_W, bh, RADIUS, rgba(246, 246, 248, if glass { 205 } else { 238 }));
+        fill_rounded(pixmap, x, y, BANNER_W, bh, RADIUS, rgba(246, 246, 248, if glass { 186 } else { 238 }));
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, BANNER_W - 1.0, bh - 1.0, RADIUS - 0.5) {
             let mut paint = Paint::default();
             paint.set_color(rgba(0, 0, 0, 34));

@@ -178,6 +178,8 @@ pub struct Ctx {
     pub glass: Vec<(f32, f32, f32, f32, f32)>,
     /// O app pediu para fechar (`Ui::close`).
     pub close_requested: bool,
+    /// Quadro agendado pelo app (`Ui::wake_after`).
+    pub wake_at: Option<std::time::Instant>,
 }
 
 impl Ctx {
@@ -200,6 +202,7 @@ impl Ctx {
             title: None,
             glass: Vec::new(),
             close_requested: false,
+            wake_at: None,
         }
     }
 
@@ -490,7 +493,7 @@ impl<'a> Ui<'a> {
         // Sombra só na faixa de fora e o véu escrito direto (sem misturar no miolo):
         // painéis grandes continuam baratos.
         crate::ui::draw::soft_shadow(self.canvas, x, y, width, h, radius, 16.0, 6.0, 60);
-        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [248, 248, 250, if glass { 196 } else { 246 }]);
+        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [248, 248, 250, if glass { 178 } else { 246 }]);
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, width - 1.0, h - 1.0, radius) {
             let mut paint = Paint::default();
             paint.anti_alias = true;
@@ -549,6 +552,13 @@ impl<'a> Ui<'a> {
     /// mostrar trabalho feito em segundo plano. Vale só para o quadro atual.
     pub fn request_tick(&mut self) {
         self.ctx.ticking = true;
+    }
+
+    /// Pede um quadro daqui a `delay` (uma vez), mesmo sem mouse nem teclado: para
+    /// mostrar dados que mudam devagar (estado do som, da rede) sem redesenhar à toa.
+    pub fn wake_after(&mut self, delay: std::time::Duration) {
+        let at = std::time::Instant::now() + delay;
+        self.ctx.wake_at = Some(self.ctx.wake_at.map_or(at, |w| w.min(at)));
     }
 
     /// O próximo campo de texto desenhado já começa com o foco (para digitar).
@@ -626,9 +636,12 @@ impl<'a> Ui<'a> {
         let t = self.ctx.theme.clone();
         let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
         let w = 220.0;
-        // Dentro da janela: abre para o lado e para cima se não couber.
-        let x = if state.pos.0 + w + 6.0 > ww { (state.pos.0 - w).max(4.0) } else { state.pos.0 + 2.0 };
-        let y0 = if state.pos.1 + state.height + 6.0 > wh { (state.pos.1 - state.height).max(4.0) } else { state.pos.1 };
+        // A ponta do menu fica no ponto do clique (como os menus da dock e da barra):
+        // o menu abre para baixo, ou para cima se não couber, e um pouco à esquerda.
+        let arrow = crate::ui::draw::ARROW_H;
+        let x = (state.pos.0 - 24.0).clamp(4.0, (ww - w - 4.0).max(4.0));
+        let up = state.pos.1 + arrow + state.height + 6.0 > wh;
+        let y0 = if up { (state.pos.1 - arrow - state.height).max(4.0) } else { state.pos.1 + arrow };
         let mut menu = Menu { ctx: &mut *self.ctx, x: x + 5.0, y: y0 + 5.0, w: w - 10.0, rows: Vec::new() };
         build(&mut menu);
         let (rows, end) = (std::mem::take(&mut menu.rows), menu.y);
@@ -647,6 +660,8 @@ impl<'a> Ui<'a> {
             fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, 10.0 + grow, color([0, 0, 0, alpha]));
         }
         fill_rounded(overlay, x, y0, w, h, 10.0, color([246, 246, 248, 245]));
+        let tip_x = state.pos.0.clamp(x + 18.0, x + w - 18.0);
+        crate::ui::draw::menu_arrow(overlay, tip_x, if up { y0 + h } else { y0 }, up, [246, 246, 248, 245]);
         let mut y = y0 + 5.0;
         let text = &mut self.ctx.text;
         for (label, kind, hovered) in rows {
@@ -799,9 +814,14 @@ impl<'a> Ui<'a> {
 
     /// Linha com um texto à esquerda e um interruptor à direita.
     pub fn switch(&mut self, label: &str, value: &mut bool) -> Response {
+        self.switch_detail(label, "", value)
+    }
+
+    /// Interruptor com uma linha de explicação cinza embaixo do texto.
+    pub fn switch_detail(&mut self, label: &str, detail: &str, value: &mut bool) -> Response {
         let t = self.ctx.theme.clone();
         let id = self.ctx.id();
-        let rect = self.alloc(None, t.row);
+        let rect = self.alloc(None, if detail.is_empty() { t.row } else { t.row + 14.0 });
         self.card_line(rect.1);
         let mut r = self.interact(id, rect);
         if r.clicked {
@@ -809,7 +829,14 @@ impl<'a> Ui<'a> {
             r.changed = true;
         }
         let label = self.fit(label, t.font, FontWeight::Regular, rect.2 - 60.0);
-        self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        if detail.is_empty() {
+            self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        } else {
+            let top = rect.1 + (rect.3 - t.font * 1.25 - t.font_small * 1.3) / 2.0;
+            self.draw_text(&label, rect.0, top, t.font, FontWeight::Regular, t.text);
+            let detail = self.fit(detail, t.font_small, FontWeight::Regular, rect.2 - 60.0);
+            self.draw_text(&detail, rect.0, top + t.font * 1.3, t.font_small, FontWeight::Regular, t.text_secondary);
+        }
         let (sx, sy) = (rect.0 + rect.2 - 40.0, rect.1 + (rect.3 - 22.0) / 2.0);
         let fill = if *value { t.accent } else { [0, 0, 0, 40] };
         fill_rounded(self.canvas, sx, sy, 40.0, 22.0, 11.0, color(fill));
@@ -843,6 +870,10 @@ impl<'a> Ui<'a> {
                     self.ctx.repaint = true;
                 }
             }
+        }
+        // Soltou o trilho: `submitted` (para gravar só no fim do arraste).
+        if self.ctx.memory.active == Some(id) && self.ctx.input.released {
+            r.submitted = true;
         }
         let label = self.fit(label, t.font, FontWeight::Regular, label_w - 12.0);
         self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
@@ -970,43 +1001,160 @@ impl<'a> Ui<'a> {
     /// Ladrilho de uma grade de ícones (como no Finder): imagem com o nome embaixo.
     /// Selecionado, ganha o vidro do mide atrás e o nome numa pílula na cor de destaque.
     pub fn tile(&mut self, image: Tile, label: &str, selected: bool, size: u32) -> Response {
+        self.tile_wide(image, label, selected, size, size)
+    }
+
+    /// Ladrilho com área de imagem retangular (`iw` x `ih`), para miniaturas largas
+    /// (papéis de parede). Ícones ficam centralizados no lado menor.
+    pub fn tile_wide(&mut self, image: Tile, label: &str, selected: bool, iw: u32, ih: u32) -> Response {
         let t = self.ctx.theme.clone();
         let id = self.ctx.id();
-        let (w, h) = (size as f32 + 44.0, size as f32 + 46.0);
+        let (fw, fh) = (iw as f32, ih as f32);
+        let (w, h) = (fw + 44.0, fh + 46.0);
         let rect = self.alloc(Some(w), h);
         let r = self.interact(id, rect);
         if !self.visible(rect) {
             return r;
         }
-        let (ix, iy) = (rect.0 + (w - size as f32) / 2.0, rect.1 + 6.0);
+        let (ix, iy) = (rect.0 + (w - fw) / 2.0, rect.1 + 6.0);
         if selected {
-            crate::ui::draw::glass(self.canvas, ix - 8.0, iy - 6.0, size as f32 + 16.0, size as f32 + 12.0, 10.0);
+            crate::ui::draw::glass(self.canvas, ix - 8.0, iy - 6.0, fw + 16.0, fh + 12.0, 10.0);
         } else if r.hovered {
-            fill_rounded(self.canvas, ix - 8.0, iy - 6.0, size as f32 + 16.0, size as f32 + 12.0, 10.0, color(t.control));
+            fill_rounded(self.canvas, ix - 8.0, iy - 6.0, fw + 16.0, fh + 12.0, 10.0, color(t.control));
         }
         match image {
             Tile::Image(pix) => {
                 let (pw, ph) = (pix.width() as f32, pix.height() as f32);
-                let (dx, dy) = (ix + (size as f32 - pw) / 2.0, iy + (size as f32 - ph) / 2.0);
+                let (dx, dy) = (ix + (fw - pw) / 2.0, iy + (fh - ph) / 2.0);
                 crate::ui::draw::blit(self.canvas, pix, dx as i32, dy as i32, 1.0);
             }
             Tile::Icon(name) => {
-                let icon = self.ctx.icon(&[name, "text-x-generic"], size, false);
+                let side = iw.min(ih);
+                let icon = self.ctx.icon(&[name, "text-x-generic"], side, false);
                 if let Some(icon) = icon {
-                    crate::ui::draw::blit(self.canvas, &icon, ix as i32, iy as i32, 1.0);
+                    let (dx, dy) = (ix + (fw - side as f32) / 2.0, iy + (fh - side as f32) / 2.0);
+                    crate::ui::draw::blit(self.canvas, &icon, dx as i32, dy as i32, 1.0);
                 }
             }
         }
         let max = w - 6.0;
         let shown = self.fit(label, t.font_small, FontWeight::Regular, max);
         let lw = self.measure(&shown, t.font_small, FontWeight::Regular);
-        let (lx, ly) = (rect.0 + (w - lw) / 2.0, iy + size as f32 + 10.0);
+        let (lx, ly) = (rect.0 + (w - lw) / 2.0, iy + fh + 10.0);
         if selected {
             fill_rounded(self.canvas, lx - 5.0, ly - 1.0, lw + 10.0, t.font_small * 1.4, 5.0, color(t.accent));
         }
         let c = if selected { t.on_accent } else { t.text };
         self.draw_text(&shown, lx, ly, t.font_small, FontWeight::Regular, c);
         r
+    }
+
+    /// Cabeçalho de uma lista em colunas (como no Finder): "Nome" à esquerda e as
+    /// outras colunas à direita, com as larguras de `columns`. `sorted` é a coluna
+    /// ordenada (0 = nome) e se é crescente. Devolve a coluna clicada.
+    pub fn list_header(&mut self, name: &str, columns: &[(&str, f32)], sorted: (usize, bool)) -> Option<usize> {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, 24.0);
+        let cols: f32 = columns.iter().map(|c| c.1).sum();
+        let mut clicked = None;
+        let mut spans = vec![(name, rect.0, rect.2 - cols)];
+        let mut cx = rect.0 + rect.2 - cols;
+        for (label, w) in columns {
+            spans.push((label, cx, *w));
+            cx += w;
+        }
+        for (i, (label, x, w)) in spans.into_iter().enumerate() {
+            let id = self.ctx.id();
+            let cell = (x, rect.1, w, rect.3);
+            let r = self.interact(id, cell);
+            if r.clicked {
+                clicked = Some(i);
+            }
+            if r.hovered {
+                fill_rounded(self.canvas, x, rect.1 + 2.0, w - 4.0, rect.3 - 4.0, 4.0, color(t.hover));
+            }
+            let lx = if i == 0 { x + 36.0 } else { x };
+            let weight = if sorted.0 == i { FontWeight::Semibold } else { FontWeight::Regular };
+            self.draw_text(label, lx, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, weight, t.text_secondary);
+            if sorted.0 == i {
+                let lw = self.measure(label, t.font_small, weight);
+                let arrow = if sorted.1 { "▲" } else { "▼" };
+                self.draw_text(arrow, lx + lw + 6.0, rect.1 + (24.0 - 9.0 * 1.25) / 2.0, 9.0, FontWeight::Regular, t.text_secondary);
+            }
+        }
+        fill_rounded(self.canvas, rect.0, rect.1 + rect.3 - 1.0, rect.2, 1.0, 0.0, color(t.line));
+        // Sem espaço entre o cabeçalho e as linhas.
+        if self.flow == Flow::Column {
+            self.cursor_y -= t.spacing;
+        }
+        clicked
+    }
+
+    /// Linha de lista em árvore (visualização em lista do Finder): recuo pelo nível,
+    /// setinha para abrir pastas (`expandable`), ícone, nome e colunas à direita.
+    /// `striped` pinta o fundo cinza das linhas alternadas. Devolve a resposta da
+    /// linha e se a setinha foi clicada.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tree_row(&mut self, depth: usize, expandable: bool, expanded: bool, icon: &str, label: &str, columns: &[(&str, f32)], selected: bool, striped: bool) -> (Response, bool) {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, 26.0);
+        if self.flow == Flow::Column {
+            self.cursor_y -= t.spacing;
+        }
+        let indent = rect.0 + 6.0 + depth as f32 * 18.0;
+        // A setinha é um alvo próprio, antes da linha (que fica com o resto).
+        let mut toggled = false;
+        if expandable {
+            let id = self.ctx.id();
+            let r = self.interact(id, (indent - 4.0, rect.1, 22.0, rect.3));
+            toggled = r.clicked;
+        }
+        let id = self.ctx.id();
+        let r = self.interact(id, rect);
+        if !self.visible(rect) {
+            return (r, toggled);
+        }
+        if selected {
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 5.0, color(t.accent));
+        } else if striped {
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 0.0, color([0, 0, 0, 10]));
+        }
+        let (main, side) = if selected { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
+        if expandable {
+            // Triângulo: para a direita fechado, para baixo aberto.
+            let (cx, cy) = (indent + 6.0, rect.1 + 13.0);
+            let mut pb = PathBuilder::new();
+            if expanded {
+                pb.move_to(cx - 4.0, cy - 2.0);
+                pb.line_to(cx + 4.0, cy - 2.0);
+                pb.line_to(cx, cy + 3.0);
+            } else {
+                pb.move_to(cx - 2.0, cy - 4.0);
+                pb.line_to(cx + 3.0, cy);
+                pb.line_to(cx - 2.0, cy + 4.0);
+            }
+            pb.close();
+            if let Some(path) = pb.finish() {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(color(if selected { t.on_accent } else { [110, 110, 118, 255] }));
+                self.canvas.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        let ix = indent + 16.0;
+        if let Some(pix) = self.ctx.icon(&[icon, "text-x-generic"], 18, false) {
+            crate::ui::draw::blit(self.canvas, &pix, ix as i32, (rect.1 + 4.0) as i32, 1.0);
+        }
+        let cols: f32 = columns.iter().map(|c| c.1).sum();
+        let shown = self.fit(label, t.font, FontWeight::Regular, (rect.0 + rect.2 - cols - ix - 30.0).max(0.0));
+        self.draw_text(&shown, ix + 24.0, rect.1 + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, main);
+        let mut cx = rect.0 + rect.2 - cols;
+        for (text, w) in columns {
+            let shown = self.fit(text, t.font_small, FontWeight::Regular, w - 8.0);
+            self.draw_text(&shown, cx, rect.1 + (26.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, side);
+            cx += w;
+        }
+        (r, toggled)
     }
 
     /// Linha de uma lista de arquivos: ícone, nome e colunas de detalhe à direita
@@ -1300,6 +1448,32 @@ impl<'a> Ui<'a> {
     /// self.secao = ui.sidebar(&secoes, self.secao, |ui, secao| { ... });
     /// ```
     pub fn sidebar(&mut self, items: &[(&str, &str)], selected: usize, content: impl FnOnce(&mut Ui, usize)) -> usize {
+        let items: Vec<(&str, &str, Option<[u8; 3]>)> = items.iter().map(|(n, i)| (*n, *i, None)).collect();
+        let raw = std::mem::take(&mut self.sidebar_raw);
+        self.sidebar_impl(&items, selected, None, raw, content)
+    }
+
+    /// Barra lateral das Configurações: campo de busca no topo e cada seção com o
+    /// ícone num quadradinho colorido (`tint`). O conteúdo vai numa página que rola.
+    pub fn sidebar_search(
+        &mut self,
+        items: &[(&str, &str, Option<[u8; 3]>)],
+        selected: usize,
+        query: &mut String,
+        placeholder: &str,
+        content: impl FnOnce(&mut Ui, usize),
+    ) -> usize {
+        self.sidebar_impl(items, selected, Some((query, placeholder)), false, content)
+    }
+
+    fn sidebar_impl(
+        &mut self,
+        items: &[(&str, &str, Option<[u8; 3]>)],
+        selected: usize,
+        search: Option<(&mut String, &str)>,
+        raw: bool,
+        content: impl FnOnce(&mut Ui, usize),
+    ) -> usize {
         let mut selected = selected;
         let t = self.ctx.theme.clone();
         let side_w = 220.0;
@@ -1308,9 +1482,25 @@ impl<'a> Ui<'a> {
         fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));
         fill_rounded(self.canvas, x + side_w - 1.0, y0, 1.0, h, 0.0, color(t.line));
         let mut row_y = y0 + 16.0;
-        for (i, (name, icon)) in items.iter().enumerate() {
-            // Item sem ícone é um título de grupo ("Favoritos"), não uma seção.
+        if let Some((query, placeholder)) = search {
+            // Campo de busca no topo da barra lateral.
+            let (old_x, old_w, old_y) = (self.x, self.width, self.cursor_y);
+            self.x = x + 10.0;
+            self.width = side_w - 20.0;
+            self.cursor_y = y0 + 12.0;
+            self.text_input(query, placeholder);
+            row_y = self.cursor_y + 4.0;
+            self.x = old_x;
+            self.width = old_w;
+            self.cursor_y = old_y;
+        }
+        for (i, (name, icon, tint)) in items.iter().enumerate() {
+            // Item sem ícone é um título de grupo ("Favoritos"); nome vazio é só espaço.
             if icon.is_empty() {
+                if name.is_empty() {
+                    row_y += 12.0;
+                    continue;
+                }
                 if i > 0 {
                     row_y += 8.0;
                 }
@@ -1332,19 +1522,31 @@ impl<'a> Ui<'a> {
             } else if r.hovered {
                 fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.control));
             }
-            let pix = self.ctx.icon(&[icon], 20, false);
+            if let Some([r_, g, b]) = tint {
+                fill_rounded(self.canvas, rect.0 + 8.0, rect.1 + 3.0, 24.0, 24.0, 6.0, color([*r_, *g, *b, 255]));
+            }
+            // Ícones "symbolic" (de uma cor só) ficam na cor de destaque, como os da
+            // barra lateral do Finder; na linha escolhida, brancos.
+            let symbolic = icon.ends_with("-symbolic");
+            let size = if symbolic { 18 } else { 20 };
+            let pix = self.ctx.icon(&[icon], size, false);
             if let Some(pix) = pix {
-                crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 10.0) as i32, (rect.1 + 5.0) as i32, 1.0);
+                let (ix, iy) = ((rect.0 + 10.0) as i32, (rect.1 + (30.0 - size as f32) / 2.0) as i32);
+                if symbolic {
+                    let tint = if is_sel { t.on_accent } else { t.accent };
+                    crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [tint[0], tint[1], tint[2]]);
+                } else {
+                    crate::ui::draw::blit(self.canvas, &pix, ix, iy, 1.0);
+                }
             }
             let tc = if is_sel { t.on_accent } else { t.text };
-            self.draw_text(name, rect.0 + 40.0, rect.1 + (30.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
+            self.draw_text(name, rect.0 + 42.0, rect.1 + (30.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
         }
         // Conteúdo à direita.
         let (old_x, old_w) = (self.x, self.width);
         self.x = x + side_w;
         self.width = old_w - side_w;
-        if self.sidebar_raw {
-            self.sidebar_raw = false;
+        if raw {
             content(self, selected);
         } else {
             self.page(|ui| content(ui, selected));

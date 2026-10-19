@@ -10,7 +10,7 @@
 #   y=61: fechar x=63, minimizar x=83, maximizar x=103.
 # - Calculadora (378 px, cabeçalho próprio) em (48, 76): X em (402, 99),
 #   maximizar (364, 99), minimizar (317, 99), menu (289, 99).
-# - Maximizada: área útil começa em y=28.
+# - Maximizada: área útil de y=28 até acima da dock (zona reservada de 57+8 px).
 # - Dock padrão (ícones de 40 px) em (258, 535) 285x57: Launchpad em (285, 560),
 #   foot em (328, 560), calculadora em (371, 560), Configurações em (414, 560),
 #   Downloads em (473, 560) e Lixeira em (516, 560).
@@ -97,13 +97,33 @@ check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
 check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" foot
 check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 180 14; 440 list" foot
-check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=800x542" "400 click 238 14; 430 click 250 73; 480 list" foot
+check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=800x477" "400 click 238 14; 430 click 250 73; 480 list" foot
 check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" foot
 check "janela Sobre redimensiona" 'janela "Sobre este computador" .*visível=580x400' "400 click 25 14; 430 click 100 49; 520 list; 530 press 587 435; 535 move 607 455; 540 move 627 475; 545 release 627 475; 580 list"
-check "relógio abre o calendário" "menu aberto: Calendar" "400 click 733 14; 440 list"
-check "Wi-Fi: interruptor desliga (simulado)" "sistema \(teste\): nmcli radio wifi off" "400 click 623 14; 440 click 735 55; 470 list"
-check "som: trilho muda o volume (simulado)" "sistema \(teste\): wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.5" "400 click 587 14; 440 click 600 90; 470 list"
-check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 659 14; 440 click 650 93; 470 list"
+check "relógio abre o calendário" "menu aberto: Calendar" "400 click 765 14; 440 list"
+# Calendário (x 512..792): "Formato da hora…" em y=323; nas opções, "Segundos" em (757, 213).
+check "calendário: Formato da hora liga os segundos" "relógio: Segundos ligado" "400 click 765 14; 440 click 652 323; 470 click 757 213; 500 list"
+# Os segundos alargam o relógio e empurram os ícones: volta ao padrão (só a hora).
+sed -i '/^seconds = true/d' "$XDG_CONFIG_HOME/mide/config.toml" 2>/dev/null
+# Central de controle (ícone em 727, painel em x 472..792): "Não perturbe" em (710, 102) (ladrilho da direita, x 638..780).
+check "central de controle abre" "menu aberto: Control" "400 click 727 14; 440 list"
+check "central de controle: Não perturbe" "não perturbe: ligado" "400 click 727 14; 440 click 710 102; 470 list"
+sed -i '/^dnd = true/d' "$XDG_CONFIG_HOME/mide/config.toml" 2>/dev/null
+check "engrenagem abre as Configurações" "sistema \(teste\): mide-settings" "400 click 583 14; 440 list"
+# Menu do mide: Repouso em y=153, Reiniciar… em y=177; confirmação no meio (Reiniciar em
+# (470, 127), Cancelar em (331, 127)). Nada é executado de verdade (simulado).
+check "menu do mide: Repouso (simulado)" "sistema \(teste\): systemctl suspend" "400 click 25 14; 430 click 100 153; 460 list"
+check "menu do mide: Reiniciar pede confirmação" "menu aberto: ConfirmRestart" "400 click 25 14; 430 click 100 177; 460 list"
+check "confirmar reinicia (simulado)" "sistema \(teste\): systemctl reboot" "400 click 25 14; 430 click 100 177; 460 click 470 127; 500 list"
+CLOG="$(timeout 150 "$SCEN" "400 click 25 14; 430 click 100 177; 460 click 331 127; 500 list" 2>&1)"
+if echo "$CLOG" | grep -q "menu aberto: ConfirmRestart" && ! echo "$CLOG" | grep -q "systemctl reboot"; then
+    echo "ok    Cancelar não reinicia"; PASS=$((PASS + 1))
+else
+    echo "FALHA Cancelar não reinicia"; FAIL=$((FAIL + 1))
+fi
+check "Wi-Fi: interruptor desliga (simulado)" "sistema \(teste\): nmcli radio wifi off" "400 click 655 14; 440 click 740 61; 470 list"
+check "som: trilho muda o volume (simulado)" "sistema \(teste\): wpctl set-volume @DEFAULT_AUDIO_SINK@ 0\.[0-9]+" "400 click 619 14; 440 click 631 96; 470 list"
+check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 691 14; 440 click 650 99; 470 list"
 check "Sobre minimizada aparece na dock e volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 click 83 61; 600 click 443 560; 700 list"
 check "Sobre este computador abre" 'janela "Sobre este computador"' "400 click 25 14; 430 click 100 49; 520 list"
 
@@ -162,7 +182,7 @@ rm -f "$ACAO"
 SCEN="$SCEN_PLAIN"
 
 echo "== janela com barra do mide (foot)"
-check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=800x542" "400 click 103 61; 450 list" foot
+check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=800x477" "400 click 103 61; 450 list" foot
 check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 103 61; 450 click 55 43; 500 list" foot
 check "duplo clique maximiza" "$FOOT posição=\(0, 58\)" "400 click 400 61; 404 click 400 61; 450 list" foot
 check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 405 move 450 111; 410 move 500 161; 415 release 500 161; 430 list" foot
@@ -175,7 +195,7 @@ check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" 
 echo "== janela com cabeçalho do app (calculadora)"
 check "fechar pelo X do app" "janela fechada" "400 click 402 99" gnome-calculator
 check "arrastar pelo cabeçalho do app" "$CALC popups=0 posição=\(108, 116\)" "400 press 200 98; 405 move 230 118; 410 move 260 138; 415 release 260 138; 450 list" gnome-calculator
-check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=800x572" "400 click 364 99; 460 list" gnome-calculator
+check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=800x507" "400 click 364 99; 460 list" gnome-calculator
 check "abrir menu do app" "$CALC popups=1" "400 click 289 99; 440 list" gnome-calculator
 check "fechar menu clicando fora" "$CALC popups=0" "400 click 289 99; 430 click 700 400; 460 list" gnome-calculator
 check "redimensionar pela borda" "$CALC .*visível=418x500" "400 press 423 330; 405 move 443 330; 410 move 463 330; 415 release 463 330; 460 list" gnome-calculator
@@ -187,7 +207,7 @@ check_last "clique traz para frente (topo = foot)" "janela \"foot\"" "400 click 
 echo "== saída redimensionada (janela do mide maximizada no host)"
 check "dock volta ao centro inferior" 'camada "mide-dock" em \(458, 735\) 285x57' "400 resize 1200 800; 420 list" foot
 check "barra acompanha a largura" 'camada "mide-bar" em \(0, 0\) 1200x28' "400 resize 1200 800; 420 list" foot
-check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x742" "400 click 103 61; 440 resize 1200 800; 460 list" foot
+check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x677" "400 click 103 61; 440 resize 1200 800; 460 list" foot
 
 echo "== dock"
 check "clique no ícone abre o app" "nova janela criada" "400 click 328 560"
@@ -287,29 +307,29 @@ if [ -n "$OLD_XDG_CONFIG_HOME" ]; then export XDG_CONFIG_HOME="$OLD_XDG_CONFIG_H
 rm -rf "$DOCKCFG"
 
 echo "== Configurações do Sistema (tela 1280x800, configuração própria)"
-check "menu do mide abre as Configurações" "sistema \(teste\): mide-settings" "400 click 25 14; 430 click 100 82; 460 list"
+check "menu do mide abre as Configurações" "sistema \(teste\): mide-settings" "400 click 25 14; 430 click 100 88; 460 list"
 SCFG="$(mktemp -d)"
 mkdir -p "$SCFG/mide"
 printf '# Meu config\n[keybindings]\n"ctrl+shift+t" = "launch:foot" # terminal\n' > "$SCFG/mide/config.toml"
 OLD_SCFG="$XDG_CONFIG_HOME"
 export XDG_CONFIG_HOME="$SCFG" MIDE_WINIT_SIZE=1280x800
 SETTINGS="$PWD/target/debug/mide-settings"
-# Janela em (48, 76): miniatura "Beach" em (562, 192); interruptor de Sombras em (805, 166).
-timeout 150 "$SCEN" "400 click 562 192; 460 list" -- "$SETTINGS wallpaper" >/dev/null 2>&1
+# Janela em (48, 76): miniatura "Beach" em (548, 185); interruptor de Sombras em (807, 169).
+timeout 150 "$SCEN" "400 click 548 185; 460 list" -- "$SETTINGS wallpaper" >/dev/null 2>&1
 if grep -q 'wallpaper = "/usr/share/backgrounds/Beach' "$SCFG/mide/config.toml" && grep -q "# terminal" "$SCFG/mide/config.toml"; then
     echo "ok    escolher papel de parede grava (e mantém os comentários)"; PASS=$((PASS + 1))
 else
     echo "FALHA escolher papel de parede grava"; FAIL=$((FAIL + 1))
 fi
 check "compositor usa o papel de parede gravado" "papel de parede: /usr/share/backgrounds/Beach" "400 list; 420 list" "$SETTINGS wallpaper"
-timeout 150 "$SCEN" "400 click 805 166; 460 list" -- "$SETTINGS effects" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 807 169; 460 list" -- "$SETTINGS effects" >/dev/null 2>&1
 if grep -q "shadows = false" "$SCFG/mide/config.toml"; then
     echo "ok    desligar sombras grava no config.toml"; PASS=$((PASS + 1))
 else
     echo "FALHA desligar sombras grava no config.toml"; FAIL=$((FAIL + 1))
 fi
-# Efeitos: "Desfoque na dock" em (805, 374) e "Desfoque no launcher" em (805, 426).
-timeout 150 "$SCEN" "400 click 805 374; 440 click 805 426; 480 list" -- "$SETTINGS effects" >/dev/null 2>&1
+# Efeitos: "Desfoque na dock" em (807, 393) e "Desfoque no launcher" em (807, 449).
+timeout 150 "$SCEN" "400 click 807 393; 440 click 807 449; 480 list" -- "$SETTINGS effects" >/dev/null 2>&1
 if grep -q "dock_blur = false" "$SCFG/mide/config.toml" && grep -q "launcher_blur = false" "$SCFG/mide/config.toml"; then
     echo "ok    interruptores de desfoque gravam no config.toml"; PASS=$((PASS + 1))
 else
@@ -317,15 +337,32 @@ else
 fi
 # O teste anterior desligou o desfoque da dock; o vidro líquido depende dele.
 sed -i '/dock_blur = false/d' "$SCFG/mide/config.toml"
-# "Vidro líquido" em (805, 478): grava no config.toml e a dock troca para o vidro clássico.
-check "Efeitos → Vidro líquido desligado: a dock volta ao vidro clássico" "vidro líquido na dock: desligado" "400 click 805 478; 480 list" "$SETTINGS effects"
+# "Vidro líquido" em (807, 505): grava no config.toml e a dock troca para o vidro clássico.
+check "Efeitos → Vidro líquido desligado: a dock volta ao vidro clássico" "vidro líquido na dock: desligado" "400 click 807 505; 480 list" "$SETTINGS effects"
 if grep -q "liquid_glass = false" "$SCFG/mide/config.toml"; then
     echo "ok    interruptor do vidro líquido grava no config.toml"; PASS=$((PASS + 1))
 else
     echo "FALHA interruptor do vidro líquido grava no config.toml"; FAIL=$((FAIL + 1))
 fi
 # Seção Dock: arrastar o trilho até o fim grava 64 px e a dock cresce sozinha.
-check "Configurações → Dock: tamanho dos ícones muda a dock" 'camada "mide-dock" em \([0-9]+, [0-9]+\) [0-9]+x81' "400 list; 420 press 520 162; 425 move 600 162; 430 move 700 162; 435 move 790 162; 440 release 790 162; 520 list" "$SETTINGS dock"
+check "Configurações → Dock: tamanho dos ícones muda a dock" 'camada "mide-dock" em \([0-9]+, [0-9]+\) [0-9]+x81' "400 list; 420 press 500 161; 425 move 600 161; 430 move 700 161; 435 move 790 161; 440 release 790 161; 520 list" "$SETTINGS dock"
+# Dock: "Ocultar e mostrar a Dock automaticamente" em (807, 212); a dock desce e esconde.
+check "Configurações → Dock: ocultar automaticamente esconde a dock" "dock escondida" "400 click 807 212; 700 list" "$SETTINGS dock"
+if grep -q "autohide = true" "$SCFG/mide/config.toml"; then
+    echo "ok    ocultar a dock grava no config.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA ocultar a dock grava no config.toml"; FAIL=$((FAIL + 1))
+fi
+sed -i '/autohide = true/d' "$SCFG/mide/config.toml"
+# Busca na barra lateral (campo em (158, 104)): "teclas" acha "Teclas no estilo Mac"; o
+# resultado (primeira linha, y=158) abre a seção Teclado, com o interruptor em (807, 169).
+timeout 150 "$SCEN" "400 click 158 104; 420 type teclas; 460 click 500 158; 500 click 807 169; 560 list" -- "$SETTINGS" >/dev/null 2>&1
+if grep -q "mac_style = true" "$SCFG/mide/config.toml"; then
+    echo "ok    busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; PASS=$((PASS + 1))
+else
+    echo "FALHA busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; FAIL=$((FAIL + 1))
+fi
+sed -i '/mac_style = true/d' "$SCFG/mide/config.toml"
 export XDG_CONFIG_HOME="$OLD_SCFG"
 unset MIDE_WINIT_SIZE
 rm -rf "$SCFG"
@@ -339,6 +376,16 @@ check_count "Esc fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 key es
 check_count "o atalho de novo fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 combo ctrl+space; 490 list"
 check_count "clique fora do painel fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 click 60 560; 490 list"
 check_count "abrir um app pelo buscador fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 440 type calc; 470 key enter; 600 list"
+
+MCFG="$(mktemp -d)"
+mkdir -p "$MCFG/mide"
+printf '[keyboard]\nmac_style = true\n' >"$MCFG/mide/config.toml"
+if XDG_CONFIG_HOME="$MCFG" timeout 150 "$SCEN" "400 combo super+space; 460 list" 2>&1 | grep -q 'camada "mide-search"'; then
+    echo "ok    teclas no estilo Mac: Command+Espaço abre o buscador"; PASS=$((PASS + 1))
+else
+    echo "FALHA teclas no estilo Mac: Command+Espaço abre o buscador"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$MCFG"
 
 echo "== vidro em barras e menus"
 check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"
@@ -359,13 +406,16 @@ rm -rf "$GCFG"
 # (48, 76): grade com Documentos antigos (345, 190), Fotos (463, 190), Projetos
 # (581, 190); na 2ª linha "por do sol.png" (345, 310), praia.jpg (463, 310) e
 # relatorio.pdf (581, 310). Botão de lista em (694, 106); Lixeira na barra lateral
-# em (103, 435). Na lista, as linhas começam em y=165 e descem de 38 em 38.
+# em (103, 435). Na lista, cabeçalho em y=152..176 e linhas de 26 px a partir de
+# y=176 (centro da 1ª em 189).
 FILES="$PWD/target/debug/mide-files"
 FDIR="$(mktemp -d)/mide-arquivos-teste"
 TRASH="${SCENARIO_OUT:-/tmp/mide-scenario}/data/Trash/files"
 fixture() {
     rm -rf "$FDIR"
     mkdir -p "$FDIR/Documentos antigos" "$FDIR/Fotos" "$FDIR/Projetos"
+    echo f >"$FDIR/Fotos/ferias.jpg"
+    echo p >"$FDIR/Projetos/plano.txt"
     echo oi >"$FDIR/notas.txt"
     echo x >"$FDIR/relatorio.pdf"
     echo y >"$FDIR/música.mp3"
@@ -390,11 +440,22 @@ check "Backspace volta para a pasta de cima" 'janela "mide-arquivos-teste"' "400
 check "voltar da barra de ferramentas" 'janela "mide-arquivos-teste"' "400 click 463 190; 406 click 463 190; 440 click 296 106; 470 list" "$FILES '$FDIR'"
 check "Lixeira na barra lateral" 'janela "Lixeira"' "400 click 103 435; 440 list" "$FILES '$FDIR'"
 file_check "Delete manda o item selecionado para a Lixeira" '[ ! -e "$FDIR/relatorio.pdf" ] && [ -e "$TRASH/relatorio.pdf" ]' "400 click 581 310; 430 key delete; 470 list"
-file_check "menu do fundo → Nova pasta, já pedindo o nome" '[ -d "$FDIR/arquivados" ] && [ ! -e "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 468; 470 type arquivados; 490 key enter; 530 list"
-file_check "Esc cancela o nome e a pasta nova fica" '[ -d "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 468; 470 type xyz; 490 key esc; 530 list"
-file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 317; 460 click 550 422; 500 list"
-file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 234; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
+file_check "menu do fundo → Nova pasta, já pedindo o nome" '[ -d "$FDIR/arquivados" ] && [ ! -e "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 311; 470 type arquivados; 490 key enter; 530 list"
+file_check "Esc cancela o nome e a pasta nova fica" '[ -d "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 311; 470 type xyz; 490 key esc; 530 list"
+file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 293; 460 click 550 502; 500 list"
+file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 277; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
 file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 415; 500 list"
+# Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
+# dentro aparece na linha seguinte (y=241).
+file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 694 106; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
+# Fundo em (600, 450): o menu abre para cima (não cabe embaixo), com "Nova pasta" em
+# y=311 e "Novo arquivo" em y=337. O nome vem todo selecionado e
+# digitar define a extensão.
+file_check "menu do fundo → Novo arquivo com a extensão digitada" '[ -f "$FDIR/leiame.md" ] && [ ! -e "$FDIR/Novo arquivo.txt" ]' "400 rclick 600 450; 430 click 650 337; 470 type leiame.md; 490 key enter; 530 list"
+# Menu de "Projetos" (pasta, em (581, 190)): "Comprimir" é a 6ª linha (y=329).
+file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 329; 560 list"
+file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581 310; 430 combo ctrl+d; 470 list"
+file_check "Ctrl+C e Ctrl+V copiam para outra pasta" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ -f "$FDIR/relatorio.pdf" ]' "400 click 581 310; 420 combo ctrl+c; 440 click 463 190; 446 click 463 190; 480 combo ctrl+v; 520 list"
 rm -rf "$(dirname "$FDIR")"
 
 if [ "$(cfg_fingerprint)" != "$CFG_BEFORE" ]; then

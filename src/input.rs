@@ -80,6 +80,7 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "esc" => 1,
         "backspace" => 14,
         "delete" => 111,
+        "." => 52,
         "tab" => 15,
         "space" | "_" => 57,
         "left" => 105,
@@ -121,10 +122,24 @@ pub fn send_combo(state: &mut State, combo: &str) -> bool {
 }
 
 /// Tecla pelo código xkb: confere os atalhos e entrega ao foco do teclado.
+/// Teclas no estilo Mac (`[keyboard] mac_style`): troca Super e Ctrl (códigos evdev),
+/// dos dois lados. Assim Command (onde fica a tecla Super/Windows) faz o papel do Ctrl
+/// nos apps e nos atalhos do mide (⌘C, ⌘V, ⌘Espaço), como no Mac.
+pub fn mac_swap(evdev: u32) -> u32 {
+    match evdev {
+        125 => 29,  // Super esquerda -> Ctrl esquerda
+        29 => 125,  // Ctrl esquerda -> Super esquerda
+        126 => 97,  // Super direita -> Ctrl direita
+        97 => 126,  // Ctrl direita -> Super direita
+        other => other,
+    }
+}
+
 fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_state: KeyState, time: u32) {
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
     };
+    let keycode = if state.config.keyboard.mac_style { (mac_swap(keycode.raw() - 8) + 8).into() } else { keycode };
     if key_state == KeyState::Pressed {
         state.mark_input("tecla", keyboard.current_focus());
     }

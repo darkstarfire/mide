@@ -185,6 +185,9 @@ pub struct State {
     pub launcher_anim: Option<(Instant, bool)>,
     /// O launcher já mostrou o primeiro quadro (a animação de abrir começa nele).
     pub launcher_seen: bool,
+    /// O launcher terminou de esmaecer ao fechar e fica invisível até a camada sumir
+    /// (sem isso, ele reaparecia inteiro por alguns quadros: uma piscada).
+    pub launcher_gone: bool,
     /// Autoteste: finge o Ctrl pressionado (o teste não tem teclado real).
     pub test_ctrl: bool,
     /// Popups (menus, listas) rastreados até serem mapeados e destruídos.
@@ -257,6 +260,7 @@ impl State {
             pending_open: Vec::new(),
             launcher_anim: None,
             launcher_seen: false,
+            launcher_gone: false,
             test_ctrl: false,
             resize_grab: None,
             popups: PopupManager::default(),
@@ -387,6 +391,7 @@ impl CompositorHandler for State {
             let has_buffer = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer().is_some()).unwrap_or(false);
             if has_buffer {
                 self.launcher_seen = true;
+                self.launcher_gone = false;
                 if self.config.effects.animations {
                     self.launcher_anim = Some((Instant::now(), true));
                 }
@@ -687,6 +692,7 @@ impl WlrLayerShellHandler for State {
             if layer.as_ref().is_some_and(|l| l.namespace() == "mide-launcher") {
                 self.launcher_seen = false;
                 self.launcher_anim = None;
+                self.launcher_gone = false;
             }
             if let Some(layer) = layer {
                 map.unmap_layer(&layer);
@@ -1006,7 +1012,6 @@ impl State {
             .is_some_and(|o| layer_map_for_output(o).layers().any(|l| l.namespace() == "mide-launcher"))
     }
 
-    /// Abre o launcher (`mide-launcher`) ou, se já estiver aberto, pede para fechar.
     /// Abre o buscador (`mide-search`), ou fecha se já estiver aberto.
     pub fn toggle_search(&mut self) {
         let open = self.space.outputs().next().and_then(|output| {
@@ -1024,6 +1029,7 @@ impl State {
         }
     }
 
+    /// Abre o launcher (`mide-launcher`) ou, se já estiver aberto, pede para fechar.
     pub fn toggle_launcher(&mut self) {
         let open = self.space.outputs().next().and_then(|output| {
             layer_map_for_output(output)
@@ -1126,6 +1132,7 @@ impl State {
                 let k = ease(start.elapsed().as_secs_f32() / LAUNCHER_CLOSE.as_secs_f32());
                 (1.0 - k, 1.0 + 0.04 * k as f64)
             }
+            None if self.launcher_gone => (0.0, 1.04),
             None => (1.0, 1.0),
         }
     }
@@ -1136,6 +1143,7 @@ impl State {
             Some((start, true)) if now.duration_since(start) >= LAUNCHER_OPEN => self.launcher_anim = None,
             Some((start, false)) if now.duration_since(start) >= LAUNCHER_CLOSE => {
                 self.launcher_anim = None;
+                self.launcher_gone = true;
                 let layer = self.space.outputs().next().and_then(|o| {
                     layer_map_for_output(o).layers().find(|l| l.namespace() == "mide-launcher").cloned()
                 });

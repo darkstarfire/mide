@@ -685,3 +685,44 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **`ui.close()`** fecha o app; **`ui.provide_icon(...)`** entrega ícones carregados pelo app.
 - **Ícones assíncronos:** os componentes pedem o ícone a uma thread e desenham sem ele até ficar pronto (carregar um SVG leva milissegundos). Vale para o Arquivos também.
 - Desenho rápido de painéis: `mide::ui::draw::paint_rounded_solid` (véu escrito linha a linha, só a borda mistura) e `soft_shadow` (sombra calculada nos pixels da faixa de fora). Painel de vidro com 8 linhas: 25 → 3,4 ms.
+
+## Rodada de ajustes do usuário (launcher, Arquivos, dock, barra, teclado, Configurações)
+
+### Launcher
+- **Sem piscada ao fechar:** quando o esmaecer terminava, o launcher voltava a aparecer inteiro por alguns quadros até a camada sumir. Agora fica invisível até sair.
+
+### Arquivos
+- **Lista igual ao Finder:** setinha nas pastas para abrir dentro da própria lista (também com → e ←), recuo por nível, **linhas alternadas**, cabeçalho com **Nome, Modificado, Tamanho e Tipo** que ordena ao clicar (de novo, inverte), tamanho das pastas calculado em segundo plano ("…" até ficar pronto), tipo em português ("Imagem PNG", "Documento PDF", "Pasta"...).
+- **Barra lateral com ícones simples** (de uma cor só, na cor de destaque, como no Finder).
+- **Menu de contexto mais completo:** Abrir, Abrir no Terminal (pastas), Renomear…, Duplicar, **Comprimir** (ou **Extrair aqui** em .zip), Copiar, Copiar caminho, Mover para a Lixeira. No vazio da pasta: Nova pasta, **Novo arquivo**, Colar (com algo copiado), Abrir no Terminal, ocultos e Copiar caminho da pasta.
+- **Novo arquivo:** cria "Novo arquivo.txt" com o nome todo selecionado; digitar "notas.md" já define a extensão.
+- **Compactar e extrair .zip nativos** (biblioteca `zip`, em Rust, sem programa externo), numa thread; caminhos maliciosos no .zip são ignorados.
+- Atalhos: Ctrl+C copia, Ctrl+V cola (com número se o nome existir), Ctrl+D duplica.
+- Lógica em `mide::files` (tipo, nomes livres, criar, duplicar, copiar, tamanho de pasta com limite, compactar, extrair), com testes.
+
+### Dock
+- **Janelas maximizadas respeitam a dock:** a dock reserva o espaço dela (zona exclusiva), como no macOS.
+- **Ocultar e mostrar automaticamente** (Configurações → Dock, `[dock] autohide`): a dock desliza para fora deixando uma faixa invisível de 2 px; o ponteiro na borda de baixo a faz subir, e ela desce ao sair (não esconde com um menu aberto). As janelas usam a tela toda.
+- **Menus com a ponta** apontando para o ícone de onde vieram. Corrigido também o vidro dos menus da dock, que era pedido em coordenadas erradas.
+
+### Barra superior
+- **Relógio só com a hora** por padrão. No calendário, **"Formato da hora…"** liga dia da semana, dia e mês, ano e segundos (`[clock]`).
+- **Central de controle** logo à esquerda do relógio: Wi-Fi e Bluetooth, **Não perturbe** (`[notifications] dnd`; as notificações não urgentes não aparecem), **brilho da tela** (com `brightnessctl` e tela com luz de fundo), som e "Configurações do Sistema…".
+- **Engrenagem** que abre as Configurações.
+- **Menu do mide como o do Mac:** Sobre este computador, Configurações do Sistema…, Forçar encerrar o app, Repouso, Reiniciar…, Desligar…, Bloquear tela, Encerrar sessão…. Reiniciar, desligar e encerrar a sessão pedem confirmação num painel; nos testes nada é executado (só registrado).
+- **Forçar encerrar** (comando `force_quit` no canal de controle) termina o processo do app em foco.
+- Todos os menus e painéis da barra com a **ponta** apontando para o título ou ícone; painéis de vidro um pouco mais transparentes.
+
+### Teclado
+- **Teclas no estilo Mac** (Configurações → Teclado, `[keyboard] mac_style`): o compositor troca Super e Ctrl, então Command (onde fica a tecla Super/Windows) faz o papel do Ctrl nos apps e nos atalhos do mide (⌘C, ⌘V, ⌘Espaço abre o buscador), e Option é o Alt. Desligado, tudo como no PC. A lista de atalhos mostra ⌘ e ⌥ com a opção ligada.
+
+### Configurações (agora no mide-ui)
+- O app foi refeito com o mide-ui (mesmo visual, menos código) e ganhou **busca** no topo da barra lateral: acha opções pelo nome ou por palavras-chave ("volume", "esconder", "teclas") e leva à seção.
+- Novas opções: "Ocultar e mostrar a Dock automaticamente", seção **Teclado** com "Teclas no estilo Mac".
+- Papéis de parede em ladrilhos retangulares; "Remover da lista" pelo botão direito nas imagens adicionadas.
+
+### mide-ui
+- `switch_detail` (interruptor com explicação), `slider` avisa ao soltar (`submitted`), `sidebar_search` (busca e ícones em quadradinho colorido), `tile_wide`, `list_header` e `tree_row` (lista em árvore), ícones "symbolic" pintados na cor de destaque, `ui.wake_after` (quadro agendado, sem redesenhar à toa) e menus de contexto com a ponta no ponto do clique.
+
+### Transparência
+- Barra, menus, notificações, central de controle e buscador um pouco mais transparentes sobre o vidro.

@@ -437,3 +437,22 @@ Manual (o que o autoteste não cobre):
 ## Buscador (B11) — manual
 
 - ctrl+space: a barra aparece sobre o vidro. Digitar "calc", "volume", "2+2", o nome de um arquivo da pasta Documentos. Setas e Enter; Esc ou clique fora fecham.
+
+## Rodada de ajustes — automáticos
+
+- `tests/ui.sh` (agora leva ~30 min; rodar sem limite de tempo):
+  - Barra: relógio abre o calendário; "Formato da hora" liga os segundos; central de controle abre; Não perturbe; engrenagem abre as Configurações; Repouso e Reiniciar (com confirmação) simulados; Cancelar não reinicia.
+  - Teclas no estilo Mac: Command+Espaço abre o buscador.
+  - Configurações: ocultar a dock automaticamente (a dock esconde e grava `autohide`); busca "teclas" leva à opção e grava `mac_style`; coordenadas novas para papel de parede, efeitos e tamanho da dock.
+  - Arquivos: setinha abre a pasta na lista; Novo arquivo com a extensão digitada; Comprimir cria o .zip; Ctrl+D duplica; Ctrl+C e Ctrl+V copiam para outra pasta.
+  - Maximizar agora para acima da dock (800x477 na saída de 800x600).
+- `cargo test`: `mide::files` (tipos, novo arquivo, duplicar, colar, tamanho de pasta, zip), relógio da barra, brilho do `brightnessctl`, busca das Configurações.
+- O autoteste ganhou a tecla `.` (para digitar nomes com extensão).
+
+## Rodada de ajustes — manual
+
+- Launcher: fechar não pisca mais os ícones.
+- Arquivos em lista: setinhas, linhas alternadas, ordenar pelo cabeçalho; botão direito numa pasta → Comprimir; num .zip → Extrair aqui; no vazio → Novo arquivo.
+- Dock: maximizar uma janela para acima da dock; Configurações → Dock → ocultar automaticamente; levar o ponteiro à borda de baixo.
+- Barra: clicar no relógio → "Formato da hora…"; central de controle; menu do mide → Reiniciar… → Cancelar.
+- Configurações: digitar na busca; Teclado → Teclas no estilo Mac; Command+C/V nos apps.

@@ -91,6 +91,22 @@ fn liquid_glass() -> bool {
     on("dock_blur") && on("liquid_glass")
 }
 
+/// Ocultar a dock automaticamente? (`[dock] autohide`, desligado como no macOS.)
+fn configured_autohide() -> bool {
+    matches!(mide::settings_file::get("dock", "autohide"), Some(mide::settings_file::Value::Bool(true)))
+}
+
+/// Faixa da dock escondida que fica na tela (invisível) para o ponteiro achar.
+const PEEK: i32 = 2;
+/// Duração do deslizar ao mostrar e esconder, e a espera antes de esconder.
+const SLIDE: Duration = Duration::from_millis(200);
+const HIDE_DELAY: Duration = Duration::from_millis(450);
+
+/// Margem de baixo com a dock toda escondida (negativa: só `PEEK` pixels na tela).
+fn hidden_margin() -> i32 {
+    PEEK - dock_height() as i32
+}
+
 /// Altura da dock para o tamanho atual dos ícones.
 fn dock_height() -> u32 {
     icon_size() + 2 * PADDING + BOTTOM_EXTRA
@@ -249,11 +265,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-dock"), None);
     let trash_items = places::trash_count(&places::trash_dir());
     layer.set_anchor(Anchor::BOTTOM);
-    layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    layer.set_exclusive_zone(0);
-
     ICON_SIZE_NOW.store(configured_icon_size(), std::sync::atomic::Ordering::Relaxed);
+    // Sem ocultar, a dock reserva o espaço dela: janelas maximizadas param acima.
+    let autohide = configured_autohide();
+    layer.set_margin(0, 0, if autohide { hidden_margin() } else { BOTTOM_MARGIN }, 0);
+    layer.set_exclusive_zone(if autohide { 0 } else { dock_height() as i32 });
     let mut catalog = Catalog::load();
     let items: Vec<DockApp> = pinned_ids()
         .iter()
@@ -301,6 +318,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         menu_dirty: false,
         config_mtime: mide::settings_file::config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok()),
         liquid: liquid_glass(),
+        autohide,
+        shown: if autohide { 0.0 } else { 1.0 },
+        show_target: if autohide { 0.0 } else { 1.0 },
+        hide_at: None,
+        sliding: false,
+        pointer_inside: false,
     };
 
     tracing::info!("dock pronta com {} app(s) fixado(s)", dock.items.len());
@@ -318,6 +341,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             dock.refresh_trash();
             dock.watch_config();
             dock.poll_text();
+            // Menu fechou com o ponteiro longe: a dock escondida volta a esconder.
+            if dock.autohide && dock.show_target > 0.0 && dock.menu.is_none() && !dock.pointer_inside && dock.hide_at.is_none() {
+                dock.schedule_hide();
+            }
             TimeoutAction::ToDuration(Duration::from_millis(800))
         })
         .map_err(|e| e.to_string())?;
@@ -520,6 +547,16 @@ struct Dock {
     config_mtime: Option<std::time::SystemTime>,
     /// O compositor desenha o vidro líquido atrás da dock (borda e reflexo vêm dele).
     liquid: bool,
+    /// Ocultar automaticamente (Configurações → Dock): a dock desce e fica só uma faixa
+    /// invisível na borda; o ponteiro nela faz a dock subir.
+    autohide: bool,
+    /// Quanto a dock aparece (0: escondida, 1: inteira), o alvo e quando esconder.
+    shown: f32,
+    show_target: f32,
+    hide_at: Option<std::time::Instant>,
+    sliding: bool,
+    /// O ponteiro está sobre a dock.
+    pointer_inside: bool,
 }
 
 impl Dock {
@@ -530,6 +567,11 @@ impl Dock {
         let Some(mut pixmap) = Pixmap::new(w, h) else {
             return;
         };
+        // Escondida: nada desenhado (só a faixa invisível que recebe o ponteiro).
+        if self.autohide && self.shown <= 0.0 {
+            self.present(&pixmap, qh);
+            return;
+        }
 
         // Fundo como a dock do macOS: vidro claro e translúcido (o mesmo da seleção
         // do launcher, em `mide::ui::draw::glass`). Com o vidro líquido, a borda, o
@@ -612,28 +654,78 @@ impl Dock {
             }
         }
 
-        // tiny-skia: RGBA premultiplicado. wl_shm Argb8888 em memória: B, G, R, A.
-        let stride = w as i32 * 4;
-        let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888)
-        else {
+        self.present(&pixmap, qh);
+        tracing::debug!("quadro da dock: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
+        self.report_icons();
+    }
+
+    /// Manda a imagem da dock para o compositor (sem pedir quadros contínuos: a dock
+    /// só redesenha quando algo muda).
+    fn present(&mut self, pixmap: &Pixmap, _qh: &QueueHandle<Self>) {
+        let (w, h) = (pixmap.width(), pixmap.height());
+        let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
             return;
         };
-        for (dst, src) in canvas.chunks_exact_mut(4).zip(pixmap.data().chunks_exact(4)) {
-            dst[0] = src[2];
-            dst[1] = src[1];
-            dst[2] = src[0];
-            dst[3] = src[3];
-        }
-
-        // Sem pedir frame contínuo: a dock só redesenha quando algo muda.
-        let _ = qh;
+        mide::ui::draw::to_argb8888(pixmap, canvas);
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, w as i32, h as i32);
         if buffer.attach_to(surface).is_ok() {
             self.layer.commit();
         }
-        tracing::debug!("quadro da dock: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
-        self.report_icons();
+    }
+
+    /// Esconde a dock daqui a pouco (com ocultar automaticamente), se o ponteiro não
+    /// voltar e não houver menu aberto.
+    fn schedule_hide(&mut self) {
+        self.hide_at = Some(std::time::Instant::now() + HIDE_DELAY);
+        self.slide();
+    }
+
+    /// Começa a deslizar a dock para `show_target` (mostrar ou esconder), quadro a
+    /// quadro, mudando a margem de baixo da camada.
+    fn slide(&mut self) {
+        if self.sliding {
+            return;
+        }
+        let Some(handle) = self.loop_handle.clone() else {
+            return;
+        };
+        self.sliding = true;
+        let step = Duration::from_millis(16);
+        let _ = handle.insert_source(Timer::from_duration(Duration::ZERO), move |_, _, dock: &mut Dock| {
+            // Hora de esconder (o ponteiro saiu e não há menu aberto)?
+            if dock.hide_at.is_some_and(|at| std::time::Instant::now() >= at) {
+                dock.hide_at = None;
+                if dock.autohide && dock.menu.is_none() && dock.press.is_none() {
+                    dock.show_target = 0.0;
+                }
+            }
+            let delta = step.as_secs_f32() / SLIDE.as_secs_f32();
+            let before = dock.shown;
+            dock.shown = if dock.show_target > dock.shown { (dock.shown + delta).min(dock.show_target) } else { (dock.shown - delta).max(dock.show_target) };
+            if dock.shown != before {
+                // Sai e entra com aceleração suave.
+                let k = dock.shown * dock.shown * (3.0 - 2.0 * dock.shown);
+                let hidden = hidden_margin() as f32;
+                let margin = (hidden + (BOTTOM_MARGIN as f32 - hidden) * k).round() as i32;
+                dock.layer.set_margin(0, 0, margin, 0);
+                // Ao começar a aparecer ou terminar de sumir, a imagem muda.
+                if before <= 0.0 || dock.shown <= 0.0 {
+                    let qh = dock.qh.clone();
+                    dock.draw(&qh);
+                } else {
+                    dock.layer.commit();
+                }
+            }
+            if dock.shown == dock.show_target && dock.hide_at.is_none() {
+                dock.sliding = false;
+                if dock.shown >= 1.0 || dock.shown <= 0.0 {
+                    tracing::info!("dock {}", if dock.shown >= 1.0 { "à mostra" } else { "escondida" });
+                }
+                return TimeoutAction::Drop;
+            }
+            TimeoutAction::ToDuration(step)
+        });
     }
 
     /// Informa ao compositor onde está cada ícone (para o efeito lâmpada ir até ele).
@@ -1275,7 +1367,8 @@ impl Dock {
         let bx = ((bounds.0 - SHADOW).floor() as i32).clamp(0, sw as i32 - 1);
         let by = ((bounds.1 - SHADOW).floor() as i32).clamp(0, sh as i32 - 1);
         let bw = (((bounds.2 + SHADOW).ceil() as i32).min(sw as i32) - bx).max(1);
-        let bh = (((bounds.3 + SHADOW).ceil() as i32).min(sh as i32) - by).max(1);
+        // A ponta do menu desce até perto do ícone (cabe no espaço acima da dock).
+        let bh = (((bounds.3 + SHADOW + ARROW_H).ceil() as i32).min(sh as i32) - by).max(1);
         let Some(mut pixmap) = Pixmap::new(bw as u32, bh as u32) else {
             return;
         };
@@ -1289,15 +1382,20 @@ impl Dock {
                 span.1 += dy;
             }
         };
-        let (fx, fy) = (bx as f32, by as f32);
-        shift(&mut menu.main, -fx, -fy);
+        // Vidro atrás dos painéis, em coordenadas da tela (a camada cobre a tela).
         let glass = mide::control_client::panel_glass();
         let mut rects = vec![(menu.main.rect.0, menu.main.rect.1, menu.main.rect.2, menu.main.rect.3, MENU_RADIUS)];
         if let Some(c) = menu.context.as_ref() {
             rects.push((c.rect.0, c.rect.1, c.rect.2, c.rect.3, MENU_RADIUS));
         }
         menu.glass.set("mide-dock-menu", if glass { &rects } else { &[] });
+        let (fx, fy) = (bx as f32, by as f32);
+        shift(&mut menu.main, -fx, -fy);
         draw_panel(&mut pixmap, text, &mut menu.main, glass);
+        // Ponta embaixo do painel principal, apontando para o ícone da dock.
+        let icon_x = dock_x + menu.anchor_x - fx;
+        let (mx, my, mw, mh) = menu.main.rect;
+        draw_arrow(&mut pixmap, icon_x.clamp(mx + 18.0, mx + mw - 18.0), my + mh, glass);
         shift(&mut menu.main, fx, fy);
         if let Some(context) = menu.context.as_mut() {
             shift(context, -fx, -fy);
@@ -1504,6 +1602,15 @@ impl Dock {
             return;
         }
         self.config_mtime = mtime;
+        let autohide = configured_autohide();
+        if autohide != self.autohide {
+            tracing::info!("dock: ocultar automaticamente {}", if autohide { "ligado" } else { "desligado" });
+            self.autohide = autohide;
+            self.show_target = if autohide { 0.0 } else { 1.0 };
+            self.hide_at = None;
+            self.layer.set_exclusive_zone(if autohide { 0 } else { dock_height() as i32 });
+            self.slide();
+        }
         let liquid = liquid_glass();
         if liquid != self.liquid {
             tracing::info!("vidro líquido na dock: {}", if liquid { "ligado" } else { "desligado" });
@@ -1627,6 +1734,14 @@ fn warm_text() -> std::sync::mpsc::Receiver<Text> {
     rx
 }
 
+/// Altura da ponta dos menus da dock.
+const ARROW_H: f32 = mide::ui::draw::ARROW_H;
+
+/// Ponta do menu com o bico em (`cx`, `top + ARROW_H`), da cor do painel.
+fn draw_arrow(pixmap: &mut Pixmap, cx: f32, top: f32, glass: bool) {
+    mide::ui::draw::menu_arrow(pixmap, cx, top, true, [246, 246, 248, if glass { 180 } else { 242 }]);
+}
+
 fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bool) {
     let (px, py, pw, ph) = panel.rect;
     for (grow, alpha) in [(6.0, 14u8), (3.0, 22), (1.0, 34)] {
@@ -1637,7 +1752,7 @@ fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bo
     if glass {
         mide::ui::draw::clear_rounded(pixmap, px, py, pw, ph, MENU_RADIUS);
     }
-    mide::ui::draw::fill_rounded(pixmap, px, py, pw, ph, MENU_RADIUS, Color::from_rgba8(246, 246, 248, if glass { 200 } else { 242 }));
+    mide::ui::draw::fill_rounded(pixmap, px, py, pw, ph, MENU_RADIUS, Color::from_rgba8(246, 246, 248, if glass { 180 } else { 242 }));
     if let Some(path) = rounded_rect(px + 0.5, py + 0.5, pw - 1.0, ph - 1.0, MENU_RADIUS) {
         let mut paint = Paint::default();
         paint.set_color(Color::from_rgba8(0, 0, 0, 46));
@@ -1795,6 +1910,12 @@ impl PointerHandler for Dock {
             match event.kind {
                 PointerEventKind::Enter { .. } => {
                     self.pointer_x = event.position.0;
+                    self.pointer_inside = true;
+                    if self.autohide {
+                        self.hide_at = None;
+                        self.show_target = 1.0;
+                        self.slide();
+                    }
                 }
                 PointerEventKind::Motion { .. } => {
                     self.pointer_x = event.position.0;
@@ -1844,6 +1965,10 @@ impl PointerHandler for Dock {
                     // painel; aqui só cancela uma espera em andamento.
                     self.hover_index = None;
                     self.hover_gen += 1;
+                    self.pointer_inside = false;
+                    if self.autohide {
+                        self.schedule_hide();
+                    }
                 }
                 _ => {}
             }

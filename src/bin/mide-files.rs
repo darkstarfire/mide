@@ -5,9 +5,13 @@
 //! das imagens) ou lista com tamanho e data. Clique seleciona, duplo clique abre, o
 //! botão direito abre o menu de contexto do item ou da pasta.
 //!
+//! Na lista, como no Finder: setinha para abrir uma pasta na própria lista (ou as
+//! setas → e ←), linhas alternadas, colunas Modificado, Tamanho (das pastas também,
+//! calculado em segundo plano) e Tipo, e o cabeçalho ordena.
+//!
 //! Teclado: Enter abre, Delete manda para a Lixeira, Backspace sobe uma pasta, setas
 //! mudam a seleção, Ctrl+N cria uma pasta, Ctrl+H mostra os ocultos, Ctrl+F busca,
-//! Ctrl+R renomeia.
+//! Ctrl+R renomeia, Ctrl+C copia, Ctrl+V cola e Ctrl+D duplica.
 //!
 //! Uso: `mide-files [pasta]` (ou `mide-files trash:///` para abrir a Lixeira).
 
@@ -54,6 +58,22 @@ struct Files {
     waiting: HashSet<PathBuf>,
     to_loader: Sender<PathBuf>,
     from_loader: Receiver<(PathBuf, Option<Pixmap>)>,
+    /// Lista: pastas abertas na própria lista e o que há dentro delas.
+    expanded: HashSet<PathBuf>,
+    children: HashMap<PathBuf, Vec<Entry>>,
+    /// Coluna ordenada (0 nome, 1 modificado, 2 tamanho, 3 tipo) e se é crescente.
+    sort: (usize, bool),
+    /// Tamanho das pastas (calculado numa thread; `None` = grande demais).
+    sizes: HashMap<PathBuf, Option<u64>>,
+    sizes_waiting: HashSet<PathBuf>,
+    to_sizer: Sender<PathBuf>,
+    from_sizer: Receiver<(PathBuf, Option<u64>)>,
+    /// Item copiado (Copiar / Ctrl+C), para Colar em outra pasta.
+    clipboard: Option<PathBuf>,
+    /// Compactar e extrair rodam numa thread: o resultado chega aqui.
+    jobs_tx: Sender<Result<PathBuf, String>>,
+    jobs_rx: Receiver<Result<PathBuf, String>>,
+    busy: usize,
 }
 
 impl Files {
@@ -70,8 +90,30 @@ impl Files {
                 }
             }
         });
+        let (to_sizer, size_jobs) = channel::<PathBuf>();
+        let (size_done, from_sizer) = channel();
+        std::thread::spawn(move || {
+            for path in size_jobs {
+                let size = files::dir_size(&path, 50_000);
+                if size_done.send((path, size)).is_err() {
+                    break;
+                }
+            }
+        });
+        let (jobs_tx, jobs_rx) = channel();
         let mut app = Self {
             place: start,
+            expanded: HashSet::new(),
+            children: HashMap::new(),
+            sort: (0, true),
+            sizes: HashMap::new(),
+            sizes_waiting: HashSet::new(),
+            to_sizer,
+            from_sizer,
+            clipboard: None,
+            jobs_tx,
+            jobs_rx,
+            busy: 0,
             back: Vec::new(),
             forward: Vec::new(),
             entries: Vec::new(),
@@ -111,9 +153,137 @@ impl Files {
                 Vec::new()
             }
         };
-        if self.selected.as_ref().is_some_and(|s| !self.entries.iter().any(|e| &e.path == s)) {
+        self.sort_entries();
+        // Pastas abertas na lista: relê o que há dentro (e esquece as que sumiram).
+        self.expanded.retain(|p| p.is_dir());
+        let expanded: Vec<PathBuf> = self.expanded.iter().cloned().collect();
+        self.children.clear();
+        for dir in expanded {
+            let mut list = files::list_dir(&dir, self.hidden).unwrap_or_default();
+            sort_list(&mut list, self.sort);
+            self.children.insert(dir, list);
+        }
+        // Tamanhos mudam depois de copiar, apagar ou renomear.
+        self.sizes.clear();
+        if self.selected.as_ref().is_some_and(|s| !s.exists()) {
             self.selected = None;
         }
+    }
+
+    fn sort_entries(&mut self) {
+        sort_list(&mut self.entries, self.sort);
+        for list in self.children.values_mut() {
+            sort_list(list, self.sort);
+        }
+    }
+
+    /// Linhas da lista: cada item com o nível dele; dentro das pastas abertas, os itens
+    /// delas logo abaixo, um nível para dentro. Na busca, só o nível de cima.
+    fn rows(&self, shown: &[Entry]) -> Vec<(usize, Entry)> {
+        fn push(rows: &mut Vec<(usize, Entry)>, list: &[Entry], depth: usize, expanded: &HashSet<PathBuf>, children: &HashMap<PathBuf, Vec<Entry>>) {
+            for entry in list {
+                rows.push((depth, entry.clone()));
+                if entry.is_dir && expanded.contains(&entry.path) && depth < 12 {
+                    if let Some(inner) = children.get(&entry.path) {
+                        push(rows, inner, depth + 1, expanded, children);
+                    }
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        let expanded = if self.search.trim().is_empty() { &self.expanded } else { &HashSet::new() };
+        push(&mut rows, shown, 0, expanded, &self.children);
+        rows
+    }
+
+    /// Abre ou fecha uma pasta na própria lista.
+    fn toggle_expand(&mut self, path: &Path, open: bool) {
+        if open {
+            let mut list = files::list_dir(path, self.hidden).unwrap_or_default();
+            sort_list(&mut list, self.sort);
+            self.children.insert(path.to_path_buf(), list);
+            self.expanded.insert(path.to_path_buf());
+            tracing::info!("pasta aberta na lista: {}", path.display());
+        } else {
+            self.expanded.retain(|p| !p.starts_with(path));
+        }
+    }
+
+    /// Texto do tamanho na lista: arquivos na hora, pastas quando a thread terminar.
+    fn size_of(&mut self, entry: &Entry) -> String {
+        if !entry.is_dir {
+            return files::size_text(entry.size);
+        }
+        match self.sizes.get(&entry.path) {
+            Some(Some(bytes)) => files::size_text(*bytes),
+            Some(None) => "—".into(),
+            None => {
+                if self.sizes_waiting.insert(entry.path.clone()) {
+                    let _ = self.to_sizer.send(entry.path.clone());
+                }
+                "…".into()
+            }
+        }
+    }
+
+    /// Pasta onde criar e colar: a de cima, ou a pasta aberta na lista escolhida.
+    fn target_dir(&self) -> Option<PathBuf> {
+        match &self.place {
+            Place::Dir(dir) => Some(dir.clone()),
+            Place::Trash => None,
+        }
+    }
+
+    fn new_file(&mut self) {
+        let Some(dir) = self.target_dir() else {
+            return;
+        };
+        match files::create_file(&dir) {
+            Ok(path) => {
+                tracing::info!("arquivo criado: {}", path.display());
+                self.reload();
+                self.selected = Some(path.clone());
+                // O nome vem todo selecionado: digitar "notas.md" já define a extensão.
+                self.start_rename(path);
+            }
+            Err(err) => self.message = Some(format!("Não foi possível criar o arquivo: {err}")),
+        }
+    }
+
+    fn duplicate(&mut self, path: &Path) {
+        match files::duplicate(path) {
+            Ok(copy) => {
+                tracing::info!("duplicado: {}", copy.display());
+                self.reload();
+                self.selected = Some(copy);
+            }
+            Err(err) => self.message = Some(format!("Não foi possível duplicar: {err}")),
+        }
+    }
+
+    fn paste(&mut self) {
+        let (Some(item), Some(dir)) = (self.clipboard.clone(), self.target_dir()) else {
+            return;
+        };
+        match files::copy_into(&item, &dir) {
+            Ok(copy) => {
+                tracing::info!("colado: {}", copy.display());
+                self.reload();
+                self.selected = Some(copy);
+            }
+            Err(err) => self.message = Some(format!("Não foi possível colar: {err}")),
+        }
+    }
+
+    /// Compactar ou extrair numa thread (pastas grandes levam tempo).
+    fn run_job(&mut self, path: PathBuf, extract: bool) {
+        let tx = self.jobs_tx.clone();
+        self.busy += 1;
+        self.message = Some(if extract { "Extraindo…".into() } else { "Compactando…".into() });
+        std::thread::spawn(move || {
+            let result = if extract { files::extract(&path) } else { files::compress(&path) };
+            let _ = tx.send(result.map_err(|e| e.to_string()));
+        });
     }
 
     fn go(&mut self, place: Place) {
@@ -269,12 +439,19 @@ impl Files {
     }
 
     /// Teclas da janela (quando não há um campo de texto com o foco).
-    fn keys(&mut self, ui: &mut Ui, shown: &[Entry], columns: usize) {
+    fn keys(&mut self, ui: &mut Ui, shown: &[Entry], columns: usize, list: bool) {
         let input = ui.input();
         let (enter, delete, backspace) = (input.key(Key::Enter), input.key(Key::Delete), input.key(Key::Backspace));
-        let moves = [(Key::Left, -1isize), (Key::Right, 1), (Key::Up, -(columns as isize)), (Key::Down, columns as isize)];
+        // Na lista, ← e → fecham e abrem a pasta escolhida (como no Finder).
+        let (left, right) = (input.key(Key::Left), input.key(Key::Right));
+        let moves = if list {
+            vec![(Key::Up, -1isize), (Key::Down, 1)]
+        } else {
+            vec![(Key::Left, -1isize), (Key::Right, 1), (Key::Up, -(columns as isize)), (Key::Down, columns as isize)]
+        };
         let step: isize = moves.iter().filter(|(k, _)| input.key(*k)).map(|(_, d)| *d).sum();
         let (new, hidden, find, rename) = (input.shortcut("n"), input.shortcut("h"), input.shortcut("f"), input.shortcut("r"));
+        let (copy, paste, dup) = (input.shortcut("c"), input.shortcut("v"), input.shortcut("d"));
         if hidden {
             self.hidden = !self.hidden;
             self.reload();
@@ -301,6 +478,30 @@ impl Files {
             ui.request_repaint();
         }
         let chosen = current.map(|i| shown[i].clone());
+        if list && (left || right) {
+            if let Some(entry) = chosen.as_ref().filter(|e| e.is_dir) {
+                self.toggle_expand(&entry.path, right);
+                ui.request_repaint();
+            }
+        }
+        if self.place != Place::Trash {
+            if copy {
+                if let Some(entry) = &chosen {
+                    self.clipboard = Some(entry.path.clone());
+                    tracing::info!("copiado: {}", entry.path.display());
+                }
+            }
+            if paste {
+                self.paste();
+                ui.request_repaint();
+            }
+            if dup {
+                if let Some(entry) = &chosen {
+                    self.duplicate(&entry.path);
+                    ui.request_repaint();
+                }
+            }
+        }
         if enter {
             if let Some(entry) = &chosen {
                 self.open(entry);
@@ -416,6 +617,28 @@ impl Files {
     }
 
     fn content(&mut self, ui: &mut Ui) {
+        // Tamanhos de pastas e tarefas (compactar, extrair) que terminaram.
+        while let Ok((path, size)) = self.from_sizer.try_recv() {
+            self.sizes_waiting.remove(&path);
+            self.sizes.insert(path, size);
+            ui.request_repaint();
+        }
+        while let Ok(result) = self.jobs_rx.try_recv() {
+            self.busy = self.busy.saturating_sub(1);
+            match result {
+                Ok(path) => {
+                    tracing::info!("pronto: {}", path.display());
+                    self.message = None;
+                    self.reload();
+                    self.selected = Some(path);
+                }
+                Err(err) => self.message = Some(format!("Não deu certo: {err}")),
+            }
+            ui.request_repaint();
+        }
+        if self.busy > 0 || !self.sizes_waiting.is_empty() {
+            ui.request_tick();
+        }
         // Miniaturas que chegaram.
         while let Ok((path, thumb)) = self.from_loader.try_recv() {
             self.waiting.remove(&path);
@@ -427,8 +650,22 @@ impl Files {
         }
         self.toolbar(ui);
         let shown = self.shown();
+        let in_list = self.list_view || self.place == Place::Trash;
         let columns = ((ui.available_width() - 2.0 * ui.theme().padding) / (TILE as f32 + 44.0 + ui.theme().spacing)).max(1.0) as usize;
-        self.keys(ui, &shown, if self.list_view || self.place == Place::Trash { 1 } else { columns });
+        // Na lista, as teclas andam pelas linhas (inclusive as de dentro das pastas).
+        let rows = if in_list { self.rows(&shown) } else { Vec::new() };
+        let row_entries: Vec<Entry> = rows.iter().map(|(_, e)| e.clone()).collect();
+        self.keys(ui, if in_list { &row_entries } else { &shown }, columns, in_list);
+        let mut sizes: HashMap<PathBuf, String> = HashMap::new();
+        if in_list {
+            for (_, entry) in &rows {
+                let text = self.size_of(entry);
+                sizes.insert(entry.path.clone(), text);
+            }
+        }
+        let mut toggles: Vec<(PathBuf, bool)> = Vec::new();
+        let mut sort_by = None;
+        let clipboard = self.clipboard.is_some();
         let in_trash = self.place == Place::Trash;
         let now = SystemTime::now();
         let mut action: Option<(Action, Entry)> = None;
@@ -462,15 +699,41 @@ impl Files {
                         } else {
                             None
                         }
-                    } else if m.item("Abrir") {
-                        Some(Action::Open)
-                    } else if m.item("Renomear…") {
-                        Some(Action::Rename)
-                    } else if m.item("Copiar caminho") {
-                        Some(Action::CopyPath)
                     } else {
+                        let is_zip = entry.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+                        let mut chosen = None;
+                        if m.item("Abrir") {
+                            chosen = Some(Action::Open);
+                        }
+                        if entry.is_dir && m.item("Abrir no Terminal") {
+                            chosen = Some(Action::Terminal);
+                        }
                         m.separator();
-                        m.danger("Mover para a Lixeira").then_some(Action::Trash)
+                        if m.item("Renomear…") {
+                            chosen = Some(Action::Rename);
+                        }
+                        if m.item("Duplicar") {
+                            chosen = Some(Action::Duplicate);
+                        }
+                        if is_zip {
+                            if m.item("Extrair aqui") {
+                                chosen = Some(Action::Extract);
+                            }
+                        } else if m.item(&format!("Comprimir \"{}\"", short(&entry.name))) {
+                            chosen = Some(Action::Compress);
+                        }
+                        m.separator();
+                        if m.item("Copiar") {
+                            chosen = Some(Action::Copy);
+                        }
+                        if m.item("Copiar caminho") {
+                            chosen = Some(Action::CopyPath);
+                        }
+                        m.separator();
+                        if m.danger("Mover para a Lixeira") {
+                            chosen = Some(Action::Trash);
+                        }
+                        chosen
                     };
                     if let Some(chosen) = chosen {
                         action = Some((chosen, entry.clone()));
@@ -484,13 +747,27 @@ impl Files {
                 // A miniatura de cada imagem vem do cache; o que falta é pedido.
                 shown.iter().map(|e| if e.is_image() { self.thumb_clone(&e.path) } else { None }).collect()
             };
-            if self.list_view || in_trash {
-                for entry in &shown {
+            if in_list {
+                // Lista no estilo do Finder: cabeçalho que ordena e linhas alternadas,
+                // com a setinha das pastas.
+                let widths = [("Modificado", 165.0), ("Tamanho", 85.0), ("Tipo", 150.0)];
+                if !shown.is_empty() {
+                    sort_by = ui.list_header("Nome", &widths, self.sort);
+                }
+                for (i, (depth, entry)) in rows.iter().enumerate() {
                     let selected = current.as_ref() == Some(&entry.path);
-                    let size = if entry.is_dir { "—".to_string() } else { files::size_text(entry.size) };
                     let date = files::date_text(entry.modified, now);
-                    let r = ui.list_row(entry.icon_name(), &entry.name, &[(&date, 170.0), (&size, 90.0)], selected);
-                    item(ui, entry, r);
+                    let size = sizes.get(&entry.path).cloned().unwrap_or_default();
+                    let kind = files::kind_text(entry);
+                    let open = self.expanded.contains(&entry.path);
+                    let expandable = entry.is_dir && !in_trash;
+                    let cols = [(date.as_str(), widths[0].1), (size.as_str(), widths[1].1), (kind.as_str(), widths[2].1)];
+                    let (r, toggled) = ui.tree_row(*depth, expandable, open, entry.icon_name(), &entry.name, &cols, selected, i % 2 == 1);
+                    if toggled {
+                        toggles.push((entry.path.clone(), !open));
+                    } else {
+                        item(ui, entry, r);
+                    }
                 }
             } else {
                 ui.wrap(|ui| {
@@ -525,21 +802,48 @@ impl Files {
                     if m.item("Nova pasta") {
                         empty_action = Some(Action::NewFolder);
                     }
+                    if m.item("Novo arquivo") {
+                        empty_action = Some(Action::NewFile);
+                    }
+                    if clipboard && m.item("Colar") {
+                        empty_action = Some(Action::Paste);
+                    }
+                    m.separator();
+                    if m.item("Abrir no Terminal") {
+                        empty_action = Some(Action::Terminal);
+                    }
                     if m.item(if self.hidden { "Esconder arquivos ocultos" } else { "Mostrar arquivos ocultos" }) {
                         empty_action = Some(Action::ToggleHidden);
                     }
-                    m.separator();
                     if m.item("Copiar caminho da pasta") {
                         empty_action = Some(Action::CopyFolder);
                     }
                 }
             });
         });
+        for (path, open) in toggles {
+            self.toggle_expand(&path, open);
+            ui.request_repaint();
+        }
+        if let Some(column) = sort_by {
+            // Clicar na coluna já ordenada inverte a ordem.
+            self.sort = if self.sort.0 == column { (column, !self.sort.1) } else { (column, true) };
+            self.sort_entries();
+            ui.request_repaint();
+        }
         if let Some((action, entry)) = action {
             match action {
                 Action::Open => self.open(&entry),
                 Action::Rename => self.start_rename(entry.path.clone()),
                 Action::CopyPath => places::copy_text(&entry.path.to_string_lossy()),
+                Action::Terminal => places::open_terminal(&entry.path),
+                Action::Duplicate => self.duplicate(&entry.path),
+                Action::Compress => self.run_job(entry.path.clone(), false),
+                Action::Extract => self.run_job(entry.path.clone(), true),
+                Action::Copy => {
+                    tracing::info!("copiado: {}", entry.path.display());
+                    self.clipboard = Some(entry.path.clone());
+                }
                 Action::Trash => self.move_to_trash(&entry.path),
                 Action::Restore => self.restore(&entry),
                 Action::Delete => self.delete_forever(&entry),
@@ -550,6 +854,13 @@ impl Files {
         if let Some(action) = empty_action {
             match action {
                 Action::NewFolder => self.new_folder(),
+                Action::NewFile => self.new_file(),
+                Action::Paste => self.paste(),
+                Action::Terminal => {
+                    if let Some(dir) = self.target_dir() {
+                        places::open_terminal(&dir);
+                    }
+                }
                 Action::ToggleHidden => {
                     self.hidden = !self.hidden;
                     self.reload();
@@ -579,7 +890,14 @@ impl Files {
 #[derive(Clone, Copy)]
 enum Action {
     Open,
+    Terminal,
     Rename,
+    Duplicate,
+    Compress,
+    Extract,
+    Copy,
+    Paste,
+    NewFile,
     CopyPath,
     Trash,
     Restore,
@@ -596,8 +914,8 @@ impl App for Files {
         let mut items: Vec<(String, &str)> = vec![("Favoritos".into(), "")];
         items.extend(self.favorites.iter().map(|(name, _, icon)| (name.clone(), *icon)));
         items.push(("Lugares".into(), ""));
-        items.push(("Computador".into(), "drive-harddisk"));
-        items.push(("Lixeira".into(), "user-trash"));
+        items.push(("Computador".into(), "drive-harddisk-symbolic"));
+        items.push(("Lixeira".into(), "user-trash-symbolic"));
         let favorites = self.favorites.len();
         let current = match &self.place {
             Place::Trash => favorites + 3,
@@ -617,6 +935,31 @@ impl App for Files {
             self.go(place);
             ui.request_repaint();
         }
+    }
+}
+
+/// Ordena uma lista pela coluna (0 nome, 1 modificado, 2 tamanho, 3 tipo). Por nome,
+/// pastas primeiro (como o Finder); nas outras colunas, tudo junto.
+fn sort_list(list: &mut [Entry], (column, ascending): (usize, bool)) {
+    list.sort_by(|a, b| {
+        let order = match column {
+            1 => a.modified.cmp(&b.modified),
+            2 => a.size.cmp(&b.size),
+            3 => files::kind_text(a).cmp(&files::kind_text(b)),
+            _ => b.is_dir.cmp(&a.is_dir).then_with(|| mide::apps::fold(&a.name).cmp(&mide::apps::fold(&b.name))),
+        };
+        let order = order.then_with(|| mide::apps::fold(&a.name).cmp(&mide::apps::fold(&b.name)));
+        if ascending { order } else { order.reverse() }
+    });
+}
+
+/// Nome curto para os menus ("Comprimir "um nome muito…"").
+fn short(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= 24 {
+        name.to_string()
+    } else {
+        format!("{}…", chars[..22].iter().collect::<String>())
     }
 }
 

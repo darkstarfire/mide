@@ -54,6 +54,7 @@ struct FileConfig {
     keybindings: BTreeMap<String, String>,
     effects: Effects,
     desktop: Desktop,
+    keyboard: Keyboard,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -111,6 +112,15 @@ impl Default for Effects {
     }
 }
 
+/// Teclado, na seção `[keyboard]` do arquivo.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Keyboard {
+    /// Teclas no estilo Mac: Command (a tecla Super/Windows) faz o papel do Ctrl e o
+    /// Ctrl o do Super, então os atalhos ficam no mesmo lugar do Mac (⌘C, ⌘V, ⌘Espaço).
+    pub mac_style: bool,
+}
+
 /// Área de trabalho, na seção `[desktop]` do arquivo.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
@@ -154,25 +164,28 @@ pub struct Config {
     pub bindings: Vec<Binding>,
     pub effects: Effects,
     pub desktop: Desktop,
+    pub keyboard: Keyboard,
 }
 
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
-        let (user, effects, desktop) = match config_path() {
+        let (user, effects, desktop, keyboard) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
                 let mut file = toml::from_str::<FileConfig>(&text)
                     .map_err(|e| format!("{}: {e}", path.display()))?;
                 let effects = file.effects;
                 let desktop = std::mem::take(&mut file.desktop);
-                (file.all_bindings(), effects, desktop)
+                let keyboard = std::mem::take(&mut file.keyboard);
+                (file.all_bindings(), effects, desktop, keyboard)
             }
-            _ => (BTreeMap::new(), Effects::default(), Desktop::default()),
+            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default()),
         };
         let mut config = Self::from_entries(&user)?;
         config.effects = effects;
         config.desktop = desktop;
+        config.keyboard = keyboard;
         Ok(config)
     }
 
@@ -198,6 +211,7 @@ impl Config {
             bindings,
             effects: Effects::default(),
             desktop: Desktop::default(),
+            keyboard: Keyboard::default(),
         })
     }
 

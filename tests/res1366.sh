@@ -51,7 +51,7 @@ check "dock centralizada embaixo" 'camada "mide-dock" em \(541, 703\) 285x57' "3
 check "Launchpad na dock abre o launcher em tela cheia" 'camada "mide-launcher" em \(0, 0\) 1366x768' "300 click 568 728; 380 list"
 check "clique na dock abre o app" "nova janela criada" "300 click 611 728; 420 list"
 check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "300 list" foot
-check "maximizar ocupa a área útil" "$FOOT posição=\(0, 58\) visível=1366x710" "300 click 103 61; 360 list" foot
+check "maximizar ocupa a área útil" "$FOOT posição=\(0, 58\) visível=1366x645" "300 click 103 61; 360 list" foot
 check "Arquivos cabe na tela" 'janela "[^"]*" popups=0 posição=\(48, 76\) visível=900x520' "300 list" "target/debug/mide-files /usr"
 check "Configurações cabem na tela" 'janela "Configurações do Sistema" popups=0 posição=\(48, 76\)' "300 list" target/debug/mide-settings
 

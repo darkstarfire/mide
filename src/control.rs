@@ -12,6 +12,7 @@
 //! - `mods`: teclas modificadoras pressionadas agora (`ctrl`, `shift`, `alt`, `logo`).
 //! - `quit`: encerra o compositor (menu "Encerrar sessão" da barra).
 //! - `search`: abre ou fecha o buscador.
+//! - `force_quit`: termina o processo do app em foco (menu do mide).
 //! - `glass <camada> raio:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
 //!   líquido) atrás desses retângulos, relativos a ela; sem regiões, limpa.
 
@@ -176,6 +177,10 @@ pub fn handle(state: &mut State, command: &str) -> String {
             }
             "ok\n".into()
         }
+        // Forçar encerrar o app em foco (menu do mide).
+        Some("force_quit") => {
+            if focused_window_action(state, "kill") { "ok\n".into() } else { "none\n".into() }
+        }
         // Abre ou fecha o buscador.
         Some("search") => {
             state.toggle_search();
@@ -338,6 +343,22 @@ fn focused_window_action(state: &mut State, action: &str) -> bool {
         "close" => toplevel.send_close(),
         "minimize" => state.minimize(toplevel.wl_surface()),
         "zoom" => crate::input::toggle_maximize(state, toplevel),
+        // Forçar encerrar: termina o processo do app (quando ele não responde).
+        "kill" => {
+            use smithay::reexports::wayland_server::Resource;
+            let pid = toplevel
+                .wl_surface()
+                .client()
+                .and_then(|c| c.get_credentials(&state.display_handle).ok())
+                .map(|c| c.pid);
+            match pid {
+                Some(pid) if pid > 1 && pid as u32 != std::process::id() => {
+                    tracing::info!("controle: forçar encerrar o processo {pid}");
+                    let _ = std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+                }
+                _ => return false,
+            }
+        }
         _ => return false,
     }
     tracing::info!("controle: janela em foco: {action}");

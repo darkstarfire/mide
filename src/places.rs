@@ -401,6 +401,26 @@ pub fn copy_text(text: &str) {
     }
 }
 
+/// Abre um terminal na pasta `dir` (foot, ou o terminal padrão do sistema). Com
+/// `MIDE_OPEN_DRY_RUN` definido (testes), só registra no log.
+pub fn open_terminal(dir: &Path) {
+    if std::env::var_os("MIDE_OPEN_DRY_RUN").is_some() {
+        tracing::info!("terminal (teste): {}", dir.display());
+        return;
+    }
+    let quoted = format!("'{}'", dir.to_string_lossy().replace('\'', "'\\''"));
+    let command = format!("foot -D {quoted} || x-terminal-emulator --working-directory={quoted}");
+    match Command::new("sh").arg("-c").arg(&command).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            tracing::info!("terminal em {}", dir.display());
+        }
+        Err(err) => tracing::warn!("falha ao abrir o terminal: {err}"),
+    }
+}
+
 /// Abre um arquivo, pasta ou endereço (como `trash:///`) com o app padrão.
 /// Com `MIDE_OPEN_DRY_RUN` definido (testes), só registra no log.
 pub fn open(target: &str) {

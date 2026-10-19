@@ -501,7 +501,12 @@ fn layer_elements(
                 }
             }
             "mide-dock" if state.config.effects.dock_blur => {
-                glass.push(GlassRegion { at: elements.len(), rect: geo, radius: 15.0, name: "mide-dock".into() });
+                // Só a parte na tela (a dock que se esconde desliza para fora); a faixa
+                // escondida, pequena demais, fica sem vidro.
+                let screen = output.current_mode().map(|m| Rectangle::from_size(m.size.to_logical(1))).unwrap_or(geo);
+                if let Some(rect) = geo.intersection(screen) {
+                    glass.push(GlassRegion { at: elements.len(), rect, radius: 15.0, name: "mide-dock".into() });
+                }
             }
             namespace if state.config.effects.panel_glass => {
                 // Regiões pedidas pela camada (barra, menus, notificações), relativas a ela.

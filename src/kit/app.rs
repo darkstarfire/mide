@@ -168,6 +168,10 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             if runner.ctx.ticking {
                 runner.dirty = true;
             }
+            if runner.ctx.wake_at.is_some_and(|at| std::time::Instant::now() >= at) {
+                runner.ctx.wake_at = None;
+                runner.dirty = true;
+            }
             TimeoutAction::ToDuration(TICK)
         })
         .map_err(|e| e.to_string())?;
@@ -440,9 +444,10 @@ impl Runner {
         match key {
             Some(k) => input.keys.push(k),
             None if input.ctrl => {
-                // Ctrl+letra vira tecla (atalho), não texto.
-                if let Some(text) = event.utf8.filter(|t| !t.is_empty()) {
-                    input.shortcuts.push(text.to_lowercase());
+                // Ctrl+letra vira atalho, não texto. Com Ctrl, o texto da tecla é um
+                // caractere de controle (Ctrl+D = 0x04): vale o símbolo da tecla.
+                if let Some(c) = event.keysym.key_char().filter(|c| c.is_alphanumeric()) {
+                    input.shortcuts.push(c.to_lowercase().to_string());
                 }
             }
             None => {

@@ -22,6 +22,8 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 usvg = { version = "0.45", default-features = false }
 xkbcommon = "0.8"
 zbus = "5"
+# Compactar e extrair .zip no Arquivos, sem programa externo.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Em desenvolvimento, as dependências (desenho de SVG, imagens, texto, shaders)
 # são compiladas otimizadas: sem isso, abrir o launcher ou a dock leva segundos.

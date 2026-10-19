@@ -83,7 +83,6 @@ const TITLE_GAP: f32 = 18.0;
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MenuAction {
     About,
-    Quit,
     /// Abre outra janela do app em foco (pelo `Exec` do `.desktop`).
     NewWindow,
     /// Comando do canal de controle do compositor (`window close`, `keys ctrl+c`...).
@@ -92,6 +91,12 @@ enum MenuAction {
     AppWindows(&'static str),
     /// Abre um painel das configurações do sistema.
     Settings(&'static str),
+    /// Repouso e bloquear tela (sem confirmação).
+    Power(system::Power),
+    /// Pede confirmação (reiniciar, desligar, encerrar a sessão).
+    Confirm(MenuId),
+    /// Fecha à força o app em foco (quando ele não responde).
+    ForceQuit,
 }
 
 /// Item de menu: texto, atalho mostrado à direita e ação (sem ação, desativado).
@@ -100,6 +105,10 @@ enum MenuItem {
     Entry(String, &'static str, Option<MenuAction>),
     Separator,
 }
+
+/// Topo dos menus e painéis: abaixo da barra, com espaço para a ponta que mostra de
+/// onde eles vêm.
+const PANEL_TOP: f32 = BAR_HEIGHT as f32 + mide::ui::draw::ARROW_H + 2.0;
 
 fn entry(label: impl Into<String>, shortcut: &'static str, action: Option<MenuAction>) -> MenuItem {
     MenuItem::Entry(label.into(), shortcut, action)
@@ -120,18 +129,34 @@ enum MenuId {
     Bluetooth,
     /// Menu da bateria (lista).
     Battery,
+    /// Central de controle (Wi-Fi, Bluetooth, Não perturbe, brilho, som).
+    Control,
+    /// Engrenagem: abre as Configurações (não é menu).
+    Gear,
+    /// Confirmações do menu do mide.
+    ConfirmRestart,
+    ConfirmShutdown,
+    ConfirmLogout,
 }
 
 impl MenuId {
     /// Painel desenhado à parte (calendário, som, Wi-Fi, Bluetooth).
     fn custom(self) -> bool {
-        matches!(self, MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth)
+        matches!(
+            self,
+            MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Control | MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout
+        )
+    }
+
+    fn confirm(self) -> bool {
+        matches!(self, MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout)
     }
 
     /// Largura do painel desenhado à parte.
     fn custom_width(self) -> f32 {
         match self {
-            MenuId::Wifi => 300.0,
+            MenuId::Wifi | MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout => 300.0,
+            MenuId::Control => 320.0,
             _ => 280.0,
         }
     }
@@ -151,6 +176,15 @@ enum PanelAction {
     ToggleBluetooth,
     Device(usize),
     Settings(&'static str),
+    /// Central de controle: Não perturbe e o trilho do brilho.
+    ToggleDnd,
+    BrightnessTrack,
+    /// Confirmação: fazer ou cancelar.
+    ConfirmYes,
+    ConfirmNo,
+    /// Calendário: abrir/fechar as opções do relógio e ligar uma parte dele.
+    ClockOptions,
+    ClockPart(usize),
 }
 
 /// Títulos dos menus do app, depois do nome dele.
@@ -165,9 +199,16 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
         MenuId::System => vec![
             entry("Sobre este computador", "", Some(MenuAction::About)),
             MenuItem::Separator,
-            entry("Configurações do sistema…", "", Some(MenuAction::Settings("wifi"))),
+            entry("Configurações do Sistema…", "", Some(MenuAction::Settings(""))),
             MenuItem::Separator,
-            entry("Encerrar sessão…", "", Some(MenuAction::Quit)),
+            entry("Forçar encerrar o app", "", Some(MenuAction::ForceQuit)),
+            MenuItem::Separator,
+            entry("Repouso", "", Some(MenuAction::Power(system::Power::Sleep))),
+            entry("Reiniciar…", "", Some(MenuAction::Confirm(MenuId::ConfirmRestart))),
+            entry("Desligar…", "", Some(MenuAction::Confirm(MenuId::ConfirmShutdown))),
+            MenuItem::Separator,
+            entry("Bloquear tela", "", Some(MenuAction::Power(system::Power::Lock))),
+            entry("Encerrar sessão…", "", Some(MenuAction::Confirm(MenuId::ConfirmLogout))),
         ],
         MenuId::App => vec![
             entry(format!("Ocultar {app}"), "", Some(MenuAction::AppWindows("hide"))),
@@ -193,8 +234,9 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
             entry("Zoom", "", window("zoom")),
         ],
         MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("power")))],
-        // Painéis desenhados à parte: sem itens de lista.
-        MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth => Vec::new(),
+        // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
+        MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Control | MenuId::Gear => Vec::new(),
+        MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout => Vec::new(),
     }
 }
 
@@ -247,6 +289,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         status: Status::default(),
         status_now: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         cal_month: (2000, 1),
+        clock_options: false,
         volume_sent: std::time::Instant::now(),
         menu: None,
         bar_dirty: false,
@@ -383,20 +426,38 @@ fn ask_compositor(command: &str) -> Option<Vec<String>> {
 }
 
 /// Data e hora no estilo do macOS em português: "sáb 17 out  20:15".
+/// O que o relógio da barra mostra além da hora (`[clock]` no `config.toml`, escolhido
+/// em "Formato da hora…" no calendário). Por padrão, só a hora.
+const CLOCK_PARTS: &[(&str, &str)] = &[("weekday", "Dia da semana"), ("date", "Dia e mês"), ("year", "Ano"), ("seconds", "Segundos")];
+
+fn clock_part(key: &str) -> bool {
+    matches!(mide::settings_file::get("clock", key), Some(mide::settings_file::Value::Bool(true)))
+}
+
 fn clock_text() -> String {
+    clock_format(Local::now(), clock_part("weekday"), clock_part("date"), clock_part("year"), clock_part("seconds"))
+}
+
+/// "qua 18 out 2026  14:05:09", com as partes escolhidas (sempre a hora).
+fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: bool, seconds: bool) -> String {
     const DAYS: [&str; 7] = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
-    const MONTHS: [&str; 12] = [
-        "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
-    ];
-    let now = Local::now();
-    format!(
-        "{} {} {}  {:02}:{:02}",
-        DAYS[now.weekday().num_days_from_monday() as usize],
-        now.day(),
-        MONTHS[now.month0() as usize],
-        now.hour(),
-        now.minute()
-    )
+    const MONTHS: [&str; 12] = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+    let mut parts = Vec::new();
+    if weekday {
+        parts.push(DAYS[now.weekday().num_days_from_monday() as usize].to_string());
+    }
+    if date {
+        parts.push(format!("{} {}", now.day(), MONTHS[now.month0() as usize]));
+    }
+    if year {
+        parts.push(now.year().to_string());
+    }
+    let time = if seconds { format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()) } else { format!("{:02}:{:02}", now.hour(), now.minute()) };
+    if parts.is_empty() {
+        time
+    } else {
+        format!("{}  {time}", parts.join(" "))
+    }
 }
 
 /// Carga da bateria (0 a 100) e se está carregando, se o computador tiver bateria.
@@ -431,6 +492,8 @@ struct Menu {
     hover_region: Option<usize>,
     panel_h: f32,
     dragging_volume: bool,
+    /// Arrastando o trilho do brilho (central de controle).
+    dragging_brightness: bool,
 }
 
 impl Menu {
@@ -452,7 +515,7 @@ impl Menu {
     /// Índice do item sob `(x, y)`, se for um item com ação.
     fn item_at(&self, x: f64, y: f64) -> Option<usize> {
         let (x, y) = (x as f32, y as f32);
-        let top = BAR_HEIGHT as f32 + 4.0 + MENU_PAD;
+        let top = PANEL_TOP + MENU_PAD;
         if x < self.x || x > self.x + self.panel_w {
             return None;
         }
@@ -472,7 +535,7 @@ impl Menu {
 
     fn inside_panel(&self, x: f64, y: f64) -> bool {
         let (x, y) = (x as f32, y as f32);
-        let top = BAR_HEIGHT as f32 + 4.0;
+        let top = PANEL_TOP;
         x >= self.x && x <= self.x + self.panel_w && y >= top && y <= top + self.panel_height()
     }
 }
@@ -510,6 +573,8 @@ struct Bar {
     status_now: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Mês mostrado no calendário (ano, mês).
     cal_month: (i32, u32),
+    /// O calendário mostra as opções do formato da hora.
+    clock_options: bool,
     /// Última vez que o volume foi mandado durante um arrasto.
     volume_sent: std::time::Instant,
     menu: Option<Menu>,
@@ -592,7 +657,7 @@ impl Bar {
         let strip = [(0.0, 0.0, fw, fh, 0.0)];
         self.glass_bar.set("mide-bar", if glass { &strip } else { &[] });
         if !self.over_launcher {
-            let (top_a, bottom_a) = if glass { (178, 170) } else { (225, 220) };
+            let (top_a, bottom_a) = if glass { (158, 150) } else { (225, 220) };
             let mut paint = Paint::default();
             paint.shader = vertical_gradient(0.0, fh, rgba(250, 250, 252, top_a), rgba(238, 238, 242, bottom_a));
             if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, fw, fh) {
@@ -666,6 +731,14 @@ impl Bar {
         highlight(&mut pixmap, MenuId::Calendar, x - 7.0, x + clock_w + 7.0);
         self.text.draw(&mut pixmap, &clock, x, text_y, FONT, FontWeight::Regular, fg);
         self.titles.push((MenuId::Calendar, x - 7.0, x + clock_w + 7.0));
+        // Central de controle logo à esquerda do relógio, como no macOS.
+        {
+            let (x0, x1) = (x - 36.0, x - 8.0);
+            highlight(&mut pixmap, MenuId::Control, x0, x1);
+            draw_control_icon(&mut pixmap, (x0 + x1) / 2.0, cy, fg);
+            self.titles.push((MenuId::Control, x0, x1));
+            x = x0;
+        }
         if let Some((level, charging)) = self.battery {
             let label = format!("{level}%");
             let label_w = self.text.measure(&label, FONT, FontWeight::Regular);
@@ -705,6 +778,13 @@ impl Bar {
             self.titles.push((id, x0, x1));
             x = x0;
         }
+        // Engrenagem (abre as Configurações), à esquerda dos outros.
+        {
+            let (x0, x1) = (x - 36.0, x - 8.0);
+            highlight(&mut pixmap, MenuId::Gear, x0, x1);
+            draw_gear_icon(&mut pixmap, (x0 + x1) / 2.0, cy, fg);
+            self.titles.push((MenuId::Gear, x0, x1));
+        }
 
         self.present_layer(&pixmap, true);
     }
@@ -725,8 +805,8 @@ impl Bar {
         let Some(mut pixmap) = Pixmap::new(w, h) else {
             return;
         };
-        let (mx, mw, items) = (menu.x, menu.panel_w, menu.items.clone());
-        let top = BAR_HEIGHT as f32 + 4.0;
+        let (mx, mw, items, menu_id) = (menu.x, menu.panel_w, menu.items.clone(), menu.id);
+        let top = PANEL_TOP;
         let ph = menu.panel_height();
 
         // Painel: vidro claro com borda fina e sombra suave.
@@ -740,12 +820,17 @@ impl Bar {
         if glass {
             mide::ui::draw::clear_rounded(&mut pixmap, mx, top, mw, ph, 10.0);
         }
-        fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(246, 246, 248, if glass { 200 } else { 240 }));
+        let fill = [246, 246, 248, if glass { 180 } else { 240 }];
+        fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(fill[0], fill[1], fill[2], fill[3]));
         if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, 10.0) {
             let mut border = Paint::default();
             border.set_color(rgba(0, 0, 0, 40));
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
+        }
+        // Ponta apontando para o título (ou a marca do mide) de onde o menu veio.
+        if let Some(cx) = self.anchor_of(menu_id) {
+            mide::ui::draw::menu_arrow(&mut pixmap, cx.clamp(mx + 18.0, mx + mw - 18.0), top, false, fill);
         }
 
         let mut y = top + MENU_PAD;
@@ -808,6 +893,13 @@ impl Bar {
     /// Abre o menu `id`, ou troca o menu aberto por ele (passar o mouse pelos títulos
     /// com um menu aberto troca de menu, como no macOS).
     fn open_menu(&mut self, id: MenuId) {
+        // A engrenagem não é menu: abre as Configurações.
+        if id == MenuId::Gear {
+            self.close_menu();
+            tracing::info!("engrenagem: Configurações");
+            system::open_settings("");
+            return;
+        }
         let app = self.focused_name.clone();
         let mut items = menu_items(id, &app);
         if id == MenuId::Battery {
@@ -820,10 +912,13 @@ impl Bar {
         if id == MenuId::Calendar {
             let today = Local::now().date_naive();
             self.cal_month = (today.year(), today.month());
+            self.clock_options = false;
         }
         let title = self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (*x0, *x1));
         let x = match (id, title) {
             (MenuId::System, _) => 8.0,
+            // Confirmações: no meio da tela.
+            (_, _) if id.confirm() => (self.width as f32 - id.custom_width()) / 2.0,
             // Painéis da direita: centrados no ícone, sem sair da tela.
             (_, Some((x0, x1))) if id.custom() || id == MenuId::Battery => {
                 let w = if id.custom() { id.custom_width() } else { MENU_MIN_W };
@@ -857,6 +952,7 @@ impl Bar {
             menu.regions.clear();
             menu.hover_region = None;
             menu.dragging_volume = false;
+            menu.dragging_brightness = false;
             self.draw_menu();
             self.draw_bar();
             return;
@@ -884,6 +980,7 @@ impl Bar {
             hover_region: None,
             panel_h: 0.0,
             dragging_volume: false,
+            dragging_brightness: false,
         });
         self.draw_bar();
     }
@@ -893,6 +990,14 @@ impl Bar {
             tracing::info!("menu fechado");
             self.draw_bar();
         }
+    }
+
+    /// Centro do título ou ícone da barra de onde o menu `id` vem.
+    fn anchor_of(&self, id: MenuId) -> Option<f32> {
+        if id == MenuId::System {
+            return Some(LOGO_X + LOGO_W / 2.0);
+        }
+        self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (x0 + x1) / 2.0)
     }
 
     /// Menu cujo título fica em `x` na barra (a marca do mide é o menu do sistema).
@@ -909,10 +1014,6 @@ impl Bar {
         tracing::info!("menu: {action:?}");
         match action {
             MenuAction::About => spawn_sibling("mide-about"),
-            MenuAction::Quit => {
-                tracing::info!("encerrando a sessão");
-                let _ = ask_compositor("quit");
-            }
             MenuAction::NewWindow => match self.names.exec_for(&self.focused_id) {
                 Some(command) => {
                     if let Ok(mut child) = std::process::Command::new("sh").arg("-c").arg(&command).spawn() {
@@ -927,6 +1028,11 @@ impl Bar {
                 let _ = ask_compositor(&command);
             }
             MenuAction::Settings(panel) => system::open_settings(panel),
+            MenuAction::Power(action) => system::power(action),
+            MenuAction::Confirm(id) => self.open_menu(id),
+            MenuAction::ForceQuit => {
+                let _ = ask_compositor("force_quit");
+            }
             MenuAction::AppWindows(what) => {
                 let mut ids = vec![self.focused_id.to_lowercase()];
                 if let Some(last) = self.focused_id.rsplit('.').next() {
@@ -955,7 +1061,7 @@ impl Bar {
         let Some(mut pixmap) = Pixmap::new(w, h) else {
             return;
         };
-        let top = BAR_HEIGHT as f32 + 4.0;
+        let top = PANEL_TOP;
         // Conteúdo primeiro num pixmap à parte, para saber a altura do painel.
         let mut content = Pixmap::new(pw as u32, 600).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         let mut regions = Vec::new();
@@ -963,6 +1069,8 @@ impl Bar {
             MenuId::Calendar => self.panel_calendar(&mut content, pw, &mut regions, hover),
             MenuId::Sound => self.panel_sound(&mut content, pw, &mut regions, hover),
             MenuId::Wifi => self.panel_wifi(&mut content, pw, &mut regions, hover),
+            MenuId::Control => self.panel_control(&mut content, pw, &mut regions, hover),
+            _ if id.confirm() => self.panel_confirm(&mut content, pw, id, &mut regions, hover),
             _ => self.panel_bluetooth(&mut content, pw, &mut regions, hover),
         };
         // Sombra, vidro claro e borda fina, como os menus.
@@ -976,12 +1084,19 @@ impl Bar {
         if glass {
             mide::ui::draw::clear_rounded(&mut pixmap, px, top, pw, ph, 12.0);
         }
-        fill_rounded(&mut pixmap, px, top, pw, ph, 12.0, rgba(246, 246, 248, if glass { 205 } else { 242 }));
+        let fill = [246, 246, 248, if glass { 186 } else { 242 }];
+        fill_rounded(&mut pixmap, px, top, pw, ph, 12.0, rgba(fill[0], fill[1], fill[2], fill[3]));
         if let Some(path) = rounded_rect(px + 0.5, top + 0.5, pw - 1.0, ph - 1.0, 12.0) {
             let mut border = Paint::default();
             border.set_color(rgba(0, 0, 0, 40));
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
+        }
+        // Ponta para o ícone de onde o painel veio (confirmações ficam no meio, sem).
+        if !id.confirm() {
+            if let Some(cx) = self.anchor_of(id) {
+                mide::ui::draw::menu_arrow(&mut pixmap, cx.clamp(px + 20.0, px + pw - 20.0), top, false, fill);
+            }
         }
         pixmap.draw_pixmap(px as i32, top as i32, content.as_ref(), &Default::default(), Transform::identity(), None);
         if let Some(menu) = self.menu.as_mut() {
@@ -1021,6 +1136,9 @@ impl Bar {
     }
 
     fn panel_calendar(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        if self.clock_options {
+            return self.panel_clock_options(p, pw, regions, hover);
+        }
         let today = Local::now().date_naive();
         let (year, month) = self.cal_month;
         self.text.draw(p, &calendar::long_date(today), 16.0, 12.0, 13.0, FontWeight::Regular, [110, 110, 118, 255]);
@@ -1060,7 +1178,28 @@ impl Bar {
             }
             self.text.draw(p, &label, cx - lw / 2.0, cy - 8.5, 13.0, if day.date == today { FontWeight::Bold } else { FontWeight::Regular }, color);
         }
-        98.0 + 5.0 * 30.0 + 26.0
+        let y = 98.0 + 5.0 * 30.0 + 14.0;
+        Self::panel_separator(p, pw, y);
+        self.panel_row(p, pw, y + 10.0, 26.0, "Formato da hora…", regions, hover, PanelAction::ClockOptions);
+        y + 10.0 + 26.0 + 8.0
+    }
+
+    /// Opções do relógio da barra: o que aparece além da hora.
+    fn panel_clock_options(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        self.text.draw(p, "Formato da hora", 16.0, 14.0, 14.0, FontWeight::Bold, [24, 24, 28, 255]);
+        let preview = clock_text();
+        self.text.draw(p, &preview, 16.0, 38.0, 12.5, FontWeight::Regular, [110, 110, 118, 255]);
+        let mut y = 64.0;
+        Self::panel_separator(p, pw, y - 8.0);
+        for (i, (key, label)) in CLOCK_PARTS.iter().enumerate() {
+            self.text.draw(p, label, 16.0, y + 6.0, FONT, FontWeight::Regular, [24, 24, 28, 255]);
+            draw_switch(p, pw - 54.0, y + 4.0, clock_part(key));
+            regions.push(((pw - 60.0, y, 50.0, 30.0), PanelAction::ClockPart(i)));
+            y += 32.0;
+        }
+        Self::panel_separator(p, pw, y);
+        self.panel_row(p, pw, y + 10.0, 26.0, "‹ Calendário", regions, hover, PanelAction::ClockOptions);
+        y + 10.0 + 26.0 + 8.0
     }
 
     fn panel_sound(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
@@ -1160,6 +1299,103 @@ impl Bar {
         y + 26.0 + 8.0
     }
 
+    /// Central de controle, como a do macOS: ladrilhos de Wi-Fi e Bluetooth, Não
+    /// perturbe, brilho da tela (se houver controle), som e as Configurações.
+    fn panel_control(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        let tile = |p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| fill_rounded(p, x, y, w, h, 12.0, rgba(255, 255, 255, 150));
+        let dark = [24, 24, 28, 255];
+        let gray = [110, 110, 118, 255];
+        // Botão redondo de ligar/desligar: azul quando ligado.
+        let round = |p: &mut Pixmap, cx: f32, cy: f32, on: bool| {
+            if let Some(c) = PathBuilder::from_circle(cx, cy, 15.0) {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(if on { rgba(10, 120, 240, 255) } else { rgba(0, 0, 0, 28) });
+                p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        };
+        let (half, gap) = ((pw - 36.0) / 2.0, 12.0);
+        // Ladrilho da esquerda: Wi-Fi e Bluetooth.
+        tile(p, gap, gap, half, 104.0);
+        let (wifi_on, _) = self.status.wifi.clone().unwrap_or((false, Vec::new()));
+        let net = self.status.active_network().map(|n| n.ssid.clone());
+        round(p, gap + 26.0, gap + 28.0, wifi_on);
+        draw_wifi_icon(p, gap + 26.0, gap + 28.0, wifi_on.then_some(3), if wifi_on { [255, 255, 255, 255] } else { dark });
+        self.text.draw(p, "Wi-Fi", gap + 48.0, gap + 13.0, FONT, FontWeight::Semibold, dark);
+        let wifi_detail = if !wifi_on { "Desligado".to_string() } else { net.unwrap_or_else(|| "Sem rede".into()) };
+        let wifi_detail = fit_label(&mut self.text, &wifi_detail, 11.5, half - 56.0);
+        self.text.draw(p, &wifi_detail, gap + 48.0, gap + 31.0, 11.5, FontWeight::Regular, gray);
+        regions.push(((gap, gap, half, 52.0), PanelAction::ToggleWifi));
+        let bt_on = self.status.bluetooth.as_ref().is_some_and(|(on, _)| *on);
+        round(p, gap + 26.0, gap + 76.0, bt_on);
+        draw_bluetooth_icon(p, gap + 26.0, gap + 76.0, true, if bt_on { [255, 255, 255, 255] } else { dark });
+        self.text.draw(p, "Bluetooth", gap + 48.0, gap + 61.0, FONT, FontWeight::Semibold, dark);
+        self.text.draw(p, if bt_on { "Ligado" } else { "Desligado" }, gap + 48.0, gap + 79.0, 11.5, FontWeight::Regular, gray);
+        regions.push(((gap, gap + 52.0, half, 52.0), PanelAction::ToggleBluetooth));
+        // Ladrilho da direita: Não perturbe.
+        let dnd = dnd_on();
+        let rx = gap * 2.0 + half;
+        tile(p, rx, gap, half, 104.0);
+        round(p, rx + 26.0, gap + 52.0, dnd);
+        draw_moon_icon(p, rx + 26.0, gap + 52.0, if dnd { [255, 255, 255, 255] } else { dark });
+        self.text.draw(p, "Não", rx + 48.0, gap + 37.0, FONT, FontWeight::Semibold, dark);
+        self.text.draw(p, "perturbe", rx + 48.0, gap + 54.0, FONT, FontWeight::Semibold, dark);
+        regions.push(((rx, gap, half, 104.0), PanelAction::ToggleDnd));
+        let mut y = gap + 104.0 + gap;
+        // Trilhos: brilho (se houver controle) e som.
+        let mut slider = |this: &mut Self, p: &mut Pixmap, y: f32, title: &str, value: f32, action: PanelAction| {
+            tile(p, gap, y, pw - 2.0 * gap, 60.0);
+            this.text.draw(p, title, gap + 14.0, y + 9.0, FONT, FontWeight::Semibold, dark);
+            let (tx, tw, ty) = (gap + 16.0, pw - 2.0 * gap - 32.0, y + 40.0);
+            fill_rounded(p, tx, ty - 5.0, tw, 10.0, 5.0, rgba(0, 0, 0, 30));
+            fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, rgba(255, 255, 255, 255));
+            if let Some(knob) = PathBuilder::from_circle(tx + tw * value, ty, 9.0) {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(rgba(255, 255, 255, 255));
+                p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+                paint.set_color(rgba(0, 0, 0, 60));
+                p.stroke_path(&knob, &paint, &Stroke::default(), Transform::identity(), None);
+            }
+            regions.push(((tx - 8.0, y + 26.0, tw + 16.0, 28.0), action));
+        };
+        if let Some(level) = self.status.brightness {
+            slider(self, p, y, "Tela", level, PanelAction::BrightnessTrack);
+            y += 60.0 + gap;
+        }
+        if let Some((volume, muted)) = self.status.volume {
+            slider(self, p, y, "Som", if muted { 0.0 } else { volume.clamp(0.0, 1.0) }, PanelAction::VolumeTrack);
+            y += 60.0 + gap;
+        }
+        Self::panel_separator(p, pw, y - 6.0);
+        self.panel_row(p, pw, y + 4.0, 26.0, "Configurações do Sistema…", regions, hover, PanelAction::Settings(""));
+        y + 4.0 + 26.0 + 8.0
+    }
+
+    /// Confirmação antes de reiniciar, desligar ou encerrar a sessão.
+    fn panel_confirm(&mut self, p: &mut Pixmap, pw: f32, id: MenuId, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        let (title, button) = match id {
+            MenuId::ConfirmRestart => ("Reiniciar o computador agora?", "Reiniciar"),
+            MenuId::ConfirmShutdown => ("Desligar o computador agora?", "Desligar"),
+            _ => ("Encerrar a sessão agora?", "Encerrar sessão"),
+        };
+        self.text.draw(p, title, 18.0, 18.0, 14.5, FontWeight::Bold, [24, 24, 28, 255]);
+        self.text.draw(p, "Os apps abertos serão fechados.", 18.0, 42.0, 12.5, FontWeight::Regular, [110, 110, 118, 255]);
+        let (bw, by) = ((pw - 48.0) / 2.0, 74.0);
+        let cancel_hover = hover == Some(regions.len());
+        fill_rounded(p, 18.0, by, bw, 30.0, 8.0, rgba(0, 0, 0, if cancel_hover { 36 } else { 20 }));
+        let cw = self.text.measure("Cancelar", FONT, FontWeight::Regular);
+        self.text.draw(p, "Cancelar", 18.0 + (bw - cw) / 2.0, by + 6.0, FONT, FontWeight::Regular, [24, 24, 28, 255]);
+        regions.push(((18.0, by, bw, 30.0), PanelAction::ConfirmNo));
+        let ok_hover = hover == Some(regions.len());
+        let ox = 30.0 + bw;
+        fill_rounded(p, ox, by, bw, 30.0, 8.0, if ok_hover { rgba(0, 88, 200, 255) } else { rgba(10, 100, 225, 255) });
+        let ow = self.text.measure(button, FONT, FontWeight::Semibold);
+        self.text.draw(p, button, ox + (bw - ow) / 2.0, by + 6.0, FONT, FontWeight::Semibold, [255, 255, 255, 255]);
+        regions.push(((ox, by, bw, 30.0), PanelAction::ConfirmYes));
+        by + 30.0 + 18.0
+    }
+
     fn region_at(&self, x: f64, y: f64) -> Option<usize> {
         let menu = self.menu.as_ref()?;
         let (x, y) = (x as f32, y as f32);
@@ -1168,8 +1404,13 @@ impl Bar {
 
     /// Volume pela posição x no trilho do painel de som.
     fn volume_from_x(&self, x: f64) -> Option<f32> {
+        self.track_from_x(x, PanelAction::VolumeTrack)
+    }
+
+    /// Valor (0 a 1) pela posição x no trilho `action` do painel aberto.
+    fn track_from_x(&self, x: f64, action: PanelAction) -> Option<f32> {
         let menu = self.menu.as_ref()?;
-        let ((rx, _, rw, _), _) = menu.regions.iter().find(|(_, a)| *a == PanelAction::VolumeTrack)?;
+        let ((rx, _, rw, _), _) = menu.regions.iter().find(|(_, a)| *a == action)?;
         let (tx, tw) = (rx + 8.0, rw - 16.0);
         Some(((x as f32 - tx) / tw).clamp(0.0, 1.0))
     }
@@ -1183,6 +1424,17 @@ impl Bar {
                     return;
                 }
             }
+        }
+        if self.menu.as_ref().is_some_and(|m| m.dragging_brightness) {
+            if let Some(value) = self.track_from_x(x, PanelAction::BrightnessTrack) {
+                self.status.brightness = Some(value);
+                if self.volume_sent.elapsed() >= Duration::from_millis(80) {
+                    system::set_brightness(value);
+                    self.volume_sent = std::time::Instant::now();
+                }
+                self.draw_menu();
+            }
+            return;
         }
         if self.menu.as_ref().is_some_and(|m| m.dragging_volume) {
             if let Some(value) = self.volume_from_x(x) {
@@ -1277,12 +1529,136 @@ impl Bar {
                 system::open_settings(panel);
                 self.close_menu();
             }
+            PanelAction::ToggleDnd => {
+                let on = !dnd_on();
+                match mide::settings_file::set("notifications", "dnd", on.then_some(mide::settings_file::Value::Bool(true))) {
+                    Ok(()) => tracing::info!("não perturbe: {}", if on { "ligado" } else { "desligado" }),
+                    Err(err) => tracing::warn!("não perturbe não gravado: {err}"),
+                }
+            }
+            PanelAction::BrightnessTrack => {
+                if let Some(value) = self.track_from_x(x, PanelAction::BrightnessTrack) {
+                    self.status.brightness = Some(value);
+                    system::set_brightness(value);
+                    self.volume_sent = std::time::Instant::now();
+                    if let Some(menu) = self.menu.as_mut() {
+                        menu.dragging_brightness = true;
+                    }
+                }
+            }
+            PanelAction::ClockOptions => self.clock_options = !self.clock_options,
+            PanelAction::ClockPart(i) => {
+                let (key, label) = CLOCK_PARTS[i];
+                let on = !clock_part(key);
+                match mide::settings_file::set("clock", key, on.then_some(mide::settings_file::Value::Bool(true))) {
+                    Ok(()) => tracing::info!("relógio: {label} {}", if on { "ligado" } else { "desligado" }),
+                    Err(err) => tracing::warn!("formato da hora não gravado: {err}"),
+                }
+                self.clock = clock_text();
+            }
+            PanelAction::ConfirmNo => self.close_menu(),
+            PanelAction::ConfirmYes => {
+                let id = self.menu.as_ref().map(|m| m.id);
+                self.close_menu();
+                match id {
+                    Some(MenuId::ConfirmRestart) => system::power(system::Power::Restart),
+                    Some(MenuId::ConfirmShutdown) => system::power(system::Power::Shutdown),
+                    Some(MenuId::ConfirmLogout) => {
+                        tracing::info!("encerrando a sessão");
+                        let _ = ask_compositor("quit");
+                    }
+                    _ => {}
+                }
+            }
         }
         self.request_status();
         if self.menu.is_some() {
             self.draw_menu();
         }
         self.draw_bar();
+    }
+}
+
+/// Não perturbe ligado (`[notifications] dnd`): as notificações não aparecem.
+fn dnd_on() -> bool {
+    matches!(mide::settings_file::get("notifications", "dnd"), Some(mide::settings_file::Value::Bool(true)))
+}
+
+/// Corta o texto com reticências para caber em `max`.
+fn fit_label(text: &mut Text, value: &str, size: f32, max: f32) -> String {
+    if text.measure(value, size, FontWeight::Regular) <= max {
+        return value.to_string();
+    }
+    let mut chars: Vec<char> = value.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let candidate = format!("{}…", chars.iter().collect::<String>().trim_end());
+        if text.measure(&candidate, size, FontWeight::Regular) <= max {
+            return candidate;
+        }
+    }
+    "…".into()
+}
+
+/// Ícone da central de controle: duas pílulas de interruptor, uma sobre a outra.
+fn draw_control_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
+    let paint = stroke_color(fg, 255);
+    for (dy, knob_x) in [(-3.5, 3.0), (3.5, -3.0)] {
+        if let Some(pill) = rounded_rect(cx - 8.0, cy + dy - 2.8, 16.0, 5.6, 2.8) {
+            p.stroke_path(&pill, &paint, &Stroke { width: 1.4, ..Default::default() }, Transform::identity(), None);
+        }
+        if let Some(dot) = PathBuilder::from_circle(cx + knob_x, cy + dy, 2.2) {
+            let mut fill = Paint::default();
+            fill.anti_alias = true;
+            fill.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+            p.fill_path(&dot, &fill, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+}
+
+/// Engrenagem: anel com oito dentes.
+fn draw_gear_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
+    let mut fill = Paint::default();
+    fill.anti_alias = true;
+    fill.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+    for i in 0..8 {
+        let a = i as f32 * std::f32::consts::PI / 4.0;
+        let mut pb = PathBuilder::new();
+        let (s, c) = a.sin_cos();
+        let (px, py) = (-s, c);
+        let (r0, r1, half) = (5.0, 8.2, 1.6);
+        pb.move_to(cx + c * r0 + px * half, cy + s * r0 + py * half);
+        pb.line_to(cx + c * r1 + px * half, cy + s * r1 + py * half);
+        pb.line_to(cx + c * r1 - px * half, cy + s * r1 - py * half);
+        pb.line_to(cx + c * r0 - px * half, cy + s * r0 - py * half);
+        pb.close();
+        if let Some(path) = pb.finish() {
+            p.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+    if let Some(ring) = PathBuilder::from_circle(cx, cy, 5.2) {
+        p.stroke_path(&ring, &stroke_color(fg, 255), &Stroke { width: 2.4, ..Default::default() }, Transform::identity(), None);
+    }
+}
+
+/// Lua (Não perturbe).
+fn draw_moon_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
+    let mut pb = PathBuilder::new();
+    pb.push_circle(cx, cy, 7.0);
+    let Some(outer) = pb.finish() else {
+        return;
+    };
+    let mut fill = Paint::default();
+    fill.anti_alias = true;
+    fill.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+    p.fill_path(&outer, &fill, FillRule::Winding, Transform::identity(), None);
+    // O recorte da lua: um círculo apagado deslocado.
+    if let Some(cut) = PathBuilder::from_circle(cx + 4.0, cy - 3.0, 6.0) {
+        let mut clear = Paint::default();
+        clear.anti_alias = true;
+        clear.blend_mode = tiny_skia::BlendMode::DestinationOut;
+        clear.set_color(rgba(0, 0, 0, 255));
+        p.fill_path(&cut, &clear, FillRule::Winding, Transform::identity(), None);
     }
 }
 
@@ -1543,6 +1919,11 @@ impl PointerHandler for Bar {
                     self.custom_press(x, y);
                 }
                 PointerEventKind::Release { button, .. } if button == BTN_LEFT && on_menu => {
+                    if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_brightness)) {
+                        if let Some(value) = self.status.brightness {
+                            system::set_brightness(value);
+                        }
+                    }
                     let dragged = self.menu.as_mut().map(|m| std::mem::take(&mut m.dragging_volume)).unwrap_or(false);
                     if dragged {
                         if let Some((value, _)) = self.status.volume {
@@ -1615,4 +1996,19 @@ impl ProvidesRegistryState for Bar {
     }
 
     registry_handlers![OutputState, SeatState];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn relogio_mostra_so_o_escolhido() {
+        let now = Local.with_ymd_and_hms(2026, 10, 21, 9, 5, 7).unwrap();
+        assert_eq!(clock_format(now, false, false, false, false), "09:05");
+        assert_eq!(clock_format(now, false, false, false, true), "09:05:07");
+        assert_eq!(clock_format(now, true, true, false, false), "qua 21 out  09:05");
+        assert_eq!(clock_format(now, true, true, true, false), "qua 21 out 2026  09:05");
+    }
 }

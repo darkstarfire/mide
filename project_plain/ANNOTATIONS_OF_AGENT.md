@@ -173,3 +173,9 @@
 - **Custo dos painéis no tiny-skia:** preencher e traçar áreas grandes com antisserrilhado (sombra em anéis, apagar + pintar) custava ~20 ms num painel de 680x450. Escrever direto nos pixels (só a borda mistura) e calcular a sombra pela distância deixou em ~3 ms.
 - **Ícones na thread da interface travam a digitação:** sempre carregar em segundo plano (o mide-ui faz isso agora).
 - **Pendente no buscador:** prévia do arquivo/app à direita (como o Spotlight), grupos com títulos, histórico das últimas buscas, ícone de lupa na barra superior.
+- **`tests/ui.sh` passou de 15 minutos:** rodar desacoplado (`setsid nohup ... &`) e esperar o fim, senão o limite de tempo do comando corta a bateria no meio (as últimas verificações aparecem como falha).
+- **Zona exclusiva no Smithay:** camada presa só embaixo reserva `zona + margem de baixo`. A dock usa zona = altura dela.
+- **Dock escondida:** a camada fica com margem negativa (só 2 px na tela) e imagem transparente; a região de vidro é recortada pela tela e some por ser pequena demais.
+- **Teclas no estilo Mac:** troca de códigos evdev (125↔29, 126↔97) antes dos atalhos e do envio aos apps. Testável pelo autoteste (`combo super+space`); com o mide aninhado, o anfitrião pode capturar a tecla Super.
+- **Ações de energia:** sempre por `mide::system::power`, que respeita `MIDE_SYSTEM_DRY_RUN`. "Bloquear tela" usa `loginctl lock-session` (com o mide aninhado, bloqueia a sessão do anfitrião).
+- **Pendentes desta rodada:** "Abrir com…" (lista de apps por tipo), seleção múltipla e arrastar no Arquivos; mostrar as notificações silenciadas depois (central de notificações, B9).
