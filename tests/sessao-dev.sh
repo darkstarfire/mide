@@ -27,5 +27,9 @@ Type=Application
 DesktopNames=mide
 ENTRY
 echo "instalado: $DEST"
-echo "Saia da sessão e escolha \"mide (desenvolvimento)\" na tela de login."
+echo "Para entrar no mide pela tela de login, saia da sessão atual (fecha os apps abertos)"
+echo "e escolha \"mide (desenvolvimento)\"."
+echo "Para testar sem sair da sessão atual: Ctrl+Alt+F3, entre no console e rode"
+echo "  timeout 300 $PWD/data/mide-session"
+echo "(Ctrl+Alt+F7, ou o console da sua sessão, volta para ela.)"
 echo "Log da sessão: ~/.local/state/mide/sessao.log"
