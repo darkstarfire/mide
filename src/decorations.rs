@@ -61,7 +61,7 @@ void main() {
     float d = sd_round_box(p, size * 0.5, radius);
     float cover = 1.0 - smoothstep(-0.5, 0.5, d);
     if (clip.z > 0.0) {
-        vec2 q = vec2(gl_FragCoord.x, output_height - gl_FragCoord.y);
+        vec2 q = vec2(gl_FragCoord.x, output_height > 0.0 ? output_height - gl_FragCoord.y : gl_FragCoord.y);
         vec2 half_clip = clip.zw * 0.5;
         float dc = sd_round_box(q - (clip.xy + half_clip), half_clip, clip_radius);
         cover *= 1.0 - smoothstep(-0.5, 0.5, dc);

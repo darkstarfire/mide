@@ -667,7 +667,7 @@ fn backdrop_key(elements: &[MideRenderElement], area: Rectangle<i32, Logical>) -
 }
 
 fn blur_source(area: Rectangle<i32, Logical>, out: smithay::utils::Size<i32, Logical>) -> Rectangle<f64, Logical> {
-    let flip = std::env::var("MIDE_BLUR_FLIP").map(|v| v != "0").unwrap_or(true);
+    let flip = std::env::var("MIDE_BLUR_FLIP").map(|v| v != "0").unwrap_or(crate::clip::flipped());
     let y = if flip { out.h - area.loc.y - area.size.h } else { area.loc.y };
     Rectangle::new((area.loc.x as f64, y as f64).into(), (area.size.w as f64, area.size.h as f64).into())
 }

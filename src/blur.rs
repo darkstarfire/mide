@@ -423,7 +423,8 @@ pub fn render_region<E: RenderElement<GlesRenderer>>(
     // só ela é limpa e desenhada.
     {
         let mut fb = renderer.bind(&mut target).ok()?;
-        let mut frame = renderer.render(&mut fb, (output_size.w, output_size.h).into(), Transform::Flipped180).ok()?;
+        // Mesma orientação da saída: os recortes das janelas usam a posição do pixel.
+        let mut frame = renderer.render(&mut fb, (output_size.w, output_size.h).into(), crate::clip::output_transform()).ok()?;
         let region: Rectangle<i32, Physical> = Rectangle::new((area.loc.x, area.loc.y).into(), (area.size.w, area.size.h).into());
         frame.clear(Color32F::new(0.12, 0.12, 0.14, 1.0), &[region]).ok()?;
         for element in elements.iter().rev() {

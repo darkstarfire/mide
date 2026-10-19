@@ -84,7 +84,16 @@ pub fn init(
     };
     output.create_global::<State>(&state.display_handle);
     // O GL do winit tem a origem embaixo, então a saída precisa ser invertida.
-    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
+    // Com MIDE_SIM_DRM=1 (testes), a cena é desenhada como no DRM: sem inversão, numa
+    // textura (como o buffer da tela), que depois é copiada para a janela.
+    let transform = if sim_drm() {
+        crate::clip::set_flipped(false);
+        tracing::info!("simulando a orientação do DRM (MIDE_SIM_DRM)");
+        Transform::Normal
+    } else {
+        Transform::Flipped180
+    };
+    output.change_current_state(Some(mode), Some(transform), None, Some((0, 0).into()));
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
 
@@ -210,7 +219,9 @@ fn render(
     state: &mut State,
     scene: &mut Scene,
 ) -> Result<(), Box<dyn Error>> {
-    {
+    if sim_drm() {
+        render_sim_drm(backend, output, damage_tracker, state, scene)?;
+    } else {
         let (renderer, mut framebuffer) = backend.bind()?;
         // O `submit` do winit troca os buffers depois do desenho terminar (como antes da
         // cena ter saído daqui): o ponto de sincronização fica sem uso.
@@ -221,4 +232,48 @@ fn render(
     backend.submit(None)?;
 
     send_frames(state, output)
+}
+
+/// Testes: simular a orientação do backend DRM (`MIDE_SIM_DRM=1`).
+fn sim_drm() -> bool {
+    std::env::var("MIDE_SIM_DRM").is_ok_and(|v| v == "1")
+}
+
+/// Como no DRM: a cena vai para uma textura sem inversão (o quadro salvo por
+/// `MIDE_DUMP_FRAME` sai dela, de cabeça para baixo em relação à janela), e a textura
+/// é copiada para a janela, invertida como o GL do winit precisa.
+fn render_sim_drm(
+    backend: &mut winit::WinitGraphicsBackend<GlesRenderer>,
+    output: &Output,
+    damage_tracker: &mut OutputDamageTracker,
+    state: &mut State,
+    scene: &mut Scene,
+) -> Result<(), Box<dyn Error>> {
+    use smithay::backend::renderer::{Bind, Frame, Offscreen, Renderer};
+    use smithay::utils::{Buffer, Rectangle, Size};
+    let size = backend.window_size();
+    let mut texture: smithay::backend::renderer::gles::GlesTexture = backend
+        .renderer()
+        .create_buffer(smithay::backend::allocator::Fourcc::Abgr8888, Size::<i32, Buffer>::from((size.w, size.h)))?;
+    {
+        let renderer = backend.renderer();
+        let mut target = renderer.bind(&mut texture)?;
+        let _sync = scene.render(renderer, &mut target, output, damage_tracker, state)?;
+    }
+    let (renderer, mut framebuffer) = backend.bind()?;
+    let mut frame = renderer.render(&mut framebuffer, size, Transform::Flipped180)?;
+    let whole = Rectangle::from_size(size);
+    frame.render_texture_from_to(
+        &texture,
+        Rectangle::from_size((size.w as f64, size.h as f64).into()),
+        whole,
+        &[whole],
+        &[],
+        Transform::Normal,
+        1.0,
+        None,
+        &[],
+    )?;
+    let _ = frame.finish()?;
+    Ok(())
 }

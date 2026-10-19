@@ -611,3 +611,11 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 ## Bateria completa depois de A14, campo de texto, editor e foco
 
 - `tests/ui.sh` no Xvfb: todas as verificações antigas com o mesmo resultado da referência (as falhas restantes são de ambiente: sem `foot`, `gnome-calculator` e o papel de parede do Zorin); 10 novas passando (editor de atalhos e editor de texto). Os testes de XWayland passaram a começar no quadro 2000 (o xclock abre ~3 s depois do mide) e o de fechar exige que a janela apareça antes do clique e suma depois.
+
+## Orientação do DRM — automáticos
+
+- `tests/res1366.sh`: com `MIDE_SIM_DRM=1`, o Arquivos aparece inteiro, com a barra de título e a barra de ferramentas claras (foto em `/tmp/mide-1366/arquivos-drm.png`). Com o recorte antigo, essa verificação falha (barra escura e topo da janela sumindo).
+
+## Orientação do DRM — manual
+
+- Entrar na sessão "mide (desenvolvimento)" (ou `data/mide-session` num console): janelas inteiras, cantos arredondados, barra de título clara, vidro da dock e da barra lateral do Arquivos mostrando o que está atrás deles.

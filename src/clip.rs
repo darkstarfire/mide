@@ -37,7 +37,8 @@ varying vec2 v_coords;
 // Moldura da janela em coordenadas da saída (x, y, w, h) e raio dos cantos.
 uniform vec4 clip;
 uniform float clip_radius;
-// Altura da saída: converte gl_FragCoord (origem embaixo) para a origem no topo.
+// Altura da saída quando o alvo é invertido no eixo y (winit: gl_FragCoord com a
+// origem embaixo); 0 quando não é (DRM: a origem já é o topo).
 uniform float output_height;
 
 #if defined(DEBUG_FLAGS)
@@ -58,7 +59,7 @@ void main() {
     color = color * alpha;
 #endif
 
-    vec2 p = vec2(gl_FragCoord.x, output_height - gl_FragCoord.y);
+    vec2 p = vec2(gl_FragCoord.x, output_height > 0.0 ? output_height - gl_FragCoord.y : gl_FragCoord.y);
     vec2 half_size = clip.zw * 0.5;
     float d = sd_round_box(p - (clip.xy + half_size), half_size, clip_radius);
     color *= 1.0 - smoothstep(-0.5, 0.5, d);
@@ -81,8 +82,33 @@ pub fn uniform_names() -> [UniformName<'static>; 3] {
     ]
 }
 
+/// Orientação dos alvos de desenho: no winit a saída é invertida no eixo y
+/// (`Transform::Flipped180`), no DRM não. Vale para a tela e para as texturas fora da
+/// tela do vidro, que usam a mesma orientação da saída.
+static FLIPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// O backend diz se a saída é invertida no eixo y (winit sim, DRM não).
+pub fn set_flipped(flipped: bool) {
+    FLIPPED.store(flipped, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn flipped() -> bool {
+    FLIPPED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Transformação dos alvos de desenho (saída e texturas do vidro).
+pub fn output_transform() -> smithay::utils::Transform {
+    if flipped() {
+        smithay::utils::Transform::Flipped180
+    } else {
+        smithay::utils::Transform::Normal
+    }
+}
+
 /// Valores dos uniformes do recorte para uma moldura.
 pub fn uniforms(frame: Rectangle<i32, Logical>, radius: f32, output_height: f32) -> Vec<Uniform<'static>> {
+    // Sem inversão, a posição do pixel já tem a origem no topo (ver o shader).
+    let output_height = if flipped() { output_height } else { 0.0 };
     vec![
         Uniform::new(
             "clip",

@@ -61,5 +61,29 @@ shot arquivos "250 move 700 400" 320 "target/debug/mide-files /usr/share"
 shot configuracoes "250 move 700 400" 320 "target/debug/mide-settings effects"
 shot menu-dock "200 rclick 799 728; 240 move 820 640" 300
 
+# Orientação do DRM (MIDE_SIM_DRM=1: a cena é desenhada sem inversão, como no backend
+# DRM): a barra de título do Arquivos (moldura em (48, 46)) sai clara e o conteúdo
+# perto do topo da janela aparece. Com o recorte invertido, a barra ficava escura e
+# transparente e o topo da janela sumia.
+drm_out="$(mktemp -d)"
+MIDE_SIM_DRM=1 SCENARIO_OUT="$drm_out" timeout 150 "$SCEN" "250 move 700 400" 320 -- "target/debug/mide-files /usr/share" >/dev/null 2>&1
+if [ -f "$drm_out/frame.png" ] && python3 - "$drm_out/frame.png" "$RES_OUT/arquivos-drm.png" <<'PY'
+import sys
+from PIL import Image
+# O quadro salvo no modo DRM sai da textura sem inversão: desvira para comparar.
+img = Image.open(sys.argv[1]).transpose(Image.FLIP_TOP_BOTTOM)
+img.save(sys.argv[2])
+bright = lambda p: sum(img.getpixel(p)[:3]) / 3
+# Barra de título (meio, y=61) e barra de ferramentas (y=90) claras.
+sys.exit(0 if bright((300, 61)) > 200 and bright((600, 90)) > 200 else 1)
+PY
+then
+    echo "ok    orientação do DRM: janela inteira com a barra de título clara"; PASS=$((PASS + 1))
+    echo "foto  $RES_OUT/arquivos-drm.png"
+else
+    echo "FALHA orientação do DRM: janela inteira com a barra de título clara"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$drm_out"
+
 echo "resultado: $PASS ok, $FAIL falha(s)"
 [ "$FAIL" = 0 ]

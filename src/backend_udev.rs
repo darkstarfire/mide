@@ -108,6 +108,8 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     let mode = Mode { size: (w as i32, h as i32).into(), refresh: drm_mode.vrefresh() as i32 * 1000 };
     output.create_global::<State>(&state.display_handle);
     output.change_current_state(Some(mode), Some(Transform::Normal), None, Some((0, 0).into()));
+    // Sem inversão no eixo y (o winit inverte): recortes e vidro seguem isso.
+    crate::clip::set_flipped(false);
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
     // O ponteiro começa no meio da tela.
