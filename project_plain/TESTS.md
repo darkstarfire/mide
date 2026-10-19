@@ -532,3 +532,28 @@ Manual (o que o autoteste não cobre):
 - [ ] Novo atalho… → digitar o nome de um app → escolher → Gravar… → apertar a combinação: o atalho abre o app.
 - [ ] Esc durante a gravação cancela; fechar as Configurações no meio não prende o teclado (expira em 20 s).
 - [ ] Restaurar os padrões volta tudo ao original.
+
+## Backend DRM (A13) — manual (num console de texto)
+
+Preparação: compilar antes, na sessão gráfica (`cargo build`). Depois, Ctrl+Alt+F3, entrar com o usuário e:
+
+```bash
+cd ~/Proyectos/Fabio/mide
+timeout 120 ./target/debug/mide 2> /tmp/mide-drm.log
+```
+
+O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de segurança). Para voltar à sessão gráfica: o console dela (`loginctl show-session $XDG_SESSION_ID -p VTNr` na sessão gráfica; no Debian do trabalho, com LightDM, é Ctrl+Alt+F7).
+
+- [ ] A tela mostra o papel de parede, a barra e a dock, na resolução nativa do monitor.
+- [ ] O cursor aparece e acompanha o mouse/touchpad; não sai da tela.
+- [ ] Clicar na dock e no menu do mide funciona; toque no touchpad clica.
+- [ ] Ctrl+Espaço abre o buscador e o teclado digita com acentos do layout do sistema (ABNT2: `ç`, `´`+`a`).
+- [ ] Abrir as Configurações; arrastar a janela; o cursor muda nas bordas (redimensionar).
+- [ ] Ctrl+Alt+F2 (ou outro console) sai do mide; voltar para o console do mide (Ctrl+Alt+F3) mostra a tela de novo, com mouse e teclado funcionando.
+- [ ] Ctrl+Shift+Esc encerra o mide e devolve o console de texto.
+- [ ] Se algo falhar, mandar o `/tmp/mide-drm.log`.
+
+## Backend DRM (A13) — automáticos (no winit)
+
+- `cargo test`: 109 (cursor: nomes do tema e reservas; teclado do sistema lido de `/etc/default/keyboard`).
+- `tests/ui.sh` no Xvfb depois do A13: os mesmos resultados da referência mais os 6 do editor de atalhos (87 ok); a única diferença ("tamanho dos ícones muda a dock") passou ao repetir (instável, ver anotações). O DRM em si só roda num console de texto: teste manual acima.

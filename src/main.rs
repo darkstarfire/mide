@@ -3,11 +3,13 @@
 //! Ponto de entrada do compositor. Esta etapa abre o socket Wayland `mide-0`
 //! e aceita clientes. A renderização ainda não existe.
 
+mod backend_udev;
 mod backend_winit;
 mod blur;
 mod clip;
 mod config;
 mod control;
+mod cursor;
 mod decorations;
 mod genie;
 mod input;
@@ -93,7 +95,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!("{} atalho(s) configurado(s)", config.bindings.len());
     let mut state = State::new(display_handle, config)?;
 
-    backend_winit::init(&event_loop, &loop_handle, &mut state)?;
+    // DRM: o mide direto na tela (iniciado de um console de texto). Winit: numa janela
+    // dentro do desktop atual (desenvolvimento). `MIDE_BACKEND=drm|winit` escolhe;
+    // sem ele, DRM quando não há desktop por baixo (nem WAYLAND_DISPLAY nem DISPLAY).
+    let drm = match std::env::var("MIDE_BACKEND").as_deref() {
+        Ok("drm") => true,
+        Ok("winit") => false,
+        _ => std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none(),
+    };
+    if drm {
+        tracing::info!("backend: DRM (direto na tela)");
+        backend_udev::init(&event_loop, &loop_handle, &mut state)?;
+    } else {
+        tracing::info!("backend: winit (janela no desktop atual)");
+        backend_winit::init(&event_loop, &loop_handle, &mut state)?;
+    }
 
     if let Err(err) = control::init(&loop_handle, socket_name()) {
         tracing::warn!("canal de controle indisponível: {err}");

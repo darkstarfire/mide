@@ -212,7 +212,9 @@ fn render(
 ) -> Result<(), Box<dyn Error>> {
     {
         let (renderer, mut framebuffer) = backend.bind()?;
-        scene.render(renderer, &mut framebuffer, output, damage_tracker, state)?;
+        // O `submit` do winit troca os buffers depois do desenho terminar (como antes da
+        // cena ter saído daqui): o ponto de sincronização fica sem uso.
+        let _sync = scene.render(renderer, &mut framebuffer, output, damage_tracker, state)?;
     }
     // Apresenta o quadro inteiro. Com dano parcial, o buffer de trás pode ter pixels
     // de quadros antigos, e a diferença aparece como padrão pontilhado nas sombras.

@@ -12,7 +12,7 @@ freedesktop-icons = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 resvg = { version = "0.45", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
-smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop", "renderer_gl", "backend_egl", "backend_winit", "backend_drm", "backend_libinput", "backend_session_libseat", "backend_udev"] }
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop", "renderer_gl", "backend_egl", "backend_winit", "backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev"] }
 smithay-client-toolkit = "0.21"
 tiny-skia = { version = "0.12", features = ["std"] }
 toml = "1.1.8"
@@ -20,6 +20,8 @@ toml_edit = "0.25.17"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 usvg = { version = "0.45", default-features = false }
+# Tema de cursores do sistema, desenhado pelo próprio mide no backend DRM.
+xcursor = "0.3"
 xkbcommon = "0.8"
 zbus = "5"
 # Compactar e extrair .zip no Arquivos, sem programa externo.

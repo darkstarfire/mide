@@ -56,6 +56,8 @@ pub struct Scene {
     blur: crate::blur::Blur,
     wallpaper: crate::wallpaper::Wallpaper,
     titles: crate::title::TitleRenderer,
+    /// Cursor desenhado pelo mide (sem anfitrião que mostre o dele, como no DRM).
+    cursors: Option<crate::cursor::Cursors>,
 }
 
 impl Scene {
@@ -69,7 +71,13 @@ impl Scene {
             .map_err(|e| format!("falha ao compilar os shaders do desfoque: {e}"))?;
         let wallpaper = crate::wallpaper::Wallpaper::new(renderer, state.config.desktop.wallpaper_path())
             .map_err(|e| format!("falha ao compilar o shader do papel de parede: {e}"))?;
-        Ok(Self { shaders, genie, blur, wallpaper, titles: crate::title::TitleRenderer::new() })
+        Ok(Self { shaders, genie, blur, wallpaper, titles: crate::title::TitleRenderer::new(), cursors: None })
+    }
+
+    /// A cena desenha o cursor (backends sem anfitrião).
+    pub fn with_cursor(mut self) -> Self {
+        self.cursors = Some(crate::cursor::Cursors::new());
+        self
     }
 
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela
@@ -79,7 +87,8 @@ impl Scene {
     }
 
     /// Desenha um quadro no alvo `framebuffer`: prévias, popups, camadas, janelas,
-    /// vidro e fundo. Quem chama apresenta o quadro e depois chama `send_frames`.
+    /// vidro e fundo. Quem chama apresenta o quadro (esperando o ponto de sincronização
+    /// devolvido, quando a apresentação precisa) e depois chama `send_frames`.
     pub fn render(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -87,15 +96,19 @@ impl Scene {
         output: &Output,
         damage_tracker: &mut OutputDamageTracker,
         state: &mut State,
-    ) -> Result<(), Box<dyn Error>> {
-        let Self { shaders, genie, blur, wallpaper, titles } = self;
+    ) -> Result<smithay::backend::renderer::sync::SyncPoint, Box<dyn Error>> {
+        let Self { shaders, genie, blur, wallpaper, titles, cursors } = self;
         state.popups.cleanup();
         let now = std::time::Instant::now();
         state.finish_animations(now);
         tracing::debug!("frame: {} janela(s) mapeada(s)", state.space.elements().count());
         // Da frente para trás: prévias das janelas, popups, camadas (barra, dock) e
         // depois as janelas.
-        let mut custom: Vec<MideRenderElement> = crate::preview::elements(renderer, state, shaders, titles);
+        let mut custom: Vec<MideRenderElement> = match cursors {
+            Some(cursors) => cursors.elements(renderer, state),
+            None => Vec::new(),
+        };
+        custom.extend(crate::preview::elements(renderer, state, shaders, titles));
         custom.extend(popup_elements(renderer, state).into_iter().map(MideRenderElement::from));
         let before_layers = custom.len();
         let (layers, mut glass) = layer_elements(renderer, output, state, blur, wallpaper);
@@ -156,8 +169,7 @@ impl Scene {
         )?;
         tracing::debug!("quadro do compositor: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
         dump_frame_if_requested(renderer, framebuffer, output)?;
-        drop(result);
-        Ok(())
+        Ok(result.sync)
     }
 }
 
@@ -703,6 +715,10 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
                 |_, _| Some(output.clone()),
             );
         }
+    }
+    // Cursor pedido por um app (desenhado pelo mide no DRM): também pode ser animado.
+    if let smithay::input::pointer::CursorImageStatus::Surface(surface) = &state.cursor_status {
+        send_frames_surface_tree(surface, output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
     }
     state.space.refresh();
     state.display_handle.flush_clients()?;

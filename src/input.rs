@@ -7,7 +7,7 @@
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyState,
-        KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     desktop::{layer_map_for_output, utils::under_from_surface_tree, PopupManager, Window, WindowSurfaceType},
     input::{
@@ -60,6 +60,14 @@ pub fn handle_event<B: InputBackend>(state: &mut State, event: InputEvent<B>, si
         InputEvent::Keyboard { event } => keyboard_key(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
             let pos = event.position_transformed(size);
+            pointer_motion(state, pos, event.time_msec());
+        }
+        // Mouse e touchpad de verdade (libinput) andam por deslocamento; o ponteiro
+        // não sai da tela.
+        InputEvent::PointerMotion { event } => {
+            let mut pos = state.pointer_location + event.delta();
+            pos.x = pos.x.clamp(0.0, (size.w - 1).max(0) as f64);
+            pos.y = pos.y.clamp(0.0, (size.h - 1).max(0) as f64);
             pointer_motion(state, pos, event.time_msec());
         }
         InputEvent::PointerButton { event } => pointer_button(state, event),
@@ -179,6 +187,12 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 alt: mods.alt,
                 shift: mods.shift,
             };
+            // Ctrl+Alt+F1…F12 (o xkb entrega como XF86Switch_VT_n): trocar de console.
+            let vt = keysym.modified_sym().raw();
+            if (xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1..=xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12).contains(&vt) {
+                let n = (vt - xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
+                return FilterResult::Intercept(Some(Action::SwitchVt(n)));
+            }
             // Usa a tecla sem o efeito do Shift, para que `ctrl+shift+e` case com `e`.
             let key = keysym.raw_latin_sym_or_raw_current_sym().unwrap_or_else(|| keysym.modified_sym());
             if let Some(capture) = state.shortcut_capture.as_mut().filter(|c| !c.expired() && c.combo.is_none()) {
@@ -226,6 +240,17 @@ fn run_action(state: &mut State, action: Action) {
         Action::RestoreMinimized => state.restore_minimized(),
         Action::ToggleLauncher => state.toggle_launcher(),
         Action::ToggleSearch => state.toggle_search(),
+        Action::SwitchVt(n) => match state.session.as_mut() {
+            Some(session) => {
+                use smithay::backend::session::Session;
+                tracing::info!("trocando para o console {n}");
+                if let Err(err) = session.change_vt(n) {
+                    tracing::warn!("não foi possível trocar para o console {n}: {err}");
+                }
+            }
+            // Dentro de um anfitrião (winit), quem troca de console é o anfitrião.
+            None => tracing::debug!("console {n}: sem sessão própria"),
+        },
         Action::Quit => {
             tracing::info!("encerrando por atalho");
             state.quit_requested = true;

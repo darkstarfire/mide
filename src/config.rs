@@ -26,6 +26,9 @@ pub enum Action {
     ToggleLauncher,
     /// Abre o buscador (estilo Spotlight), ou fecha se já estiver aberto.
     ToggleSearch,
+    /// Troca para o console de texto `n` (Ctrl+Alt+F`n` no backend DRM). Fixo, não
+    /// vem do arquivo: é o jeito de sair do mide para outro console.
+    SwitchVt(i32),
 }
 
 /// Combinação de teclas já convertida, pronta para comparar com o input.
@@ -247,6 +250,45 @@ pub fn combo_name(mods: Modifiers, key: Keysym) -> String {
     parts.join("+")
 }
 
+/// Teclado do sistema (modelo, layout, variante e opções do xkb).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SystemKeyboard {
+    pub model: String,
+    pub layout: String,
+    pub variant: String,
+    pub options: Option<String>,
+}
+
+/// Teclado configurado no sistema (`/etc/default/keyboard`, padrão no Debian e no
+/// Ubuntu), para o mide digitar com o mesmo layout (ABNT2, por exemplo) também fora
+/// de um desktop anfitrião. Com `XKB_DEFAULT_LAYOUT` definido, vale o ambiente:
+/// campos vazios fazem o xkb usar as variáveis `XKB_DEFAULT_*`.
+pub fn system_keyboard() -> SystemKeyboard {
+    if std::env::var_os("XKB_DEFAULT_LAYOUT").is_some() {
+        return SystemKeyboard::default();
+    }
+    fs::read_to_string("/etc/default/keyboard").map(|t| parse_system_keyboard(&t)).unwrap_or_default()
+}
+
+/// Lê as linhas `XKBLAYOUT="br"` (e modelo, variante, opções) do arquivo de teclado.
+fn parse_system_keyboard(text: &str) -> SystemKeyboard {
+    let mut kb = SystemKeyboard::default();
+    for line in text.lines() {
+        let Some((key, value)) = line.trim().split_once('=') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+        match key.trim() {
+            "XKBMODEL" => kb.model = value,
+            "XKBLAYOUT" => kb.layout = value,
+            "XKBVARIANT" => kb.variant = value,
+            "XKBOPTIONS" if !value.is_empty() => kb.options = Some(value),
+            _ => {}
+        }
+    }
+    kb
+}
+
 /// Caminho de `config.toml`, respeitando `XDG_CONFIG_HOME`.
 fn config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -321,6 +363,7 @@ impl fmt::Display for Action {
             Action::RestoreMinimized => write!(f, "restore_minimized"),
             Action::ToggleLauncher => write!(f, "toggle_launcher"),
             Action::ToggleSearch => write!(f, "toggle_search"),
+            Action::SwitchVt(n) => write!(f, "switch_vt:{n}"),
         }
     }
 }
@@ -353,6 +396,17 @@ mod tests {
         let c = cfg(&[]).unwrap();
         let mods = Modifiers { ctrl: true, shift: true, ..Default::default() };
         assert_eq!(c.match_binding(mods, sym("escape")), Some(Action::Quit));
+    }
+
+    #[test]
+    fn teclado_do_sistema() {
+        let text = "# KEYBOARD\nXKBMODEL=\"pc105\"\nXKBLAYOUT=\"br\"\nXKBVARIANT=\"\"\nXKBOPTIONS=\"\"\nBACKSPACE=\"guess\"\n";
+        let kb = parse_system_keyboard(text);
+        assert_eq!(kb.model, "pc105");
+        assert_eq!(kb.layout, "br");
+        assert_eq!(kb.variant, "");
+        assert_eq!(kb.options, None);
+        assert_eq!(parse_system_keyboard("XKBOPTIONS=\"ctrl:nocaps\"").options.as_deref(), Some("ctrl:nocaps"));
     }
 
     #[test]

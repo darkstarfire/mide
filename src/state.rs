@@ -195,6 +195,10 @@ pub struct State {
     pub redraw: bool,
     /// Acorda o laço de desenho na hora (`wake`), sem esperar o relógio.
     pub waker: Option<smithay::reexports::calloop::ping::Ping>,
+    /// Cursor pedido pelo app sob o ponteiro (desenhado pelo mide no DRM).
+    pub cursor_status: smithay::input::pointer::CursorImageStatus,
+    /// Sessão do backend DRM (trocar de console com Ctrl+Alt+F1…F12).
+    pub session: Option<smithay::backend::session::libseat::LibSeatSession>,
     /// Gravação de atalho em andamento (tela Teclado das Configurações).
     pub shortcut_capture: Option<ShortcutCapture>,
     /// Autoteste: finge o Ctrl pressionado (o teste não tem teclado real).
@@ -253,7 +257,13 @@ impl State {
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "seat0");
-        seat.add_keyboard(XkbConfig::default(), 200, 25)?;
+        // Layout do sistema (ABNT2 etc.), também sem desktop anfitrião (DRM).
+        let kb = crate::config::system_keyboard();
+        if !kb.layout.is_empty() {
+            tracing::info!("teclado: layout {} {}", kb.layout, kb.variant);
+        }
+        let xkb = XkbConfig { rules: "", model: &kb.model, layout: &kb.layout, variant: &kb.variant, options: kb.options.clone() };
+        seat.add_keyboard(xkb, 200, 25)?;
         seat.add_pointer();
 
         Ok(Self {
@@ -285,6 +295,8 @@ impl State {
             launcher_gone: false,
             redraw: true,
             waker: None,
+            cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
+            session: None,
             shortcut_capture: None,
             test_ctrl: false,
             resize_grab: None,
@@ -514,8 +526,10 @@ impl SeatHandler for State {
     fn cursor_image(
         &mut self,
         _seat: &Seat<Self>,
-        _image: smithay::input::pointer::CursorImageStatus,
+        image: smithay::input::pointer::CursorImageStatus,
     ) {
+        self.cursor_status = image;
+        self.wake();
     }
 }
 

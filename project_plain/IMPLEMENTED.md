@@ -806,3 +806,14 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Desligar um atalho:** a ação `none` remove a combinação, inclusive um atalho padrão (trocar a combinação de um atalho grava a antiga como `none` e a nova com a ação).
 - Diálogo desenhado fora da área de conteúdo (`ui.modal` no `view`), centralizado na janela.
 - Testes: 5 unitários novos (107 no total) e 6 verificações novas no `tests/ui.sh` (gravar, vale no compositor, antiga desligada, gravando não dispara atalho, conflito pede confirmação, restaurar padrões).
+
+## Backend DRM (A13): o mide direto na tela
+
+- **`src/backend_udev.rs`:** sessão pelo libseat (acesso à placa de vídeo e à entrada sem root), placa principal do assento, DRM/KMS com o primeiro monitor conectado no modo preferido, GBM + EGL + `GlesRenderer` (o mesmo renderizador do winit, então a cena é a mesma) e `GbmBufferedSurface` com formato opaco (XRGB8888) primeiro. O quadro é entregue com o ponto de sincronização da GPU e o próximo só sai depois do vblank; parado, não desenha (`state.wake` acorda pelo `ping`).
+- **Entrada pelo libinput:** mouse e touchpad por deslocamento (ponteiro preso na tela), teclado, rolagem; touchpads com toque para clicar ligado.
+- **Cursor desenhado pelo mide** (`src/cursor.rs`): tema do sistema (`XCURSOR_THEME`, `XCURSOR_SIZE`, padrão `default` 24 px, com nomes antigos de reserva), seta própria se não houver tema, superfície do app quando ele pede (com hotspot), e as formas de redimensionar do mide por cima. A cena desenha o cursor só quando o backend pede (`Scene::with_cursor`); no winit, o anfitrião mostra o dele.
+- **Troca de console:** Ctrl+Alt+F1…F12 (`XF86Switch_VT_n` do xkb) troca pela sessão; ao sair, tela e entrada são liberadas; ao voltar, retomadas e redesenhadas.
+- **Layout do teclado do sistema:** o assento lê `/etc/default/keyboard` (ex.: `XKBLAYOUT="br"`), a não ser que `XKB_DEFAULT_LAYOUT` esteja definido. Vale também no winit.
+- **Escolha do backend:** `MIDE_BACKEND=drm` ou `winit`; sem ele, DRM quando não há `WAYLAND_DISPLAY` nem `DISPLAY` (iniciado de um console de texto).
+- `Scene::render` passou a devolver o ponto de sincronização (`SyncPoint`) do quadro.
+- Limites: uma placa e uma tela, sem hotplug de monitor, cursor desenhado na cena (sem plano de hardware), tela redesenhada inteira a cada quadro.
