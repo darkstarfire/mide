@@ -1179,11 +1179,15 @@ impl Launcher {
 }
 
 /// Desenha `icon` reduzido (ou ampliado) para `size` em (x, y), com filtro suave.
+/// Bilinear, não bicúbico: o bicúbico "passa do ponto" nas bordas transparentes e gera
+/// pixels com cor maior que a opacidade, que viram pontinhos brancos quando o
+/// compositor esmaece o launcher ao fechar.
 fn draw_scaled(pixmap: &mut Pixmap, icon: &Pixmap, x: f32, y: f32, size: f32) {
     let scale = size / icon.width().max(1) as f32;
-    let paint = PixmapPaint { quality: FilterQuality::Bicubic, ..Default::default() };
+    let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
     let transform = Transform::from_translate(x, y).pre_scale(scale, scale);
     pixmap.draw_pixmap(0, 0, icon.as_ref(), &paint, transform, None);
+    mide::ui::draw::fix_premultiplied(pixmap);
 }
 
 impl CompositorHandler for Launcher {

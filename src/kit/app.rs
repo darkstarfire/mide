@@ -156,6 +156,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app: Box::new(app),
     };
 
+    runner.ctx.layer = matches!(runner.shell, Shell::Layer(..));
     let mut event_loop: EventLoop<Runner> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())

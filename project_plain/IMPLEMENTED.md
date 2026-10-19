@@ -743,3 +743,11 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - O servidor de notificações guarda cada notificação recebida num histórico (as 50 mais novas, em `$XDG_RUNTIME_DIR/<socket>-notificacoes`, separado por sessão), inclusive as silenciadas pelo **Não perturbe**.
 - Clicar no relógio abre o calendário e, embaixo, a **central de notificações**: as mais recentes em cartões (app, hora, título e a primeira linha do texto), quantas couberem na tela (até 5, com "e mais N"), e **Limpar**.
 - Lógica do histórico em `mide::notify` (gravar, ler, limpar e o formato da linha, com escape), com teste.
+
+## Correções: pontinhos no launcher e diálogo de criar no Arquivos
+
+- **Sem pontinhos brancos ao fechar o launcher:** os ícones eram reduzidos com filtro bicúbico, que "passa do ponto" nas bordas transparentes e gera pixels com cor maior que a opacidade. Quando o compositor esmaece o launcher, esses pixels clareiam demais. Agora o filtro é bilinear e os pixels são conferidos (`mide::ui::draw::fix_premultiplied`).
+- **Diálogo (modal) para Nova pasta, Novo arquivo e Renomear** no Arquivos: a janela escurece e um painel branco aparece no meio, com o nome já selecionado, **Cancelar** e **Criar**. Nada é criado antes de "Criar": Cancelar ou Esc não criam nada. Sem mudar o nome, cria "Nova pasta", "Nova pasta (1)", "Nova pasta (2)"... (e "Novo arquivo.txt", "Novo arquivo (1).txt"); com outro nome, cria exatamente com ele, sem sobrescrever (nome repetido mostra o erro no diálogo).
+- **mide-ui:** `ui.modal(largura, |ui| ...)` (escurece a janela, painel centralizado, só o conteúdo do modal reage). Painéis de vidro ficam opacos em janelas comuns (o vidro desfocado de verdade só existe em camadas).
+- `mide::files`: `numbered_name` ("Nova pasta (1)") e `create_named` (cria pasta ou arquivo sem sobrescrever), com testes.
+- Plano: registrada a etapa **B12** (escolher nas Configurações os itens da barra superior).

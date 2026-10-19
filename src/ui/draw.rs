@@ -305,6 +305,18 @@ pub fn menu_arrow(pixmap: &mut Pixmap, cx: f32, edge: f32, down: bool, rgba_fill
     }
 }
 
+/// Garante pixels premultiplicados válidos (cor nunca maior que a opacidade). Filtros
+/// de escala podem passar do ponto nas bordas; um pixel inválido clareia demais quando
+/// o compositor aplica transparência (aparece como ponto branco).
+pub fn fix_premultiplied(pixmap: &mut Pixmap) {
+    for px in pixmap.data_mut().chunks_exact_mut(4) {
+        let a = px[3];
+        px[0] = px[0].min(a);
+        px[1] = px[1].min(a);
+        px[2] = px[2].min(a);
+    }
+}
+
 /// Copia o pixmap (RGBA premultiplicado) para um buffer wl_shm Argb8888 (B, G, R, A).
 /// Troca R e B de 4 em 4 bytes como um número só (bem mais rápido que byte a byte).
 pub fn to_argb8888(pixmap: &Pixmap, canvas: &mut [u8]) {
@@ -369,6 +381,15 @@ mod tests {
         for (p, q) in a.pixels().iter().zip(b.pixels()) {
             assert!((p.alpha() as i32 - q.alpha() as i32).abs() <= 64, "{} vs {}", p.alpha(), q.alpha());
         }
+    }
+
+    #[test]
+    fn pixels_premultiplicados_validos() {
+        let mut p = Pixmap::new(2, 1).unwrap();
+        // Pixel inválido (cor 200 com opacidade 100), escrito à mão.
+        p.data_mut().copy_from_slice(&[200, 50, 120, 100, 10, 10, 10, 255]);
+        fix_premultiplied(&mut p);
+        assert_eq!(p.data(), &[100, 50, 100, 100, 10, 10, 10, 255]);
     }
 
     #[test]

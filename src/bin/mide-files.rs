@@ -49,8 +49,9 @@ struct Files {
     hidden: bool,
     search: String,
     searching: bool,
-    renaming: Option<(PathBuf, String)>,
-    /// O campo do nome novo ainda precisa receber o foco.
+    /// Diálogo aberto (nova pasta, novo arquivo ou renomear).
+    dialog: Option<Dialog>,
+    /// O campo do nome ainda precisa receber o foco.
     focus_rename: bool,
     message: Option<String>,
     favorites: Vec<(String, PathBuf, &'static str)>,
@@ -122,7 +123,7 @@ impl Files {
             hidden: false,
             search: String::new(),
             searching: false,
-            renaming: None,
+            dialog: None,
             focus_rename: false,
             message: None,
             favorites: files::favorites(),
@@ -234,19 +235,11 @@ impl Files {
         }
     }
 
+    /// Novo arquivo: diálogo com "Novo arquivo.txt" todo selecionado (digitar
+    /// "notas.md" já define a extensão).
     fn new_file(&mut self) {
-        let Some(dir) = self.target_dir() else {
-            return;
-        };
-        match files::create_file(&dir) {
-            Ok(path) => {
-                tracing::info!("arquivo criado: {}", path.display());
-                self.reload();
-                self.selected = Some(path.clone());
-                // O nome vem todo selecionado: digitar "notas.md" já define a extensão.
-                self.start_rename(path);
-            }
-            Err(err) => self.message = Some(format!("Não foi possível criar o arquivo: {err}")),
+        if self.target_dir().is_some() {
+            self.open_dialog(DialogKind::NewFile, "Novo arquivo.txt".into());
         }
     }
 
@@ -300,7 +293,7 @@ impl Files {
         self.selected = None;
         self.search.clear();
         self.searching = false;
-        self.renaming = None;
+        self.dialog = None;
         self.message = None;
         self.reload();
         match &self.place {
@@ -374,42 +367,57 @@ impl Files {
         self.reload();
     }
 
+    /// Nova pasta: abre o diálogo com o nome sugerido (nada é criado ainda).
     fn new_folder(&mut self) {
-        let Place::Dir(dir) = &self.place else {
-            return;
-        };
-        match files::create_folder(dir) {
-            Ok(path) => {
-                tracing::info!("pasta criada: {}", path.display());
-                self.reload();
-                self.selected = Some(path.clone());
-                // Como no Finder: a pasta nova já entra com o nome para trocar.
-                self.start_rename(path);
-            }
-            Err(err) => self.message = Some(format!("Não foi possível criar a pasta: {err}")),
+        if self.target_dir().is_some() {
+            self.open_dialog(DialogKind::NewFolder, "Nova pasta".into());
         }
     }
 
     fn start_rename(&mut self, path: PathBuf) {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        self.renaming = Some((path, name));
+        self.open_dialog(DialogKind::Rename(path), name);
+    }
+
+    fn open_dialog(&mut self, kind: DialogKind, name: String) {
+        self.dialog = Some(Dialog { kind, suggestion: name.clone(), name, error: None });
         self.focus_rename = true;
     }
 
-    fn finish_rename(&mut self) {
-        let Some((path, name)) = self.renaming.take() else {
+    /// "Criar" ou "Renomear" no diálogo. Para criar: sem mudar o nome sugerido, usa o
+    /// próximo livre ("Nova pasta", "Nova pasta (1)"...); com outro nome, exatamente
+    /// ele (sem sobrescrever nada). Com erro, o diálogo continua aberto e mostra.
+    fn confirm_dialog(&mut self) {
+        let Some(dialog) = self.dialog.as_ref() else {
             return;
         };
-        match files::rename(&path, &name) {
-            Ok(target) => {
-                tracing::info!("renomeado: {} -> {}", path.display(), target.display());
+        let result = match &dialog.kind {
+            DialogKind::Rename(path) => files::rename(path, &dialog.name),
+            kind => {
+                let Some(dir) = self.target_dir() else {
+                    return;
+                };
+                let folder = matches!(kind, DialogKind::NewFolder);
+                let name = if dialog.name.trim() == dialog.suggestion {
+                    if folder { files::numbered_name(&dir, "Nova pasta", "") } else { files::numbered_name(&dir, "Novo arquivo", "txt") }
+                } else {
+                    dialog.name.trim().to_string()
+                };
+                files::create_named(&dir, &name, folder)
+            }
+        };
+        match result {
+            Ok(path) => {
+                tracing::info!("pronto: {}", path.display());
+                self.dialog = None;
                 self.reload();
-                self.selected = Some(target);
+                self.selected = Some(path);
                 self.message = None;
             }
             Err(err) => {
-                self.message = Some(format!("Não foi possível renomear: {err}"));
-                self.renaming = Some((path, name));
+                if let Some(d) = self.dialog.as_mut() {
+                    d.error = Some(err);
+                }
             }
         }
     }
@@ -465,7 +473,7 @@ impl Files {
             self.new_folder();
             ui.request_repaint();
         }
-        if ui.typing() || self.renaming.is_some() {
+        if ui.typing() || self.dialog.is_some() {
             return;
         }
         let current = self.selected.as_ref().and_then(|s| shown.iter().position(|e| &e.path == s));
@@ -586,32 +594,49 @@ impl Files {
         }
     }
 
-    fn rename_bar(&mut self, ui: &mut Ui) {
-        let Some((_, mut name)) = self.renaming.clone() else {
+    /// Diálogo (modal, vidro branco no meio da janela): nome, Cancelar e Criar.
+    /// Cancelar (ou Esc) não cria nada; Enter confirma.
+    fn dialog_view(&mut self, ui: &mut Ui) {
+        let Some(dialog) = self.dialog.as_mut() else {
             return;
         };
+        let (title, action) = match dialog.kind {
+            DialogKind::NewFolder => ("Nova pasta", "Criar"),
+            DialogKind::NewFile => ("Novo arquivo", "Criar"),
+            DialogKind::Rename(_) => ("Renomear", "Renomear"),
+        };
+        let focus = std::mem::take(&mut self.focus_rename);
         let mut done = false;
         let mut cancel = ui.input().key(Key::Escape);
-        ui.heading("Renomear");
-        ui.card(|ui| {
-            if std::mem::take(&mut self.focus_rename) {
+        let error = dialog.error.clone();
+        let mut name = dialog.name.clone();
+        ui.modal(380.0, |ui| {
+            ui.strong(title);
+            if focus {
                 ui.focus_next_input();
             }
-            done = ui.text_input(&mut name, "Nome novo").submitted();
+            done = ui.text_input(&mut name, "Nome").submitted();
+            if let Some(err) = &error {
+                ui.note(err);
+            }
             ui.row(|ui| {
-                done |= ui.primary_button("Renomear").clicked();
-                cancel |= ui.button("Cancelar").clicked();
+                ui.push_right(2.0 * 110.0 + 8.0);
+                ui.sized(110.0, |ui| cancel |= ui.button("Cancelar").clicked());
+                ui.sized(110.0, |ui| done |= ui.primary_button(action).clicked());
             });
         });
-        if let Some((_, current)) = self.renaming.as_mut() {
-            *current = name;
+        if let Some(d) = self.dialog.as_mut() {
+            if d.name != name {
+                d.error = None;
+            }
+            d.name = name;
         }
         if cancel {
-            self.renaming = None;
-            self.message = None;
+            tracing::info!("diálogo cancelado: nada criado");
+            self.dialog = None;
             ui.request_repaint();
         } else if done {
-            self.finish_rename();
+            self.confirm_dialog();
             ui.request_repaint();
         }
     }
@@ -671,7 +696,6 @@ impl Files {
         let mut action: Option<(Action, Entry)> = None;
         let mut empty_action = None;
         ui.page(|ui| {
-            self.rename_bar(ui);
             if let Some(message) = &self.message {
                 ui.note(message);
             }
@@ -887,6 +911,20 @@ impl Files {
     }
 }
 
+/// Diálogo do Arquivos: o que ele faz, o nome sugerido, o nome digitado e o erro.
+struct Dialog {
+    kind: DialogKind,
+    suggestion: String,
+    name: String,
+    error: Option<String>,
+}
+
+enum DialogKind {
+    NewFolder,
+    NewFile,
+    Rename(PathBuf),
+}
+
 #[derive(Clone, Copy)]
 enum Action {
     Open,
@@ -924,6 +962,8 @@ impl App for Files {
         };
         let refs: Vec<(&str, &str)> = items.iter().map(|(n, i)| (n.as_str(), *i)).collect();
         let chosen = ui.sidebar_area(&refs, current, |ui, _| self.content(ui));
+        // Diálogo por cima de tudo (a janela inteira escurece atrás).
+        self.dialog_view(ui);
         if chosen != current {
             let place = if chosen == favorites + 3 {
                 Place::Trash

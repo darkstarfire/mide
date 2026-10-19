@@ -141,6 +141,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [x] B9. (feito: servidor `mide-notifications` com banners no estilo do macOS, ações, expiração, fechar, Não perturbe e a central de notificações com o histórico, no painel do relógio) Notificações: servidor `org.freedesktop.Notifications` com visual do DE
 - [ ] B10. Ícones e pastas na área de trabalho, com menu de contexto
 - [x] B11. (feito: `mide-search` com ctrl+space, apps, Configurações, arquivos e contas, sobre o vidro líquido; pendentes: prévia, grupos e histórico) Buscador de apps nativo (estilo Spotlight), recriado no mide no lugar do buscador de terceiros que está instalado: barra flutuante com o vidro líquido da dock (mesmo componente/shader), busca de apps, arquivos e ações, abrindo por atalho, para o visual ficar integrado ao DE
+- [ ] B12. Configurações → Barra superior: escolher quais itens aparecem na barra (som, Wi-Fi, Bluetooth, bateria, central de controle, engrenagem e os ícones de apps do tray)
 
 ### Fase D: plataforma para apps
 - [~] D1. (feito: `mide::kit` com componentes, layout, tema, janela e eventos, exemplo `mide-ui-demo` e guia `docs/mide-ui.md`; menu de contexto, grade, ladrilhos, lista, barra de ferramentas, duplo clique e foco com seleção; camadas (`Window::overlay`), `glass_panel`, linhas de resultado e ícones assíncronos; faltam tema escuro, campo de texto completo (cursor no meio, colar), diálogos, seletor de arquivos e animações como componentes; as Configurações já foram passadas para ele) Framework mide-ui: criar apps com a interface nativa do mide
@@ -150,7 +151,7 @@ Decisão de arquitetura: o compositor (`mide`) cuida de Wayland, janelas, input 
 - [ ] C1. Bloqueio de tela (`ext-session-lock-v1`) e inatividade (`ext-idle-notify-v1`)
 - [ ] C2. Sessão de login (entrada `.desktop` para `greetd`) e autostart
 - [ ] C3. Instalador em bash descrito em `INSTALATION.md`
-- [~] C4. (feito: 99 testes unitários, tests/smoke.sh, tests/ui.sh com 142 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
+- [~] C4. (feito: 101 testes unitários, tests/smoke.sh, tests/ui.sh com 144 verificações de interface (800x600) e tests/res1366.sh com 8 em 1366x768; feito também `tests/perf.sh` com tempos de quadro e de resposta por cenário; falta medir o tempo de GPU) Testes automatizados e medição de desempenho (frame time e GPU)
 ---
 
 ---

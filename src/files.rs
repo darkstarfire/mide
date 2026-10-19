@@ -353,6 +353,32 @@ pub fn extract(path: &Path) -> std::io::Result<PathBuf> {
     Ok(target)
 }
 
+/// Nome livre para um item novo: "Nova pasta", "Nova pasta (1)", "Nova pasta (2)"...
+/// (`ext` vazia para pastas; com extensão: "Novo arquivo.txt", "Novo arquivo (1).txt").
+pub fn numbered_name(dir: &Path, stem: &str, ext: &str) -> String {
+    let with = |s: &str| if ext.is_empty() { s.to_string() } else { format!("{s}.{ext}") };
+    let mut name = with(stem);
+    let mut n = 1;
+    while dir.join(&name).exists() {
+        name = with(&format!("{stem} ({n})"));
+        n += 1;
+    }
+    name
+}
+
+/// Cria um item novo com o nome dado (pasta ou arquivo vazio). Não sobrescreve: com
+/// o nome já usado, devolve o erro em português.
+pub fn create_named(dir: &Path, name: &str, folder: bool) -> Result<PathBuf, String> {
+    let name = valid_name(name)?;
+    let path = dir.join(name);
+    if path.exists() {
+        return Err(format!("já existe \"{name}\" nesta pasta"));
+    }
+    let result = if folder { fs::create_dir(&path) } else { fs::OpenOptions::new().write(true).create_new(true).open(&path).map(|_| ()) };
+    result.map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +492,22 @@ mod tests {
         assert_eq!(fs::read_to_string(out.join("Projeto/LEIAME.md")).unwrap(), "oi");
         // Extrair de novo não sobrescreve: pasta com número.
         assert_eq!(extract(&zip).unwrap().file_name().unwrap(), "Projeto 2");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn nomes_numerados_e_criar_com_nome() {
+        let dir = temp("numerados");
+        assert_eq!(numbered_name(&dir, "Nova pasta", ""), "Nova pasta");
+        create_named(&dir, "Nova pasta", true).unwrap();
+        assert_eq!(numbered_name(&dir, "Nova pasta", ""), "Nova pasta (1)");
+        create_named(&dir, "Nova pasta (1)", true).unwrap();
+        assert_eq!(numbered_name(&dir, "Nova pasta", ""), "Nova pasta (2)");
+        assert_eq!(numbered_name(&dir, "Novo arquivo", "txt"), "Novo arquivo.txt");
+        let f = create_named(&dir, "notas.md", false).unwrap();
+        assert!(f.is_file());
+        assert!(create_named(&dir, "notas.md", false).unwrap_err().contains("já existe"));
+        assert!(create_named(&dir, "a/b", true).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

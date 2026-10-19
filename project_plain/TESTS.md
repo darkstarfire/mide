@@ -476,3 +476,8 @@ Manual (o que o autoteste não cobre):
 
 - `notify-send "Teste" "Olá"` algumas vezes; clicar no relógio: as notificações aparecem embaixo do calendário; "Limpar" apaga.
 - Ligar o Não perturbe na central de controle, mandar uma notificação: não aparece banner, mas ela está no relógio.
+
+## Diálogo do Arquivos — automáticos
+
+- `tests/ui.sh`: Esc no diálogo não cria nada; Cancelar não cria nada; Criar sem mudar o nome cria "Nova pasta" e depois "Nova pasta (1)"; com nome digitado cria com ele.
+- `cargo test`: `nomes_numerados_e_criar_com_nome`, `pixels_premultiplicados_validos`.

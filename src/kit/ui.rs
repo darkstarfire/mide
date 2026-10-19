@@ -146,6 +146,9 @@ pub struct Memory {
     menu: Option<MenuState>,
     menu_rect: Option<(f32, f32, f32, f32)>,
     menu_drawn: bool,
+    /// Modal aberto (retângulo do quadro anterior, na janela) e se foi desenhado agora.
+    modal_rect: Option<(f32, f32, f32, f32)>,
+    modal_drawn: bool,
 }
 
 /// Tudo que os componentes compartilham num quadro.
@@ -170,6 +173,8 @@ pub struct Ctx {
     window: (u32, u32),
     /// Algum componente está sob o ponteiro neste quadro.
     hover_claimed: bool,
+    /// Desenhando o conteúdo do modal (só ele reage enquanto está aberto).
+    in_modal: bool,
     /// O app pediu outro quadro em breve (`Ui::request_tick`).
     pub ticking: bool,
     /// Título pedido pelo app (`Ui::set_title`), aplicado pela janela.
@@ -180,6 +185,8 @@ pub struct Ctx {
     pub close_requested: bool,
     /// Quadro agendado pelo app (`Ui::wake_after`).
     pub wake_at: Option<std::time::Instant>,
+    /// O app é uma camada (`Window::overlay`): painéis de vidro deixam ver o fundo.
+    pub layer: bool,
 }
 
 impl Ctx {
@@ -198,11 +205,13 @@ impl Ctx {
             overlay: None,
             window: (0, 0),
             hover_claimed: false,
+            in_modal: false,
             ticking: false,
             title: None,
             glass: Vec::new(),
             close_requested: false,
             wake_at: None,
+            layer: false,
         }
     }
 
@@ -265,6 +274,7 @@ impl Ctx {
         }
         self.ticking = !self.icon_pending.is_empty();
         self.memory.menu_drawn = false;
+        self.memory.modal_drawn = false;
         self.overlay = None;
         if self.input.key(Key::Escape) && self.memory.menu.is_some() {
             self.memory.menu = None;
@@ -276,6 +286,11 @@ impl Ctx {
 
     /// Fim de um quadro: solta o componente apertado e limpa a entrada do quadro.
     pub fn end_frame(&mut self) {
+        // Modal que não foi desenhado neste quadro fechou.
+        if !self.memory.modal_drawn && self.memory.modal_rect.is_some() {
+            self.memory.modal_rect = None;
+            self.repaint = true;
+        }
         // Menu aberto: clique fora fecha; se o dono dele sumiu, fecha também.
         if self.memory.menu.is_some() {
             let outside = (self.input.pressed || self.input.secondary)
@@ -422,7 +437,9 @@ impl<'a> Ui<'a> {
     fn interact(&mut self, id: u64, rect: (f32, f32, f32, f32)) -> Response {
         // Com um menu aberto, o que está debaixo dele não reage.
         let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r));
-        let hovered = !under_menu && self.over(rect) && self.ctx.memory.active.is_none_or(|a| a == id);
+        // Com um modal aberto, só o que está dentro dele reage.
+        let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
+        let hovered = !under_menu && !blocked && self.over(rect) && self.ctx.memory.active.is_none_or(|a| a == id);
         if hovered {
             self.ctx.hover_claimed = true;
         }
@@ -453,7 +470,8 @@ impl<'a> Ui<'a> {
             return Response { rect, id, ..Default::default() };
         }
         let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r));
-        let hovered = !under_menu && self.over(rect);
+        let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
+        let hovered = !under_menu && !blocked && self.over(rect);
         Response {
             hovered,
             clicked: hovered && self.ctx.input.pressed,
@@ -462,6 +480,36 @@ impl<'a> Ui<'a> {
             id,
             ..Default::default()
         }
+    }
+
+    /// Janela modal (diálogo): escurece a janela e mostra um painel de vidro branco no
+    /// centro, com o conteúdo montado no `add`. Enquanto o modal é desenhado (a cada
+    /// quadro em que ele está aberto), nada atrás dele reage. Chamar no fim do `view`,
+    /// na área de cima (a janela inteira):
+    ///
+    /// ```ignore
+    /// if let Some(d) = &mut self.dialogo {
+    ///     ui.modal(380.0, |ui| {
+    ///         ui.title("Nova pasta");
+    ///         ui.text_input(&mut d.nome, "Nome");
+    ///     });
+    /// }
+    /// ```
+    pub fn modal(&mut self, width: f32, add: impl FnOnce(&mut Ui)) -> (f32, f32, f32, f32) {
+        let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
+        let mut dim = Paint::default();
+        dim.set_color(color([0, 0, 0, 56]));
+        if let Some(r) = tiny_skia::Rect::from_xywh(0.0, 0.0, ww, wh) {
+            self.canvas.fill_rect(r, &dim, Transform::identity(), None);
+        }
+        let width = width.min(ww - 32.0);
+        let (x, y) = (((ww - width) / 2.0).round(), (wh * 0.24).round());
+        self.ctx.in_modal = true;
+        let rect = self.glass_panel(x, y, width, 14.0, add);
+        self.ctx.in_modal = false;
+        self.ctx.memory.modal_rect = Some((self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3));
+        self.ctx.memory.modal_drawn = true;
+        rect
     }
 
     /// Entrega um ícone já carregado (por exemplo, numa thread do app) para os
@@ -489,11 +537,14 @@ impl<'a> Ui<'a> {
         let max_h = (self.visible.1 - y).max(1.0);
         let (inner, used) = self.sub_area(x + pad, y + pad, width - 2.0 * pad, max_h - 2.0 * pad, y + pad, add);
         let h = ((used - self.ctx.theme.spacing).max(0.0) + 2.0 * pad).min(max_h);
-        let glass = crate::control_client::panel_glass();
+        // Vidro de verdade só em camadas (o compositor desfoca atrás); numa janela, o
+        // painel é branco opaco (senão abriria um buraco para a área de trabalho).
+        let glass = self.ctx.layer && crate::control_client::panel_glass();
         // Sombra só na faixa de fora e o véu escrito direto (sem misturar no miolo):
         // painéis grandes continuam baratos.
         crate::ui::draw::soft_shadow(self.canvas, x, y, width, h, radius, 16.0, 6.0, 60);
-        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [248, 248, 250, if glass { 178 } else { 246 }]);
+        let veil = if glass { 178 } else if self.ctx.layer { 246 } else { 255 };
+        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [248, 248, 250, veil]);
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, width - 1.0, h - 1.0, radius) {
             let mut paint = Paint::default();
             paint.anti_alias = true;
