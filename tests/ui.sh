@@ -575,6 +575,46 @@ file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581
 file_check "Ctrl+C e Ctrl+V copiam para outra pasta" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ -f "$FDIR/relatorio.pdf" ]' "400 click 581 310; 420 combo ctrl+c; 440 click 463 190; 446 click 463 190; 480 combo ctrl+v; 520 list"
 rm -rf "$(dirname "$FDIR")"
 
+echo "== editor de texto (mide-text)"
+TDIR="$(mktemp -d)"
+TEXT_APP="$PWD/target/debug/mide-text"
+printf 'fn main() {\n    println!("olá");\n}\n' > "$TDIR/teste.rs"
+# Abre com o foco no texto: Ctrl+End vai ao fim, Enter e digitar, Ctrl+S salva.
+timeout 150 "$SCEN" "400 list; 420 combo ctrl+end; 440 key enter; 450 type editado; 470 combo ctrl+s; 520 list" -- "$TEXT_APP '$TDIR/teste.rs'" >/dev/null 2>&1
+if [ "$(tail -n 1 "$TDIR/teste.rs")" = "editado" ] && grep -q 'println!("olá");' "$TDIR/teste.rs"; then
+    echo "ok    editor: editar no fim e salvar com Ctrl+S"; PASS=$((PASS + 1))
+else
+    echo "FALHA editor: editar no fim e salvar com Ctrl+S"; FAIL=$((FAIL + 1))
+fi
+# Copiar num editor e colar em outro (área de transferência do Wayland). O primeiro
+# fica em (48, 76) e o segundo em (80, 108), por cima: barra do primeiro em (300, 61),
+# texto do segundo visível em (925, 400).
+printf 'copiar isto' > "$TDIR/a.txt"; : > "$TDIR/b.txt"
+# O segundo abre ~3 s depois do primeiro: os passos começam no quadro 2000 (o
+# autoteste conta quadros, e sem GPU eles passam rápido).
+SCENARIO_WAIT=40 timeout 150 "$SCEN" "2000 list; 2020 click 300 61; 2040 combo ctrl+a; 2050 combo ctrl+c; 2070 click 925 400; 2090 combo ctrl+v; 2120 combo ctrl+s; 2180 list" -- "$TEXT_APP '$TDIR/a.txt'" "sleep 1; $TEXT_APP '$TDIR/b.txt'" >/dev/null 2>&1
+if [ "$(cat "$TDIR/b.txt")" = "copiar isto" ]; then
+    echo "ok    copiar num app e colar em outro"; PASS=$((PASS + 1))
+else
+    echo "FALHA copiar num app e colar em outro"; FAIL=$((FAIL + 1))
+fi
+check "editor: alteração não salva marca o título" 'janela "• teste.rs' "400 type x; 460 list" "$TEXT_APP '$TDIR/teste.rs'"
+check "fechar com alteração pergunta antes (janela continua)" 'janela "• teste.rs' "400 type x; 430 click 63 61; 480 list" "$TEXT_APP '$TDIR/teste.rs'"
+rm -rf "$TDIR"
+
+echo "== apps X11 (XWayland, precisa de xwayland-satellite, Xwayland e xclock)"
+if command -v xclock >/dev/null && { command -v xwayland-satellite >/dev/null || [ -x "$HOME/.cargo/bin/xwayland-satellite" ]; }; then
+    # O app X11 usa o display do XWayland deste mide (gravado ao lado do socket).
+    XAPP="sh -c 'sleep 2; DISPLAY=\$(cat \"\$XDG_RUNTIME_DIR/\$MIDE_SOCKET.xdisplay\") exec xclock -geometry 300x300'"
+    # O xclock abre ~3 s depois do mide (espera do app e partida do Xwayland): os
+    # passos começam no quadro 2000.
+    MIDE_XWAYLAND=1 SCENARIO_WAIT=30 check "app X11 (xclock) abre como janela do mide" 'janela "xclock" .*barra=30' "2000 list" "$XAPP"
+    # Aparece na lista de antes do clique (1 vez) e some depois dele.
+    MIDE_XWAYLAND=1 SCENARIO_WAIT=30 check_count "fechar pela barra do mide fecha o app X11" 'janela "xclock"' 1 "2000 list; 2020 click 63 61; 2100 list" "$XAPP"
+else
+    echo "pulo  apps X11 (falta xclock ou xwayland-satellite)"
+fi
+
 if [ "$(cfg_fingerprint)" != "$CFG_BEFORE" ]; then
     echo "FALHA a bateria alterou $REAL_CFG"
     FAIL=$((FAIL + 1))

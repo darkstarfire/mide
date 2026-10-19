@@ -248,6 +248,10 @@ impl State {
     pub fn new(display_handle: DisplayHandle, config: Config) -> Result<Self, Box<dyn Error>> {
         // Teclado virtual: deixa ferramentas como o wtype digitarem nos testes automáticos.
         VirtualKeyboardManagerState::new::<Self, _>(&display_handle, |_| true);
+        // Pedidos de recorte e escala de superfície (wp_viewporter) e posição lógica das
+        // saídas (xdg-output): o XWayland (xwayland-satellite) precisa dos dois.
+        smithay::wayland::viewporter::ViewporterState::new::<Self>(&display_handle);
+        smithay::wayland::output::OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         let compositor_state = CompositorState::new::<Self>(&display_handle);
         let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
         let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
@@ -353,8 +357,9 @@ impl State {
         }
     }
 
-    /// Dá o foco do teclado a uma camada que aceita foco. Usado no primeiro commit
-    /// e no clique, porque antes disso o cliente ainda não está pronto para receber teclas.
+    /// Dá o foco do teclado a uma camada que aceita foco. Usado no clique e, para as
+    /// camadas que exigem o teclado, no commit (antes disso o cliente ainda não está
+    /// pronto para receber teclas).
     pub fn focus_layer_if_allowed(&mut self, surface: &WlSurface) {
         let Some(layer) = self.layer_for(surface) else {
             return;
@@ -422,7 +427,14 @@ impl CompositorHandler for State {
         }
         self.popups.commit(surface);
         self.arrange_layer_if_any(surface);
-        self.focus_layer_if_allowed(surface);
+        // Só camadas que exigem o teclado (launcher, buscador, menus) pegam o foco
+        // sozinhas. As que só querem o teclado quando clicadas (área de trabalho) não:
+        // senão, a cada redesenho, tirariam o foco da janela em que se está digitando.
+        if self.layer_for(surface).is_some_and(|l| {
+            l.cached_state().keyboard_interactivity == smithay::wayland::shell::wlr_layer::KeyboardInteractivity::Exclusive
+        }) {
+            self.focus_layer_if_allowed(surface);
+        }
         // Primeiro quadro do launcher: começa a animação de abrir.
         if !self.launcher_seen && self.layer_for(surface).is_some_and(|l| l.namespace() == "mide-launcher") {
             let has_buffer = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer().is_some()).unwrap_or(false);
@@ -624,6 +636,7 @@ impl WlrLayerShellHandler for State {
 delegate_layer_shell!(State);
 
 delegate_output!(State);
+smithay::delegate_viewporter!(State);
 
 impl XdgDecorationHandler for State {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {

@@ -568,3 +568,46 @@ O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de s
 
 - [ ] Arquivos com uma pasta de muitos itens, janela baixa: clique direito num item do meio; o menu abre ao lado, sem cobrir o item, com a ponta apontando para ele. Perto da borda direita da janela, abre à esquerda.
 - [ ] Fechar uma janela: ela encolhe e esmaece com os cantos arredondados (sem cantos vivos).
+
+## XWayland (A14) — automáticos
+
+- `cargo test`: display X livre pula sockets e travas ocupados.
+- `tests/ui.sh` (bloco "apps X11"): `xclock` aberto pelo display do XWayland do mide vira janela do mide com a barra de título; fechar pelo botão da barra fecha o app X11. Pulado se faltar `xclock` ou `xwayland-satellite`.
+
+## XWayland (A14) — manual
+
+- [ ] `cargo run` (ou no console, A13): o log mostra `XWayland: apps X11 no display :N`.
+- [ ] Abrir um app X11 pelo mide (ex.: atalho novo nas Configurações para `xterm`, ou o terminal pelo menu do Arquivos quando ele for X11): abre dentro do mide, com a barra do mide, e digita normalmente.
+- [ ] Um app X11 grande (IDE da JetBrains sem Wayland ativado, ou outro só-X11) abre, aceita teclado, mouse e copiar/colar com apps Wayland.
+
+## Campo de texto, área de transferência e Editor de Texto — automáticos
+
+- `cargo test`: `kit::textedit` (digitar no meio, acentos, seleção com Shift, palavras, tudo selecionado, duplo clique, cursor fora do texto), `kit::textarea` (linhas, coluna por largura, desfazer juntando a digitação, recuo), `files::is_text`, `mide-text` (salvar mantém CRLF, binário não abre, buscar e substituir com desfazer).
+- `tests/ui.sh` (editor de texto): editar no fim e salvar com Ctrl+S; copiar num editor e colar em outro (Wayland) e salvar; título com "•" quando alterado; fechar com alteração pergunta (a janela continua).
+
+## Campo de texto, área de transferência e Editor de Texto — manual
+
+- [ ] Configurações → busca: clicar no meio do texto põe o cursor ali; Shift+setas seleciona; Ctrl+A, Ctrl+C e colar em outro app (ex.: um terminal Wayland).
+- [ ] Digitar acentos no campo e no editor (ABNT2: `´`+`a`, `~`+`a`, `ç`).
+- [ ] Arquivos: duplo clique num `.txt`/`.md`/`.rs` abre no Editor de Texto; editar, Ctrl+S, conferir o arquivo; Ctrl+Z desfaz.
+- [ ] Editor: Ctrl+F busca, Substituir tudo; fechar com alteração pergunta; Não salvar fecha sem gravar.
+- [ ] Abrir um app e digitar logo em seguida: as teclas vão para ele (não para a área de trabalho).
+
+## Sessão de login (C2) — automáticos
+
+- `cargo test` (`session::tests`): regras de autostart (substituição pelo arquivo do usuário, `Hidden`, `OnlyShowIn`, `NotShowIn`, `TryExec`, `X-GNOME-Autostart-enabled`, códigos `%U` tirados do `Exec`).
+
+## Sessão de login (C2) — manual
+
+Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atual (Cinnamon) e, na tela de login, escolher "mide (desenvolvimento)" no seletor de sessão.
+
+- [ ] Entra direto no mide, na resolução do monitor, com barra, dock e papel de parede.
+- [ ] Mouse, teclado (ABNT2) e touchpad funcionam; apps abrem pela dock e pelo launcher.
+- [ ] Apps de inicialização automática do sistema sobem (ex.: o applet de rede ou o gnome-keyring, conforme a distribuição): conferir em `~/.local/state/mide/sessao.log` as linhas "sessão: iniciando".
+- [ ] Notificações de outros apps chegam (o ambiente foi publicado para o D-Bus).
+- [ ] Menu do mide → Encerrar sessão volta à tela de login.
+- [ ] Se algo falhar: Ctrl+Alt+F3, entrar no console e mandar o `~/.local/state/mide/sessao.log`. Para tirar a entrada: `sudo tests/sessao-dev.sh remover`.
+
+## Bateria completa depois de A14, campo de texto, editor e foco
+
+- `tests/ui.sh` no Xvfb: todas as verificações antigas com o mesmo resultado da referência (as falhas restantes são de ambiente: sem `foot`, `gnome-calculator` e o papel de parede do Zorin); 10 novas passando (editor de atalhos e editor de texto). Os testes de XWayland passaram a começar no quadro 2000 (o xclock abre ~3 s depois do mide) e o de fechar exige que a janela apareça antes do clique e suma depois.

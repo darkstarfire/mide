@@ -105,6 +105,8 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "down" => 108,
         "pageup" => 104,
         "pagedown" => 109,
+        "home" => 102,
+        "end" => 107,
         "ctrl" => 29,
         "shift" => 42,
         "alt" => 56,

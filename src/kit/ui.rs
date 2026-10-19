@@ -175,8 +175,10 @@ pub struct Memory {
     pub dragging_scroll: Option<(u64, f32)>,
     /// O próximo `text_input` desenhado recebe o foco (`Ui::focus_next_input`).
     focus_next: bool,
-    /// O texto do campo com foco está todo selecionado (digitar substitui).
-    select_all: bool,
+    /// Cursor e seleção do campo com foco.
+    edit: super::textedit::Edit,
+    /// Rolagem horizontal do texto do campo com foco (texto maior que o campo).
+    text_scroll: f32,
     /// Último clique (componente e quando), para reconhecer o duplo clique.
     last_click: Option<(u64, std::time::Instant)>,
     /// Menu de contexto aberto e o retângulo dele no último quadro (na janela).
@@ -227,6 +229,10 @@ pub struct Ctx {
     pub wake_at: Option<std::time::Instant>,
     /// O app é uma camada (`Window::overlay`): painéis de vidro deixam ver o fundo.
     pub layer: bool,
+    /// Texto copiado (Ctrl+C, Ctrl+X num campo): a janela põe na área de transferência.
+    pub clipboard_out: Option<String>,
+    /// Ctrl+V num campo: a janela lê a área de transferência e entrega em `input.paste`.
+    pub paste_requested: bool,
 }
 
 impl Ctx {
@@ -253,6 +259,8 @@ impl Ctx {
             close_requested: false,
             wake_at: None,
             layer: false,
+            clipboard_out: None,
+            paste_requested: false,
         }
     }
 
@@ -703,6 +711,12 @@ impl<'a> Ui<'a> {
         (self.x, self.visible.0, self.width, self.visible.1 - self.visible.0)
     }
 
+    /// Altura que sobra da área atual abaixo do que já foi colocado (para um item que
+    /// ocupa o resto da janela, como a área de texto de um editor).
+    pub fn remaining_height(&self) -> f32 {
+        (self.visible.1 - self.cursor_y).max(0.0)
+    }
+
     /// Entrada deste quadro (teclas, atalhos com Ctrl).
     pub fn input(&self) -> &Input {
         &self.ctx.input
@@ -1007,52 +1021,95 @@ impl<'a> Ui<'a> {
 
     /// Campo de texto de uma linha. Clique dá o foco; Enter responde `submitted`.
     pub fn text_input(&mut self, value: &mut String, placeholder: &str) -> Response {
+        use super::textedit::Edit;
         let t = self.ctx.theme.clone();
         let id = self.ctx.id();
         let rect = self.alloc(None, t.row);
         let mut r = self.interact(id, rect);
+        // Posição do texto no campo e onde o ponteiro está nele (para o cursor).
+        let inner = (rect.0 + 10.0, rect.2 - 20.0);
+        let pointer_x = self.ctx.input.pointer.map(|(px, _)| px - self.offset.0 - inner.0 + self.ctx.memory.text_scroll);
         if std::mem::take(&mut self.ctx.memory.focus_next) {
             self.ctx.memory.focus = Some(id);
-            self.ctx.memory.select_all = !value.is_empty();
+            self.ctx.memory.edit = Edit::all(value);
+            self.ctx.memory.text_scroll = 0.0;
             self.ctx.repaint = true;
-        } else if r.clicked {
+        } else if r.hovered && self.ctx.input.pressed {
+            // Clique: foco e cursor no ponto clicado (arrastar seleciona).
+            if self.ctx.memory.focus != Some(id) {
+                self.ctx.memory.text_scroll = 0.0;
+            }
             self.ctx.memory.focus = Some(id);
-            self.ctx.memory.select_all = false;
+            let at = pointer_x.map_or(value.len(), |x| self.index_at(value, x));
+            self.ctx.memory.edit = Edit { cursor: at, anchor: Some(at) };
             self.ctx.repaint = true;
         } else if self.ctx.input.pressed && !r.hovered && self.ctx.memory.focus == Some(id) {
             self.ctx.memory.focus = None;
         }
         let focused = self.ctx.memory.focus == Some(id);
         if focused {
-            // Tudo selecionado: digitar ou apagar troca o texto inteiro.
-            let all = self.ctx.memory.select_all;
-            if !self.ctx.input.text.is_empty() {
-                if all {
-                    value.clear();
-                    self.ctx.memory.select_all = false;
+            let mut edit = self.ctx.memory.edit;
+            edit.clamp(value);
+            let before = value.clone();
+            let input = &self.ctx.input;
+            // Arrastar com o botão apertado estende a seleção; duplo clique pega a palavra.
+            if input.down && !input.pressed && self.ctx.memory.active == Some(id) {
+                if let Some(x) = pointer_x {
+                    let at = self.index_at(value, x);
+                    edit.move_to(at, true);
                 }
-                value.push_str(&self.ctx.input.text);
-                r.changed = true;
             }
-            for key in self.ctx.input.keys.clone() {
+            if r.double_clicked {
+                edit.select_word(value, edit.cursor);
+            }
+            let input = &self.ctx.input;
+            if !input.text.is_empty() {
+                edit.insert(value, &input.text.clone());
+            }
+            if let Some(pasted) = input.paste.clone() {
+                // Uma linha só: quebras de linha viram espaço.
+                edit.insert(value, &pasted.replace(['\r', '\n'], " "));
+            }
+            for (key, ctrl, shift) in self.ctx.input.key_events() {
                 match key {
-                    Key::Backspace | Key::Delete if self.ctx.memory.select_all => {
-                        r.changed |= !value.is_empty();
-                        value.clear();
-                        self.ctx.memory.select_all = false;
-                    }
-                    Key::Left | Key::Right => self.ctx.memory.select_all = false,
                     Key::Backspace => {
-                        r.changed |= value.pop().is_some();
+                        edit.backspace(value, ctrl);
                     }
+                    Key::Delete => {
+                        edit.delete(value, ctrl);
+                    }
+                    Key::Left => edit.left(value, ctrl, shift),
+                    Key::Right => edit.right(value, ctrl, shift),
+                    Key::Home => edit.move_to(0, shift),
+                    Key::End => edit.move_to(value.len(), shift),
                     Key::Enter => r.submitted = true,
                     Key::Escape => self.ctx.memory.focus = None,
                     _ => {}
                 }
             }
-            if r.changed || r.submitted {
+            // Ctrl+A, C, X e V são do campo (o app não recebe esses atalhos).
+            let shifts = std::mem::take(&mut self.ctx.input.shortcut_shift);
+            for (i, shortcut) in std::mem::take(&mut self.ctx.input.shortcuts).into_iter().enumerate() {
+                let shift = shifts.get(i).copied().unwrap_or(false);
+                match shortcut.as_str() {
+                    "a" => edit = Edit::all(value),
+                    "c" => self.ctx.clipboard_out = edit.selected(value).map(str::to_string),
+                    "x" => {
+                        self.ctx.clipboard_out = edit.selected(value).map(str::to_string);
+                        edit.delete_selection(value);
+                    }
+                    "v" => self.ctx.paste_requested = true,
+                    _ => {
+                        self.ctx.input.shortcuts.push(shortcut);
+                        self.ctx.input.shortcut_shift.push(shift);
+                    }
+                }
+            }
+            r.changed = *value != before;
+            if edit != self.ctx.memory.edit || r.changed || r.submitted {
                 self.ctx.repaint = true;
             }
+            self.ctx.memory.edit = edit;
         }
         fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
         let border = if focused { t.accent } else { [0, 0, 0, 40] };
@@ -1065,18 +1122,287 @@ impl<'a> Ui<'a> {
         }
         let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
         if value.is_empty() && !focused {
-            self.draw_text(placeholder, rect.0 + 10.0, ty, t.font, FontWeight::Regular, t.text_secondary);
+            self.draw_text(placeholder, inner.0, ty, t.font, FontWeight::Regular, t.text_secondary);
+        } else if !focused {
+            let shown = self.fit(value, t.font, FontWeight::Regular, inner.1 - 4.0);
+            self.draw_text(&shown, inner.0, ty, t.font, FontWeight::Regular, t.text);
         } else {
-            let shown = self.fit(value, t.font, FontWeight::Regular, rect.2 - 24.0);
-            if focused && self.ctx.memory.select_all {
-                let sw = self.measure(&shown, t.font, FontWeight::Regular);
-                let [r_, g, b, _] = t.accent;
-                fill_rounded(self.canvas, rect.0 + 8.0, rect.1 + 6.0, sw + 4.0, rect.3 - 12.0, 3.0, color([r_, g, b, 70]));
+            self.edit_text(value, rect, inner, ty);
+        }
+        r
+    }
+
+    /// Texto do campo com foco: rolado para o cursor ficar à vista, com a seleção e o
+    /// cursor, recortado dentro do campo.
+    fn edit_text(&mut self, value: &str, rect: (f32, f32, f32, f32), inner: (f32, f32), ty: f32) {
+        let t = self.ctx.theme.clone();
+        let edit = self.ctx.memory.edit;
+        let cursor_x = self.measure(&value[..edit.cursor], t.font, FontWeight::Regular);
+        let total = self.measure(value, t.font, FontWeight::Regular);
+        let mut scroll = self.ctx.memory.text_scroll;
+        if cursor_x - scroll > inner.1 {
+            scroll = cursor_x - inner.1;
+        }
+        if cursor_x < scroll {
+            scroll = cursor_x;
+        }
+        scroll = scroll.clamp(0.0, (total - inner.1).max(0.0));
+        self.ctx.memory.text_scroll = scroll;
+        // Desenha numa imagem do tamanho de dentro do campo: o que passa fica de fora.
+        let (w, h) = ((inner.1 + 4.0).ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
+        let Some(mut clip) = Pixmap::new(w, h) else {
+            return;
+        };
+        let x0 = 2.0 - scroll;
+        if let Some((a, b)) = edit.selection() {
+            let (xa, xb) = (self.measure(&value[..a], t.font, FontWeight::Regular), self.measure(&value[..b], t.font, FontWeight::Regular));
+            let [r_, g, b_, _] = t.accent;
+            fill_rounded(&mut clip, x0 + xa - 1.0, 6.0, xb - xa + 2.0, rect.3 - 12.0, 3.0, color([r_, g, b_, 70]));
+        }
+        self.ctx.text.draw(&mut clip, value, x0, ty - rect.1, t.font, FontWeight::Regular, t.text);
+        if edit.selection().is_none() {
+            fill_rounded(&mut clip, x0 + cursor_x, 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
+        }
+        self.canvas.draw_pixmap((inner.0 - 2.0) as i32, rect.1 as i32, clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+    }
+
+    /// Posição no texto (índice de byte) mais perto de `x`, medido do começo do texto.
+    fn index_at(&mut self, value: &str, x: f32) -> usize {
+        let font = self.ctx.theme.font;
+        let mut left = 0.0;
+        for (i, c) in value.char_indices() {
+            let right = self.measure(&value[..i + c.len_utf8()], font, FontWeight::Regular);
+            if x < (left + right) / 2.0 {
+                return i;
             }
-            let w = self.draw_text(&shown, rect.0 + 10.0, ty, t.font, FontWeight::Regular, t.text);
-            if focused && !self.ctx.memory.select_all {
-                fill_rounded(self.canvas, rect.0 + 11.0 + w, rect.1 + 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
+            left = right;
+        }
+        value.len()
+    }
+
+    /// Área de texto de várias linhas (editor): números de linha, cursor, seleção com
+    /// mouse e teclado, desfazer (Ctrl+Z) e refazer (Ctrl+Shift+Z, Ctrl+Y), área de
+    /// transferência e rolagem. Só as linhas à vista são desenhadas. Os outros atalhos
+    /// com Ctrl (salvar, buscar...) ficam para o app. `changed` diz se o texto mudou.
+    pub fn text_area(&mut self, doc: &mut super::textarea::TextDoc, height: f32) -> Response {
+        use super::textarea::{index_in_line, line_end, line_of, Change};
+        use super::textedit::Edit;
+        let t = self.ctx.theme.clone();
+        let size = t.font;
+        let line_h = (size * 1.5).round();
+        let pad = 6.0;
+        let id = self.ctx.id();
+        let rect = self.alloc(None, height);
+        let mut r = self.interact(id, rect);
+        let mut starts = doc.line_starts();
+        let digits = starts.len().to_string().len().max(2);
+        let gutter = self.ctx.text.measure_mono(&"0".repeat(digits), size * 0.9) + 20.0;
+        let text_x = rect.0 + gutter + 8.0;
+        let view = (rect.2 - gutter - 16.0, rect.3 - 2.0 * pad);
+        let rows = (view.1 / line_h).floor().max(1.0) as usize;
+        // Linha e posição sob o ponteiro.
+        let pointer_at = |ui: &mut Self, doc: &super::textarea::TextDoc, starts: &[usize]| -> Option<usize> {
+            let (px, py) = ui.pointer()?;
+            let line = (((py - rect.1 - pad + doc.scroll) / line_h).floor().max(0.0) as usize).min(starts.len() - 1);
+            let x = px - text_x + doc.scroll_x;
+            Some(index_in_line(&doc.text, starts, line, x, |s| ui.ctx.text.measure_mono(s, size)))
+        };
+        if std::mem::take(&mut self.ctx.memory.focus_next) {
+            self.ctx.memory.focus = Some(id);
+        }
+        if r.hovered && self.ctx.input.pressed {
+            self.ctx.memory.focus = Some(id);
+            if let Some(at) = pointer_at(self, doc, &starts) {
+                doc.edit = Edit { cursor: at, anchor: Some(at) };
+                doc.goal_x = None;
             }
+            self.ctx.repaint = true;
+        }
+        if r.hovered && self.ctx.input.scroll != 0.0 {
+            doc.scroll += std::mem::take(&mut self.ctx.input.scroll);
+            self.ctx.repaint = true;
+        }
+        let focused = self.ctx.memory.focus == Some(id);
+        let mut moved = false;
+        if focused {
+            doc.edit.clamp(&doc.text);
+            let before = (doc.edit, doc.version);
+            if self.ctx.input.down && !self.ctx.input.pressed && self.ctx.memory.active == Some(id) {
+                if let Some(at) = pointer_at(self, doc, &starts) {
+                    doc.edit.move_to(at, true);
+                    moved = true;
+                }
+            }
+            if r.double_clicked {
+                let at = doc.edit.cursor;
+                doc.edit.select_word(&doc.text, at);
+            }
+            let typed = std::mem::take(&mut self.ctx.input.text);
+            doc.type_text(&typed);
+            if let Some(pasted) = self.ctx.input.paste.take() {
+                doc.before_change(Change::Other);
+                doc.edit.insert(&mut doc.text, &pasted.replace("\r\n", "\n"));
+                moved = true;
+            }
+            for (key, ctrl, shift) in self.ctx.input.key_events() {
+                starts = doc.line_starts();
+                let line = line_of(&starts, doc.edit.cursor);
+                // Coluna em pixels do cursor (para subir e descer mantendo a coluna).
+                let col_x = |ui: &mut Self, doc: &super::textarea::TextDoc| {
+                    doc.goal_x.unwrap_or_else(|| ui.ctx.text.measure_mono(&doc.text[starts[line]..doc.edit.cursor], size))
+                };
+                let vertical = |ui: &mut Self, doc: &mut super::textarea::TextDoc, to: usize| {
+                    let x = col_x(ui, doc);
+                    let at = index_in_line(&doc.text, &starts, to, x, |s| ui.ctx.text.measure_mono(s, size));
+                    doc.edit.move_to(at, shift);
+                    doc.goal_x = Some(x);
+                };
+                match key {
+                    Key::Enter => doc.newline(),
+                    Key::Tab => doc.type_text("    "),
+                    Key::Backspace | Key::Delete => {
+                        let mut probe = (doc.text.clone(), doc.edit);
+                        let deleted = if key == Key::Backspace { probe.1.backspace(&mut probe.0, ctrl) } else { probe.1.delete(&mut probe.0, ctrl) };
+                        if deleted {
+                            doc.before_change(Change::Deleting);
+                            (doc.text, doc.edit) = probe;
+                        }
+                        doc.goal_x = None;
+                    }
+                    Key::Left => {
+                        doc.edit.left(&doc.text, ctrl, shift);
+                        doc.goal_x = None;
+                    }
+                    Key::Right => {
+                        doc.edit.right(&doc.text, ctrl, shift);
+                        doc.goal_x = None;
+                    }
+                    Key::Up if line > 0 => vertical(self, doc, line - 1),
+                    Key::Up => doc.edit.move_to(0, shift),
+                    Key::Down if line + 1 < starts.len() => vertical(self, doc, line + 1),
+                    Key::Down => doc.edit.move_to(doc.text.len(), shift),
+                    Key::PageUp => vertical(self, doc, line.saturating_sub(rows)),
+                    Key::PageDown => vertical(self, doc, (line + rows).min(starts.len() - 1)),
+                    Key::Home => {
+                        doc.edit.move_to(if ctrl { 0 } else { starts[line] }, shift);
+                        doc.goal_x = None;
+                    }
+                    Key::End => {
+                        let end = if ctrl { doc.text.len() } else { line_end(&doc.text, &starts, line) };
+                        doc.edit.move_to(end, shift);
+                        doc.goal_x = None;
+                    }
+                    _ => continue,
+                }
+                moved = true;
+            }
+            let shifts = std::mem::take(&mut self.ctx.input.shortcut_shift);
+            for (i, shortcut) in std::mem::take(&mut self.ctx.input.shortcuts).into_iter().enumerate() {
+                let shift = shifts.get(i).copied().unwrap_or(self.ctx.input.shift);
+                match shortcut.as_str() {
+                    "a" => doc.edit = Edit::all(&doc.text),
+                    "c" => self.ctx.clipboard_out = doc.edit.selected(&doc.text).map(str::to_string),
+                    "x" => {
+                        if let Some(cut) = doc.edit.selected(&doc.text).map(str::to_string) {
+                            doc.before_change(Change::Other);
+                            doc.edit.delete_selection(&mut doc.text);
+                            self.ctx.clipboard_out = Some(cut);
+                        }
+                    }
+                    "v" => self.ctx.paste_requested = true,
+                    "z" if shift => {
+                        doc.redo();
+                    }
+                    "z" => {
+                        doc.undo();
+                    }
+                    "y" => {
+                        doc.redo();
+                    }
+                    _ => {
+                        self.ctx.input.shortcuts.push(shortcut);
+                        self.ctx.input.shortcut_shift.push(shift);
+                        continue;
+                    }
+                }
+                moved = true;
+            }
+            r.changed = doc.version != before.1;
+            moved |= r.changed || doc.edit != before.0;
+            if moved {
+                self.ctx.repaint = true;
+            }
+        }
+        starts = doc.line_starts();
+        let cursor_line = line_of(&starts, doc.edit.cursor);
+        let cursor_x = self.ctx.text.measure_mono(&doc.text[starts[cursor_line]..doc.edit.cursor], size);
+        // O cursor fica à vista depois de mexer nele.
+        let content_h = starts.len() as f32 * line_h;
+        if moved {
+            let top = cursor_line as f32 * line_h;
+            if top < doc.scroll {
+                doc.scroll = top;
+            }
+            if top + line_h > doc.scroll + view.1 {
+                doc.scroll = top + line_h - view.1;
+            }
+            if cursor_x < doc.scroll_x {
+                doc.scroll_x = (cursor_x - 40.0).max(0.0);
+            }
+            if cursor_x > doc.scroll_x + view.0 - 8.0 {
+                doc.scroll_x = cursor_x - view.0 + 40.0;
+            }
+        }
+        doc.scroll = doc.scroll.clamp(0.0, (content_h - view.1).max(0.0));
+
+        // Desenho: fundo, margem com os números e só as linhas à vista.
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
+        fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color([0, 0, 0, 10]));
+        let first = (doc.scroll / line_h).floor() as usize;
+        let last = (first + rows + 2).min(starts.len());
+        let (w, h) = ((view.0 + 8.0).ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
+        let Some(mut clip) = Pixmap::new(w, h) else {
+            return r;
+        };
+        let selection = doc.edit.selection();
+        let [ar, ag, ab, _] = t.accent;
+        for line in first..last {
+            let (start, end) = (starts[line], line_end(&doc.text, &starts, line));
+            let y = pad + line as f32 * line_h - doc.scroll;
+            let x0 = -doc.scroll_x;
+            if focused && line == cursor_line && selection.is_none() {
+                fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color([ar, ag, ab, 14]));
+            }
+            if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
+                let (sa, sb) = (a.max(start), b.min(end));
+                let xa = self.ctx.text.measure_mono(&doc.text[start..sa], size);
+                let xb = self.ctx.text.measure_mono(&doc.text[start..sb], size);
+                // A quebra de linha selecionada aparece como um pouco a mais no fim.
+                let extra = if b > end { size * 0.5 } else { 0.0 };
+                fill_rounded(&mut clip, x0 + xa, y, xb - xa + extra, line_h, 0.0, color([ar, ag, ab, 70]));
+            }
+            let content = &doc.text[start..end];
+            if !content.is_empty() {
+                self.ctx.text.draw_mono(&mut clip, content, x0, y + (line_h - size * 1.25) / 2.0, size, t.text);
+            }
+            let number = (line + 1).to_string();
+            let nw = self.ctx.text.measure_mono(&number, size * 0.9);
+            let ny = rect.1 + y + (line_h - size * 0.9 * 1.25) / 2.0;
+            if ny > rect.1 && ny < rect.1 + rect.3 - size {
+                let shade = if line == cursor_line && focused { t.text } else { t.text_secondary };
+                self.ctx.text.draw_mono(self.canvas, &number, rect.0 + gutter - 10.0 - nw, ny, size * 0.9, shade);
+            }
+        }
+        if focused && selection.is_none() {
+            let y = pad + cursor_line as f32 * line_h - doc.scroll;
+            fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(t.text));
+        }
+        self.canvas.draw_pixmap(text_x as i32, rect.1 as i32, clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        // Indicador de rolagem à direita quando o texto passa da altura.
+        if content_h > view.1 {
+            let bar_h = (view.1 * view.1 / content_h).max(24.0);
+            let bar_y = rect.1 + pad + (view.1 - bar_h) * doc.scroll / (content_h - view.1);
+            fill_rounded(self.canvas, rect.0 + rect.2 - 8.0, bar_y, 4.0, bar_h, 2.0, color([0, 0, 0, 60]));
         }
         r
     }

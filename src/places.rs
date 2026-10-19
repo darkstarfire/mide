@@ -442,16 +442,25 @@ pub fn open(target: &str) {
         tracing::info!("abrir (teste): {target}");
         return;
     }
-    // Pastas e a Lixeira abrem no Arquivos do mide (quando instalado).
+    // Pastas e a Lixeira abrem no Arquivos do mide, e arquivos de texto no Editor de
+    // Texto do mide (quando instalados).
     let path = Path::new(target.strip_prefix("file://").unwrap_or(target));
-    if target.starts_with("trash:") || path.is_dir() {
-        let sibling = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("mide-files"))).filter(|p| p.exists());
-        let program = sibling.unwrap_or_else(|| PathBuf::from("mide-files"));
-        if let Ok(mut child) = Command::new(program).arg(target).spawn() {
+    let native = if target.starts_with("trash:") || path.is_dir() {
+        Some(("mide-files", "Arquivos"))
+    } else if crate::files::is_text(path) {
+        Some(("mide-text", "Editor de Texto"))
+    } else {
+        None
+    };
+    if let Some((name, app)) = native {
+        let sibling = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(name))).filter(|p| p.exists());
+        let program = sibling.unwrap_or_else(|| PathBuf::from(name));
+        let arg = if target.starts_with("trash:") { target } else { path.to_str().unwrap_or(target) };
+        if let Ok(mut child) = Command::new(program).arg(arg).spawn() {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
-            tracing::info!("abrindo {target} no Arquivos");
+            tracing::info!("abrindo {target} no {app}");
             return;
         }
     }

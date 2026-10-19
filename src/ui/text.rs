@@ -29,11 +29,11 @@ pub struct Text {
     swash: SwashCache,
     /// Larguras já medidas: medir é caro, e as interfaces medem os mesmos textos a
     /// cada quadro (por exemplo, ao redimensionar uma janela).
-    widths: HashMap<(String, u32, FontWeight), f32>,
+    widths: HashMap<(String, u32, FontWeight, bool), f32>,
     /// Textos já desenhados (imagem, deslocamento e largura): as interfaces desenham os
     /// mesmos rótulos a cada quadro, e colar a imagem pronta é muito mais rápido que
     /// compor as letras de novo.
-    images: HashMap<(String, u32, FontWeight, [u8; 4]), (Pixmap, i32, i32, f32)>,
+    images: HashMap<(String, u32, FontWeight, [u8; 4], bool), (Pixmap, i32, i32, f32)>,
 }
 
 impl Default for Text {
@@ -52,10 +52,11 @@ impl Text {
         }
     }
 
-    fn buffer(&mut self, text: &str, size: f32, weight: FontWeight) -> Buffer {
+    fn buffer(&mut self, text: &str, size: f32, weight: FontWeight, mono: bool) -> Buffer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, size * 1.25));
-        buffer.set_size(Some(10_000.0), Some(size * 1.5));
-        let attrs = Attrs::new().family(Family::SansSerif).weight(weight.to_cosmic());
+        buffer.set_size(Some(100_000.0), Some(size * 1.5));
+        let family = if mono { Family::Monospace } else { Family::SansSerif };
+        let attrs = Attrs::new().family(family).weight(weight.to_cosmic());
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
         buffer
@@ -63,11 +64,20 @@ impl Text {
 
     /// Largura do texto em pixels.
     pub fn measure(&mut self, text: &str, size: f32, weight: FontWeight) -> f32 {
-        let key = (text.to_string(), size.to_bits(), weight);
+        self.measure_with(text, size, weight, false)
+    }
+
+    /// Largura do texto em fonte de largura fixa (editor de texto).
+    pub fn measure_mono(&mut self, text: &str, size: f32) -> f32 {
+        self.measure_with(text, size, FontWeight::Regular, true)
+    }
+
+    fn measure_with(&mut self, text: &str, size: f32, weight: FontWeight, mono: bool) -> f32 {
+        let key = (text.to_string(), size.to_bits(), weight, mono);
         if let Some(width) = self.widths.get(&key) {
             return *width;
         }
-        let buffer = self.buffer(text, size, weight);
+        let buffer = self.buffer(text, size, weight, mono);
         let width = buffer.layout_runs().map(|r| r.line_w).fold(0.0, f32::max);
         if self.widths.len() > 8192 {
             self.widths.clear();
@@ -88,9 +98,19 @@ impl Text {
         weight: FontWeight,
         rgba: [u8; 4],
     ) -> f32 {
-        let key = (text.to_string(), size.to_bits(), weight, rgba);
+        self.draw_with(pixmap, text, (x, y), size, weight, rgba, false)
+    }
+
+    /// Desenha em fonte de largura fixa (editor de texto).
+    pub fn draw_mono(&mut self, pixmap: &mut Pixmap, text: &str, x: f32, y: f32, size: f32, rgba: [u8; 4]) -> f32 {
+        self.draw_with(pixmap, text, (x, y), size, FontWeight::Regular, rgba, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_with(&mut self, pixmap: &mut Pixmap, text: &str, (x, y): (f32, f32), size: f32, weight: FontWeight, rgba: [u8; 4], mono: bool) -> f32 {
+        let key = (text.to_string(), size.to_bits(), weight, rgba, mono);
         if !self.images.contains_key(&key) {
-            let image = self.render(text, size, weight, rgba);
+            let image = self.render(text, size, weight, rgba, mono);
             if self.images.len() > 1024 {
                 self.images.clear();
             }
@@ -103,8 +123,8 @@ impl Text {
 
     /// Desenha o texto numa imagem transparente só dele: a imagem, onde ela fica em
     /// relação ao ponto do texto e a largura do texto.
-    fn render(&mut self, text: &str, size: f32, weight: FontWeight, rgba: [u8; 4]) -> (Pixmap, i32, i32, f32) {
-        let mut buffer = self.buffer(text, size, weight);
+    fn render(&mut self, text: &str, size: f32, weight: FontWeight, rgba: [u8; 4], mono: bool) -> (Pixmap, i32, i32, f32) {
+        let mut buffer = self.buffer(text, size, weight, mono);
         let width = buffer.layout_runs().map(|r| r.line_w).fold(0.0, f32::max);
         // Margem para letras que passam um pouco do retângulo (itálicos, acentos).
         let margin = (size * 0.5).ceil() as i32;

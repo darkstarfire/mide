@@ -31,6 +31,8 @@
 
 mod app;
 mod input;
+pub mod textarea;
+pub mod textedit;
 mod theme;
 mod ui;
 

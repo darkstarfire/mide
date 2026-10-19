@@ -14,12 +14,14 @@ mod decorations;
 mod genie;
 mod input;
 mod selftest;
+mod session;
 mod preview;
 mod render;
 mod state;
 mod title;
 mod wallpaper;
 mod wm;
+mod xwayland;
 
 use std::{error::Error, sync::Arc, time::Duration};
 
@@ -111,9 +113,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         backend_winit::init(&event_loop, &loop_handle, &mut state)?;
     }
 
+    // Apps X11 dentro do mide (xwayland-satellite); encerrado junto com o mide.
+    let _xwayland = xwayland::start(socket_name());
+
     if let Err(err) = control::init(&loop_handle, socket_name()) {
         tracing::warn!("canal de controle indisponível: {err}");
     }
+
+    // Sessão de login: ambiente para o D-Bus/systemd e apps de inicialização automática.
+    session::start(socket_name());
 
     // Área de trabalho (ícones) primeiro: fica atrás de tudo.
     spawn_client("mide-desktop");
@@ -144,6 +152,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// launcher e na dock). Em desenvolvimento, os dados ficam em `data/` no projeto.
 pub fn child_env(command: &mut std::process::Command) {
     command.env("WAYLAND_DISPLAY", socket_name());
+    // Apps X11 abrem dentro do mide (XWayland), e não no desktop por baixo.
+    if let Some(display) = xwayland::display() {
+        command.env("DISPLAY", display);
+    }
     let Some(bin_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) else {
         return;
     };

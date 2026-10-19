@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=mide
+Comment=Ambiente de desktop mide (Wayland)
+Exec=mide-session
+Type=Application
+DesktopNames=mide

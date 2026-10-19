@@ -34,6 +34,9 @@ rm -f "$OUT"/frame.*
 # 1366x768 por padrão; tests/res1366.sh testa nesse tamanho).
 export MIDE_WINIT_SIZE="${MIDE_WINIT_SIZE:-800x600}"
 export MIDE_WINIT_FIXED=1
+# Sem XWayland por padrão (um Xwayland a menos por cenário); os testes de apps X11
+# ligam com MIDE_XWAYLAND=1.
+export MIDE_XWAYLAND="${MIDE_XWAYLAND:-0}"
 
 # Socket próprio dos testes: uma sessão do mide aberta (mide-0) não é tocada.
 SOCK="${MIDE_TEST_SOCKET:-mide-test}"

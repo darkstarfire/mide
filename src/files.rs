@@ -379,9 +379,58 @@ pub fn create_named(dir: &Path, name: &str, folder: bool) -> Result<PathBuf, Str
     Ok(path)
 }
 
+/// Extensões de arquivos de texto conhecidas (abrem no Editor de Texto do mide).
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "rst", "log", "csv", "tsv", "json", "toml", "yaml", "yml", "ini", "conf", "cfg", "xml",
+    "html", "htm", "css", "js", "ts", "jsx", "tsx", "rs", "go", "py", "rb", "c", "h", "cpp", "hpp", "java", "kt", "sh",
+    "bash", "zsh", "fish", "lua", "sql", "desktop", "env", "gitignore", "mod", "sum", "lock",
+];
+
+/// O arquivo é texto? Pela extensão conhecida ou, sem ela, pelo começo do conteúdo
+/// (UTF-8 sem bytes nulos). Pastas e arquivos grandes demais (mais de 20 MB) não.
+pub fn is_text(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {
+        return false;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    if ext.as_deref().is_some_and(|e| TEXT_EXTENSIONS.contains(&e)) {
+        return true;
+    }
+    if ext.is_some() {
+        return false;
+    }
+    // Sem extensão (README, Makefile, .bashrc...): olha o começo.
+    let mut head = vec![0u8; 4096];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| std::io::Read::read(&mut f, &mut head)) else {
+        return false;
+    };
+    let head = &head[..n];
+    !head.contains(&0) && (std::str::from_utf8(head).is_ok() || n == 4096)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconhece_arquivos_de_texto() {
+        let dir = std::env::temp_dir().join(format!("mide-texto-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            let p = dir.join(name);
+            std::fs::write(&p, bytes).unwrap();
+            p
+        };
+        assert!(is_text(&write("notas.md", b"# oi")));
+        assert!(is_text(&write("README", "texto com acento: ação".as_bytes())));
+        assert!(!is_text(&write("foto.png", b"\x89PNG\0\0")));
+        assert!(!is_text(&write("binario", b"ELF\0\0\0")));
+        assert!(!is_text(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     use std::time::Duration;
 
     fn temp(name: &str) -> PathBuf {

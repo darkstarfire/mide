@@ -1,0 +1,37 @@
+#!/bin/sh
+# Sessão do mide: é o que a tela de login (LightDM, GDM, greetd) executa ao escolher
+# "mide". Define o ambiente de uma sessão Wayland e inicia o compositor direto na tela.
+
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=mide
+export XDG_SESSION_DESKTOP=mide
+export MIDE_SESSION=1
+export MIDE_BACKEND=drm
+# Apps que sabem usar Wayland passam a usá-lo (os só-X11 abrem pelo XWayland).
+export MOZ_ENABLE_WAYLAND=1
+export QT_QPA_PLATFORM="wayland;xcb"
+export ELECTRON_OZONE_PLATFORM_HINT=auto
+export SDL_VIDEODRIVER="wayland,x11"
+export _JAVA_AWT_WM_NONREPARENTING=1
+
+# O compositor: ao lado deste script (instalado), ou o do projeto (desenvolvimento,
+# com o script em data/), ou o do PATH.
+dir="$(dirname "$(readlink -f "$0")")"
+mide=mide
+for candidate in "$dir/mide" "$dir/../target/release/mide" "$dir/../target/debug/mide"; do
+    if [ -x "$candidate" ]; then
+        mide="$candidate"
+        break
+    fi
+done
+
+# Log da sessão, para quando algo der errado (a tela não mostra o terminal).
+log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/sessao.log"
+mkdir -p "$(dirname "$log")"
+[ -f "$log" ] && mv -f "$log" "$log.anterior"
+
+# Sem barramento de sessão (algumas telas de login não abrem um), abre um próprio.
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null; then
+    exec dbus-run-session -- "$mide" >"$log" 2>&1
+fi
+exec "$mide" >"$log" 2>&1

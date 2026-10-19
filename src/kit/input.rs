@@ -13,6 +13,10 @@ pub enum Key {
     Up,
     Down,
     Delete,
+    Home,
+    End,
+    PageUp,
+    PageDown,
 }
 
 /// Tudo o que aconteceu desde o último quadro.
@@ -26,13 +30,21 @@ pub struct Input {
     pub down: bool,
     /// Botão direito apertado neste quadro.
     pub secondary: bool,
-    /// Ctrl segurado.
+    /// Ctrl e Shift segurados.
     pub ctrl: bool,
+    pub shift: bool,
+    /// Texto colado da área de transferência (Ctrl+V num campo), chegou neste quadro.
+    pub paste: Option<String>,
     /// Rolagem vertical acumulada (positivo = para baixo), em pixels.
     pub scroll: f32,
     /// Texto digitado e teclas especiais.
     pub text: String,
     pub keys: Vec<Key>,
+    /// Ctrl e Shift no momento de cada tecla de `keys` (o estado de `ctrl` e `shift`
+    /// é o do fim do quadro: uma combinação rápida já pode ter soltado o Ctrl).
+    pub key_mods: Vec<(bool, bool)>,
+    /// Shift no momento de cada atalho de `shortcuts` (Ctrl+Shift+Z refaz).
+    pub shortcut_shift: Vec<bool>,
     /// Atalhos com Ctrl neste quadro (a letra, em minúscula: "c", "v", "n"...).
     pub shortcuts: Vec<String>,
 }
@@ -46,7 +58,22 @@ impl Input {
         self.scroll = 0.0;
         self.text.clear();
         self.keys.clear();
+        self.key_mods.clear();
         self.shortcuts.clear();
+        self.shortcut_shift.clear();
+        self.paste = None;
+    }
+
+    /// Teclas deste quadro com o Ctrl e o Shift de quando cada uma foi apertada.
+    pub fn key_events(&self) -> Vec<(Key, bool, bool)> {
+        self.keys
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                let (ctrl, shift) = self.key_mods.get(i).copied().unwrap_or((self.ctrl, self.shift));
+                (*k, ctrl, shift)
+            })
+            .collect()
     }
 
     /// A tecla foi apertada neste quadro?
@@ -57,6 +84,12 @@ impl Input {
     /// Ctrl+`letra` neste quadro?
     pub fn shortcut(&self, letter: &str) -> bool {
         self.shortcuts.iter().any(|s| s == letter)
+    }
+
+    /// Ctrl+`letra` neste quadro, e se o Shift estava junto (`Some(true)` em Ctrl+Shift).
+    pub fn shortcut_shift(&self, letter: &str) -> Option<bool> {
+        let i = self.shortcuts.iter().position(|s| s == letter)?;
+        Some(self.shortcut_shift.get(i).copied().unwrap_or(self.shift))
     }
 
     /// O ponteiro está dentro do retângulo (x, y, largura, altura)?

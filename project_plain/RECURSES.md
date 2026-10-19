@@ -18,7 +18,7 @@ Lista de crates, protocolos e serviços para o projeto, organizada a partir do `
 | `khronos-egl`, `gl` ou `glow` | EGL e OpenGL ES para shaders de blur, transparência, sombras e efeito lâmpada. |
 | `xkbcommon` | Layouts de teclado e atalhos. |
 | `xcursor` | Carrega o tema do cursor. |
-| `x11rb` | Xwayland e apps X11 legados. |
+| `xwayland-satellite` (programa externo) | Apps X11 legados (A14): roda o Xwayland como cliente Wayland comum, sem código X11 no compositor. Escolhido no lugar do `x11rb` + recurso `xwayland` do Smithay. |
 
 ---
 

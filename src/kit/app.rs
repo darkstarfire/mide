@@ -5,17 +5,26 @@ use std::{error::Error, num::NonZeroU32};
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
+    data_device_manager::{
+        data_device::{DataDevice, DataDeviceHandler},
+        data_offer::{DataOfferHandler, DragOffer},
+        data_source::{CopyPasteSource, DataSourceHandler},
+        DataDeviceManagerState, WritePipe,
+    },
     delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::{
         calloop::{
             timer::{TimeoutAction, Timer},
-            EventLoop,
+            EventLoop, LoopHandle, PostAction,
         },
         calloop_wayland_source::WaylandSource,
         client::{
             globals::registry_queue_init,
-            protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+            protocol::{
+                wl_data_device::WlDataDevice, wl_data_device_manager::DndAction, wl_data_source::WlDataSource, wl_keyboard,
+                wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
+            },
             Connection, QueueHandle,
         },
     },
@@ -48,6 +57,13 @@ use crate::ui::draw::to_argb8888;
 /// Um app do mide-ui: descreve a tela no `view`, que é chamado a cada quadro.
 pub trait App {
     fn view(&mut self, ui: &mut Ui);
+
+    /// O usuário pediu para fechar a janela (botão da barra, atalho). Devolva `false`
+    /// para continuar aberta (por exemplo, para perguntar se salva as alterações);
+    /// depois, o app fecha com `ui.close()`.
+    fn close_requested(&mut self) -> bool {
+        true
+    }
 }
 
 /// Janela do app: título, id (para a dock e o launcher) e tamanhos.
@@ -156,7 +172,14 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         }
     };
 
+    let mut event_loop: EventLoop<Runner> = EventLoop::try_new()?;
     let mut runner = Runner {
+        data_devices: DataDeviceManagerState::bind(&globals, &qh).ok(),
+        data_device: None,
+        copied: None,
+        serial: 0,
+        qh: qh.clone(),
+        loop_handle: event_loop.handle(),
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
         output_state: OutputState::new(&globals, &qh),
@@ -182,7 +205,6 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
 
     // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
     runner.ctx.layer = matches!(runner.shell, Shell::Layer(..)) && !window.desktop;
-    let mut event_loop: EventLoop<Runner> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
         .map_err(|e| e.to_string())?;
@@ -213,6 +235,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         event_loop.dispatch(None, &mut runner)?;
         if runner.dirty && runner.configured {
             runner.frame();
+            runner.clipboard();
         }
     }
     Ok(())
@@ -241,6 +264,15 @@ impl Shell {
 }
 
 struct Runner {
+    /// Área de transferência: o gerenciador, o dispositivo do assento, o texto que este
+    /// app copiou (com a origem oferecida aos outros) e o serial da última entrada
+    /// (o compositor só aceita uma seleção pedida por uma entrada do usuário).
+    data_devices: Option<DataDeviceManagerState>,
+    data_device: Option<DataDevice>,
+    copied: Option<(CopyPasteSource, String)>,
+    serial: u32,
+    qh: QueueHandle<Runner>,
+    loop_handle: LoopHandle<'static, Runner>,
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -362,7 +394,11 @@ impl OutputHandler for Runner {
 
 impl WindowHandler for Runner {
     fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow) {
-        self.exit = true;
+        if self.app.close_requested() {
+            self.exit = true;
+        } else {
+            self.dirty = true;
+        }
     }
 
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow, configure: WindowConfigure, _: u32) {
@@ -405,6 +441,9 @@ impl SeatHandler for Runner {
         if capability == Capability::Keyboard && self.keyboard.is_none() {
             self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
         }
+        if self.data_device.is_none() {
+            self.data_device = self.data_devices.as_ref().map(|m| m.get_data_device(qh, &seat));
+        }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer {
@@ -433,7 +472,8 @@ impl PointerHandler for Runner {
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => input.pointer = Some(pos),
                 PointerEventKind::Leave { .. } => input.pointer = None,
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
+                PointerEventKind::Press { button, serial, .. } if button == BTN_LEFT => {
+                    self.serial = serial;
                     input.pointer = Some(pos);
                     input.pressed = true;
                     input.down = true;
@@ -462,7 +502,8 @@ impl KeyboardHandler for Runner {
     fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
 
-    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
+    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, serial: u32, event: KeyEvent) {
+        self.serial = serial;
         self.key(event);
     }
 
@@ -474,6 +515,7 @@ impl KeyboardHandler for Runner {
 
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, modifiers: Modifiers, _: RawModifiers, _: u32) {
         self.ctx.input.ctrl = modifiers.ctrl;
+        self.ctx.input.shift = modifiers.shift;
     }
 }
 
@@ -490,15 +532,23 @@ impl Runner {
             Keysym::Up => Some(Key::Up),
             Keysym::Down => Some(Key::Down),
             Keysym::Delete => Some(Key::Delete),
+            Keysym::Home | Keysym::KP_Home => Some(Key::Home),
+            Keysym::End | Keysym::KP_End => Some(Key::End),
+            Keysym::Page_Up | Keysym::KP_Page_Up => Some(Key::PageUp),
+            Keysym::Page_Down | Keysym::KP_Page_Down => Some(Key::PageDown),
             _ => None,
         };
         match key {
-            Some(k) => input.keys.push(k),
+            Some(k) => {
+                input.keys.push(k);
+                input.key_mods.push((input.ctrl, input.shift));
+            }
             None if input.ctrl => {
                 // Ctrl+letra vira atalho, não texto. Com Ctrl, o texto da tecla é um
                 // caractere de controle (Ctrl+D = 0x04): vale o símbolo da tecla.
                 if let Some(c) = event.keysym.key_char().filter(|c| c.is_alphanumeric()) {
                     input.shortcuts.push(c.to_lowercase().to_string());
+                    input.shortcut_shift.push(input.shift);
                 }
             }
             None => {
@@ -509,6 +559,104 @@ impl Runner {
         }
         self.dirty = true;
     }
+}
+
+/// Tipos de texto oferecidos e aceitos na área de transferência, do preferido ao último.
+const TEXT_MIMES: [&str; 4] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT"];
+
+impl Runner {
+    /// Atende o que o quadro pediu: pôr texto na área de transferência (Ctrl+C/X) ou
+    /// ler o que está nela (Ctrl+V). A leitura é feita no laço de eventos, sem travar:
+    /// quem tem o texto pode ser este mesmo app.
+    fn clipboard(&mut self) {
+        if let Some(text) = self.ctx.clipboard_out.take() {
+            if let (Some(manager), Some(device)) = (&self.data_devices, &self.data_device) {
+                let source = manager.create_copy_paste_source(&self.qh, TEXT_MIMES);
+                source.set_selection(device, self.serial);
+                tracing::debug!("área de transferência: copiado ({} bytes, serial {})", text.len(), self.serial);
+                self.copied = Some((source, text));
+            } else {
+                tracing::debug!("área de transferência: sem dispositivo de dados");
+            }
+        }
+        if !std::mem::take(&mut self.ctx.paste_requested) {
+            return;
+        }
+        if let Some((_, text)) = &self.copied {
+            self.ctx.input.paste = Some(text.clone());
+            self.dirty = true;
+            return;
+        }
+        let Some(offer) = self.data_device.as_ref().and_then(|d| d.data().selection_offer()) else {
+            tracing::debug!("área de transferência: nada para colar");
+            return;
+        };
+        let Some(mime) = offer.with_mime_types(|offered| TEXT_MIMES.iter().find(|m| offered.iter().any(|o| o == *m)).map(|m| m.to_string())) else {
+            return;
+        };
+        tracing::debug!("área de transferência: colando ({mime})");
+        let Ok(pipe) = offer.receive(mime) else {
+            return;
+        };
+        let mut bytes = Vec::new();
+        let _ = self.loop_handle.insert_source(pipe, move |_, file, runner| {
+            use std::io::Read;
+            let mut chunk = [0u8; 4096];
+            loop {
+                // SAFETY: o arquivo não é fechado aqui (o calloop é dono dele).
+                match unsafe { file.get_mut() }.read(&mut chunk) {
+                    Ok(0) => {
+                        tracing::debug!("área de transferência: colado ({} bytes)", bytes.len());
+                        runner.ctx.input.paste = Some(String::from_utf8_lossy(&bytes).into_owned());
+                        runner.dirty = true;
+                        return PostAction::Remove;
+                    }
+                    Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return PostAction::Continue,
+                    Err(_) => return PostAction::Remove,
+                }
+            }
+        });
+    }
+}
+
+impl DataDeviceHandler for Runner {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64, _: &wl_surface::WlSurface) {}
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64) {}
+    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+}
+
+impl DataOfferHandler for Runner {
+    fn source_actions(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+    fn selected_action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+}
+
+impl DataSourceHandler for Runner {
+    fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: Option<String>) {}
+
+    /// Outro app (ou este) quer o texto copiado: escreve no canal que ele mandou.
+    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource, _: String, mut fd: WritePipe) {
+        use std::io::Write;
+        if let Some((copied, text)) = &self.copied {
+            if copied.inner() == source {
+                tracing::debug!("área de transferência: entregando o texto copiado");
+                let _ = fd.write_all(text.as_bytes());
+            }
+        }
+    }
+
+    /// Outro app copiou algo: o texto deste deixa de ser o da área de transferência.
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource) {
+        if self.copied.as_ref().is_some_and(|(copied, _)| copied.inner() == source) {
+            self.copied = None;
+        }
+    }
+
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
 }
 
 impl ShmHandler for Runner {
