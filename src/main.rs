@@ -239,15 +239,24 @@ pub fn child_env(command: &mut std::process::Command) {
     };
     let path = std::env::var("PATH").unwrap_or_default();
     command.env("PATH", format!("{}:{path}", bin_dir.display()));
+    if let Some(dirs) = data_dirs() {
+        command.env("XDG_DATA_DIRS", dirs);
+    }
+}
+
+/// `XDG_DATA_DIRS` com a pasta de dados do mide na frente (os `.desktop` dele e a
+/// configuração dos portais). Em desenvolvimento, `data/` no projeto.
+pub fn data_dirs() -> Option<String> {
+    let bin_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let data_dir = std::env::var_os("MIDE_DATA_DIR")
         .map(std::path::PathBuf::from)
         .into_iter()
         .chain([bin_dir.join("../../data"), bin_dir.join("../share/mide")])
-        .find(|d| d.join("applications").is_dir());
-    if let Some(data_dir) = data_dir.and_then(|d| d.canonicalize().ok()) {
-        let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-        command.env("XDG_DATA_DIRS", format!("{}:{dirs}", data_dir.display()));
-    }
+        .find(|d| d.join("applications").is_dir())?
+        .canonicalize()
+        .ok()?;
+    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    Some(format!("{}:{dirs}", data_dir.display()))
 }
 
 pub fn spawn_client(name: &str) {

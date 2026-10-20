@@ -99,10 +99,23 @@ fn publish_environment(socket: &str) {
     if let Some(display) = crate::xwayland::display() {
         vars.push(format!("DISPLAY={display}"));
     }
+    // A pasta de dados do mide vai junto: nela está `xdg-desktop-portal/mide-portals.conf`,
+    // que diz ao portal quais implementações usar no desktop "mide".
+    if let Some(dirs) = crate::data_dirs() {
+        vars.push(format!("XDG_DATA_DIRS={dirs}"));
+    }
     match Command::new("dbus-update-activation-environment").arg("--systemd").args(&vars).status() {
         Ok(status) if status.success() => tracing::info!("sessão: ambiente publicado ({})", vars.join(" ")),
         Ok(status) => tracing::warn!("sessão: dbus-update-activation-environment saiu com {status}"),
         Err(err) => tracing::warn!("sessão: dbus-update-activation-environment indisponível: {err}"),
+    }
+    // O portal pode ter sido iniciado antes do ambiente acima (por um app automático):
+    // reiniciado, ele lê a configuração do mide e passa a oferecer as configurações do
+    // sistema aos apps (layout dos botões, tema escuro, fontes).
+    match Command::new("systemctl").args(["--user", "try-restart", "xdg-desktop-portal.service"]).status() {
+        Ok(status) if status.success() => tracing::info!("sessão: portal do desktop reiniciado com a configuração do mide"),
+        Ok(status) => tracing::warn!("sessão: reiniciar o portal saiu com {status}"),
+        Err(err) => tracing::warn!("sessão: systemctl indisponível: {err}"),
     }
 }
 
