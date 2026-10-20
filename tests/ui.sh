@@ -4,24 +4,26 @@
 # Usa tests/scenario.sh (autoteste por MIDE_SELFTEST) e confere o log de cada
 # cenário. Precisa de sessão gráfica, foot e gnome-calculator.
 #
-# Coordenadas (saída 800x600, barra superior de 28 px):
+# Coordenadas (saída 1366x768, a tela mais comum no Brasil; barra superior de 28 px):
 # - A primeira janela nasce em (48, 76) e a segunda em (80, 108).
 # - Barra do mide numa janela em (48, 76): moldura em y=46, botões no centro
 #   y=61: fechar x=63, minimizar x=83, maximizar x=103.
 # - Calculadora (378 px, cabeçalho próprio) em (48, 76): X em (402, 99),
 #   maximizar (364, 99), minimizar (317, 99), menu (289, 99).
-# - Maximizada: área útil de y=28 até 2 px acima da dock (zona reservada de 57+2+8 px).
-# - Dock padrão (ícones de 40 px) em (258, 535) 285x57: Launchpad em (285, 560),
-#   foot em (328, 560), calculadora em (371, 560), Configurações em (414, 560),
-#   Downloads em (473, 560) e Lixeira em (516, 560).
-#   Com separador (calculadora aberta e não fixada): (261, 531) 278x61, calculadora em (400, 560).
+# - Maximizada: área útil de y=28 até 2 px acima da dock (y=701).
+# - Dock padrão (ícones de 40 px) em (541, 703) 285x57: Launchpad em (568, 728),
+#   foot em (611, 728), calculadora em (654, 728), Configurações em (697, 728),
+#   Downloads em (756, 728) e Lixeira em (799, 728).
 # - Menu de contexto de um app aberto (clique direito): "Manter/Remover da Dock" em
-#   y=441, "Ocultar" em y=476 e "Encerrar" em y=502. App fechado: "Remover" em y=502.
+#   y=609, "Ocultar" em y=644 e "Encerrar" em y=670. App fechado: "Remover" em y=670.
 # - Barra superior: marca em (25, 14); menu: "Sobre este computador" em (100, 49).
+#   À direita: relógio (1331, 14), central de controle (1293, 14), Bluetooth (1257, 14),
+#   Wi-Fi (1221, 14), som (1185, 14) e engrenagem (1149, 14).
 set -u
 
 cd "$(dirname "$0")/.."
 SCEN=tests/scenario.sh
+export MIDE_WINIT_SIZE=1366x768
 export SCENARIO_WAIT="${SCENARIO_WAIT:-10}"
 PASS=0
 FAIL=0
@@ -91,91 +93,92 @@ CALC='janela "Calculadora"'
 CALC_OPEN='janela "Calculadora"'
 
 echo "== barra superior"
-check "barra no topo, largura total" 'camada "mide-bar" em \(0, 0\) 800x28' "400 list" foot
+check "barra no topo, largura total" 'camada "mide-bar" em \(0, 0\) 1366x28' "400 list" foot
 check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "400 list" foot
 check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 430 list"
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
 check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" foot
 check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 180 14; 440 list" foot
-check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=800x475" "400 click 238 14; 430 click 250 73; 480 list" foot
+check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 238 14; 430 click 250 73; 480 list" foot
 check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" foot
 check "janela Sobre redimensiona" 'janela "Sobre este computador" .*visível=580x400' "400 click 25 14; 430 click 100 49; 520 list; 530 press 587 435; 535 move 607 455; 540 move 627 475; 545 release 627 475; 580 list"
-check "relógio abre o calendário" "menu aberto: Calendar" "400 click 765 14; 440 list"
-# Calendário (x 512..792): "Formato da hora…" em y=323; nas opções, "Segundos" em (757, 213).
-check "calendário: Formato da hora liga os segundos" "relógio: Segundos ligado" "400 click 765 14; 440 click 652 323; 470 click 757 213; 500 list"
+check "relógio abre o calendário" "menu aberto: Calendar" "400 click 1331 14; 440 list"
+# Calendário (x 1078..1358): "Formato da hora…" em y=323; nas opções, "Segundos" em (1323, 213).
+check "calendário: Formato da hora liga os segundos" "relógio: Segundos ligado" "400 click 1331 14; 440 click 1218 323; 470 click 1323 213; 500 list"
 # Os segundos alargam o relógio e empurram os ícones: volta ao padrão (só a hora).
 sed -i '/^seconds = true/d' "$XDG_CONFIG_HOME/mide/config.toml" 2>/dev/null
-# Central de controle (ícone em 727, painel em x 472..792): "Não perturbe" em (710, 102) (ladrilho da direita, x 638..780).
-check "central de controle abre" "menu aberto: Control" "400 click 727 14; 440 list"
-check "central de controle: Não perturbe" "não perturbe: ligado" "400 click 727 14; 440 click 710 102; 470 list"
+# Central de controle (ícone em 1293, painel em x 1038..1358): "Não perturbe" em (1276, 102)
+# (ladrilho da direita).
+check "central de controle abre" "menu aberto: Control" "400 click 1293 14; 440 list"
+check "central de controle: Não perturbe" "não perturbe: ligado" "400 click 1293 14; 440 click 1276 102; 470 list"
 sed -i '/^dnd = true/d' "$XDG_CONFIG_HOME/mide/config.toml" 2>/dev/null
-check "engrenagem abre as Configurações" "sistema \(teste\): mide-settings" "400 click 583 14; 440 list"
-# Menu do mide: Repouso em y=153, Reiniciar… em y=177; confirmação no meio (no meio da tela:
-# Reiniciar em (470, 328), Cancelar em (331, 328)). Nada é executado de verdade (simulado).
+check "engrenagem abre as Configurações" "sistema \(teste\): mide-settings" "400 click 1149 14; 440 list"
+# Menu do mide: Repouso em y=153, Reiniciar… em y=177; confirmação no meio da tela:
+# Reiniciar em (753, 412), Cancelar em (614, 412). Nada é executado de verdade (simulado).
 check "menu do mide: Repouso (simulado)" "sistema \(teste\): systemctl suspend" "400 click 25 14; 430 click 100 153; 460 list"
 check "menu do mide: Reiniciar pede confirmação" "menu aberto: ConfirmRestart" "400 click 25 14; 430 click 100 177; 460 list"
-check "confirmar reinicia (simulado)" "sistema \(teste\): systemctl reboot" "400 click 25 14; 430 click 100 177; 460 click 470 328; 500 list"
-CLOG="$(timeout 150 "$SCEN" "400 click 25 14; 430 click 100 177; 460 click 331 328; 500 list" 2>&1)"
+check "confirmar reinicia (simulado)" "sistema \(teste\): systemctl reboot" "400 click 25 14; 430 click 100 177; 460 click 753 412; 500 list"
+CLOG="$(timeout 150 "$SCEN" "400 click 25 14; 430 click 100 177; 460 click 614 412; 500 list" 2>&1)"
 if echo "$CLOG" | grep -q "menu aberto: ConfirmRestart" && ! echo "$CLOG" | grep -q "systemctl reboot"; then
     echo "ok    Cancelar não reinicia"; PASS=$((PASS + 1))
 else
     echo "FALHA Cancelar não reinicia"; FAIL=$((FAIL + 1))
 fi
-check "Wi-Fi: interruptor desliga (simulado)" "sistema \(teste\): nmcli radio wifi off" "400 click 655 14; 440 click 740 61; 470 list"
-check "som: trilho muda o volume (simulado)" "sistema \(teste\): wpctl set-volume @DEFAULT_AUDIO_SINK@ 0\.[0-9]+" "400 click 619 14; 440 click 631 96; 470 list"
-check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 691 14; 440 click 650 99; 470 list"
-check "Sobre minimizada aparece na dock e volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 click 83 61; 600 click 443 560; 700 list"
+check "Wi-Fi: interruptor desliga (simulado)" "sistema \(teste\): nmcli radio wifi off" "400 click 1221 14; 440 click 1306 61; 470 list"
+check "som: trilho muda o volume (simulado)" "sistema \(teste\): wpctl set-volume @DEFAULT_AUDIO_SINK@ 0\.[0-9]+" "400 click 1185 14; 440 click 1197 96; 470 list"
+check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 1257 14; 440 click 1216 99; 470 list"
+check "Sobre minimizada aparece na dock e volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 click 83 61; 600 click 726 728; 700 list"
 check "Sobre este computador abre" 'janela "Sobre este computador"' "400 click 25 14; 430 click 100 49; 520 list"
 
 echo "== launcher (ctrl+shift+space)"
-# Grade em 800x600: ícones de 67 px, 6 colunas a partir de x=79, 3 linhas a partir
-# de y=130; o primeiro item fica em (132, 171) e o segundo em (239, 171). Abaixo da
-# grade (400, 495) é vazio.
+# Grade em 1366x768: ícones de 90 px, células de 144x149, 8 colunas a partir de
+# x=107, 3 linhas a partir de y=160; o primeiro item fica em (179, 210) e o segundo
+# em (323, 210). Abaixo da grade (683, 650) é vazio.
 LAUNCH="400 combo ctrl+shift+space"
-check "atalho abre o launcher" 'camada "mide-launcher" em \(0, 0\) 800x600' "$LAUNCH; 460 list"
+check "atalho abre o launcher" 'camada "mide-launcher" em \(0, 0\) 1366x768' "$LAUNCH; 460 list"
 check_count "Esc fecha" 'camada "mide-launcher"' 0 "$LAUNCH; 450 key esc; 480 list"
 check_count "atalho de novo fecha" 'camada "mide-launcher"' 0 "$LAUNCH; 450 combo ctrl+shift+space; 480 list"
-check_count "clique no vazio fecha" 'camada "mide-launcher"' 0 "$LAUNCH; 450 click 400 495; 480 list"
+check_count "clique no vazio fecha" 'camada "mide-launcher"' 0 "$LAUNCH; 450 click 683 650; 480 list"
 check "buscar e Enter abre o app" "$CALC_OPEN" "$LAUNCH; 440 type calc; 450 key enter; 600 list"
-check "buscar e clicar abre o app" "$CALC_OPEN" "$LAUNCH; 440 type calc; 450 click 132 171; 600 list"
+check "buscar e clicar abre o app" "$CALC_OPEN" "$LAUNCH; 440 type calc; 450 click 179 210; 600 list"
 
-check "roda para baixo vai para a página da direita" "página 0 → 1" "$LAUNCH; 450 move 400 300; 460 wheel down; 500 list"
-check "roda para cima volta para a página da esquerda" "página 1 → 0" "$LAUNCH; 450 move 400 300; 460 wheel down; 500 wheel up; 540 list"
-check "clique do meio vai para a próxima página" "página 0 → 1" "$LAUNCH; 450 mclick 400 300; 490 list"
+check "roda para baixo vai para a página da direita" "página 0 → 1" "$LAUNCH; 450 move 683 384; 460 wheel down; 500 list"
+check "roda para cima volta para a página da esquerda" "página 1 → 0" "$LAUNCH; 450 move 683 384; 460 wheel down; 500 wheel up; 540 list"
+check "clique do meio vai para a próxima página" "página 0 → 1" "$LAUNCH; 450 mclick 683 384; 490 list"
 # Pasta Utilitários (2 páginas) na página 2 da grade, em (346, 397).
 # A pasta (Utilitários) muda de lugar conforme os apps instalados: o launcher
 # registra onde ela fica na página 2, e o teste clica lá.
 UPOS="$(timeout 150 "$SCEN" "$LAUNCH; 440 key pagedown; 480 list" 2>&1 | grep -oE "pasta Utilitários na página 1 em \([0-9]+, [0-9]+\)" | head -1 | grep -oE "[0-9]+, [0-9]+" | tr -d ',')"
-check "roda dentro da pasta troca de página (carrossel)" "página da pasta 0 → 1" "$LAUNCH; 440 key pagedown; 470 click ${UPOS:-346 397}; 500 move 400 300; 510 wheel down; 550 list"
+check "roda dentro da pasta troca de página (carrossel)" "página da pasta 0 → 1" "$LAUNCH; 440 key pagedown; 470 click ${UPOS:-346 397}; 500 move 683 384; 510 wheel down; 550 list"
 check "Configurações aparecem no launcher" 'janela "Configurações do Sistema"' "$LAUNCH; 440 type configuracoes_do_sistema; 450 key enter; 560 list"
-check_count "clicar num app da dock fecha o launcher" 'camada "mide-launcher"' 0 "$LAUNCH; 460 click 371 560; 520 list"
+check_count "clicar num app da dock fecha o launcher" 'camada "mide-launcher"' 0 "$LAUNCH; 460 click 654 728; 520 list"
 
 echo "== launcher: arrastar, pastas e renomear (configuração própria)"
 LCFG="$(mktemp -d)"
 OLD_LCFG="$XDG_CONFIG_HOME"
 export XDG_CONFIG_HOME="$LCFG"
-DRAG="460 press 132 171; 465 move 150 171; 470 move 200 171; 475 move 239 171; 480 release 239 171"
+DRAG="460 press 179 210; 465 move 200 210; 470 move 260 210; 475 move 323 210; 480 release 323 210"
 check "arrastar app sobre app cria uma pasta" "pasta .*\(2 apps\)" "$LAUNCH; $DRAG; 520 list"
 check "pasta fica salva" "em [0-9]+ lugar\(es\) e 4 pasta" "$LAUNCH; 460 list"
-check "clicar no nome da pasta e renomear" "pasta renomeada para gravar" "$LAUNCH; 460 click 132 171; 490 click 400 192; 510 key backspace; 511 key backspace; 512 key backspace; 513 key backspace; 514 key backspace; 520 type gravar; 530 key enter; 560 list"
-check "arrastar para fora tira o app da pasta" "saiu da pasta gravar" "$LAUNCH; 460 click 132 171; 490 press 346 290; 495 move 300 350; 500 move 200 450; 505 move 100 500; 510 release 100 500; 540 list"
+check "clicar no nome da pasta e renomear" "pasta renomeada para gravar" "$LAUNCH; 460 click 179 210; 490 click 683 258; 510 key backspace; 511 key backspace; 512 key backspace; 513 key backspace; 514 key backspace; 520 type gravar; 530 key enter; 560 list"
+check "arrastar para fora tira o app da pasta" "saiu da pasta gravar" "$LAUNCH; 460 click 179 210; 490 press 611 368; 495 move 560 420; 500 move 400 520; 505 move 200 600; 510 release 150 620; 540 list"
 export XDG_CONFIG_HOME="$OLD_LCFG"
 rm -rf "$LCFG"
 
 echo "== notificações (barramento D-Bus de teste)"
 # O servidor do mide atende num barramento próprio (tests/scenario-dbus.sh). A
-# camada fica em (436, 28): banner em x=446..790; com botões, "Abrir" em (672, 121);
-# o × aparece com o mouse em cima, no canto em (450, 42).
+# camada fica em (1002, 28): banner em x=1012..1356; com botões, "Abrir" em (1238, 121);
+# o × aparece com o mouse em cima, no canto em (1016, 42).
 NOTE1="notify-send -a Calculadora 'Download concluído' 'Arquivo pronto'"
 NOTE2="notify-send -a Terminal -A ok=Abrir -A no=Ignorar 'Atualizações' 'Há 12 atualizações'"
 SCEN_PLAIN="$SCEN"
 SCEN=tests/scenario-dbus.sh
-check "notificação aparece abaixo da barra, à direita" 'camada "mide-notifications" em \(436, 28\) 364x94' "250 list" "$NOTE1"
+check "notificação aparece abaixo da barra, à direita" 'camada "mide-notifications" em \(1002, 28\) 364x94' "250 list" "$NOTE1"
 check "notificação some sozinha depois de 5 s" "notificação 1 expirou" "700 list" "$NOTE1"
-check "× fecha a notificação" "notificação 1 fechada" "250 move 600 80; 260 click 450 42; 300 list" "$NOTE1"
-check "botão de ação aciona o app" "ação ok da notificação 1" "250 click 672 121; 300 list" "$NOTE2"
+check "× fecha a notificação" "notificação 1 fechada" "250 move 1166 80; 260 click 1016 42; 300 list" "$NOTE1"
+check "botão de ação aciona o app" "ação ok da notificação 1" "250 click 1238 121; 300 list" "$NOTE2"
 ACAO="$(mktemp)"
-timeout 150 "$SCEN" "250 click 672 121; 300 list" -- "$NOTE2 > $ACAO" >/dev/null 2>&1
+timeout 150 "$SCEN" "250 click 1238 121; 300 list" -- "$NOTE2 > $ACAO" >/dev/null 2>&1
 if [ "$(cat "$ACAO")" = "ok" ]; then
     echo "ok    app recebe a ação pelo D-Bus"; PASS=$((PASS + 1))
 else
@@ -191,8 +194,8 @@ if grep -q "Download concluído" "$HIST" 2>/dev/null; then
 else
     echo "FALHA notificação vai para o histórico"; FAIL=$((FAIL + 1))
 fi
-# Painel do relógio (x 512..792): "Limpar" da central em (755, 364).
-timeout 150 "$SCEN" "300 click 765 14; 340 click 755 364; 380 list" -- "$NOTE1" >/dev/null 2>&1
+# Painel do relógio (x 1078..1358): "Limpar" da central em (1321, 364).
+timeout 150 "$SCEN" "300 click 1331 14; 340 click 1321 364; 380 list" -- "$NOTE1" >/dev/null 2>&1
 if [ ! -s "$HIST" ]; then
     echo "ok    Limpar apaga o histórico de notificações"; PASS=$((PASS + 1))
 else
@@ -213,7 +216,7 @@ rm -rf "$NCFG" "$HIST"
 SCEN="$SCEN_PLAIN"
 
 echo "== janela com barra do mide (foot)"
-check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=800x475" "400 click 103 61; 450 list" foot
+check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 103 61; 450 list" foot
 check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 103 61; 450 click 55 43; 500 list" foot
 check "duplo clique maximiza" "$FOOT posição=\(0, 58\)" "400 click 400 61; 404 click 400 61; 450 list" foot
 check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 405 move 450 111; 410 move 500 161; 415 release 500 161; 430 list" foot
@@ -226,7 +229,7 @@ check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" 
 echo "== janela com cabeçalho do app (calculadora)"
 check "fechar pelo X do app" "janela fechada" "400 click 402 99" gnome-calculator
 check "arrastar pelo cabeçalho do app" "$CALC popups=0 posição=\(108, 116\)" "400 press 200 98; 405 move 230 118; 410 move 260 138; 415 release 260 138; 450 list" gnome-calculator
-check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=800x505" "400 click 364 99; 460 list" gnome-calculator
+check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=1366x673" "400 click 364 99; 460 list" gnome-calculator
 check "abrir menu do app" "$CALC popups=1" "400 click 289 99; 440 list" gnome-calculator
 check "fechar menu clicando fora" "$CALC popups=0" "400 click 289 99; 430 click 700 400; 460 list" gnome-calculator
 check "redimensionar pela borda" "$CALC .*visível=418x500" "400 press 423 330; 405 move 443 330; 410 move 463 330; 415 release 463 330; 460 list" gnome-calculator
@@ -241,21 +244,27 @@ check "barra acompanha a largura" 'camada "mide-bar" em \(0, 0\) 1200x28' "400 r
 check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x675" "400 click 103 61; 440 resize 1200 800; 460 list" foot
 
 echo "== dock"
-check "clique no ícone abre o app" "nova janela criada" "400 click 328 560"
-check_count "clique no ícone de app aberto não abre outro" "janela \"foot\"" 1 "400 click 328 560; 480 list" foot
-check_count "ctrl+clique abre nova instância" "janela \"foot\"" 2 "390 ctrl on; 400 click 328 560; 480 list" foot
-check "clique no ícone restaura minimizada" "janela restaurada" "400 click 317 99; 440 click 371 560" gnome-calculator
-check "Launchpad na dock abre o launcher" 'camada "mide-launcher"' "400 click 285 560; 470 list"
-check "abrir pela dock sai do ícone (lâmpada)" "abrindo pela dock: org.gnome.calculator" "400 click 371 560; 700 list"
-check "Configurações fixadas na dock abrem" 'janela "Configurações do Sistema"' "400 click 414 560; 560 list"
-check "menu do app: Ocultar" "janela minimizada" "400 rclick 328 560; 440 click 328 476" foot
-check "menu do app: Encerrar" "janela fechada" "400 rclick 328 560; 440 click 328 502" foot
-check "menu do app lista as janelas e foca a escolhida" "controle: janela [0-9]+ focada" "400 rclick 328 560; 440 click 328 345; 480 list" foot foot
-check "prévias ao parar o mouse no ícone" "prévias: 2 janela" "400 move 340 560; 405 move 328 560; 470 list" foot gnome-calculator foot
-check "clique na prévia escolhe a janela" "prévia: janela [0-9]+ escolhida" "400 move 340 560; 405 move 328 560; 470 move 237 430; 480 click 220 420; 520 list" foot gnome-calculator foot
-check "× da prévia fecha a janela" "prévia: fechar janela" "400 move 340 560; 405 move 328 560; 470 move 237 430; 475 move 317 365; 480 click 317 365; 540 list" foot gnome-calculator foot
-check "clique direito abre o menu do app" "menu de Foot aberto" "400 rclick 328 560; 470 list" foot
-check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 click 317 99; 420 click 371 560" gnome-calculator
+check "clique no ícone abre o app" "nova janela criada" "400 click 611 728"
+# App em foco: o clique minimiza (como o "minimize or previews" do dash-to-dock); outro
+# clique traz de volta, sem abrir outra janela.
+check "clique no ícone do app em foco minimiza" "em foco: minimizado pela dock" "400 click 611 728; 480 list" foot
+check_count "clique de novo restaura, sem abrir outro" "janela \"foot\"" 1 "400 click 611 728; 460 click 611 728; 540 list" foot
+check "app em foco com duas janelas: o clique mostra as prévias" "em foco com 2 janelas: prévias" "400 click 611 728; 480 list" foot foot
+check_count "ctrl+clique abre nova instância" "janela \"foot\"" 2 "390 ctrl on; 400 click 611 728; 480 list" foot
+check "clique no ícone restaura minimizada" "janela restaurada" "400 click 317 99; 440 click 654 728" gnome-calculator
+check "Launchpad na dock abre o launcher" 'camada "mide-launcher"' "400 click 568 728; 470 list"
+check "abrir pela dock sai do ícone (lâmpada)" "abrindo pela dock: org.gnome.calculator" "400 click 654 728; 700 list"
+check "Configurações fixadas na dock abrem" 'janela "Configurações do Sistema"' "400 click 697 728; 560 list"
+check "menu do app: Ocultar" "janela minimizada" "400 rclick 611 728; 440 click 611 644" foot
+check "menu do app: Encerrar" "janela fechada" "400 rclick 611 728; 440 click 611 670" foot
+check "menu do app lista as janelas e foca a escolhida" "controle: janela [0-9]+ focada" "400 rclick 611 728; 440 click 611 513; 480 list" foot foot
+check "prévias ao parar o mouse no ícone" "prévias: 2 janela" "400 move 623 728; 405 move 611 728; 470 list" foot gnome-calculator foot
+check "clique na prévia escolhe a janela" "prévia: janela [0-9]+ escolhida" "400 move 623 728; 405 move 611 728; 470 move 520 598; 480 click 503 588; 520 list" foot gnome-calculator foot
+# Com o Launchpad aberto, escolher uma janela nas prévias fecha o launcher.
+check_count "prévia com o launcher aberto: escolher fecha o launcher" 'camada "mide-launcher"' 0 "400 combo ctrl+shift+space; 460 move 623 728; 465 move 611 728; 530 move 520 598; 540 click 503 588; 600 list" foot gnome-calculator foot
+check "× da prévia fecha a janela" "prévia: fechar janela" "400 move 623 728; 405 move 611 728; 470 move 520 598; 475 move 600 533; 480 click 600 533; 540 list" foot gnome-calculator foot
+check "clique direito abre o menu do app" "menu de Foot aberto" "400 rclick 611 728; 470 list" foot
+check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 click 317 99; 420 click 654 728" gnome-calculator
 
 echo "== dock: Downloads e Lixeira (pastas temporárias)"
 # Downloads de teste com 3 itens (o mais novo é "projeto") e uma Lixeira de teste.
@@ -275,38 +284,52 @@ fill_trash() {
         printf '[Trash Info]\nPath=%s\nDeletionDate=2026-01-01T10:00:00\n' "$PLACES/orig/$f" > "$PLACES/data/Trash/info/$f.trashinfo"
     done
 }
-# Painel de Downloads (320x177) acima do ícone: linhas em y=395 (projeto) e 429
-# (foto.jpg). O menu de um arquivo abre no ponto do clique direito, por cima da
-# lista: clicando em (455, 395), "Copiar caminho" fica em (520, 494); em (455, 429),
-# "Mover para a Lixeira" fica em (520, 563). Menu do ícone da Lixeira: "Esvaziar
-# Lixeira…" em (502, 502). Confirmação: "Esvaziar Lixeira" em (502, 476) e
-# "Cancelar" em (502, 502). Lista da Lixeira com 2 itens: o primeiro (a.txt) em
-# y=403; menu dele em (504, 403): "Restaurar" em (580, 450), "Apagar
-# permanentemente" em (580, 485).
-check "Downloads mostra os recentes" "pilha Downloads aberta: 3 item" "400 click 473 560; 470 list"
-check "clique num download abre o item" "abrir \(teste\): .*/dl/projeto" "400 click 473 560; 440 click 473 395"
-check "Abrir no Gerenciador de Arquivos" "abrir \(teste\): .*/dl$" "400 click 473 560; 440 click 473 502"
-check_count "clique fora fecha o painel" 'camada "mide-dock-menu"' 0 "400 click 473 560; 440 click 100 200; 470 list"
-check "menu do arquivo abre sobre a lista" "menu do arquivo projeto aberto" "400 click 473 560; 440 rclick 473 395; 470 list"
-check_count "lista continua aberta com o menu do arquivo" 'camada "mide-dock-menu"' 1 "400 click 473 560; 440 rclick 473 395; 470 list"
-check "menu de arquivo: Copiar caminho" "copiar \(teste\): .*/dl/projeto" "400 click 473 560; 440 rclick 473 395; 480 click 538 494"
-check "menu de arquivo: Mover para a Lixeira" "movido para a lixeira: foto.jpg" "400 click 473 560; 440 rclick 473 429; 480 click 538 563"
+# Painel de Downloads (320x177) acima do ícone: linhas em y=563 (projeto) e 597
+# (foto.jpg). O menu de um arquivo abre por cima da lista: clicando em (756, 563),
+# "Copiar caminho" fica em (821, 662); em (756, 597), "Mover para a Lixeira" fica
+# em (821, 731). Menu do ícone da Lixeira: "Esvaziar Lixeira…" em (799, 670).
+# Confirmação: "Esvaziar Lixeira" em (799, 644) e "Cancelar" em (799, 670). Lista da
+# Lixeira com 2 itens: o primeiro (a.txt) em y=571; menu dele: "Restaurar" em
+# (887, 618), "Apagar permanentemente" em (887, 653).
+check "Downloads mostra os recentes" "pilha Downloads aberta: 3 item" "400 click 756 728; 470 list"
+check "clique num download abre o item" "abrir \(teste\): .*/dl/projeto" "400 click 756 728; 440 click 756 563"
+check "Abrir no Gerenciador de Arquivos" "abrir \(teste\): .*/dl$" "400 click 756 728; 440 click 756 670"
+check_count "clique fora fecha o painel" 'camada "mide-dock-menu"' 0 "400 click 756 728; 440 click 100 200; 470 list"
+check "menu do arquivo abre sobre a lista" "menu do arquivo projeto aberto" "400 click 756 728; 440 rclick 756 563; 470 list"
+check_count "lista continua aberta com o menu do arquivo" 'camada "mide-dock-menu"' 1 "400 click 756 728; 440 rclick 756 563; 470 list"
+check "menu de arquivo: Copiar caminho" "copiar \(teste\): .*/dl/projeto" "400 click 756 728; 440 rclick 756 563; 480 click 821 662"
+check "menu de arquivo: Mover para a Lixeira" "movido para a lixeira: foto.jpg" "400 click 756 728; 440 rclick 756 597; 480 click 821 731"
+# Depois de agir num item, a lista continua aberta (para agir em vários); Esc fecha.
+check_count "lista de Downloads continua aberta depois de mover um item" 'camada "mide-dock-menu"' 1 "400 click 756 728; 440 rclick 756 597; 480 click 821 731; 540 list"
+check_count "Esc fecha a lista de Downloads" 'camada "mide-dock-menu"' 0 "400 click 756 728; 440 key esc; 480 list"
+# Copiar caminho chega de verdade a outro app: o editor de texto (aberto depois) cola
+# com Ctrl+V e salva. O texto fica com o compositor.
+CPY="$(mktemp)"
+SCENARIO_WAIT=24 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1000 click 400 300; 1020 combo ctrl+v; 1050 combo ctrl+s; 1100 list" -- "sleep 8; $PWD/target/debug/mide-text '$CPY'" >/dev/null 2>&1
+if grep -q "/dl/projeto" "$CPY"; then
+    echo "ok    Copiar caminho da dock cola em outro app"; PASS=$((PASS + 1))
+else
+    echo "FALHA Copiar caminho da dock cola em outro app (colado: '$(cat "$CPY")')"; FAIL=$((FAIL + 1))
+fi
+rm -f "$CPY"
 OLD_DATA="${XDG_DATA_HOME-}"
 export XDG_DATA_HOME="$PLACES/data"
 fill_trash
-check "clique na Lixeira mostra os itens apagados" "lista da Lixeira aberta: 2 item" "400 click 516 560; 440 list"
-check "item da Lixeira: Restaurar" "restaurado da lixeira: .*/orig/a.txt" "400 click 516 560; 440 rclick 516 403; 480 click 604 450; 520 list"
+check "clique na Lixeira mostra os itens apagados" "lista da Lixeira aberta: 2 item" "400 click 799 728; 440 list"
+check "item da Lixeira: Restaurar" "restaurado da lixeira: .*/orig/a.txt" "400 click 799 728; 440 rclick 799 571; 480 click 887 618; 520 list"
 fill_trash
-check "item da Lixeira: Apagar permanentemente" "apagado permanentemente: a.txt" "400 click 516 560; 440 rclick 516 403; 480 click 604 485; 520 list"
+check_count "lista da Lixeira continua aberta depois de restaurar" 'camada "mide-dock-menu"' 1 "400 click 799 728; 440 rclick 799 571; 480 click 887 618; 540 list"
 fill_trash
-check "Lixeira: esvaziar com confirmação" "lixeira esvaziada: 2 item" "400 rclick 516 560; 440 click 516 502; 480 click 516 476; 520 list"
+check "item da Lixeira: Apagar permanentemente" "apagado permanentemente: a.txt" "400 click 799 728; 440 rclick 799 571; 480 click 887 653; 520 list"
+fill_trash
+check "Lixeira: esvaziar com confirmação" "lixeira esvaziada: 2 item" "400 rclick 799 728; 440 click 799 670; 480 click 799 644; 520 list"
 if [ -z "$(ls -A "$PLACES/data/Trash/files")" ]; then
     echo "ok    Lixeira: arquivos apagados de verdade"; PASS=$((PASS + 1))
 else
     echo "FALHA Lixeira: arquivos continuam lá"; FAIL=$((FAIL + 1))
 fi
 fill_trash
-timeout 150 "$SCEN" "400 rclick 516 560; 440 click 516 502; 480 click 516 502; 520 list" -- >/dev/null 2>&1
+timeout 150 "$SCEN" "400 rclick 799 728; 440 click 799 670; 480 click 799 670; 520 list" -- >/dev/null 2>&1
 if [ "$(ls "$PLACES/data/Trash/files" | wc -l)" = 2 ]; then
     echo "ok    Lixeira: cancelar não apaga"; PASS=$((PASS + 1))
 else
@@ -327,23 +350,23 @@ CALC_ID='"org.gnome.Calculator"'
 OLD_XDG_CONFIG_HOME="${XDG_CONFIG_HOME-}"
 export XDG_CONFIG_HOME="$DOCKCFG"
 dock_pins "$FOOT_ID"
-check "app aberto não fixado entra na dock" 'camada "mide-dock" em \(271, 535\) 258x57' "500 list" gnome-calculator
+check "app aberto não fixado entra na dock" 'camada "mide-dock" em \(554, 703\) 258x57' "500 list" gnome-calculator
 dock_pins "$FOOT_ID"
-check "menu do app: Manter na Dock" "dock salva: org.codeberg.dnkl.foot, org.gnome.Calculator" "500 rclick 400 560; 540 click 400 445" gnome-calculator
+check "menu do app: Manter na Dock" "dock salva: org.codeberg.dnkl.foot, org.gnome.Calculator" "500 rclick 683 728; 540 click 683 613" gnome-calculator
 dock_pins "$FOOT_ID, $CALC_ID"
-check "menu do app: Remover da Dock" "dock salva: org.gnome.Calculator$" "300 rclick 349 560; 340 click 349 506"
+check "menu do app: Remover da Dock" "dock salva: org.gnome.Calculator$" "300 rclick 632 728; 340 click 632 674"
 dock_pins "$FOOT_ID, $CALC_ID"
-check "arrastar reordena" "dock salva: org.gnome.Calculator, org.codeberg.dnkl.foot" "300 press 349 560; 305 move 360 560; 310 move 375 560; 315 move 392 560; 320 release 392 560"
+check "arrastar reordena" "dock salva: org.gnome.Calculator, org.codeberg.dnkl.foot" "300 press 632 728; 305 move 643 728; 310 move 658 728; 315 move 675 728; 320 release 675 728"
 if [ -n "$OLD_XDG_CONFIG_HOME" ]; then export XDG_CONFIG_HOME="$OLD_XDG_CONFIG_HOME"; else unset XDG_CONFIG_HOME; fi
 rm -rf "$DOCKCFG"
 
-echo "== Configurações do Sistema (tela 1280x800, configuração própria)"
+echo "== Configurações do Sistema (configuração própria)"
 check "menu do mide abre as Configurações" "sistema \(teste\): mide-settings" "400 click 25 14; 430 click 100 88; 460 list"
 SCFG="$(mktemp -d)"
 mkdir -p "$SCFG/mide"
 printf '# Meu config\n[keybindings]\n"ctrl+shift+t" = "launch:foot" # terminal\n' > "$SCFG/mide/config.toml"
 OLD_SCFG="$XDG_CONFIG_HOME"
-export XDG_CONFIG_HOME="$SCFG" MIDE_WINIT_SIZE=1280x800
+export XDG_CONFIG_HOME="$SCFG"
 SETTINGS="$PWD/target/debug/mide-settings"
 # Janela em (48, 76): miniatura "Beach" em (548, 185); interruptor de Sombras em (807, 169).
 timeout 150 "$SCEN" "400 click 548 185; 460 list" -- "$SETTINGS wallpaper" >/dev/null 2>&1
@@ -429,12 +452,11 @@ else
     echo "FALHA restaurar os atalhos padrão"; FAIL=$((FAIL + 1))
 fi
 export XDG_CONFIG_HOME="$OLD_SCFG"
-unset MIDE_WINIT_SIZE
 rm -rf "$SCFG"
 
 echo "== buscador (ctrl+space)"
 SEARCH="400 combo ctrl+space"
-check "ctrl+space abre o buscador em tela cheia" 'camada "mide-search" em \(0, 0\) 800x600' "$SEARCH; 460 list"
+check "ctrl+space abre o buscador em tela cheia" 'camada "mide-search" em \(0, 0\) 1366x768' "$SEARCH; 460 list"
 check "buscador sobre vidro" 'vidro: desfoque refeito \(mide-search#0\)' "$SEARCH; 440 type calc; 480 list"
 check "buscar e Enter abre o app" "nova janela criada" "$SEARCH; 440 type calc; 470 key enter; 600 list"
 check_count "Esc fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 key esc; 490 list"
@@ -461,7 +483,8 @@ if echo "$HLOG" | grep -q 'camada "mide-dock"' && ! echo "$HLOG" | grep -q "dock
 else
     echo "FALHA ocultar inteligente: sem janela por cima, a dock fica à mostra"; FAIL=$((FAIL + 1))
 fi
-if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "600 list" -- foot 2>&1 | grep -q "dock escondida"; then
+# Em 1366x768 a janela nova não chega na dock: maximizada, ela cobre a dock.
+if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "400 click 103 61; 700 list" -- foot 2>&1 | grep -q "dock escondida"; then
     echo "ok    ocultar inteligente: janela sobre a dock a esconde"; PASS=$((PASS + 1))
 else
     echo "FALHA ocultar inteligente: janela sobre a dock a esconde"; FAIL=$((FAIL + 1))
@@ -469,7 +492,7 @@ fi
 rm -rf "$HCFG"
 
 echo "== área de trabalho (ícones)"
-# Pasta de teste com um arquivo: o ícone fica na coluna da direita, em (732, 76)
+# Pasta de teste com um arquivo: o ícone fica na coluna da direita, em (1298, 76)
 # (área útil abaixo da barra e acima da dock). Fundo vazio em (400, 300): menu com
 # "Nova pasta" em (450, 326).
 DESK="$(mktemp -d)"
@@ -477,10 +500,10 @@ reset_desk() { rm -rf "$DESK"/* ; echo oi >"$DESK/notas.txt"; }
 reset_desk
 export MIDE_DESKTOP_DIR="$DESK"
 check "área de trabalho aparece como camada de fundo" 'camada "mide-desktop"' "300 list"
-check "duplo clique no ícone abre o arquivo" "abrir \(teste\): .*notas.txt" "300 click 732 76; 306 click 732 76; 340 list"
+check "duplo clique no ícone abre o arquivo" "abrir \(teste\): .*notas.txt" "300 click 1298 76; 306 click 1298 76; 340 list"
 unset MIDE_DESKTOP_DIR
 reset_desk
-MIDE_DESKTOP_DIR="$DESK" timeout 150 "$SCEN" "300 click 732 76; 330 key delete; 380 list" >/dev/null 2>&1
+MIDE_DESKTOP_DIR="$DESK" timeout 150 "$SCEN" "300 click 1298 76; 330 key delete; 380 list" >/dev/null 2>&1
 if [ ! -e "$DESK/notas.txt" ]; then
     echo "ok    Delete manda o ícone da área de trabalho para a Lixeira"; PASS=$((PASS + 1))
 else
@@ -498,7 +521,7 @@ rm -rf "$DESK"
 echo "== vidro em barras e menus"
 check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"
 check "menu da barra sobre vidro" 'vidro: desfoque refeito \(mide-bar-menu#0\)' "300 click 25 14; 360 list"
-check "menu da dock sobre vidro" 'vidro: desfoque refeito \(mide-dock-menu#0\)' "300 rclick 516 560; 360 list"
+check "menu da dock sobre vidro" 'vidro: desfoque refeito \(mide-dock-menu#0\)' "300 rclick 799 728; 360 list"
 GCFG="$(mktemp -d)"
 mkdir -p "$GCFG/mide"
 printf '[effects]\npanel_glass = false\n' >"$GCFG/mide/config.toml"
@@ -613,6 +636,76 @@ if command -v xclock >/dev/null && { command -v xwayland-satellite >/dev/null ||
     MIDE_XWAYLAND=1 SCENARIO_WAIT=30 check_count "fechar pela barra do mide fecha o app X11" 'janela "xclock"' 1 "2000 list; 2020 click 63 61; 2100 list" "$XAPP"
 else
     echo "pulo  apps X11 (falta xclock ou xwayland-satellite)"
+fi
+
+echo "== captura de tela (Print)"
+# A imagem vai para Imagens/Capturas de tela: no teste, uma pasta temporária.
+SHOTS="$(mktemp -d)"
+printf 'XDG_PICTURES_DIR="%s"\n' "$SHOTS" > "$TESTCFG/user-dirs.dirs"
+timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo ctrl+s; 720 list" >/dev/null 2>&1
+if ls "$SHOTS/Capturas de tela/"*.png >/dev/null 2>&1 && python3 -c "
+import sys, glob
+from PIL import Image
+img = Image.open(glob.glob(sys.argv[1] + '/Capturas de tela/*.png')[0])
+sys.exit(0 if img.size == (400, 250) else 1)" "$SHOTS"; then
+    echo "ok    captura de uma área salva em Imagens/Capturas de tela (400x250)"; PASS=$((PASS + 1))
+else
+    echo "FALHA captura de uma área salva em Imagens/Capturas de tela"; FAIL=$((FAIL + 1))
+fi
+check "captura: Enter copia a imagem para a área de transferência" "bytes de image/png copiados" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 key enter; 720 list"
+rm -f "$TESTCFG/user-dirs.dirs"
+rm -rf "$SHOTS"
+
+echo "== monitores (telas virtuais)"
+MONCFG="$(mktemp -d)"
+mkdir -p "$MONCFG/mide"
+OLD_MONCFG="$XDG_CONFIG_HOME"
+export XDG_CONFIG_HOME="$MONCFG"
+export MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080
+SETTINGS="$PWD/target/debug/mide-settings"
+check "duas telas lado a lado" 'tela HEADLESS-2 em \(1366, 0\) 1920x1080' "300 list"
+printf '[monitors]\nprimary = "HEADLESS-2"\n' > "$MONCFG/mide/config.toml"
+check "barra na tela principal escolhida" 'camada "mide-bar" em \(1366, 0\) 1920x28' "300 list"
+printf '[monitors.outputs."HEADLESS-2"]\nenabled = false\n' > "$MONCFG/mide/config.toml"
+check_count "tela desligada fica de fora" 'tela HEADLESS' 1 "300 list"
+: > "$MONCFG/mide/config.toml"
+# Configurações → Monitores: HEADLESS-2 no arranjo em (654, 255); "Usar como tela
+# principal" em (404, 526); "Aplicar" em (430, 422); "Manter" em (446, 482).
+check "Monitores: tornar principal e manter" 'camada "mide-bar" em \(1366, 0\) 1920x28' "300 click 654 255; 330 click 404 526; 360 click 430 422; 460 click 446 482; 520 list" "$SETTINGS displays"
+if grep -q 'primary = "HEADLESS-2"' "$MONCFG/mide/config.toml"; then
+    echo "ok    Monitores grava a tela principal no config.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA Monitores grava a tela principal no config.toml"; FAIL=$((FAIL + 1))
+fi
+: > "$MONCFG/mide/config.toml"
+# Sem confirmar, volta sozinho em 15 s (a barra volta para a primeira tela).
+SCENARIO_WAIT=34 check "Monitores: sem confirmar, volta ao anterior em 15 s" 'camada "mide-bar" em \(0, 0\) 1366x28' "300 click 654 255; 330 click 404 526; 360 click 430 422; 1500 list" "$SETTINGS displays"
+unset MIDE_HEADLESS_OUTPUTS
+printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$MONCFG/mide/config.toml"
+MIDE_HEADLESS_OUTPUTS=1920x1080 check "escala 125%: tela de 1920x1080 com 1536x864 pontos" 'tela HEADLESS-1 em \(0, 0\) 1536x864' "300 list"
+export XDG_CONFIG_HOME="$OLD_MONCFG"
+rm -rf "$MONCFG"
+
+echo "== menu do app na barra (menu global, barramento D-Bus de teste)"
+# App de teste (examples/mide-menu-teste) que publica "Projeto" e "Ajuda" pelo dbusmenu.
+MENU_APP="$PWD/target/debug/examples/mide-menu-teste"
+# "Projeto" na barra em (186, 14); no menu, "Compilar" é a primeira linha (y=49).
+MENU_X=186
+if [ -x "$MENU_APP" ]; then
+    SCEN_PLAIN="$SCEN"
+    SCEN=tests/scenario-dbus.sh
+    RUST_LOG="mide=debug,mide_bar=info" check "a barra mostra os menus do app em foco" "menu do app mide-menu-teste: Projeto, Ajuda" "500 list" "$MENU_APP"
+    CLICK="$(mktemp)"
+    MENU_TESTE_ARQUIVO="$CLICK" timeout 150 "$SCEN" "500 click $MENU_X 14; 540 click $MENU_X 49; 580 list" -- "$MENU_APP" >/dev/null 2>&1
+    if [ "$(cat "$CLICK")" = "11" ]; then
+        echo "ok    clique no menu do app chega ao app (Projeto → Compilar)"; PASS=$((PASS + 1))
+    else
+        echo "FALHA clique no menu do app chega ao app (recebeu: '$(cat "$CLICK")')"; FAIL=$((FAIL + 1))
+    fi
+    rm -f "$CLICK"
+    SCEN="$SCEN_PLAIN"
+else
+    echo "pulo  menu do app (rode cargo build --examples)"
 fi
 
 if [ "$(cfg_fingerprint)" != "$CFG_BEFORE" ]; then

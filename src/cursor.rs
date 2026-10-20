@@ -48,8 +48,9 @@ impl Cursors {
     }
 
     /// Elementos do cursor na posição do ponteiro (o primeiro da lista fica na frente).
-    pub fn elements(&mut self, renderer: &mut GlesRenderer, state: &State) -> Vec<MideRenderElement> {
-        let pointer = state.pointer_location.to_i32_round::<i32>();
+    /// Cursor na tela que começa em `origin` (posição dela entre as telas).
+    pub fn elements(&mut self, renderer: &mut GlesRenderer, state: &State, origin: smithay::utils::Point<i32, smithay::utils::Logical>) -> Vec<MideRenderElement> {
+        let pointer = state.pointer_location.to_i32_round::<i32>() - origin;
         // Bordas de redimensionar e outras formas do mide valem sobre o que o app pediu.
         let name = match (state.cursor, &state.cursor_status) {
             (CursorShape::Default, CursorImageStatus::Hidden) => return Vec::new(),
@@ -60,14 +61,14 @@ impl Cursors {
                         .and_then(|a| a.lock().ok().map(|a| a.hotspot))
                 })
                 .unwrap_or_default();
-                let location: Point<i32, Physical> = (pointer - hotspot).to_physical(1);
-                return render_elements_from_surface_tree(renderer, surface, location, 1.0, 1.0, Kind::Cursor);
+                let location: Point<i32, Physical> = crate::clip::phys(pointer - hotspot);
+                return render_elements_from_surface_tree(renderer, surface, location, crate::clip::scale(), 1.0, Kind::Cursor);
             }
             (CursorShape::Default, CursorImageStatus::Named(icon)) => icon.name().to_string(),
             (shape, _) => shape_name(shape).to_string(),
         };
         let image = self.image(&name);
-        let location = (pointer - image.hotspot).to_f64().to_physical(1.0);
+        let location = crate::clip::phys(pointer - image.hotspot).to_f64();
         match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, None, Kind::Cursor) {
             Ok(element) => vec![MideRenderElement::Title(element)],
             Err(err) => {

@@ -384,17 +384,18 @@ impl Blur {
         area: Rectangle<i32, Logical>,
         radius: f32,
         glass: f32,
+        alpha: f32,
     ) -> TextureShaderElement {
         // Com `Transform::Flipped180` aqui, o Smithay não varia `v_coords` (o recorte
         // dos cantos some); a orientação é acertada na amostragem do shader.
         let inner = TextureRenderElement::from_static_texture(
             Id::new(),
             renderer.context_id(),
-            (area.loc.x as f64, area.loc.y as f64),
+            crate::clip::phys(area.loc).to_f64(),
             blurred,
             1,
             Transform::Normal,
-            None,
+            (alpha < 1.0).then_some(alpha),
             Some(Rectangle::from_size((blurred_size.w as f64, blurred_size.h as f64).into())),
             Some(area.size),
             None,
@@ -404,8 +405,9 @@ impl Blur {
             inner,
             self.composite.clone(),
             vec![
-                Uniform::new("area_size", (area.size.w as f32, area.size.h as f32)),
-                Uniform::new("corner", radius),
+                // Em pixels da tela: a forma (cantos, borda) acompanha a escala.
+                Uniform::new("area_size", (area.size.w as f32 * crate::clip::scale() as f32, area.size.h as f32 * crate::clip::scale() as f32)),
+                Uniform::new("corner", radius * crate::clip::scale() as f32),
                 Uniform::new("glass", glass),
                 Uniform::new("flip_y", if crate::clip::flipped() { 1.0f32 } else { 0.0 }),
             ],
@@ -432,7 +434,7 @@ pub fn render_region<E: RenderElement<GlesRenderer>>(
         let region: Rectangle<i32, Physical> = Rectangle::new((area.loc.x, area.loc.y).into(), (area.size.w, area.size.h).into());
         frame.clear(Color32F::new(0.12, 0.12, 0.14, 1.0), &[region]).ok()?;
         for element in elements.iter().rev() {
-            let dst = element.geometry(Scale::from(1.0));
+            let dst = element.geometry(Scale::from(crate::clip::scale()));
             let Some(visible) = dst.intersection(region) else {
                 continue;
             };

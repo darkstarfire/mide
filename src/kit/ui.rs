@@ -85,6 +85,8 @@ struct MenuState {
     height: f32,
     /// Topo do item clicado (para o menu que abre para cima não cobrir o item).
     item_top: Option<f32>,
+    /// Quando abriu (entra esmaecendo, `[effects] menu_animation`).
+    opened: Option<std::time::Instant>,
 }
 
 /// Onde o menu de contexto fica: canto de cima à esquerda, se abre ao lado do clique
@@ -162,6 +164,58 @@ impl Menu<'_> {
     }
 }
 
+/// Tela no arranjo das Configurações → Monitores (`Ui::arrangement`), em pixels
+/// lógicos.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrangedScreen {
+    pub name: String,
+    pub pos: (i32, i32),
+    pub size: (i32, i32),
+    pub primary: bool,
+}
+
+/// Arrasto em andamento: componente, tela, ponto agarrado (na tela, em pixels da
+/// janela) e a escala e origem do desenho no começo do arrasto (o desenho não muda de
+/// escala enquanto a tela anda).
+#[derive(Debug, Clone, Copy)]
+struct ArrangeDrag {
+    id: u64,
+    index: usize,
+    grab: (f32, f32),
+    k: f32,
+    origin: (f32, f32),
+    min: (i32, i32),
+}
+
+/// Encaixa a tela `i`, solta em `pos`, na vizinha mais próxima: encostada à direita, à
+/// esquerda, embaixo ou em cima de outra, sem sobrepor nenhuma (como no macOS).
+pub fn snap_screen(screens: &[ArrangedScreen], i: usize, pos: (i32, i32)) -> (i32, i32) {
+    let (w, h) = screens[i].size;
+    let others: Vec<&ArrangedScreen> = screens.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, s)| s).collect();
+    if others.is_empty() {
+        return (0, 0);
+    }
+    let overlaps = |p: (i32, i32)| {
+        others.iter().any(|o| p.0 < o.pos.0 + o.size.0 && o.pos.0 < p.0 + w && p.1 < o.pos.1 + o.size.1 && o.pos.1 < p.1 + h)
+    };
+    let mut best: Option<((i32, i32), i64)> = None;
+    for o in &others {
+        let (ox, oy, ow, oh) = (o.pos.0, o.pos.1, o.size.0, o.size.1);
+        let y = pos.1.clamp(oy - h + 1, oy + oh - 1);
+        let x = pos.0.clamp(ox - w + 1, ox + ow - 1);
+        for candidate in [(ox + ow, y), (ox - w, y), (x, oy + oh), (x, oy - h)] {
+            if overlaps(candidate) {
+                continue;
+            }
+            let d = (candidate.0 - pos.0) as i64 * (candidate.0 - pos.0) as i64 + (candidate.1 - pos.1) as i64 * (candidate.1 - pos.1) as i64;
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((candidate, d));
+            }
+        }
+    }
+    best.map(|(p, _)| p).unwrap_or(screens[i].pos)
+}
+
 /// O que dura entre quadros: componente apertado, foco do teclado e rolagens.
 #[derive(Default)]
 pub struct Memory {
@@ -173,6 +227,8 @@ pub struct Memory {
     pub scroll: HashMap<u64, f32>,
     /// Arrasto da barra de rolagem: área e ponto do clique dentro da alça.
     pub dragging_scroll: Option<(u64, f32)>,
+    /// Tela sendo arrastada no arranjo (`Ui::arrangement`).
+    arrange_drag: Option<ArrangeDrag>,
     /// O próximo `text_input` desenhado recebe o foco (`Ui::focus_next_input`).
     focus_next: bool,
     /// Cursor e seleção do campo com foco.
@@ -307,6 +363,20 @@ impl Ctx {
     /// Camada de cima (menus) deste quadro, se houver.
     pub fn take_overlay(&mut self) -> Option<Pixmap> {
         self.overlay.take()
+    }
+
+    /// Opacidade e deslocamento vertical da camada de cima (o menu que acabou de abrir
+    /// entra esmaecendo e descendo 6 px em 120 ms). Enquanto anima, pede quadros.
+    pub fn overlay_look(&mut self) -> (f32, i32) {
+        let Some(opened) = self.memory.menu.as_ref().and_then(|m| m.opened) else {
+            return (1.0, 0);
+        };
+        let t = (opened.elapsed().as_secs_f32() / 0.12).clamp(0.0, 1.0);
+        if t < 1.0 {
+            self.ticking = true;
+        }
+        let e = 1.0 - (1.0 - t) * (1.0 - t);
+        (e, (-6.0 * (1.0 - e)).round() as i32)
     }
 
     /// Começo de um quadro: os ids voltam a contar do início.
@@ -734,7 +804,13 @@ impl<'a> Ui<'a> {
     /// });
     /// ```
     pub fn context_menu(&mut self, response: &Response, build: impl FnOnce(&mut Menu)) {
-        if response.secondary_clicked {
+        self.menu_impl(response, response.secondary_clicked, build);
+    }
+
+    /// Menu que abre com `open` (clique direito no menu de contexto, clique comum na
+    /// lista de escolha) e fica aberto até escolher ou clicar fora.
+    fn menu_impl(&mut self, response: &Response, open: bool, build: impl FnOnce(&mut Menu)) {
+        if open {
             // Num item (linha, ladrilho), a ponta sai da borda de baixo dele, sem cobrir
             // o nome; numa área grande (fundo), sai do ponto do clique.
             let small = response.rect.3 < 200.0;
@@ -742,7 +818,8 @@ impl<'a> Ui<'a> {
             let item_top = small.then(|| self.offset.1 + response.rect.1);
             if let Some(click) = self.ctx.input.pointer {
                 let pos = (click.0, item_bottom.unwrap_or(click.1));
-                self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, click, height: 0.0, item_top });
+                let opened = crate::settings_file::effect("menu_animation").then(std::time::Instant::now);
+                self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, click, height: 0.0, item_top, opened });
                 self.ctx.memory.menu_rect = None;
                 self.ctx.repaint = true;
             }
@@ -971,6 +1048,149 @@ impl<'a> Ui<'a> {
             paint.anti_alias = true;
             paint.set_color(color([255, 255, 255, 255]));
             self.canvas.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        r
+    }
+
+    /// Desenho livre no canvas da janela (imagens, anotações): `f` recebe o canvas e o
+    /// deslocamento da área atual.
+    pub fn paint(&mut self, f: impl FnOnce(&mut Pixmap, (f32, f32))) {
+        let offset = self.offset;
+        f(self.canvas, offset);
+    }
+
+    /// Linha com um texto e, à direita, o valor escolhido entre `options`; o clique abre
+    /// a lista para trocar. `changed` quando outro valor é escolhido.
+    pub fn dropdown(&mut self, label: &str, options: &[String], selected: &mut usize) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(None, t.row);
+        self.card_line(rect.1);
+        let current = options.get(*selected).cloned().unwrap_or_default();
+        let value_w = self.measure(&current, t.font, FontWeight::Regular) + 34.0;
+        let button = (rect.0 + rect.2 - value_w, rect.1 + (rect.3 - 26.0) / 2.0, value_w, 26.0);
+        let mut r = self.interact(id, button);
+        let label = self.fit(label, t.font, FontWeight::Regular, rect.2 - value_w - 16.0);
+        self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        let mut fill = t.control;
+        if r.hovered {
+            fill[3] = fill[3].saturating_add(30);
+        }
+        fill_rounded(self.canvas, button.0, button.1, button.2, button.3, t.control_radius, color(fill));
+        self.draw_text(&current, button.0 + 10.0, button.1 + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        // Setinha para baixo.
+        let (ax, ay) = (button.0 + button.2 - 16.0, button.1 + 11.0);
+        let mut pb = PathBuilder::new();
+        pb.move_to(ax - 4.0, ay);
+        pb.line_to(ax, ay + 4.0);
+        pb.line_to(ax + 4.0, ay);
+        if let Some(path) = pb.finish() {
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(color(t.text_secondary));
+            let stroke = Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+            self.canvas.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
+        let mut chosen = None;
+        self.menu_impl(&r, r.clicked, |m| {
+            for (i, option) in options.iter().enumerate() {
+                if m.item(option) {
+                    chosen = Some(i);
+                }
+            }
+        });
+        if let Some(i) = chosen {
+            if i != *selected {
+                *selected = i;
+                r.changed = true;
+                self.ctx.repaint = true;
+            }
+        }
+        r
+    }
+
+    /// Arranjo das telas (Configurações → Monitores): cada tela é um retângulo em
+    /// escala, com o nome; a principal tem a faixa da barra em cima. Clicar escolhe
+    /// (`selected`); arrastar move e, ao soltar, encaixa na vizinha (`changed`).
+    pub fn arrangement(&mut self, screens: &mut [ArrangedScreen], selected: &mut usize) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(None, 230.0);
+        let mut r = Response { rect, id, ..Default::default() };
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 10.0, color([0, 0, 0, 14]));
+        if screens.is_empty() {
+            return r;
+        }
+        // Escala e origem: todas as telas cabem com folga, centralizadas.
+        let drag = self.ctx.memory.arrange_drag.filter(|d| d.id == id);
+        let (k, origin, min) = match drag {
+            Some(d) => (d.k, d.origin, d.min),
+            None => {
+                let min = (screens.iter().map(|s| s.pos.0).min().unwrap_or(0), screens.iter().map(|s| s.pos.1).min().unwrap_or(0));
+                let max = (
+                    screens.iter().map(|s| s.pos.0 + s.size.0).max().unwrap_or(1),
+                    screens.iter().map(|s| s.pos.1 + s.size.1).max().unwrap_or(1),
+                );
+                let (bw, bh) = ((max.0 - min.0).max(1) as f32, (max.1 - min.1).max(1) as f32);
+                let k = ((rect.2 - 60.0) / bw).min((rect.3 - 50.0) / bh) * 0.85;
+                let origin = (rect.0 + (rect.2 - bw * k) / 2.0, rect.1 + (rect.3 - bh * k) / 2.0);
+                (k, origin, min)
+            }
+        };
+        let to_view = |p: (i32, i32)| (origin.0 + (p.0 - min.0) as f32 * k, origin.1 + (p.1 - min.1) as f32 * k);
+        let pointer = self.pointer();
+        // Começa o arrasto na tela sob o ponteiro (a de cima primeiro).
+        if self.ctx.input.pressed && drag.is_none() {
+            if let Some((px, py)) = pointer {
+                if let Some(i) = (0..screens.len()).rev().find(|&i| {
+                    let (x, y) = to_view(screens[i].pos);
+                    px >= x && px <= x + screens[i].size.0 as f32 * k && py >= y && py <= y + screens[i].size.1 as f32 * k
+                }) {
+                    let (x, y) = to_view(screens[i].pos);
+                    *selected = i;
+                    r.clicked = true;
+                    self.ctx.memory.active = Some(id);
+                    self.ctx.memory.arrange_drag = Some(ArrangeDrag { id, index: i, grab: (px - x, py - y), k, origin, min });
+                    self.ctx.repaint = true;
+                }
+            }
+        }
+        if let (Some(d), Some((px, py))) = (self.ctx.memory.arrange_drag.filter(|d| d.id == id), pointer) {
+            let pos = (
+                ((px - d.grab.0 - origin.0) / k).round() as i32 + min.0,
+                ((py - d.grab.1 - origin.1) / k).round() as i32 + min.1,
+            );
+            if self.ctx.input.down {
+                screens[d.index].pos = pos;
+                self.ctx.repaint = true;
+            } else {
+                // Soltou: encaixa na vizinha.
+                screens[d.index].pos = snap_screen(screens, d.index, pos);
+                self.ctx.memory.arrange_drag = None;
+                r.changed = true;
+                self.ctx.repaint = true;
+            }
+        }
+        for (i, screen) in screens.iter().enumerate() {
+            let (x, y) = to_view(screen.pos);
+            let (w, h) = (screen.size.0 as f32 * k, screen.size.1 as f32 * k);
+            let chosen = i == *selected;
+            fill_rounded(self.canvas, x, y, w, h, 6.0, color(if chosen { [92, 150, 245, 255] } else { [120, 130, 150, 255] }));
+            if screen.primary {
+                // Faixa da barra superior, como no macOS.
+                fill_rounded(self.canvas, x + 2.0, y + 2.0, w - 4.0, (h * 0.07).max(4.0), 2.0, color([255, 255, 255, 220]));
+            }
+            if chosen {
+                if let Some(path) = rounded_rect(x - 2.0, y - 2.0, w + 4.0, h + 4.0, 8.0) {
+                    let mut paint = Paint::default();
+                    paint.anti_alias = true;
+                    paint.set_color(color(t.accent));
+                    self.canvas.stroke_path(&path, &paint, &Stroke { width: 2.0, ..Default::default() }, Transform::identity(), None);
+                }
+            }
+            let name = self.fit(&screen.name, t.font_small, FontWeight::Semibold, w - 8.0);
+            let tw = self.measure(&name, t.font_small, FontWeight::Semibold);
+            self.draw_text(&name, x + (w - tw) / 2.0, y + (h - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Semibold, [255, 255, 255, 255]);
         }
         r
     }
@@ -2070,7 +2290,7 @@ mod tests {
     use crate::kit::theme::Theme;
 
     fn menu(click: (f32, f32), item: (f32, f32), height: f32) -> MenuState {
-        MenuState { owner: 1, pos: (click.0, item.1), click, height, item_top: Some(item.0) }
+        MenuState { owner: 1, pos: (click.0, item.1), click, height, item_top: Some(item.0), opened: None }
     }
 
     #[test]
@@ -2416,5 +2636,21 @@ mod tests {
                 ui.result_row("text-x-generic", &format!("Resultado {i}"), "Aplicativo", i == 0);
             }
         });
+    }
+
+    #[test]
+    fn tela_arrastada_encaixa_na_vizinha() {
+        let screens = vec![
+            ArrangedScreen { name: "A".into(), pos: (0, 0), size: (1920, 1080), primary: true },
+            ArrangedScreen { name: "B".into(), pos: (1920, 0), size: (1366, 768), primary: false },
+        ];
+        // Solta um pouco à direita e abaixo da borda: encosta na direita, alinhada.
+        assert_eq!(snap_screen(&screens, 1, (2000, 100)), (1920, 100));
+        // Solta à esquerda: encosta na esquerda.
+        assert_eq!(snap_screen(&screens, 1, (-1500, 10)), (-1366, 10));
+        // Solta embaixo: encosta embaixo, sem sobrepor.
+        assert_eq!(snap_screen(&screens, 1, (300, 1200)), (300, 1080));
+        // Uma tela só fica na origem.
+        assert_eq!(snap_screen(&screens[..1], 0, (50, 50)), (0, 0));
     }
 }

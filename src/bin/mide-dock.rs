@@ -47,6 +47,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -62,7 +63,7 @@ use smithay_client_toolkit::{
 use tiny_skia::{Color, FillRule, GradientStop, LinearGradient, Paint, PathBuilder, Pixmap, Point as SkPoint, SpreadMode, Stroke, Transform};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
 
@@ -302,6 +303,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         catalog,
         press: None,
         pointer: None,
+        keyboard: None,
         pointer_x: 0.0,
         running: HashSet::new(),
         qh: qh.clone(),
@@ -534,6 +536,8 @@ struct Dock {
     catalog: Catalog,
     press: Option<Press>,
     pointer: Option<wl_pointer::WlPointer>,
+    /// Teclado: só chega com um painel aberto (Esc fecha).
+    keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer_x: f64,
     /// app_ids (em minúsculas) com janela aberta ou minimizada.
     running: HashSet<String>,
@@ -915,9 +919,12 @@ impl Dock {
         })
     }
 
-    /// Foca ou restaura o app se ele já tiver janela; senão, abre.
-    fn activate_or_launch(&self, index: usize) {
-        let app = &self.items[index];
+    /// Foca ou restaura o app se ele já tiver janela; senão, abre. Clicando no app que
+    /// já está em foco: com uma janela, minimiza; com várias, mostra as prévias para
+    /// escolher (como o "minimize or previews" do dash-to-dock). Desligável em
+    /// Configurações → Dock (`[dock] click_minimize = false`).
+    fn activate_or_launch(&mut self, index: usize) {
+        let app = self.items[index].clone();
         // Ctrl+clique: abre uma instância nova mesmo com o app já aberto.
         let ctrl = ask_compositor("mods")
             .and_then(|lines| lines.first().cloned())
@@ -926,6 +933,19 @@ impl Dock {
             tracing::info!("ctrl+clique: nova instância de {}", app.name);
             self.launch(index);
             return;
+        }
+        if mide::settings_file::flag("dock", "click_minimize", true) {
+            let windows = app_windows_status(&app);
+            if windows.iter().any(|(_, status)| status == "focused") {
+                if windows.len() > 1 {
+                    tracing::info!("{} em foco com {} janelas: prévias", app.name, windows.len());
+                    self.show_previews(index);
+                } else {
+                    tracing::info!("{} em foco: minimizado pela dock", app.name);
+                    ask_compositor(&format!("hide {}", app.match_ids.join(" ")));
+                }
+                return;
+            }
         }
         let command = format!("activate {}", app.match_ids.join(" "));
         if let Some(reply) = ask_compositor(&command) {
@@ -1351,7 +1371,8 @@ impl Dock {
         let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-menu"), None);
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
         layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        // O painel recebe o teclado enquanto está aberto (Esc fecha).
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.commit();
         let Ok(pool) = SlotPool::new(256 * 256 * 4, &self.shm) else {
             return;
@@ -1602,29 +1623,31 @@ impl Dock {
                 self.menu = None;
                 places::copy_text(&path);
             }
+            // Depois de agir num item, a lista continua aberta (atualizada), para agir
+            // em vários sem clicar de novo no ícone; fecha com clique fora ou Esc.
             RowAction::Trash(path) => {
-                self.menu = None;
                 match places::move_to_trash(std::path::Path::new(&path), &places::trash_dir()) {
                     Ok(name) => tracing::info!("movido para a lixeira: {name}"),
                     Err(err) => tracing::warn!("falha ao mover {path} para a lixeira: {err}"),
                 }
                 self.refresh_trash();
+                self.open_menu(MenuKind::Downloads, self.items.len() + STACK_DOWNLOADS);
             }
             RowAction::Restore(name) => {
-                self.menu = None;
                 match places::restore_from_trash(&places::trash_dir(), &name) {
                     Ok(path) => tracing::info!("restaurado da lixeira: {}", path.display()),
                     Err(err) => tracing::warn!("falha ao restaurar {name}: {err}"),
                 }
                 self.refresh_trash();
+                self.open_menu(MenuKind::Trash, self.items.len() + STACK_TRASH);
             }
             RowAction::DeleteForever(name) => {
-                self.menu = None;
                 match places::delete_from_trash(&places::trash_dir(), &name) {
                     Ok(()) => tracing::info!("apagado permanentemente: {name}"),
                     Err(err) => tracing::warn!("falha ao apagar {name}: {err}"),
                 }
                 self.refresh_trash();
+                self.open_menu(MenuKind::Trash, self.items.len() + STACK_TRASH);
             }
             RowAction::EmptyTrash => {
                 self.menu = None;
@@ -1744,6 +1767,22 @@ impl Dock {
 }
 
 /// Janelas abertas de um app: id no compositor e título.
+/// Janelas do app com o estado (`focused`, `normal` ou `minimized`).
+fn app_windows_status(app: &DockApp) -> Vec<(u64, String)> {
+    ask_compositor("windows")
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let id: u64 = parts.next()?.parse().ok()?;
+            let app_id = parts.next()?.to_lowercase();
+            let _title = parts.next()?;
+            let status = parts.next().unwrap_or("").to_string();
+            app.match_ids.contains(&app_id).then_some((id, status))
+        })
+        .collect()
+}
+
 fn app_windows(app: &DockApp) -> Vec<(u64, String)> {
     ask_compositor("windows")
         .unwrap_or_default()
@@ -1932,6 +1971,9 @@ impl SeatHandler for Dock {
                 self.pointer = Some(pointer);
             }
         }
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+        }
     }
 
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
@@ -1943,6 +1985,33 @@ impl SeatHandler for Dock {
     }
 
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+}
+
+/// Com um painel aberto (a camada dele recebe o teclado), Esc fecha: primeiro o menu de
+/// um item, depois a lista.
+impl KeyboardHandler for Dock {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+
+    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
+        if event.keysym != Keysym::Escape {
+            return;
+        }
+        let Some(menu) = self.menu.as_mut() else {
+            return;
+        };
+        if menu.context.take().is_some() {
+            tracing::info!("menu do item fechado (Esc)");
+            self.draw_menu();
+        } else {
+            tracing::info!("painel fechado (Esc)");
+            self.menu = None;
+        }
+    }
+
+    fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
+    fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
+    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: RawModifiers, _: u32) {}
 }
 
 impl PointerHandler for Dock {

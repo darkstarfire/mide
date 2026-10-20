@@ -397,11 +397,22 @@ pub fn delete_from_trash(trash: &Path, name: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Copia um texto para a área de transferência (`wl-copy`). Com
-/// `MIDE_OPEN_DRY_RUN` definido (testes), só registra no log.
+/// Copia um texto para a área de transferência: o compositor guarda o texto (continua
+/// lá mesmo que o app feche); sem o mide, o `wl-copy`. Com `MIDE_OPEN_DRY_RUN`
+/// definido (testes), também registra no log e não usa o `wl-copy`.
 pub fn copy_text(text: &str) {
-    if std::env::var_os("MIDE_OPEN_DRY_RUN").is_some() {
+    // Nos testes, registra e copia no mide de teste (copiar não mexe em nada fora dele).
+    let dry_run = std::env::var_os("MIDE_OPEN_DRY_RUN").is_some();
+    if dry_run {
         tracing::info!("copiar (teste): {text}");
+    }
+    // Uma linha só no canal de controle.
+    let line = text.replace(['\n', '\r'], " ");
+    if crate::control_client::ask_compositor(&format!("copy {line}")).is_some() {
+        tracing::info!("copiado: {text}");
+        return;
+    }
+    if dry_run {
         return;
     }
     match Command::new("wl-copy").arg("--").arg(text).spawn() {

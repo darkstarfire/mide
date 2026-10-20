@@ -64,18 +64,20 @@ fn window_by_id(state: &State, id: u64) -> Option<Window> {
         .or_else(|| state.minimized.iter().find(|m| window_id(&m.window) == id).map(|m| m.window.clone()))
 }
 
-/// Retângulo da camada da dock na tela.
-fn dock_rect(output: &Output) -> Option<Rectangle<i32, Logical>> {
+/// Retângulo da camada da dock, em coordenadas globais (de todas as telas).
+fn dock_rect(state: &State, output: &Output) -> Option<Rectangle<i32, Logical>> {
     let map = layer_map_for_output(output);
     let dock = map.layers().find(|l| l.namespace() == "mide-dock")?;
-    map.layer_geometry(dock)
+    let geo = map.layer_geometry(dock)?;
+    let screen = state.space.output_geometry(output)?;
+    Some(Rectangle::new(geo.loc + screen.loc, geo.size))
 }
 
-/// Painel e miniaturas, em coordenadas da saída.
+/// Painel e miniaturas, em coordenadas globais.
 pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logical>, Vec<Thumb>)> {
-    let output = state.space.outputs().next()?;
-    let out = state.space.output_geometry(output)?;
-    let dock = dock_rect(output)?;
+    let output = state.primary_output()?;
+    let out = state.space.output_geometry(&output)?;
+    let dock = dock_rect(state, &output)?;
     let windows: Vec<(u64, Window)> = preview.ids.iter().filter_map(|id| Some((*id, window_by_id(state, *id)?))).collect();
     if windows.is_empty() {
         return None;
@@ -102,7 +104,7 @@ pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logica
 
 /// O ponto está sobre o painel ou sobre a dock? (Fora dos dois, as prévias somem.)
 pub fn keeps_open(state: &State, preview: &Preview, pos: Point<f64, Logical>) -> bool {
-    let Some(output) = state.space.outputs().next() else {
+    let Some(output) = state.primary_output() else {
         return false;
     };
     let over_panel = layout(state, preview).is_some_and(|(panel, _)| {
@@ -110,7 +112,7 @@ pub fn keeps_open(state: &State, preview: &Preview, pos: Point<f64, Logical>) ->
         let bridge = Rectangle::new(panel.loc, (panel.size.w, panel.size.h + 12).into());
         bridge.to_f64().contains(pos)
     });
-    over_panel || dock_rect(output).is_some_and(|d| d.to_f64().contains(pos))
+    over_panel || dock_rect(state, &output).is_some_and(|d| d.to_f64().contains(pos))
 }
 
 /// Miniatura e × sob o ponto.
@@ -134,15 +136,22 @@ pub fn hit(state: &State, preview: &Preview, pos: Point<f64, Logical>) -> (Optio
 pub fn elements(
     renderer: &mut GlesRenderer,
     state: &State,
+    origin: Point<i32, Logical>,
     shaders: &Shaders,
     titles: &mut TitleRenderer,
 ) -> Vec<MideRenderElement> {
     let Some(preview) = state.preview.as_ref() else {
         return Vec::new();
     };
-    let Some((panel, thumbs)) = layout(state, preview) else {
+    let Some((panel, mut thumbs)) = layout(state, preview) else {
         return Vec::new();
     };
+    // Desenho relativo à tela da dock.
+    let panel = Rectangle::new(panel.loc - origin, panel.size);
+    for thumb in &mut thumbs {
+        thumb.boxed.loc -= origin;
+        thumb.close.loc -= origin;
+    }
     let mut front: Vec<MideRenderElement> = Vec::new();
     let mut middle: Vec<MideRenderElement> = Vec::new();
     for (i, thumb) in thumbs.iter().enumerate() {
@@ -178,13 +187,15 @@ pub fn elements(
             let bar_shown = bar_h as f64 * scale;
             let target = (frame_x, frame_y + bar_shown);
             // A superfície começa antes da área visível (sombras do app): desloca.
+            // Em pixels da tela (vezes a escala dela).
+            let s = crate::clip::scale();
             let origin: Point<i32, smithay::utils::Physical> = (
-                (target.0 - geo.loc.x as f64 * scale).round() as i32,
-                (target.1 - geo.loc.y as f64 * scale).round() as i32,
+                ((target.0 - geo.loc.x as f64 * scale) * s).round() as i32,
+                ((target.1 - geo.loc.y as f64 * scale) * s).round() as i32,
             )
                 .into();
             let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                thumb.window.render_elements(renderer, origin, Scale::from(1.0), 1.0);
+                thumb.window.render_elements(renderer, origin, Scale::from(s), 1.0);
             for element in content {
                 middle.push(MideRenderElement::Scaled(RescaleRenderElement::from_element(element, origin, scale)));
             }

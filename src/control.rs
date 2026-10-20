@@ -109,6 +109,76 @@ pub fn handle(state: &mut State, command: &str) -> String {
             }
             _ => "uso: restart shell|all\n".into(),
         },
+        // `copy <texto>`: o compositor guarda o texto na área de transferência.
+        Some("copy") => {
+            let text = command.trim_start().strip_prefix("copy").map(|t| t.strip_prefix(' ').unwrap_or(t)).unwrap_or("");
+            state.copy_text(text);
+            "ok\n".into()
+        }
+        // Telas: `outputs` lista (uma por linha, para as Configurações); `outputs apply`
+        // relê a configuração e refaz as telas (resolução, posição, principal...).
+        Some("outputs") => match words.next() {
+            Some("apply") => {
+                if let Ok(config) = crate::config::Config::load() {
+                    state.config = config;
+                }
+                match &state.outputs_waker {
+                    Some(waker) => {
+                        waker.ping();
+                        "ok\n".into()
+                    }
+                    None => "este backend não muda as telas\n".into(),
+                }
+            }
+            _ => state.outputs_info.iter().map(|o| o.line() + "\n").collect(),
+        },
+        // `copy-file <tipo> <arquivo>`: o compositor guarda o conteúdo do arquivo (a
+        // imagem da captura de tela) na área de transferência.
+        Some("copy-file") => {
+            let mime = words.next().unwrap_or("application/octet-stream").to_string();
+            let path: String = words.collect::<Vec<_>>().join(" ");
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    state.copy_bytes(&mime, bytes);
+                    "ok\n".into()
+                }
+                Err(err) => format!("erro: {err}\n"),
+            }
+        }
+        // `screenshot <arquivo.png>`: salva o próximo quadro da tela principal (sem o
+        // cursor). O arquivo aparece pronto (gravado com outro nome e renomeado).
+        Some("screenshot") => {
+            let path: String = words.collect::<Vec<_>>().join(" ");
+            if path.is_empty() {
+                "uso: screenshot <arquivo.png>\n".into()
+            } else {
+                state.screenshot_request = Some(path.into());
+                state.wake();
+                "ok\n".into()
+            }
+        }
+        // Janelas à mostra com a moldura (incluindo a barra), a de cima primeiro:
+        // `id<TAB>x<TAB>y<TAB>largura<TAB>altura<TAB>título` (captura de tela → Janela).
+        Some("window_rects") => {
+            let mut out = String::new();
+            for window in state.space.elements().rev() {
+                let Some(loc) = state.space.element_location(window) else {
+                    continue;
+                };
+                let size = window.geometry().size;
+                let bar = crate::state::bar_height_for(window);
+                out.push_str(&format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\n",
+                    crate::state::window_id(window),
+                    loc.x,
+                    loc.y - bar,
+                    size.w,
+                    size.h + bar,
+                    crate::render::window_title(window)
+                ));
+            }
+            out
+        }
         Some("quit") => {
             tracing::info!("encerrando por pedido do canal de controle");
             state.quit_requested = true;

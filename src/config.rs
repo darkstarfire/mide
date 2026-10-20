@@ -60,6 +60,7 @@ struct FileConfig {
     effects: Effects,
     desktop: Desktop,
     keyboard: Keyboard,
+    monitors: Monitors,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -100,6 +101,8 @@ pub struct Effects {
     pub liquid_glass: bool,
     /// Vidro (desfoque e vidro líquido) atrás da barra, dos menus e das notificações.
     pub panel_glass: bool,
+    /// Menus (da barra, da dock, dos apps e de contexto) aparecem com um esmaecer curto.
+    pub menu_animation: bool,
 }
 
 impl Default for Effects {
@@ -113,6 +116,7 @@ impl Default for Effects {
             launcher_blur: true,
             liquid_glass: true,
             panel_glass: true,
+            menu_animation: true,
         }
     }
 }
@@ -124,6 +128,66 @@ pub struct Keyboard {
     /// Teclas no estilo Mac: Command (a tecla Super/Windows) faz o papel do Ctrl e o
     /// Ctrl o do Super, então os atalhos ficam no mesmo lugar do Mac (⌘C, ⌘V, ⌘Espaço).
     pub mac_style: bool,
+}
+
+/// Telas, na seção `[monitors]`: a principal e as opções de cada uma pelo nome do
+/// conector (`DP-1`, `HDMI-A-1`, `eDP-1`...).
+///
+/// ```toml
+/// [monitors]
+/// primary = "DP-1"
+/// [monitors.outputs."DP-1"]
+/// mode = "1920x1080@60"
+/// scale = 1.25
+/// x = 0
+/// y = 0
+/// [monitors.outputs."HDMI-A-1"]
+/// enabled = false
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Monitors {
+    /// Tela da barra, da dock e do launcher. Sem ela, a primeira.
+    pub primary: Option<String>,
+    pub outputs: BTreeMap<String, Monitor>,
+}
+
+/// Opções de uma tela.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Monitor {
+    /// Desligada: o mide não usa a tela.
+    pub enabled: bool,
+    /// Resolução e frequência (`1920x1080@60`); sem ela, o modo preferido da tela.
+    pub mode: Option<String>,
+    /// Escala (1.0 = 100%, 1.25, 1.5, 2.0...).
+    pub scale: f64,
+    /// Posição no arranjo das telas (canto superior esquerdo). Sem ela, lado a lado.
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+}
+
+impl Default for Monitor {
+    fn default() -> Self {
+        Self { enabled: true, mode: None, scale: 1.0, x: None, y: None }
+    }
+}
+
+impl Monitor {
+    /// Resolução e frequência de `mode` (`1920x1080@60`, ou `1920x1080` sem frequência).
+    pub fn parsed_mode(&self) -> Option<(u32, u32, Option<f64>)> {
+        parse_mode(self.mode.as_deref()?)
+    }
+}
+
+/// `LARGURAxALTURA[@HZ]` → (largura, altura, frequência).
+pub fn parse_mode(text: &str) -> Option<(u32, u32, Option<f64>)> {
+    let (size, hz) = match text.trim().split_once('@') {
+        Some((size, hz)) => (size, Some(hz.trim().parse::<f64>().ok()?)),
+        None => (text.trim(), None),
+    };
+    let (w, h) = size.split_once('x')?;
+    Some((w.trim().parse().ok()?, h.trim().parse().ok()?, hz))
 }
 
 /// Área de trabalho, na seção `[desktop]` do arquivo.
@@ -161,6 +225,8 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+shift+space", "toggle_launcher"),
     // Buscador do mide (estilo Spotlight).
     ("ctrl+space", "toggle_search"),
+    // Captura de tela do mide (seleção, janela ou tela inteira, com marcações).
+    ("print", "launch:mide-screenshot"),
 ];
 
 /// Configuração carregada, com os atalhos já convertidos.
@@ -170,12 +236,13 @@ pub struct Config {
     pub effects: Effects,
     pub desktop: Desktop,
     pub keyboard: Keyboard,
+    pub monitors: Monitors,
 }
 
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
-        let (user, effects, desktop, keyboard) = match config_path() {
+        let (user, effects, desktop, keyboard, monitors) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
                 let mut file = toml::from_str::<FileConfig>(&text)
@@ -183,14 +250,16 @@ impl Config {
                 let effects = file.effects;
                 let desktop = std::mem::take(&mut file.desktop);
                 let keyboard = std::mem::take(&mut file.keyboard);
-                (file.all_bindings(), effects, desktop, keyboard)
+                let monitors = std::mem::take(&mut file.monitors);
+                (file.all_bindings(), effects, desktop, keyboard, monitors)
             }
-            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default()),
+            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default()),
         };
         let mut config = Self::from_entries(&user)?;
         config.effects = effects;
         config.desktop = desktop;
         config.keyboard = keyboard;
+        config.monitors = monitors;
         Ok(config)
     }
 
@@ -219,6 +288,7 @@ impl Config {
             effects: Effects::default(),
             desktop: Desktop::default(),
             keyboard: Keyboard::default(),
+            monitors: Monitors::default(),
         })
     }
 
@@ -563,5 +633,20 @@ mod tests {
         assert!(path.ends_with("Imagens/fundo.jpg"));
         assert!(!path.starts_with("~"));
         assert_eq!(file.all_bindings().len(), 1);
+    }
+
+    #[test]
+    fn telas_no_config() {
+        let text = "[monitors]\nprimary = \"DP-1\"\n[monitors.outputs.\"DP-1\"]\nmode = \"2560x1440@144\"\nscale = 1.25\nx = 1920\n[monitors.outputs.\"HDMI-A-1\"]\nenabled = false\n";
+        let file: FileConfig = toml::from_str(text).unwrap();
+        assert_eq!(file.monitors.primary.as_deref(), Some("DP-1"));
+        let dp = &file.monitors.outputs["DP-1"];
+        assert_eq!(dp.parsed_mode(), Some((2560, 1440, Some(144.0))));
+        assert_eq!((dp.scale, dp.x, dp.y, dp.enabled), (1.25, Some(1920), None, true));
+        assert!(!file.monitors.outputs["HDMI-A-1"].enabled);
+        assert_eq!(parse_mode("1366x768"), Some((1366, 768, None)));
+        assert_eq!(parse_mode("x"), None);
+        // A seção das telas não vira atalho.
+        assert!(file.all_bindings().is_empty());
     }
 }

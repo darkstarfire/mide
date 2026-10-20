@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     desktop::{layer_map_for_output, Window},
+    output::Output,
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState,
         wayland_server::protocol::wl_surface::WlSurface,
@@ -421,18 +422,22 @@ impl State {
     /// Alguma janela (fora as minimizadas) está onde a dock fica quando aparece?
     /// Usado pela dock que se esconde sozinha: só some quando há janela por cima dela.
     pub fn dock_covered(&self) -> bool {
-        let Some(output) = self.space.outputs().next() else {
+        let Some(output) = self.primary_output() else {
             return false;
         };
-        let Some(screen) = self.space.output_geometry(output) else {
+        let Some(screen) = self.space.output_geometry(&output) else {
             return false;
         };
-        let map = layer_map_for_output(output);
+        let map = layer_map_for_output(&output);
         let Some(geo) = map.layers().find(|l| l.namespace() == "mide-dock").and_then(|l| map.layer_geometry(l)) else {
             return false;
         };
-        // Onde a dock fica à mostra (margem de 8 px da borda de baixo), mesmo escondida.
-        let shown = smithay::utils::Rectangle::<i32, Logical>::new((geo.loc.x, screen.size.h - 8 - geo.size.h).into(), geo.size);
+        // Onde a dock fica à mostra (margem de 8 px da borda de baixo), mesmo escondida,
+        // em coordenadas globais.
+        let shown = smithay::utils::Rectangle::<i32, Logical>::new(
+            (screen.loc.x + geo.loc.x, screen.loc.y + screen.size.h - 8 - geo.size.h).into(),
+            geo.size,
+        );
         self.space.elements().any(|w| {
             self.space.element_location(w).is_some_and(|loc| {
                 let rect = smithay::utils::Rectangle::new(loc, w.geometry().size);
@@ -444,7 +449,12 @@ impl State {
     /// Área útil da saída: sem as zonas exclusivas das camadas (ex.: barra superior),
     /// em coordenadas globais. É onde janelas maximizadas ficam.
     pub fn usable_area(&self) -> Option<smithay::utils::Rectangle<i32, Logical>> {
-        let output = self.space.outputs().next()?;
+        self.usable_area_of(&self.primary_output()?)
+    }
+
+    /// Área útil de uma tela (sem a barra e a dock, se estiverem nela), em
+    /// coordenadas globais.
+    pub fn usable_area_of(&self, output: &Output) -> Option<smithay::utils::Rectangle<i32, Logical>> {
         let geo = self.space.output_geometry(output)?;
         let zone = layer_map_for_output(output).non_exclusive_zone();
         Some(smithay::utils::Rectangle::new(geo.loc + zone.loc, zone.size))

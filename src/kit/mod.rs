@@ -39,4 +39,4 @@ mod ui;
 pub use app::{run, App, Window};
 pub use input::{Input, Key};
 pub use theme::{Rgba, Theme};
-pub use ui::{Menu, Response, Tile, Ui};
+pub use ui::{ArrangedScreen, Menu, Response, Tile, Ui};

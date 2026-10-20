@@ -2,9 +2,11 @@
 //! próprias como "Sobre este computador").
 
 pub mod apps;
+pub mod appmenu;
 pub mod backdrop;
 pub mod calendar;
 pub mod control_client;
+pub mod displays;
 pub mod files;
 pub mod icons;
 pub mod kit;

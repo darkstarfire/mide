@@ -18,7 +18,8 @@ use std::{
 
 use mide::{
     control_client::ask_compositor,
-    kit::{run, App, Key, Tile, Ui, Window},
+    displays::{self, Display},
+    kit::{run, App, ArrangedScreen, Key, Tile, Ui, Window},
     settings_file::{self, Value},
     system::{self, Status},
 };
@@ -29,6 +30,7 @@ enum Section {
     Wifi,
     Bluetooth,
     Sound,
+    Displays,
     Wallpaper,
     Dock,
     Bar,
@@ -44,6 +46,7 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Bluetooth), "Bluetooth", "bluetooth", [10, 132, 255]),
     (None, "", "", [0, 0, 0]),
     (Some(Section::Sound), "Som", "audio-volume-high", [255, 55, 95]),
+    (Some(Section::Displays), "Monitores", "video-display", [52, 120, 246]),
     (Some(Section::Wallpaper), "Papel de parede", "preferences-desktop-wallpaper", [100, 210, 255]),
     (Some(Section::Dock), "Dock", "user-desktop", [52, 199, 89]),
     (Some(Section::Bar), "Barra superior", "gnome-panel", [88, 86, 214]),
@@ -63,6 +66,8 @@ const EFFECTS: &[(&str, &str, &str)] = &[
     ("launcher_blur", "Desfoque no launcher", "O fundo do launcher é o papel de parede desfocado"),
     ("liquid_glass", "Vidro líquido", "Dock com bordas que refratam a luz e reflexo, sobre o desfoque"),
     ("panel_glass", "Vidro em barras e menus", "Barra superior, menus, notificações e prévias das janelas com vidro"),
+    ("menu_animation", "Animação dos menus", "Menus e listas aparecem com um esmaecer curto"),
+    ("view_animation", "Transições no Arquivos", "Abrir pastas na lista e trocar entre ícones e lista com transição suave"),
 ];
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela.
@@ -71,10 +76,14 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
     ("Volume de saída", "som audio alto-falante volume", Section::Sound),
     ("Sem som", "mudo silenciar som", Section::Sound),
+    ("Monitores", "tela telas monitor resolucao frequencia hz escala organizar principal segundo monitor", Section::Displays),
+    ("Resolução e frequência da tela", "monitor resolucao frequencia hz taxa atualizacao", Section::Displays),
+    ("Escala da tela", "monitor escala tamanho zoom hidpi", Section::Displays),
     ("Papel de parede", "fundo imagem wallpaper area de trabalho", Section::Wallpaper),
     ("Adicionar imagem de fundo", "papel de parede imagem foto", Section::Wallpaper),
     ("Tamanho dos ícones da dock", "dock icones tamanho", Section::Dock),
     ("Ocultar e mostrar a Dock automaticamente", "dock esconder ocultar automatico", Section::Dock),
+    ("Clicar no app em foco minimiza", "dock minimizar clique foco previas janelas", Section::Dock),
     ("Itens da barra superior", "barra menu topo icones som wifi bluetooth bateria central controle engrenagem", Section::Bar),
     ("Sombras das janelas", "efeitos sombra", Section::Effects),
     ("Cantos arredondados", "efeitos cantos bordas", Section::Effects),
@@ -84,6 +93,8 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Desfoque no launcher", "efeitos blur desfoque launcher", Section::Effects),
     ("Vidro líquido", "efeitos vidro liquid glass transparencia", Section::Effects),
     ("Vidro em barras e menus", "efeitos vidro barra menus notificacoes transparencia", Section::Effects),
+    ("Animação dos menus", "efeitos animacao menus contexto esmaecer", Section::Effects),
+    ("Transições no Arquivos", "efeitos animacao arquivos lista icones pastas transicao", Section::Effects),
     ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
     ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
     ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
@@ -127,6 +138,12 @@ struct Settings {
     dock_size: f32,
     /// A busca acabou de ser limpa (um resultado foi escolhido).
     query_reset: bool,
+    /// Telas (Monitores): como estão na tela agora e como o usuário está deixando.
+    screens_applied: Vec<Display>,
+    screens: Vec<Display>,
+    screen_selected: usize,
+    /// Mudanças aplicadas esperando confirmação: quando foram aplicadas e as anteriores.
+    screens_revert: Option<(std::time::Instant, Vec<Display>)>,
 }
 
 impl Settings {
@@ -157,6 +174,10 @@ impl Settings {
             shortcut: None,
             info: mide::sysinfo::system_info(),
             query_reset: false,
+            screens_applied: Vec::new(),
+            screens: Vec::new(),
+            screen_selected: 0,
+            screens_revert: None,
             volume: 0.0,
             dock_size: match settings_file::get("dock", "icon_size") {
                 Some(Value::Int(n)) => (n as f32).clamp(DOCK_MIN, DOCK_MAX),
@@ -303,6 +324,150 @@ impl Settings {
                 if ui.list_item(&d.name, detail).clicked() {
                     system::toggle_device(d);
                 }
+            }
+        });
+    }
+
+    /// Monitores: arranjo das telas (arrastar), tela principal, ligar e desligar,
+    /// resolução, frequência e escala. "Aplicar" grava e o compositor muda na hora;
+    /// sem confirmar em 15 s, volta ao que era (se a tela ficar preta, basta esperar).
+    fn displays(&mut self, ui: &mut Ui) {
+        const KEEP_SECS: u64 = 15;
+        ui.title("Monitores");
+        if self.screens_applied.is_empty() {
+            self.screens_applied = displays::load();
+            self.screens = self.screens_applied.clone();
+            self.screen_selected = self.screens.iter().position(|d| d.primary).unwrap_or(0);
+        }
+        if self.screens.is_empty() {
+            ui.note("O mide não informou as telas (rodando numa janela, a tela é a da janela).");
+            return;
+        }
+        // Arranjo: só as telas ligadas.
+        let on: Vec<usize> = (0..self.screens.len()).filter(|&i| self.screens[i].enabled).collect();
+        let mut arranged: Vec<ArrangedScreen> = on
+            .iter()
+            .map(|&i| {
+                let d = &self.screens[i];
+                ArrangedScreen { name: d.name.clone(), pos: d.position, size: d.logical_size(), primary: d.primary }
+            })
+            .collect();
+        let mut pick = on.iter().position(|&i| i == self.screen_selected).unwrap_or(0);
+        let r = ui.arrangement(&mut arranged, &mut pick);
+        if r.clicked || r.changed {
+            if let Some(&i) = on.get(pick) {
+                self.screen_selected = i;
+            }
+        }
+        if r.changed {
+            for (a, &i) in arranged.iter().zip(&on) {
+                self.screens[i].position = a.pos;
+            }
+            tracing::info!("monitores: {} movida para ({}, {})", arranged[pick].name, arranged[pick].pos.0, arranged[pick].pos.1);
+        }
+        ui.note("Arraste as telas para organizar. A faixa branca marca a tela principal, com a barra e a dock.");
+        // Aplicar logo abaixo do arranjo (à vista, sem rolar).
+        let changed = self.screens != self.screens_applied;
+        if changed && self.screens_revert.is_none() {
+            ui.row(|ui| {
+                if ui.button("Desfazer").clicked() {
+                    self.screens = self.screens_applied.clone();
+                }
+                if ui.primary_button("Aplicar").clicked() {
+                    match displays::save(&self.screens) {
+                        Ok(()) => {
+                            ask_compositor("outputs apply");
+                            tracing::info!("monitores: aplicado");
+                            self.screens_revert = Some((std::time::Instant::now(), self.screens_applied.clone()));
+                            self.screens_applied = self.screens.clone();
+                        }
+                        Err(err) => tracing::warn!("monitores não gravados: {err}"),
+                    }
+                }
+            });
+        }
+
+        // Confirmação: manter ou voltar ao que era (sozinho, depois de 15 s). Fica
+        // logo abaixo do arranjo, à vista.
+        if let Some((at, previous)) = self.screens_revert.clone() {
+            let left = KEEP_SECS.saturating_sub(at.elapsed().as_secs());
+            let mut keep = false;
+            let mut revert = left == 0;
+            ui.card(|ui| {
+                ui.label("Manter estas configurações?");
+                ui.note(&format!("Voltando às anteriores em {left} s."));
+                ui.row(|ui| {
+                    revert |= ui.button("Reverter").clicked();
+                    keep = ui.primary_button("Manter").clicked();
+                });
+            });
+            if keep {
+                tracing::info!("monitores: mantido");
+                self.screens_revert = None;
+                self.screens_applied = displays::load();
+                self.screens = self.screens_applied.clone();
+            } else if revert {
+                tracing::info!("monitores: revertido");
+                if displays::save(&previous).is_ok() {
+                    ask_compositor("outputs apply");
+                }
+                self.screens_revert = None;
+                self.screens_applied = Vec::new();
+            } else {
+                ui.wake_after(Duration::from_millis(500));
+            }
+        }
+        let names: Vec<String> = self
+            .screens
+            .iter()
+            .map(|d| if d.description.is_empty() { d.name.clone() } else { format!("{} ({})", d.name, d.description) })
+            .collect();
+        let others_on = self.screens.iter().enumerate().filter(|(i, d)| *i != self.screen_selected && d.enabled).count();
+        ui.card(|ui| {
+            if names.len() > 1 {
+                ui.dropdown("Tela", &names, &mut self.screen_selected);
+            }
+            let Some(d) = self.screens.get_mut(self.screen_selected) else {
+                return;
+            };
+            let mut on = d.enabled;
+            if ui.switch_detail("Ligada", "Desligada, a tela fica apagada e o mide não a usa", &mut on).changed() {
+                // A última tela ligada não desliga.
+                d.enabled = on || others_on == 0;
+            }
+            if !d.enabled {
+                return;
+            }
+            if d.primary {
+                ui.list_item("Tela principal", "barra, dock e launcher");
+            } else if ui.button("Usar como tela principal").clicked() {
+                let name = d.name.clone();
+                for other in self.screens.iter_mut() {
+                    other.primary = other.name == name;
+                }
+                return;
+            }
+            let Some(d) = self.screens.get_mut(self.screen_selected) else {
+                return;
+            };
+            let sizes = d.sizes();
+            let mut size_i = sizes.iter().position(|s| *s == (d.current.0, d.current.1)).unwrap_or(0);
+            let labels: Vec<String> = sizes.iter().map(|s| displays::size_label(*s)).collect();
+            if ui.dropdown("Resolução", &labels, &mut size_i).changed() {
+                let size = sizes[size_i];
+                let hz = d.rates(size).first().copied().unwrap_or(60.0);
+                d.current = (size.0, size.1, hz);
+            }
+            let rates = d.rates((d.current.0, d.current.1));
+            let mut rate_i = rates.iter().position(|r| (r - d.current.2).abs() < 0.5).unwrap_or(0);
+            let labels: Vec<String> = rates.iter().map(|r| displays::rate_label(*r)).collect();
+            if ui.dropdown("Frequência", &labels, &mut rate_i).changed() {
+                d.current.2 = rates[rate_i];
+            }
+            let mut scale_i = displays::SCALES.iter().position(|s| (s - d.scale).abs() < 0.01).unwrap_or(0);
+            let labels: Vec<String> = displays::SCALES.iter().map(|s| displays::scale_label(*s)).collect();
+            if ui.dropdown("Escala", &labels, &mut scale_i).changed() {
+                d.scale = displays::SCALES[scale_i];
             }
         });
     }
@@ -470,6 +635,16 @@ impl Settings {
             if ui.switch_detail("Ocultar e mostrar a Dock automaticamente", detail, &mut autohide).changed() {
                 match settings_file::set("dock", "autohide", autohide.then_some(Value::Bool(true))) {
                     Ok(()) => tracing::info!("dock: ocultar automaticamente {}", if autohide { "ligado" } else { "desligado" }),
+                    Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
+                }
+            }
+        });
+        let mut click_minimize = settings_file::flag("dock", "click_minimize", true);
+        ui.card(|ui| {
+            let detail = "Com uma janela, minimiza; com várias, mostra as prévias para escolher";
+            if ui.switch_detail("Clicar no app em foco minimiza", detail, &mut click_minimize).changed() {
+                match settings_file::set("dock", "click_minimize", (!click_minimize).then_some(Value::Bool(false))) {
+                    Ok(()) => tracing::info!("dock: clicar no app em foco minimiza {}", if click_minimize { "ligado" } else { "desligado" }),
                     Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
                 }
             }
@@ -827,6 +1002,7 @@ impl App for Settings {
                 Section::Wifi => self.wifi(ui),
                 Section::Bluetooth => self.bluetooth(ui),
                 Section::Sound => self.sound(ui),
+                Section::Displays => self.displays(ui),
                 Section::Wallpaper => self.wallpaper(ui),
                 Section::Dock => self.dock(ui),
                 Section::Bar => self.bar(ui),
@@ -1021,6 +1197,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let section = match std::env::args().nth(1).as_deref() {
         Some("bluetooth") => Section::Bluetooth,
         Some("sound") => Section::Sound,
+        Some("displays") => Section::Displays,
         Some("wallpaper") => Section::Wallpaper,
         Some("dock") => Section::Dock,
         Some("bar") => Section::Bar,

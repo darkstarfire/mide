@@ -195,6 +195,20 @@ pub struct State {
     pub redraw: bool,
     /// Acorda o laço de desenho na hora (`wake`), sem esperar o relógio.
     pub waker: Option<smithay::reexports::calloop::ping::Ping>,
+    /// Telas conhecidas pelo backend (conectadas, ligadas ou não), para as
+    /// Configurações (`outputs` no canal de controle).
+    pub outputs_info: Vec<OutputInfo>,
+    /// Pede ao backend para refazer as telas pela configuração (`outputs apply`).
+    pub outputs_waker: Option<smithay::reexports::calloop::ping::Ping>,
+    /// Tela onde estão a barra, a dock e a área de trabalho (para reabri-los quando a
+    /// tela principal muda).
+    pub shell_output: Option<String>,
+    /// Captura de tela pedida (`screenshot <arquivo>`): o próximo quadro da tela
+    /// principal é salvo em PNG nesse arquivo, sem o cursor.
+    pub screenshot_request: Option<std::path::PathBuf>,
+    /// Menus que acabaram de aparecer (camadas de menu e popups), com o momento:
+    /// entram esmaecendo (`[effects] menu_animation`).
+    pub appearing: Vec<(WlSurface, Instant)>,
     /// Cursor pedido pelo app sob o ponteiro (desenhado pelo mide no DRM).
     pub cursor_status: smithay::input::pointer::CursorImageStatus,
     /// Sessão do backend DRM (trocar de console com Ctrl+Alt+F1…F12).
@@ -301,6 +315,11 @@ impl State {
             launcher_gone: false,
             redraw: true,
             waker: None,
+            outputs_info: Vec::new(),
+            screenshot_request: None,
+            appearing: Vec::new(),
+            outputs_waker: None,
+            shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
             session: None,
             shortcut_capture: None,
@@ -489,6 +508,9 @@ impl XdgShellHandler for State {
         // outro lado ou deslizam, como o protocolo pede).
         surface.with_pending_state(|s| s.geometry = positioner.get_geometry());
         self.unconstrain_popup(&surface, &positioner);
+        if self.config.effects.menu_animation {
+            self.appearing.push((surface.wl_surface().clone(), Instant::now()));
+        }
         if let Err(err) = self.popups.track_popup(PopupKind::Xdg(surface.clone())) {
             tracing::warn!("popup sem pai válido: {err}");
         }
@@ -544,7 +566,8 @@ impl State {
         let Some(window_loc) = self.space.element_location(window) else {
             return;
         };
-        let Some(screen) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else {
+        // Limite: a tela onde a janela está.
+        let Some(screen) = self.output_at(window_loc.to_f64()).and_then(|o| self.space.output_geometry(&o)) else {
             return;
         };
         let mut target = screen;
@@ -584,8 +607,101 @@ impl SeatHandler for State {
 
 delegate_seat!(State);
 
+/// Uma tela conectada, como as Configurações a mostram.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputInfo {
+    /// Conector (`DP-1`, `HDMI-A-1`, `eDP-1`).
+    pub name: String,
+    /// Fabricante e modelo, quando a tela informa.
+    pub description: String,
+    /// Modos que a tela aceita: largura, altura e frequência em mHz.
+    pub modes: Vec<(i32, i32, i32)>,
+    /// Modo em uso (ou o preferido, se desligada).
+    pub current: (i32, i32, i32),
+    pub position: (i32, i32),
+    pub scale: f64,
+    pub enabled: bool,
+    pub primary: bool,
+}
+
+impl OutputInfo {
+    /// Linha do comando `outputs`: campos separados por tabulação.
+    pub fn line(&self) -> String {
+        let modes: Vec<String> = self.modes.iter().map(|(w, h, r)| format!("{w}x{h}@{}", fmt_hz(*r))).collect();
+        format!(
+            "{}\t{}\t{}x{}@{}\t{},{}\t{}\t{}\t{}\t{}",
+            self.name,
+            if self.description.is_empty() { "-" } else { &self.description },
+            self.current.0,
+            self.current.1,
+            fmt_hz(self.current.2),
+            self.position.0,
+            self.position.1,
+            self.scale,
+            if self.enabled { "ligada" } else { "desligada" },
+            if self.primary { "principal" } else { "-" },
+            modes.join(" "),
+        )
+    }
+}
+
+/// Frequência em Hz a partir de mHz, sem casas decimais quando é inteira.
+pub fn fmt_hz(mhz: i32) -> String {
+    if mhz % 1000 == 0 { format!("{}", mhz / 1000) } else { format!("{:.2}", mhz as f64 / 1000.0) }
+}
+
 impl SelectionHandler for State {
-    type SelectionUserData = ();
+    /// Texto que o próprio mide pôs na área de transferência (`copy` no canal de
+    /// controle): "Copiar caminho" da dock, do Arquivos e da área de trabalho, e o
+    /// resultado da busca. Fica com o compositor, então continua lá mesmo que o app
+    /// que copiou feche.
+    type SelectionUserData = std::sync::Arc<Vec<u8>>;
+
+    fn send_selection(
+        &mut self,
+        _ty: smithay::wayland::selection::SelectionTarget,
+        _mime_type: String,
+        fd: std::os::fd::OwnedFd,
+        _seat: Seat<Self>,
+        bytes: &Self::SelectionUserData,
+    ) {
+        // Numa thread: quem cola pode demorar a ler, e o compositor não espera.
+        let bytes = bytes.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = std::fs::File::from(fd).write_all(&bytes);
+        });
+    }
+}
+
+impl State {
+    /// Põe `text` na área de transferência, oferecido pelo próprio compositor.
+    pub fn copy_text(&mut self, text: &str) {
+        let mimes = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING"]
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        smithay::wayland::selection::data_device::set_data_device_selection(
+            &self.display_handle,
+            &self.seat,
+            mimes,
+            std::sync::Arc::new(text.as_bytes().to_vec()),
+        );
+        tracing::info!("área de transferência: {} caractere(s) copiado(s)", text.chars().count());
+    }
+
+    /// Põe na área de transferência o conteúdo de um arquivo com o tipo `mime` (uma
+    /// imagem da captura de tela, `image/png`).
+    pub fn copy_bytes(&mut self, mime: &str, bytes: Vec<u8>) {
+        let n = bytes.len();
+        smithay::wayland::selection::data_device::set_data_device_selection(
+            &self.display_handle,
+            &self.seat,
+            vec![mime.to_string()],
+            std::sync::Arc::new(bytes),
+        );
+        tracing::info!("área de transferência: {n} bytes de {mime} copiados");
+    }
 }
 
 impl DataDeviceHandler for State {
@@ -618,12 +734,15 @@ impl WlrLayerShellHandler for State {
         let output = output
             .as_ref()
             .and_then(Output::from_resource)
-            .or_else(|| self.space.outputs().next().cloned());
+            .or_else(|| self.primary_output());
         let Some(output) = output else {
             tracing::warn!("superfície de camada sem saída, ignorada");
             return;
         };
 
+        if self.config.effects.menu_animation && matches!(namespace.as_str(), "mide-bar-menu" | "mide-dock-menu") {
+            self.appearing.push((surface.wl_surface().clone(), Instant::now()));
+        }
         let desktop_surface = DesktopLayerSurface::new(surface, namespace.clone());
         let mut map = layer_map_for_output(&output);
         if let Err(err) = map.map_layer(&desktop_surface) {
@@ -703,6 +822,9 @@ fn set_server_side(toplevel: &ToplevelSurface) {
 pub struct SsdMarker;
 
 /// Duração do esmaecer ao fechar uma janela.
+/// Duração da entrada dos menus.
+pub const MENU_APPEAR: std::time::Duration = std::time::Duration::from_millis(120);
+
 pub const CLOSE_FADE: std::time::Duration = std::time::Duration::from_millis(180);
 
 /// Número da janela, dado quando ela abre e único na sessão.
@@ -773,14 +895,13 @@ impl State {
     pub fn launcher_open(&self) -> bool {
         self.space
             .outputs()
-            .next()
-            .is_some_and(|o| layer_map_for_output(o).layers().any(|l| l.namespace() == "mide-launcher"))
+            .any(|o| layer_map_for_output(o).layers().any(|l| l.namespace() == "mide-launcher"))
     }
 
     /// Abre o buscador (`mide-search`), ou fecha se já estiver aberto.
     pub fn toggle_search(&mut self) {
-        let open = self.space.outputs().next().and_then(|output| {
-            layer_map_for_output(output).layers().find(|l| l.namespace() == "mide-search").cloned()
+        let open = self.primary_output().and_then(|output| {
+            layer_map_for_output(&output).layers().find(|l| l.namespace() == "mide-search").cloned()
         });
         match open {
             Some(layer) => {
@@ -796,8 +917,8 @@ impl State {
 
     /// Abre o launcher (`mide-launcher`) ou, se já estiver aberto, pede para fechar.
     pub fn toggle_launcher(&mut self) {
-        let open = self.space.outputs().next().and_then(|output| {
-            layer_map_for_output(output)
+        let open = self.primary_output().and_then(|output| {
+            layer_map_for_output(&output)
                 .layers()
                 .find(|l| l.namespace() == "mide-launcher")
                 .cloned()
@@ -836,8 +957,8 @@ impl State {
             })?
             .to_lowercase();
         let (_, icon) = self.dock_icons.iter().find(|(ids, _)| ids.contains(&app_id))?;
-        let output = self.space.outputs().next()?;
-        let map = layer_map_for_output(output);
+        let output = self.primary_output()?;
+        let map = layer_map_for_output(&output);
         let dock = map.layers().find(|l| l.namespace() == "mide-dock")?;
         let geo = map.layer_geometry(dock)?;
         Some(smithay::utils::Rectangle::new(geo.loc + icon.loc, icon.size))
@@ -846,7 +967,7 @@ impl State {
     /// Depois de a saída mudar de tamanho: reorganiza as camadas (a dock volta ao
     /// lugar) e reajusta as janelas maximizadas à nova área.
     pub fn output_resized(&mut self) {
-        let Some(output) = self.space.outputs().next().cloned() else {
+        let Some(output) = self.primary_output() else {
             return;
         };
         layer_map_for_output(&output).arrange();
@@ -870,6 +991,33 @@ impl State {
         }
     }
 
+    /// Quanto do menu já apareceu (0 a 1, suavizado) e o deslocamento vertical dele
+    /// (desce 6 px até o lugar). Menus fora da lista já estão inteiros.
+    pub fn appear(&self, surface: &WlSurface) -> (f32, i32) {
+        let Some((_, at)) = self.appearing.iter().find(|(s, _)| s == surface) else {
+            return (1.0, 0);
+        };
+        let t = (at.elapsed().as_secs_f32() / MENU_APPEAR.as_secs_f32()).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - t) * (1.0 - t);
+        (e, (-6.0 * (1.0 - e)).round() as i32)
+    }
+
+    /// Tela principal: a escolhida nas Configurações (`[monitors] primary`), ou a
+    /// primeira. É onde ficam a barra, a dock, o launcher e as janelas novas.
+    pub fn primary_output(&self) -> Option<Output> {
+        let wanted = self.config.monitors.primary.as_deref();
+        self.space
+            .outputs()
+            .find(|o| wanted.is_some_and(|name| o.name() == name))
+            .or_else(|| self.space.outputs().next())
+            .cloned()
+    }
+
+    /// Tela sob o ponto (coordenadas globais), ou a principal.
+    pub fn output_at(&self, pos: Point<f64, Logical>) -> Option<Output> {
+        self.space.output_under(pos).next().cloned().or_else(|| self.primary_output())
+    }
+
     /// Algo mudou na tela: pede um quadro ao anfitrião já.
     pub fn wake(&mut self) {
         if !self.redraw {
@@ -885,13 +1033,14 @@ impl State {
         // Pedido de fechar sem resposta em 2 s (o app perguntou "salvar?"): esquece.
         self.close_requests.retain(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(2));
         self.ghosts.retain(|(_, _, at)| now.duration_since(*at) < CLOSE_FADE);
+        self.appearing.retain(|(s, at)| s.is_alive() && now.duration_since(*at) < MENU_APPEAR);
         match self.launcher_anim {
             Some((start, true)) if now.duration_since(start) >= LAUNCHER_OPEN => self.launcher_anim = None,
             Some((start, false)) if now.duration_since(start) >= LAUNCHER_CLOSE => {
                 self.launcher_anim = None;
                 self.launcher_gone = true;
-                let layer = self.space.outputs().next().and_then(|o| {
-                    layer_map_for_output(o).layers().find(|l| l.namespace() == "mide-launcher").cloned()
+                let layer = self.primary_output().and_then(|o| {
+                    layer_map_for_output(&o).layers().find(|l| l.namespace() == "mide-launcher").cloned()
                 });
                 if let Some(layer) = layer {
                     layer.layer_surface().send_close();

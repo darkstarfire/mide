@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Captura de Tela
+Name[en]=Screenshot
+Comment=Capture a tela, uma janela ou uma área e marque com setas, círculos e quadrados
+Exec=mide-screenshot
+Icon=applets-screenshooter
+Categories=Utility;Graphics;
+Keywords=print;captura;screenshot;tela;imagem;
+StartupWMClass=mide-screenshot
+OnlyShowIn=mide;

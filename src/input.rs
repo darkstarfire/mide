@@ -56,18 +56,37 @@ pub enum CursorShape {
 /// Trata um evento de entrada vindo do backend (winit hoje, libinput depois).
 /// `size` é o tamanho atual da saída, usado para converter posições absolutas.
 pub fn handle_event<B: InputBackend>(state: &mut State, event: InputEvent<B>, size: Size<i32, Logical>) {
+    handle_event_in(state, event, smithay::utils::Rectangle::from_size(size));
+}
+
+/// Como `handle_event`, com várias telas: `bounds` é a caixa que contém todas (para
+/// posições absolutas). O ponteiro anda de uma tela para a outra e não sai delas.
+pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>, bounds: smithay::utils::Rectangle<i32, Logical>) {
     match event {
         InputEvent::Keyboard { event } => keyboard_key(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
-            let pos = event.position_transformed(size);
+            let pos = event.position_transformed(bounds.size) + bounds.loc.to_f64();
             pointer_motion(state, pos, event.time_msec());
         }
         // Mouse e touchpad de verdade (libinput) andam por deslocamento; o ponteiro
-        // não sai da tela.
+        // passa entre as telas, mas não sai delas (nem cai num vão entre telas de
+        // alturas diferentes).
         InputEvent::PointerMotion { event } => {
-            let mut pos = state.pointer_location + event.delta();
-            pos.x = pos.x.clamp(0.0, (size.w - 1).max(0) as f64);
-            pos.y = pos.y.clamp(0.0, (size.h - 1).max(0) as f64);
+            let pos = state.pointer_location + event.delta();
+            let pos = if state.space.output_under(pos).next().is_some() {
+                pos
+            } else {
+                let screen = state
+                    .space
+                    .output_under(state.pointer_location)
+                    .next()
+                    .and_then(|o| state.space.output_geometry(o))
+                    .unwrap_or(bounds);
+                let mut pos = pos;
+                pos.x = pos.x.clamp(screen.loc.x as f64, (screen.loc.x + screen.size.w - 1) as f64);
+                pos.y = pos.y.clamp(screen.loc.y as f64, (screen.loc.y + screen.size.h - 1) as f64);
+                pos
+            };
             pointer_motion(state, pos, event.time_msec());
         }
         InputEvent::PointerButton { event } => pointer_button(state, event),
@@ -111,6 +130,8 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "shift" => 42,
         "alt" => 56,
         "super" => 125,
+        // Print Screen (captura de tela).
+        "print" => 99,
         _ => {
             let mut chars = name.chars();
             let c = chars.next()?;
@@ -366,6 +387,10 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
                         state.request_close(&window);
                     } else {
                         tracing::info!("prévia: janela {id} escolhida");
+                        // Com o launcher aberto, ele fecha e a janela escolhida aparece.
+                        if state.launcher_open() {
+                            state.toggle_launcher();
+                        }
                         crate::control::handle(state, &format!("focus {id}"));
                     }
                     return;
@@ -502,14 +527,17 @@ fn window_under(state: &State, pos: Point<f64, Logical>) -> Option<Window> {
 /// Camada de topo ou sobreposta (barra, dock, launcher) sob `pos`. Elas ficam por
 /// cima das janelas, então um clique nelas não chega a nenhuma janela.
 fn top_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-    let output = state.space.outputs().next()?;
+    // As camadas ficam na tela sob o ponto; a posição delas é relativa a essa tela.
+    let output = state.space.output_under(pos).next()?;
+    let screen = state.space.output_geometry(output)?.loc;
     let map = layer_map_for_output(output);
     for layer in crate::state::front_layers(&map).iter() {
         let Some(geo) = map.layer_geometry(layer) else {
             continue;
         };
-        if let Some((surface, p)) = layer.surface_under(pos - geo.loc.to_f64(), WindowSurfaceType::ALL) {
-            return Some((surface, (p + geo.loc).to_f64()));
+        let loc = geo.loc + screen;
+        if let Some((surface, p)) = layer.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL) {
+            return Some((surface, (p + loc).to_f64()));
         }
     }
     None
@@ -517,14 +545,16 @@ fn top_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface
 
 /// Camada de fundo (área de trabalho) sob `pos`, quando não há janela por cima.
 fn back_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-    let output = state.space.outputs().next()?;
+    let output = state.space.output_under(pos).next()?;
+    let screen = state.space.output_geometry(output)?.loc;
     let map = layer_map_for_output(output);
     for layer in crate::state::back_layers(&map).iter() {
         let Some(geo) = map.layer_geometry(layer) else {
             continue;
         };
-        if let Some((surface, p)) = layer.surface_under(pos - geo.loc.to_f64(), WindowSurfaceType::ALL) {
-            return Some((surface, (p + geo.loc).to_f64()));
+        let loc = geo.loc + screen;
+        if let Some((surface, p)) = layer.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL) {
+            return Some((surface, (p + loc).to_f64()));
         }
     }
     None

@@ -87,6 +87,25 @@ pub fn uniform_names() -> [UniformName<'static>; 3] {
 /// tela do vidro, que usam a mesma orientação da saída.
 static FLIPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// Escala da tela sendo desenhada (1.0, 1.25, 1.5, 2.0...), em milésimos.
+static SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+/// A cena define a escala da tela antes de desenhar cada uma: posições lógicas viram
+/// pixels multiplicando por ela.
+pub fn set_scale(scale: f64) {
+    let milli = (scale.clamp(0.5, 4.0) * 1000.0).round() as u32;
+    SCALE.store(milli, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn scale() -> f64 {
+    SCALE.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0
+}
+
+/// Ponto lógico em pixels da tela atual.
+pub fn phys(p: smithay::utils::Point<i32, Logical>) -> smithay::utils::Point<i32, smithay::utils::Physical> {
+    p.to_f64().to_physical(scale()).to_i32_round()
+}
+
 /// O backend diz se a saída é invertida no eixo y (winit sim, DRM não).
 pub fn set_flipped(flipped: bool) {
     FLIPPED.store(flipped, std::sync::atomic::Ordering::Relaxed);
@@ -107,19 +126,21 @@ pub fn output_transform() -> smithay::utils::Transform {
 
 /// Valores dos uniformes do recorte para uma moldura.
 pub fn uniforms(frame: Rectangle<i32, Logical>, radius: f32, output_height: f32) -> Vec<Uniform<'static>> {
-    // Sem inversão, a posição do pixel já tem a origem no topo (ver o shader).
-    let output_height = if flipped() { output_height } else { 0.0 };
+    // Sem inversão, a posição do pixel já tem a origem no topo (ver o shader). O
+    // shader compara com a posição do pixel na tela: tudo em pixels (vezes a escala).
+    let s = scale() as f32;
+    let output_height = if flipped() { output_height * s } else { 0.0 };
     vec![
         Uniform::new(
             "clip",
             [
-                frame.loc.x as f32,
-                frame.loc.y as f32,
-                frame.size.w as f32,
-                frame.size.h as f32,
+                frame.loc.x as f32 * s,
+                frame.loc.y as f32 * s,
+                frame.size.w as f32 * s,
+                frame.size.h as f32 * s,
             ],
         ),
-        Uniform::new("clip_radius", radius),
+        Uniform::new("clip_radius", radius * s),
         Uniform::new("output_height", output_height),
     ]
 }

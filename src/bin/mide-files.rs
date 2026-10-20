@@ -62,6 +62,10 @@ struct Files {
     /// Lista: pastas abertas na própria lista e o que há dentro delas.
     expanded: HashSet<PathBuf>,
     children: HashMap<PathBuf, Vec<Entry>>,
+    /// Transições (`[effects] view_animation`): pasta que acabou de abrir na lista e
+    /// troca entre ícones e lista, com o momento em que começaram.
+    expanding: Option<(PathBuf, std::time::Instant)>,
+    view_switched: Option<std::time::Instant>,
     /// Coluna ordenada (0 nome, 1 modificado, 2 tamanho, 3 tipo) e se é crescente.
     sort: (usize, bool),
     /// Tamanho das pastas (calculado numa thread; `None` = grande demais).
@@ -105,6 +109,8 @@ impl Files {
         let mut app = Self {
             place: start,
             expanded: HashSet::new(),
+            expanding: None,
+            view_switched: None,
             children: HashMap::new(),
             sort: (0, true),
             sizes: HashMap::new(),
@@ -204,6 +210,9 @@ impl Files {
             sort_list(&mut list, self.sort);
             self.children.insert(path.to_path_buf(), list);
             self.expanded.insert(path.to_path_buf());
+            if mide::settings_file::effect("view_animation") {
+                self.expanding = Some((path.to_path_buf(), std::time::Instant::now()));
+            }
             tracing::info!("pasta aberta na lista: {}", path.display());
         } else {
             self.expanded.retain(|p| !p.starts_with(path));
@@ -585,6 +594,9 @@ impl Files {
             self.go_forward();
         }
         if let Some(list) = toggle {
+            if list != self.list_view && mide::settings_file::effect("view_animation") {
+                self.view_switched = Some(std::time::Instant::now());
+            }
             self.list_view = list;
         }
         if empty_trash {
@@ -798,6 +810,15 @@ impl Files {
                     let expandable = entry.is_dir && !in_trash;
                     let cols = [(date.as_str(), widths[0].1), (size.as_str(), widths[1].1), (kind.as_str(), widths[2].1)];
                     let (r, toggled) = ui.tree_row(*depth, expandable, open, entry.icon_name(), &entry.name, &cols, selected, i % 2 == 1);
+                    // Itens da pasta que acabou de abrir: aparecem esmaecendo, de cima
+                    // para baixo (cada linha começa um pouco depois da anterior).
+                    if let Some((folder, at)) = &self.expanding {
+                        if entry.path != *folder && entry.path.starts_with(folder) {
+                            let order = rows.iter().take(i).filter(|(_, e)| e.path.starts_with(folder) && e.path != *folder).count();
+                            let t = ((at.elapsed().as_secs_f32() - order as f32 * 0.025) / 0.18).clamp(0.0, 1.0);
+                            veil(ui, r.rect, 1.0 - t * (2.0 - t));
+                        }
+                    }
                     if toggled {
                         toggles.push((entry.path.clone(), !open));
                     } else {
@@ -823,6 +844,11 @@ impl Files {
             // Fundo da pasta: clique no vazio tira a seleção; o botão direito abre o
             // menu da pasta.
             let area = ui.region();
+            // Troca entre ícones e lista: o conteúdo novo aparece esmaecendo.
+            if let Some(at) = self.view_switched {
+                let t = (at.elapsed().as_secs_f32() / 0.2).clamp(0.0, 1.0);
+                veil(ui, area, 0.9 * (1.0 - t * (2.0 - t)));
+            }
             let bg = ui.background(area);
             if bg.clicked() {
                 self.selected = None;
@@ -859,6 +885,16 @@ impl Files {
         for (path, open) in toggles {
             self.toggle_expand(&path, open);
             ui.request_repaint();
+        }
+        // Transições em andamento: pedem quadros até acabar.
+        if self.expanding.as_ref().is_some_and(|(_, at)| at.elapsed().as_secs_f32() > 0.6) {
+            self.expanding = None;
+        }
+        if self.view_switched.is_some_and(|at| at.elapsed().as_secs_f32() > 0.22) {
+            self.view_switched = None;
+        }
+        if self.expanding.is_some() || self.view_switched.is_some() {
+            ui.request_tick();
         }
         if let Some(column) = sort_by {
             // Clicar na coluna já ordenada inverte a ordem.
@@ -1038,4 +1074,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360);
     run(window, Files::new(start))
+}
+
+/// Véu da cor do fundo sobre `rect` (área atual), com opacidade `k` (0 a 1): o que
+/// está embaixo aparece conforme o véu some.
+fn veil(ui: &mut Ui, rect: (f32, f32, f32, f32), k: f32) {
+    if k <= 0.01 {
+        return;
+    }
+    let bg = ui.theme().background;
+    ui.paint(|canvas, offset| {
+        if let Some(r) = tiny_skia::Rect::from_xywh(offset.0 + rect.0, offset.1 + rect.1, rect.2, rect.3) {
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color(tiny_skia::Color::from_rgba8(bg[0], bg[1], bg[2], (k.clamp(0.0, 1.0) * 255.0) as u8));
+            canvas.fill_rect(r, &paint, tiny_skia::Transform::identity(), None);
+        }
+    });
 }

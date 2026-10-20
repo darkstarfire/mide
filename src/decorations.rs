@@ -391,7 +391,7 @@ fn ring(shaders: &Shaders, rect: Rect) -> PixelShaderElement {
         1.0,
         vec![
             Uniform::new("half_size", (rect.size.w as f32 / 2.0, rect.size.h as f32 / 2.0)),
-            Uniform::new("radius", (rect.size.w / 2) as f32),
+            Uniform::new("radius", (rect.size.w / 2) as f32 * crate::clip::scale() as f32),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, 0.18]),
         ],
@@ -431,7 +431,7 @@ pub fn shadow_uniforms(casters: &[Caster]) -> Vec<Uniform<'static>> {
     }
     out.push(Uniform::new("sa", [strengths[0], strengths[1], strengths[2], strengths[3]]));
     out.push(Uniform::new("sb", [strengths[4], strengths[5], strengths[6], strengths[7]]));
-    out.push(Uniform::new("radius", CORNER_RADIUS as f32));
+    out.push(Uniform::new("radius", CORNER_RADIUS as f32 * crate::clip::scale() as f32));
     out.push(Uniform::new("offset_y", SHADOW_OFFSET as f32));
     out.push(Uniform::new("margin", SHADOW_MARGIN as f32));
     out
@@ -457,7 +457,7 @@ fn rounded(
     clip: &[Uniform<'static>],
 ) -> PixelShaderElement {
     let mut uniforms = vec![
-        Uniform::new("radius", radius as f32),
+        Uniform::new("radius", radius as f32 * crate::clip::scale() as f32),
         Uniform::new("fill", color),
     ];
     uniforms.extend(clip.iter().cloned());
@@ -477,7 +477,7 @@ pub fn rounded_rect_element(shaders: &Shaders, area: Rect, color: [f32; 4], radi
 
 /// Vidro claro arredondado (destaque da prévia sob o ponteiro).
 pub fn glass_element(shaders: &Shaders, area: Rect, radius: i32) -> PixelShaderElement {
-    PixelShaderElement::new(shaders.glass.clone(), area, None, 1.0, vec![Uniform::new("radius", radius as f32)], Kind::Unspecified)
+    PixelShaderElement::new(shaders.glass.clone(), area, None, 1.0, vec![Uniform::new("radius", radius as f32 * crate::clip::scale() as f32)], Kind::Unspecified)
 }
 
 /// × na cor pedida (botão de fechar das prévias, branco sobre o círculo escuro).
@@ -519,7 +519,7 @@ pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool) -> PixelSh
                 "half_size",
                 (frame.size.w as f32 / 2.0, frame.size.h as f32 / 2.0),
             ),
-            Uniform::new("radius", CORNER_RADIUS as f32),
+            Uniform::new("radius", CORNER_RADIUS as f32 * crate::clip::scale() as f32),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, alpha]),
         ],

@@ -184,7 +184,7 @@ fn run(state: &mut State, step: Step, frame: u32) {
         Step::Resize(w, h) => {
             // Simula a janela do host mudando de tamanho: novo modo da saída e o mesmo
             // tratamento do evento real.
-            let output = state.space.outputs().next().cloned();
+            let output = state.primary_output();
             if let Some(output) = output {
                 let mode = smithay::output::Mode {
                     size: (w, h).into(),
@@ -236,15 +236,27 @@ fn list(state: &State) {
             geo.size.h + bar_h,
         );
     }
-    if let Some(output) = state.space.outputs().next() {
+    // Telas e camadas de cada uma, em coordenadas globais.
+    for output in state.space.outputs() {
+        let Some(screen) = state.space.output_geometry(output) else {
+            continue;
+        };
+        tracing::info!(
+            "autoteste: tela {} em ({}, {}) {}x{}",
+            output.name(),
+            screen.loc.x,
+            screen.loc.y,
+            screen.size.w,
+            screen.size.h
+        );
         let map = layer_map_for_output(output);
         for layer in map.layers() {
             if let Some(g) = map.layer_geometry(layer) {
                 tracing::info!(
                     "autoteste: camada {:?} em ({}, {}) {}x{}",
                     layer.namespace(),
-                    g.loc.x,
-                    g.loc.y,
+                    screen.loc.x + g.loc.x,
+                    screen.loc.y + g.loc.y,
                     g.size.w,
                     g.size.h
                 );

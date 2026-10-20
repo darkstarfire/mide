@@ -866,3 +866,38 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Mide de teste não age como sessão:** o `MIDE_SESSION` é lido e tirado do ambiente na partida (os apps abertos dentro da sessão não o herdam) e o `scenario.sh` o limpa. Antes, um mide de teste aberto de um terminal da sessão publicava o socket de teste no D-Bus/systemd do usuário e reabria os apps automáticos.
 - **Atualizar sem deslogar (A16):** comandos `restart shell` e `restart all` no canal de controle, o programa `mide-ctl` (manda comandos ao mide) e o script `data/mide-atualizar` (recompila em release e aplica; `--tudo` reinicia também o compositor). O compositor reinicia no mesmo processo (a sessão de login continua) e os apps automáticos que seguem vivos não são abertos de novo.
 - Plano: registrados A15 (vários monitores e Configurações → Monitores), A16 e B13 (captura de tela).
+
+## Grande rodada: monitores, captura de tela, menu global, animações e ajustes da dock
+
+### Vários monitores (A15)
+- **Compositor:** o backend DRM liga **todas as telas conectadas**, cada uma com o seu buffer, o seu vblank e o seu modo. Conectar e desconectar um cabo refaz as telas (udev). A cena é desenhada por tela, com a posição dela (`crate::outputs`): papel de parede por tela, janelas, popups e cursor relativos à tela, camadas na tela delas. O ponteiro passa de uma tela para a outra sem cair nos vãos.
+- **Tela principal:** barra, dock, área de trabalho e launcher ficam nela; se ela muda (nas Configurações ou porque a tela saiu), eles são reabertos lá. Janelas que ficam fora de qualquer tela voltam para a principal.
+- **Escala por tela** (100%, 125%, 150%, 175%, 200%): a cena é desenhada na resolução física com tudo multiplicado pela escala (recortes, cantos, vidro, sombras, títulos, prévias, cursor); os apps recebem a escala da tela (GTK, Qt, Chrome e VS Code desenham nítidos). A interface do próprio mide (mide-ui) ainda é ampliada (fica um pouco menos nítida em escalas fracionárias): desenhar o mide-ui na escala da tela fica como próximo passo.
+- **`[monitors]` no config.toml:** `primary` e, por tela, `mode` (`1920x1080@60`), `scale`, `x`/`y` e `enabled`. O arranjo começa sempre em (0, 0).
+- **Configurações → Monitores:** arranjo das telas em escala (arrastar; ao soltar, a tela encosta na vizinha, como no macOS; a principal tem a faixa da barra), tela ligada/desligada, "Usar como tela principal", Resolução, Frequência e Escala. "Aplicar" grava e o compositor muda na hora; "Manter estas configurações?" com contagem: sem confirmar em 15 s, volta ao que era.
+- **Canal de controle:** `outputs` (lista para as Configurações) e `outputs apply`.
+- **Backend sem tela com várias telas virtuais** (`MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080`), para testar tudo isso sem monitores.
+- **mide-ui:** `ui.dropdown` (lista de escolha) e `ui.arrangement` (arranjo de telas arrastável), `ui.paint` (desenho livre).
+
+### Captura de tela (B13)
+- App **`mide-screenshot`** (tecla **Print**, ou "Captura de Tela" no launcher): a tela congela por cima de tudo. Modos **Seleção** (arrastar), **Janela** (clicar numa janela) e **Tela inteira**. Dentro da área, desenha **seta, círculo ou quadrado** em **vermelho, branco, preto, verde, amarelo ou azul**. **Copiar** (Enter ou Ctrl+C) põe a imagem na área de transferência; **Salvar** (Ctrl+S) grava em Imagens/Capturas de tela; Esc cancela.
+- Compositor: `screenshot <arquivo>` (o próximo quadro da tela principal, sem o cursor), `copy-file <tipo> <arquivo>` (imagem na área de transferência, guardada pelo compositor) e `window_rects` (janelas com a moldura, para o modo Janela).
+
+### Menu global dos apps na barra (B2)
+- A barra é o **`com.canonical.AppMenu.Registrar`** e lê os menus pelo **dbusmenu**: quando o app em foco publicou a barra de menus, os títulos depois do nome do app são os dele (submenus com recuo, marcados com ✓, atalhos à direita) e o clique chega ao app. O app em foco é achado pelo processo que registrou (o nome dele bate com o `app_id` da janela). Chamadas aos apps desistem em 300 ms (a barra nunca trava).
+- Quem publica: apps que exportam o menu global pelo D-Bus — VS Code, Chrome, Firefox e LibreOffice **rodando pelo XWayland** (no Wayland puro eles não publicam), apps Qt/GTK com o módulo appmenu. Sem menu publicado, ficam os menus do mide (Arquivo, Editar, Janela).
+
+### Animações (B14), cada uma com interruptor em Efeitos
+- **Animação dos menus** (`menu_animation`): menus da barra, da dock, dos apps (popups) e os de contexto do mide-ui entram esmaecendo e descendo 6 px em 120 ms; o vidro atrás deles esmaece junto.
+- **Transições no Arquivos** (`view_animation`): itens da pasta que abre na lista aparecem em cascata; trocar entre ícones e lista esmaece o conteúdo novo.
+- mide-ui: quadros no ritmo da tela (16 ms) enquanto algo anima, 40 ms parado.
+
+### Dock (B16) e área de transferência
+- **Clique no app em foco minimiza**; com várias janelas, mostra as prévias para escolher (como o "minimize or previews" do dash-to-dock). Interruptor em Configurações → Dock.
+- **Downloads e Lixeira:** depois de excluir, restaurar ou apagar um item, a lista continua aberta e atualizada; fecha com clique fora ou **Esc** (o painel da dock recebe o teclado enquanto aberto).
+- **"Copiar caminho" copia de verdade** (dock, Arquivos, área de trabalho, resultado da calculadora na busca): antes dependia do programa `wl-copy` (não instalado); agora o **compositor guarda o texto** na área de transferência (`copy <texto>`), e ele continua lá mesmo que o app que copiou feche.
+- **Prévias com o Launchpad aberto:** escolher uma janela fecha o launcher.
+
+### Sessão e testes
+- Sessão do mide: `xdg-desktop-portal` configurado para o desktop "mide" (`data/xdg-desktop-portal/mide-portals.conf`) e reiniciado na entrada: os apps GTK4 recebem as configurações do sistema (botões da janela, tema, fontes, cursor).
+- `tests/ui.sh` passou para **1366x768** (todas as coordenadas recalibradas), com testes novos de monitores, escala, captura de tela, menu global, dock e cópia entre apps; app de teste `examples/mide-menu-teste`.

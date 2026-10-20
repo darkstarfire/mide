@@ -14,6 +14,7 @@ mod cursor;
 mod decorations;
 mod genie;
 mod input;
+mod outputs;
 mod selftest;
 mod session;
 mod preview;

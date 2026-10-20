@@ -630,3 +630,19 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Na sessão: `data/mide-atualizar` (barra, dock... trocam; janelas ficam) e `data/mide-atualizar --tudo` (compositor reinicia; volta sem passar pelo login; os apps automáticos como o nm-applet voltam, os que seguiam abertos não duplicam).
 - Chrome: menu ⋮ → Histórico: o submenu abre para a esquerda, dentro da tela.
 - Arquivos: a barra lateral de vidro mostra o papel de parede na posição certa.
+
+## Monitores, captura, menu global, animações e dock — automáticos (`tests/ui.sh`, 1366x768)
+
+- Monitores (telas virtuais): duas telas lado a lado; barra na principal escolhida no config; tela desligada fica de fora; Configurações → Monitores: tornar principal e manter (barra vai para a outra tela, `primary` gravado); sem confirmar, volta sozinho em 15 s; escala 125% numa tela de 1920x1080 dá 1536x864 pontos.
+- Captura de tela: Print, arrastar uma área e Ctrl+S grava 400x250 em Imagens/Capturas de tela (pasta temporária); Enter copia a imagem (`image/png`).
+- Menu global: com `examples/mide-menu-teste` (barramento de teste), a barra mostra "Projeto, Ajuda" e o clique em Projeto → Compilar chega ao app.
+- Dock: clique no app em foco minimiza; de novo restaura; com duas janelas mostra as prévias; lista de Downloads e da Lixeira continua aberta depois de agir num item; Esc fecha a lista; "Copiar caminho" da dock cola no Editor de Texto (Ctrl+V).
+- Prévias com o launcher aberto: escolher fecha o launcher.
+- `cargo test`: arranjo das telas (`outputs`), leitura da lista de telas e gravação de `[monitors]` (`displays`), encaixe da tela arrastada, leitura do dbusmenu e casamento do processo com o app (`appmenu`), recorte da captura com as marcações.
+
+## Monitores, captura, menu global, animações e dock — manual (na sessão)
+
+- Configurações → Monitores com os dois monitores: os dois acendem; arrastar a segunda tela para o outro lado; trocar a principal (barra e dock mudam); trocar resolução/frequência/escala e "Manter"; "Reverter" ou esperar 15 s volta ao anterior; desconectar um cabo com o mide aberto.
+- Print: seleção, janela, tela inteira; desenhar seta/círculo/quadrado nas 6 cores; colar a imagem num app.
+- VS Code pelo XWayland (com o `xwayland-satellite`): a barra mostra os menus dele.
+- Efeitos: desligar "Animação dos menus" e "Transições no Arquivos" e conferir que somem.

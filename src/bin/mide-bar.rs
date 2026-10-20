@@ -97,12 +97,14 @@ enum MenuAction {
     Confirm(MenuId),
     /// Fecha à força o app em foco (quando ele não responde).
     ForceQuit,
+    /// Item do menu do próprio app (menu global): o número dele no menu do app.
+    Native(i32),
 }
 
 /// Item de menu: texto, atalho mostrado à direita e ação (sem ação, desativado).
 #[derive(Debug, Clone)]
 enum MenuItem {
-    Entry(String, &'static str, Option<MenuAction>),
+    Entry(String, String, Option<MenuAction>),
     Separator,
 }
 
@@ -110,8 +112,8 @@ enum MenuItem {
 /// onde eles vêm.
 const PANEL_TOP: f32 = BAR_HEIGHT as f32 + mide::ui::draw::ARROW_H + 2.0;
 
-fn entry(label: impl Into<String>, shortcut: &'static str, action: Option<MenuAction>) -> MenuItem {
-    MenuItem::Entry(label.into(), shortcut, action)
+fn entry(label: impl Into<String>, shortcut: &str, action: Option<MenuAction>) -> MenuItem {
+    MenuItem::Entry(label.into(), shortcut.to_string(), action)
 }
 
 /// Qual menu: o do sistema (marca do mide) ou um dos menus do app em foco.
@@ -122,6 +124,8 @@ enum MenuId {
     File,
     Edit,
     Window,
+    /// Menu do próprio app (menu global), pela posição na barra de menus dele.
+    Native(u8),
     /// Painéis da direita (desenhados à parte, não são listas).
     Calendar,
     Sound,
@@ -236,6 +240,8 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
             entry("Zoom", "", window("zoom")),
         ],
         MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("power")))],
+        // Itens vêm do app (`Bar::native_items`).
+        MenuId::Native(_) => Vec::new(),
         // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
         MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Control | MenuId::Gear => Vec::new(),
         MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout => Vec::new(),
@@ -288,6 +294,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         launcher_k: 0.0,
         clock: String::new(),
         items: Vec::new(),
+        appmenu: mide::appmenu::start_registrar(),
+        native: None,
+        native_failed: None,
         battery: None,
         names: AppNames::load(),
         status: Status::default(),
@@ -580,6 +589,12 @@ struct Bar {
     clock: String,
     /// Quais itens de `BAR_ITEMS` estão à mostra (para redesenhar quando mudam).
     items: Vec<bool>,
+    /// Menus dos apps (menu global): o registrar e a conexão, e o menu do app em foco
+    /// (nome no barramento, objeto e os menus de cima).
+    appmenu: Option<(mide::appmenu::Registry, zbus::blocking::Connection)>,
+    native: Option<(String, String, Vec<mide::appmenu::Item>)>,
+    /// Menu que não pôde ser lido (não tenta de novo a cada meio segundo).
+    native_failed: Option<(String, String)>,
     battery: Option<(u8, bool)>,
     names: AppNames,
     /// Som, Wi-Fi e Bluetooth, lidos numa thread a cada 2 s.
@@ -630,6 +645,73 @@ impl Bar {
         }
     }
 
+    /// Menu do próprio app em foco, se ele registrou um (menu global). Lido quando o app
+    /// em foco muda ou quando o registro aparece depois.
+    fn refresh_native(&mut self) {
+        let Some((registry, conn)) = &self.appmenu else {
+            return;
+        };
+        let wanted = registry.menu_for_app(&self.focused_id);
+        let same = match (&wanted, &self.native) {
+            (Some((s, p)), Some((ns, np, _))) => s == ns && p == np,
+            (None, None) => true,
+            _ => false,
+        };
+        if same || (wanted.is_some() && wanted == self.native_failed) {
+            return;
+        }
+        self.native_failed = None;
+        let failed = &mut self.native_failed;
+        self.native = wanted.and_then(|(sender, path)| {
+            let Some(layout) = mide::appmenu::layout(conn, &sender, &path, 0) else {
+                tracing::info!("menu do app {}: não foi possível ler", self.focused_id);
+                *failed = Some((sender, path));
+                return None;
+            };
+            let top: Vec<mide::appmenu::Item> = layout.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect();
+            tracing::info!("menu do app {}: {}", self.focused_id, top.iter().map(|i| i.label.as_str()).collect::<Vec<_>>().join(", "));
+            (!top.is_empty()).then_some((sender, path, top))
+        });
+        self.draw_bar();
+    }
+
+    /// Itens de um menu do app (lidos de novo ao abrir: o app pode ter mudado o menu).
+    /// Submenus aparecem logo abaixo do título deles, com recuo.
+    fn native_items(&mut self, index: usize) -> Vec<MenuItem> {
+        let (Some((_, conn)), Some((sender, path, top))) = (&self.appmenu, &self.native) else {
+            return Vec::new();
+        };
+        let Some(menu) = top.get(index) else {
+            return Vec::new();
+        };
+        let children = mide::appmenu::layout(conn, sender, path, menu.id).unwrap_or_else(|| menu.children.clone());
+        let mut out = Vec::new();
+        fn push(out: &mut Vec<MenuItem>, items: &[mide::appmenu::Item], depth: usize) {
+            for item in items {
+                if item.separator {
+                    if !matches!(out.last(), Some(MenuItem::Separator) | None) {
+                        out.push(MenuItem::Separator);
+                    }
+                    continue;
+                }
+                let mark = match item.checked {
+                    Some(true) => "✓ ",
+                    _ => "",
+                };
+                let label = format!("{}{mark}{}", "    ".repeat(depth), item.label);
+                if item.children.is_empty() {
+                    let action = item.enabled.then_some(MenuAction::Native(item.id));
+                    out.push(entry(label, &item.shortcut, action));
+                } else {
+                    out.push(entry(label, "", None));
+                    push(out, &item.children, depth + 1);
+                }
+            }
+        }
+        push(&mut out, &children, 0);
+        out
+    }
+
     /// Atualiza relógio, bateria e app em foco; redesenha só se algo mudou.
     fn refresh(&mut self) {
         let clock = clock_text();
@@ -660,12 +742,18 @@ impl Bar {
             self.items = items;
             self.draw_bar();
         }
+        let focus_changed = focused_id != self.focused_id;
         if clock != self.clock || battery != self.battery || focused != self.focused_name || focused_id != self.focused_id {
             self.clock = clock;
             self.battery = battery;
             self.focused_name = focused;
             self.focused_id = focused_id;
             self.draw_bar();
+        }
+        // O menu do app em foco: ao trocar de app, e enquanto ele não registrou (o
+        // registro pode chegar depois da janela).
+        if focus_changed || self.native.is_none() {
+            self.refresh_native();
         }
     }
 
@@ -752,7 +840,10 @@ impl Bar {
         let mut tx = LOGO_X + LOGO_W + 14.0;
         let name = self.focused_name.clone();
         let mut titles: Vec<(MenuId, String, FontWeight)> = vec![(MenuId::App, name, FontWeight::Bold)];
-        if !self.focused_id.is_empty() {
+        if let Some((_, _, top)) = &self.native {
+            // Menus do próprio app (menu global).
+            titles.extend(top.iter().enumerate().take(u8::MAX as usize).map(|(i, item)| (MenuId::Native(i as u8), item.label.clone(), FontWeight::Regular)));
+        } else if !self.focused_id.is_empty() {
             titles.extend(APP_MENUS.iter().map(|(id, t)| (*id, t.to_string(), FontWeight::Regular)));
         }
         for (id, title, weight) in titles {
@@ -954,7 +1045,10 @@ impl Bar {
             return;
         }
         let app = self.focused_name.clone();
-        let mut items = menu_items(id, &app);
+        let mut items = match id {
+            MenuId::Native(i) => self.native_items(i as usize),
+            _ => menu_items(id, &app),
+        };
         if id == MenuId::Battery {
             if let Some((level, charging)) = self.battery {
                 let state = if charging { "carregando" } else { "na bateria" };
@@ -1070,6 +1164,11 @@ impl Bar {
         tracing::info!("menu: {action:?}");
         match action {
             MenuAction::About => spawn_sibling("mide-about"),
+            MenuAction::Native(item) => {
+                if let (Some((_, conn)), Some((sender, path, _))) = (&self.appmenu, &self.native) {
+                    mide::appmenu::click(conn, sender, path, item);
+                }
+            }
             MenuAction::NewWindow => match self.names.exec_for(&self.focused_id) {
                 Some(command) => {
                     if let Ok(mut child) = std::process::Command::new("sh").arg("-c").arg(&command).spawn() {

@@ -167,7 +167,7 @@ pub fn element(
     let image = titles.image(title, focused, max_width)?;
     let x = bar.loc.x + (bar.size.w - image.width) / 2;
     let y = bar.loc.y + (bar.size.h - image.height) / 2;
-    let location: Point<f64, smithay::utils::Physical> = (x as f64, y as f64).into();
+    let location: Point<f64, smithay::utils::Physical> = crate::clip::phys((x as i32, y as i32).into()).to_f64();
     MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         location,

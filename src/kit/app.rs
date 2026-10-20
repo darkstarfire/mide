@@ -228,7 +228,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
                 runner.ctx.wake_at = None;
                 runner.dirty = true;
             }
-            TimeoutAction::ToDuration(TICK)
+            // Animando (menu entrando, transições): no ritmo da tela; senão, mais devagar.
+            TimeoutAction::ToDuration(if runner.ctx.ticking { std::time::Duration::from_millis(16) } else { TICK })
         })
         .map_err(|e| e.to_string())?;
     while !runner.exit {
@@ -321,7 +322,9 @@ impl Runner {
             }
             // Menus de contexto ficam por cima de tudo.
             if let Some(overlay) = self.ctx.take_overlay() {
-                canvas.draw_pixmap(0, 0, overlay.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
+                let (alpha, dy) = self.ctx.overlay_look();
+                let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
+                canvas.draw_pixmap(0, dy, overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
             }
             if let Some(title) = self.ctx.title.take() {
                 if title != self.title {

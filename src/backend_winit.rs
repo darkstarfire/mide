@@ -145,7 +145,7 @@ pub fn init(
                     tracing::debug!("relógio de reserva: {err}");
                 }
                 // Continua só com algo em movimento; um commit novo acorda de novo.
-                state.redraw = !state.animations.is_empty() || state.launcher_anim.is_some() || !state.ghosts.is_empty();
+                state.redraw = !state.animations.is_empty() || state.launcher_anim.is_some() || !state.ghosts.is_empty() || !state.appearing.is_empty();
             }
             smithay::reexports::calloop::timer::TimeoutAction::ToDuration(busy_tick)
         })?;

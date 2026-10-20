@@ -179,7 +179,7 @@ impl Genie {
         let inner = TextureRenderElement::from_static_texture(
             Id::new(),
             renderer.context_id(),
-            (area.loc.x as f64, area.loc.y as f64),
+            crate::clip::phys(area.loc).to_f64(),
             texture,
             1,
             Transform::Normal,
@@ -201,7 +201,7 @@ impl Genie {
                 Uniform::new("progress", progress),
                 Uniform::new("flip_y", genie_flip()),
                 Uniform::new("tex_size", (size.w as f32, size.h as f32)),
-                Uniform::new("corner", corner),
+                Uniform::new("corner", corner * crate::clip::scale() as f32),
             ],
         ))
     }
