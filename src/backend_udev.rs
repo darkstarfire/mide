@@ -377,18 +377,26 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) {
         let mode = choose_mode(c, state);
         let scale = monitors.outputs.get(&c.name).map(|m| m.scale).unwrap_or(1.0);
         if let Some(head) = gpu.heads.iter_mut().find(|h| h.connector == c.handle) {
-            // Já ligada: troca o modo se mudou.
-            if head.surface.current_mode() != mode {
+            // Já ligada: troca o modo se mudou (o modo em uso é o da saída; o da
+            // superfície GBM pode vir zerado antes do primeiro quadro).
+            let in_use = head.output.current_mode().map(|m| (m.size.w, m.size.h, m.refresh));
+            let wanted = (mode.size().0 as i32, mode.size().1 as i32, mode.vrefresh() as i32 * 1000);
+            if in_use != Some(wanted) {
                 match head.surface.use_mode(mode) {
                     Ok(()) => {
                         tracing::info!("tela {}: {}x{} a {} Hz", c.name, mode.size().0, mode.size().1, mode.vrefresh());
                         head.damage_tracker = OutputDamageTracker::from_output(&head.output);
                         head.pending = false;
                     }
-                    Err(err) => tracing::warn!("tela {}: modo não aplicado: {err}", c.name),
+                    Err(err) => {
+                        // Fica no modo de antes (só a escala pode mudar).
+                        tracing::warn!("tela {}: modo não aplicado: {err}", c.name);
+                        head.output.change_current_state(None, None, Some(output_scale(scale)), None);
+                        continue;
+                    }
                 }
             }
-            set_output_mode(&head.output, head.surface.current_mode(), scale);
+            set_output_mode(&head.output, mode, scale);
             continue;
         }
         match create_head(gpu, state, c, mode, scale) {
@@ -409,7 +417,11 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) {
         .iter()
         .map(|c| {
             let head = gpu.heads.iter().find(|h| h.connector == c.handle);
-            let current = head.map(|h| h.surface.current_mode()).unwrap_or(c.preferred);
+            let preferred = (c.preferred.size().0 as i32, c.preferred.size().1 as i32, c.preferred.vrefresh() as i32 * 1000);
+            let current = head
+                .and_then(|h| h.output.current_mode())
+                .map(|m| (m.size.w, m.size.h, m.refresh))
+                .unwrap_or(preferred);
             let mut modes: Vec<(i32, i32, i32)> =
                 c.modes.iter().map(|m| (m.size().0 as i32, m.size().1 as i32, m.vrefresh() as i32 * 1000)).collect();
             modes.dedup();
@@ -417,7 +429,7 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) {
                 name: c.name.clone(),
                 description: format!("{}x{} mm", c.mm.0, c.mm.1),
                 modes,
-                current: (current.size().0 as i32, current.size().1 as i32, current.vrefresh() as i32 * 1000),
+                current,
                 position: head.and_then(|h| state.space.output_geometry(&h.output)).map(|g| (g.loc.x, g.loc.y)).unwrap_or((0, 0)),
                 scale: monitors.outputs.get(&c.name).map(|m| m.scale).unwrap_or(1.0),
                 enabled: head.is_some(),

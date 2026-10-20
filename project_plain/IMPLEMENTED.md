@@ -901,3 +901,10 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 ### Sessão e testes
 - Sessão do mide: `xdg-desktop-portal` configurado para o desktop "mide" (`data/xdg-desktop-portal/mide-portals.conf`) e reiniciado na entrada: os apps GTK4 recebem as configurações do sistema (botões da janela, tema, fontes, cursor).
 - `tests/ui.sh` passou para **1366x768** (todas as coordenadas recalibradas), com testes novos de monitores, escala, captura de tela, menu global, dock e cópia entre apps; app de teste `examples/mide-menu-teste`.
+
+## Correções depois do primeiro uso (monitores, reinício, captura)
+
+- **Configurações → Monitores sem modo atual:** o compositor lia o modo da tela na superfície GBM, que vinha zerado (`0x0@0`): a Frequência ficava vazia e as telas não tinham tamanho no arranjo (não dava para arrastar). Agora o modo vem da saída Wayland. Modo que não pode ser aplicado deixa a tela no modo anterior.
+- **`restart all` travava:** depois de publicar o ambiente, o mide esperava o systemd reiniciar o portal, e o portal, ao subir, esperava o mide. Agora o reinício do portal é pedido sem esperar (`--no-block`).
+- **Captura aberta pelo launcher saía com o launcher na imagem:** espera o launcher fechar antes de capturar.
+- **Captura mais leve:** a imagem escurecida é feita uma vez; cada quadro só copia bytes (antes misturava a tela inteira a cada movimento do mouse). Medido em 1920x1080: 14–19 ms por quadro. Mostra o tamanho da área escolhida e o painel não corta mais o botão Copiar.

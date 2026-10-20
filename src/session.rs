@@ -112,7 +112,9 @@ fn publish_environment(socket: &str) {
     // O portal pode ter sido iniciado antes do ambiente acima (por um app automático):
     // reiniciado, ele lê a configuração do mide e passa a oferecer as configurações do
     // sistema aos apps (layout dos botões, tema escuro, fontes).
-    match Command::new("systemctl").args(["--user", "try-restart", "xdg-desktop-portal.service"]).status() {
+    // Sem esperar (`--no-block`): o portal, ao subir, conversa com o próprio mide; se o
+    // mide esperasse aqui, os dois ficariam presos (aconteceu no `restart all`).
+    match Command::new("systemctl").args(["--user", "--no-block", "try-restart", "xdg-desktop-portal.service"]).status() {
         Ok(status) if status.success() => tracing::info!("sessão: portal do desktop reiniciado com a configuração do mide"),
         Ok(status) => tracing::warn!("sessão: reiniciar o portal saiu com {status}"),
         Err(err) => tracing::warn!("sessão: systemctl indisponível: {err}"),

@@ -64,6 +64,9 @@ fn inside(r: (f32, f32, f32, f32), p: (f32, f32)) -> bool {
 
 struct Capture {
     shot: Pixmap,
+    /// A captura já escurecida (fora da área escolhida), feita uma vez: cada quadro só
+    /// copia bytes, sem misturar a tela inteira de novo.
+    dimmed: Pixmap,
     mode: Mode,
     tool: Tool,
     color: usize,
@@ -80,7 +83,13 @@ struct Capture {
 
 impl Capture {
     fn new(shot: Pixmap, windows: Vec<(f32, f32, f32, f32)>) -> Self {
-        Self { shot, mode: Mode::Selection, tool: Tool::Arrow, color: 0, selection: None, drag: None, shapes: Vec::new(), windows, swatches: Vec::new() }
+        let mut dimmed = shot.clone();
+        for px in dimmed.data_mut().chunks_mut(4) {
+            for c in &mut px[..3] {
+                *c = (*c as u16 * 145 / 255) as u8;
+            }
+        }
+        Self { shot, dimmed, mode: Mode::Selection, tool: Tool::Arrow, color: 0, selection: None, drag: None, shapes: Vec::new(), windows, swatches: Vec::new() }
     }
 
     /// A área escolhida com as marcações, recortada da captura.
@@ -212,31 +221,29 @@ impl App for Capture {
         let drawing = self.drag.filter(|(_, new_area)| !*new_area).and_then(|(start, _)| {
             ui.input().pointer.map(|p| Shape { tool: self.tool, color: COLORS[self.color].1, from: start, to: p })
         });
-        let shot = &self.shot;
+        let (shot, dimmed) = (&self.shot, &self.dimmed);
         let shapes = &self.shapes;
         ui.paint(|canvas, _| {
-            canvas.draw_pixmap(0, 0, shot.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-            let dim = |canvas: &mut Pixmap, r: (f32, f32, f32, f32)| {
-                if let Some(rect) = Rect::from_xywh(r.0, r.1, r.2, r.3) {
-                    let mut paint = Paint::default();
-                    paint.set_color(Color::from_rgba8(0, 0, 0, 110));
-                    canvas.fill_rect(rect, &paint, Transform::identity(), None);
-                }
-            };
-            match selection.or(hovered_window) {
-                Some((x, y, w, h)) => {
-                    dim(canvas, (0.0, 0.0, sw, y));
-                    dim(canvas, (0.0, y + h, sw, sh - y - h));
-                    dim(canvas, (0.0, y, x, h));
-                    dim(canvas, (x + w, y, sw - x - w, h));
-                    outline(canvas, (x, y, w, h));
-                }
-                None => dim(canvas, (0.0, 0.0, sw, sh)),
+            // Tela escurecida e, por cima, a área escolhida com as cores de verdade:
+            // só cópia de bytes (rápido mesmo numa tela grande).
+            if canvas.data().len() == dimmed.data().len() {
+                canvas.data_mut().copy_from_slice(dimmed.data());
+            }
+            if let Some((x, y, w, h)) = selection.or(hovered_window) {
+                copy_rect(canvas, shot, (x, y, w, h));
+                outline(canvas, (x, y, w, h));
             }
             for shape in shapes.iter().chain(drawing.iter()) {
                 draw_shape(canvas, shape, (0.0, 0.0));
             }
         });
+
+        // Tamanho da área escolhida, logo acima dela (ou dentro, se não couber).
+        if let Some((x, y, w, h)) = self.selection.filter(|_| self.mode != Mode::Full) {
+            let text = format!("{} × {}", w.round() as i32, h.round() as i32);
+            let ly = if y >= 44.0 { y - 40.0 } else { y + 6.0 };
+            ui.glass_panel(x, ly, 120.0, 8.0, |ui| ui.label(&text));
+        }
 
         // Painel: modo, ferramenta, cor e ações, embaixo e no meio.
         let panel_w = 720.0;
@@ -254,7 +261,7 @@ impl App for Capture {
                         self.shapes.clear();
                     }
                 }
-                ui.push_right(250.0);
+                ui.push_right(268.0);
                 if ui.button("Cancelar").clicked() {
                     action = Some("cancelar");
                 }
@@ -321,6 +328,30 @@ impl App for Capture {
         if self.drag.is_some() {
             ui.request_repaint();
         }
+    }
+}
+
+/// Copia o retângulo `r` de `src` para o mesmo lugar em `dst` (mesmo tamanho), linha
+/// a linha.
+fn copy_rect(dst: &mut Pixmap, src: &Pixmap, r: (f32, f32, f32, f32)) {
+    let (w, h) = (src.width() as i64, src.height() as i64);
+    if dst.width() as i64 != w || dst.height() as i64 != h {
+        return;
+    }
+    let x0 = (r.0.floor() as i64).clamp(0, w);
+    let x1 = ((r.0 + r.2).ceil() as i64).clamp(0, w);
+    let y0 = (r.1.floor() as i64).clamp(0, h);
+    let y1 = ((r.1 + r.3).ceil() as i64).clamp(0, h);
+    if x1 <= x0 {
+        return;
+    }
+    let stride = w as usize * 4;
+    let (a, b) = (x0 as usize * 4, x1 as usize * 4);
+    let src = src.data();
+    let dst = dst.data_mut();
+    for y in y0 as usize..y1 as usize {
+        let row = y * stride;
+        dst[row + a..row + b].copy_from_slice(&src[row + a..row + b]);
     }
 }
 
@@ -402,6 +433,17 @@ fn chrono_name() -> String {
 
 /// Pede a captura ao compositor e espera o arquivo (até 3 s).
 fn capture() -> Result<Pixmap, Box<dyn Error>> {
+    // Aberta pelo launcher: espera ele fechar (com o esmaecer), senão a captura sai
+    // com o launcher por cima.
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while ask_compositor("launcher state").is_some_and(|r| r.first().map(String::as_str) == Some("open")) {
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // O último quadro do esmaecer e os menus que fecham junto.
+    std::thread::sleep(Duration::from_millis(60));
     let path = runtime_dir().join(format!("mide-tela-{}.png", std::process::id()));
     let _ = std::fs::remove_file(&path);
     ask_compositor(&format!("screenshot {}", path.display())).ok_or("o mide não respondeu")?;
