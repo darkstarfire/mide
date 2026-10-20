@@ -15,6 +15,7 @@ use smithay_client_toolkit::{
     output::{OutputHandler, OutputState},
     reexports::{
         calloop::{
+            ping::{make_ping, Ping},
             timer::{TimeoutAction, Timer},
             EventLoop, LoopHandle, PostAction,
         },
@@ -48,7 +49,7 @@ use smithay_client_toolkit::{
 use tiny_skia::Pixmap;
 
 use super::{
-    input::Key,
+    input::{Key, KeyPress},
     theme::{color, Theme},
     ui::{Ctx, Ui},
 };
@@ -132,6 +133,17 @@ impl Window {
     }
 }
 
+/// Acorda a janela de outra thread para desenhar um quadro (por exemplo, quando
+/// chega saída de um programa). Pegue com [`Ui::waker`](super::Ui::waker).
+#[derive(Clone)]
+pub struct Waker(pub(super) Ping);
+
+impl Waker {
+    pub fn wake(&self) {
+        self.0.ping();
+    }
+}
+
 /// Abre a janela e roda o app até ela ser fechada.
 const TICK: std::time::Duration = std::time::Duration::from_millis(40);
 
@@ -208,6 +220,13 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
         .map_err(|e| e.to_string())?;
+    // Quadros pedidos de outra thread (`Ui::waker`).
+    let (ping, ping_source) = make_ping().map_err(|e| e.to_string())?;
+    event_loop
+        .handle()
+        .insert_source(ping_source, |_, _, runner: &mut Runner| runner.dirty = true)
+        .map_err(|e| e.to_string())?;
+    runner.ctx.waker = Some(Waker(ping));
     // Quadros pedidos pelo app (`Ui::request_tick`), por exemplo enquanto miniaturas
     // carregam em segundo plano.
     event_loop
@@ -519,12 +538,22 @@ impl KeyboardHandler for Runner {
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, modifiers: Modifiers, _: RawModifiers, _: u32) {
         self.ctx.input.ctrl = modifiers.ctrl;
         self.ctx.input.shift = modifiers.shift;
+        self.ctx.input.alt = modifiers.alt;
+        self.ctx.input.logo = modifiers.logo;
     }
 }
 
 impl Runner {
     fn key(&mut self, event: KeyEvent) {
         let input = &mut self.ctx.input;
+        input.presses.push(KeyPress {
+            keysym: event.keysym.raw(),
+            text: event.utf8.clone(),
+            ctrl: input.ctrl,
+            shift: input.shift,
+            alt: input.alt,
+            logo: input.logo,
+        });
         let key = match event.keysym {
             Keysym::BackSpace => Some(Key::Backspace),
             Keysym::Return | Keysym::KP_Enter => Some(Key::Enter),

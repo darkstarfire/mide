@@ -377,6 +377,8 @@ pub struct Ctx {
     pub clipboard_out: Option<String>,
     /// Ctrl+V num campo: a janela lê a área de transferência e entrega em `input.paste`.
     pub paste_requested: bool,
+    /// Acorda a janela de outra thread (`Ui::waker`).
+    pub waker: Option<super::app::Waker>,
 }
 
 impl Ctx {
@@ -405,6 +407,7 @@ impl Ctx {
             layer: false,
             clipboard_out: None,
             paste_requested: false,
+            waker: None,
         }
     }
 
@@ -1145,6 +1148,35 @@ impl<'a> Ui<'a> {
     pub fn paint(&mut self, f: impl FnOnce(&mut Pixmap, (f32, f32))) {
         let offset = self.offset;
         f(self.canvas, offset);
+    }
+
+    /// Desenho livre num espaço de `height` reservado no lugar do próximo item: `f`
+    /// recebe o canvas e o retângulo (x, y, largura, altura) no canvas.
+    pub fn custom(&mut self, height: f32, f: impl FnOnce(&mut Pixmap, (f32, f32, f32, f32))) {
+        let rect = self.alloc(None, height);
+        f(self.canvas, rect);
+    }
+
+    /// Como `paint`, com o texto do mide-ui para escrever (por exemplo, `draw_mono`).
+    pub fn paint_text(&mut self, f: impl FnOnce(&mut Pixmap, &mut crate::ui::text::Text, (f32, f32))) {
+        let offset = self.offset;
+        f(self.canvas, &mut self.ctx.text, offset);
+    }
+
+    /// Põe o texto na área de transferência.
+    pub fn copy(&mut self, text: &str) {
+        self.ctx.clipboard_out = Some(text.to_string());
+    }
+
+    /// Pede o texto da área de transferência: chega num dos próximos quadros em
+    /// `input().paste`.
+    pub fn request_paste(&mut self) {
+        self.ctx.paste_requested = true;
+    }
+
+    /// Para acordar a janela de outra thread (ver [`Waker`](super::Waker)).
+    pub fn waker(&self) -> Option<super::app::Waker> {
+        self.ctx.waker.clone()
     }
 
     /// Linha com um texto e, à direita, o valor escolhido entre `options`; o clique abre

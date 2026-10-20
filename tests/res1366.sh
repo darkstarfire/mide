@@ -4,7 +4,7 @@
 # revisão em $RES_OUT (padrão: /tmp/mide-1366).
 #
 # Coordenadas (saída 1366x768): dock padrão (ícones de 40 px) em (541, 703) 285x57,
-# com Launchpad em (568, 728), foot em (611, 728), calculadora em (654, 728),
+# com Launchpad em (568, 728), Terminal em (611, 728), calculadora em (654, 728),
 # Configurações em (697, 728), Downloads em (756, 728) e Lixeira em (799, 728).
 set -u
 cd "$(dirname "$0")/.."
@@ -18,7 +18,8 @@ export XDG_CONFIG_HOME="$TESTCFG"
 trap 'rm -rf "$TESTCFG"' EXIT
 PASS=0
 FAIL=0
-FOOT='janela "foot" popups=0'
+TERMINAL="$PWD/target/debug/mide-terminal --title Terminal"
+FOOT='janela "Terminal" popups=0'
 
 check() {
     local name="$1" expected="$2" script="$3"
@@ -50,8 +51,8 @@ check "barra ocupa a largura toda" 'camada "mide-bar" em \(0, 0\) 1366x28' "300 
 check "dock centralizada embaixo" 'camada "mide-dock" em \(541, 703\) 285x57' "300 list"
 check "Launchpad na dock abre o launcher em tela cheia" 'camada "mide-launcher" em \(0, 0\) 1366x768' "300 click 568 728; 380 list"
 check "clique na dock abre o app" "nova janela criada" "300 click 611 728; 420 list"
-check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "300 list" foot
-check "maximizar ocupa a área útil" "$FOOT posição=\(0, 58\) visível=1366x643" "300 click 103 61; 360 list" foot
+check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "300 list" "$TERMINAL"
+check "maximizar ocupa a área útil" "$FOOT posição=\(0, 58\) visível=1366x643" "300 click 103 61; 360 list" "$TERMINAL"
 check "Arquivos cabe na tela" 'janela "[^"]*" popups=0 posição=\(48, 76\) visível=900x520' "300 list" "target/debug/mide-files /usr"
 check "Configurações cabem na tela" 'janela "Configurações do Sistema" popups=0 posição=\(48, 76\)' "300 list" target/debug/mide-settings
 

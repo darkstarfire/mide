@@ -45,6 +45,7 @@ Lista de crates, protocolos e serviços para o projeto, organizada a partir do `
 | `iced` | Toolkit em Rust com arquitetura Elm. Alta produtividade. Usado pelo COSMIC. |
 | `slint` | Toolkit declarativo com linguagem própria. Bom para painéis e telas de configuração. |
 | `egui` | Simples, mas com aparência pouco nativa. Use só em protótipos. |
+| `rustix` (pty, termios, process) | Pseudoterminal do Terminal do mide (`openpt`, `grantpt`, tamanho da janela, sessão nova). A emulação do terminal é própria do mide (`src/terminal/`), sem crate de terminal. |
 
 Para o visual macOS, comece com `iced` ou `slint` e customize o tema. Se quiser controle total, desenhe os widgets sobre `tiny-skia` ou `vello`.
 

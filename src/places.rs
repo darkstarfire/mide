@@ -426,7 +426,7 @@ pub fn copy_text(text: &str) {
     }
 }
 
-/// Abre um terminal na pasta `dir` (foot, ou o terminal padrão do sistema). Com
+/// Abre o Terminal do mide na pasta `dir`. Com
 /// `MIDE_OPEN_DRY_RUN` definido (testes), só registra no log.
 pub fn open_terminal(dir: &Path) {
     if std::env::var_os("MIDE_OPEN_DRY_RUN").is_some() {
@@ -434,7 +434,7 @@ pub fn open_terminal(dir: &Path) {
         return;
     }
     let quoted = format!("'{}'", dir.to_string_lossy().replace('\'', "'\\''"));
-    let command = format!("foot -D {quoted} || x-terminal-emulator --working-directory={quoted}");
+    let command = format!("mide-terminal -D {quoted}");
     match Command::new("sh").arg("-c").arg(&command).spawn() {
         Ok(mut child) => {
             std::thread::spawn(move || {

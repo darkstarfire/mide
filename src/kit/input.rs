@@ -19,6 +19,20 @@ pub enum Key {
     PageDown,
 }
 
+/// Uma tecla apertada como chegou do teclado (para apps que tratam o teclado inteiro,
+/// como o terminal): o símbolo da tecla (keysym do xkb), o texto que ela produz e os
+/// modificadores de quando foi apertada.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyPress {
+    pub keysym: u32,
+    pub text: Option<String>,
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    /// A tecla Super (⌘ no estilo Mac).
+    pub logo: bool,
+}
+
 /// Tudo o que aconteceu desde o último quadro.
 #[derive(Debug, Clone, Default)]
 pub struct Input {
@@ -30,9 +44,11 @@ pub struct Input {
     pub down: bool,
     /// Botão direito apertado neste quadro.
     pub secondary: bool,
-    /// Ctrl e Shift segurados.
+    /// Ctrl, Shift, Alt e Super (⌘) segurados.
     pub ctrl: bool,
     pub shift: bool,
+    pub alt: bool,
+    pub logo: bool,
     /// Texto colado da área de transferência (Ctrl+V num campo), chegou neste quadro.
     pub paste: Option<String>,
     /// Rolagem vertical acumulada (positivo = para baixo), em pixels.
@@ -47,6 +63,8 @@ pub struct Input {
     pub shortcut_shift: Vec<bool>,
     /// Atalhos com Ctrl neste quadro (a letra, em minúscula: "c", "v", "n"...).
     pub shortcuts: Vec<String>,
+    /// Todas as teclas apertadas neste quadro, cruas e na ordem (ver [`KeyPress`]).
+    pub presses: Vec<KeyPress>,
 }
 
 impl Input {
@@ -61,6 +79,7 @@ impl Input {
         self.key_mods.clear();
         self.shortcuts.clear();
         self.shortcut_shift.clear();
+        self.presses.clear();
         self.paste = None;
     }
 

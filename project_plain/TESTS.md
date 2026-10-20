@@ -683,3 +683,16 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 
 - Abrir o Launchpad: o papel de parede aparece com desfoque leve; as pastas têm vidro com borda clara. Abrir uma pasta: o painel cresce em vidro; trocar de página: o vidro das pastas desliza junto. Desligar "Vidro líquido" em Efeitos: pastas no visual antigo.
 - Copiar caminho (Downloads da dock) e abrir um app do mide em seguida: Ctrl+V cola de primeira.
+
+## Terminal e Calculadora do mide — automáticos
+
+- `cargo test`: decodificador VT500 (UTF-8, CSI com subparâmetros, OSC com BEL e ST, cancelamento), tela (quebra automática, histórico, cursor e apagar, região de rolagem, cores 16/256/RGB, largos e combinados, tela alternativa, respostas DA/DSR/DECRQM/OSC 11, título, OSC 52/7/133, reflow ao mudar largura e altura, seleção por palavra atravessando quebras, mouse SGR/X10, desenho de linhas do DEC, busca sem acentos), teclas e colar, PTY real (`stty size`, `tty`), larguras, temas, painéis (dividir, fechar, áreas, divisores, vizinhos), perfis (campos faltando, nomes repetidos, limites), atalhos do Mac e do Linux, contas da calculadora.
+- `tests/ui.sh` usa o Terminal (`--title Terminal`) e a Calculadora do mide em todos os testes de janela, dock e prévias; os de cabeçalho do app (CSD) só com a gnome-calculator instalada.
+
+## Terminal do mide — manual (na sessão)
+
+- Abrir pela dock e pelo Ctrl+Shift+T (com o terminal em foco, vira nova aba); `ls --color`, `vim`, `top`, `less` (roda do mouse vira setas), `htop` com o mouse.
+- ⌘D e ⌘⇧D, arrastar o divisor, ⌘⌥ setas, ⌘⇧Enter; ⌘T, ⌘1…9, fechar aba pelo ×; ⌘F e buscar; ⌘, e trocar tema/fonte/cursor (o terminal aberto muda em até 1 s); ⌘+/⌘−.
+- Selecionar com duplo e triplo clique, ⌘C/⌘V no estilo Mac, Ctrl+C interrompe.
+- Fechar com `vim` aberto: pergunta antes.
+

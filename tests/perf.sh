@@ -64,7 +64,8 @@ run launcher "100 combo ctrl+shift+space; 180 wheel down; 220 wheel up; 260 type
 run buscador "100 combo ctrl+space; 160 type c; 170 type a; 180 type l; 190 type c; 220 key down; 240 key down; 260 key up; 300 key esc; 400 list"
 # Prévias da dock: duas janelas do terminal, ponteiro no ícone e depois numa miniatura.
 # (Dock padrão em 1366x768: terminal em x=611.)
-run previas "450 move 611 728; 520 move 613 728; 560 move 590 690; 566 move 560 620; 572 move 540 600; 620 list" foot foot
+TERMINAL="$PWD/target/debug/mide-terminal --title Terminal"
+run previas "450 move 611 728; 520 move 613 728; 560 move 590 690; 566 move 560 620; 572 move 540 600; 620 list" "$TERMINAL" "$TERMINAL"
 # Arquivos: navegar, menu de contexto, lista e voltar.
 FDIR="$OUT/pasta"
 mkdir -p "$FDIR"/{Fotos,Projetos,Docs}

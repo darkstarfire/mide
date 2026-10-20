@@ -116,6 +116,12 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "backspace" => 14,
         "delete" => 111,
         "." => 52,
+        "," => 51,
+        "/" => 53,
+        "-" => 12,
+        "=" => 13,
+        "0" => 11,
+        d @ ("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") => d.parse::<u32>().ok()? + 1,
         "tab" => 15,
         "space" | "_" => 57,
         "left" => 105,
@@ -257,6 +263,15 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 capture.combo = Some(combo);
                 return FilterResult::Intercept(None);
             }
+            // O Terminal do mide trata o ⌘ ele mesmo (⌘T, ⌘D, ⌘F...), e o atalho que
+            // abre um terminal vira "nova aba" nele.
+            if focused_app_id(state).as_deref() == Some("mide-terminal") {
+                return match state.config.match_binding(modifiers, key) {
+                    Some(Action::Launch(command)) if command.trim_start().starts_with("mide-terminal") => FilterResult::Forward,
+                    Some(action) => FilterResult::Intercept(Some(action)),
+                    None => FilterResult::Forward,
+                };
+            }
             // Terminal no estilo Mac: ⌘C copia e ⌘V cola (Ctrl+Shift+C/V do terminal).
             if terminal && mods.logo && !mods.ctrl && !mods.alt && !mods.shift {
                 let c = xkbcommon::xkb::keysym_to_utf32(key);
@@ -359,7 +374,7 @@ fn run_action(state: &mut State, action: Action) {
 
 /// Apps de terminal (o estilo Mac trata o teclado como no Terminal do Mac).
 const TERMINALS: &[&str] = &[
-    "foot", "footclient", "org.codeberg.dnkl.foot", "kitty", "alacritty", "org.alacritty.alacritty", "org.gnome.terminal",
+    "mide-terminal", "foot", "footclient", "org.codeberg.dnkl.foot", "kitty", "alacritty", "org.alacritty.alacritty", "org.gnome.terminal",
     "gnome-terminal-server", "org.gnome.console", "kgx", "org.gnome.ptyxis", "ptyxis", "konsole", "org.kde.konsole",
     "xterm", "uxterm", "tilix", "com.gexperts.tilix", "terminator", "wezterm", "org.wezfurlong.wezterm",
     "com.mitchellh.ghostty", "ghostty", "xfce4-terminal",
@@ -367,17 +382,18 @@ const TERMINALS: &[&str] = &[
 
 /// O app com o foco do teclado é um terminal?
 fn focused_is_terminal(state: &State) -> bool {
-    let Some(toplevel) = focused_toplevel(state) else {
-        return false;
-    };
-    let app_id = smithay::wayland::compositor::with_states(toplevel.wl_surface(), |s| {
+    focused_app_id(state).is_some_and(|id| TERMINALS.contains(&id.as_str()))
+}
+
+/// `app_id` (em minúsculas) da janela com o foco do teclado.
+fn focused_app_id(state: &State) -> Option<String> {
+    let toplevel = focused_toplevel(state)?;
+    smithay::wayland::compositor::with_states(toplevel.wl_surface(), |s| {
         s.data_map
             .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
             .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
     })
-    .unwrap_or_default()
-    .to_lowercase();
-    TERMINALS.contains(&app_id.as_str())
+    .map(|id| id.to_lowercase())
 }
 
 /// Janela com o foco do teclado.

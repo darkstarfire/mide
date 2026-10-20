@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache, Weight};
+use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
 use tiny_skia::Pixmap;
 
 /// Peso da fonte.
@@ -23,6 +23,14 @@ impl FontWeight {
     }
 }
 
+/// Família e estilo da fonte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Face {
+    Sans,
+    Mono,
+    MonoItalic,
+}
+
 /// Composição e desenho de texto. Carregar as fontes é caro, então crie um só.
 pub struct Text {
     fonts: FontSystem,
@@ -33,7 +41,7 @@ pub struct Text {
     /// Textos já desenhados (imagem, deslocamento e largura): as interfaces desenham os
     /// mesmos rótulos a cada quadro, e colar a imagem pronta é muito mais rápido que
     /// compor as letras de novo.
-    images: HashMap<(String, u32, FontWeight, [u8; 4], bool), (Pixmap, i32, i32, f32)>,
+    images: HashMap<(String, u32, FontWeight, [u8; 4], Face), (Pixmap, i32, i32, f32)>,
 }
 
 impl Default for Text {
@@ -52,11 +60,12 @@ impl Text {
         }
     }
 
-    fn buffer(&mut self, text: &str, size: f32, weight: FontWeight, mono: bool) -> Buffer {
+    fn buffer(&mut self, text: &str, size: f32, weight: FontWeight, face: Face) -> Buffer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, size * 1.25));
         buffer.set_size(Some(100_000.0), Some(size * 1.5));
-        let family = if mono { Family::Monospace } else { Family::SansSerif };
-        let attrs = Attrs::new().family(family).weight(weight.to_cosmic());
+        let family = if face == Face::Sans { Family::SansSerif } else { Family::Monospace };
+        let style = if face == Face::MonoItalic { Style::Italic } else { Style::Normal };
+        let attrs = Attrs::new().family(family).weight(weight.to_cosmic()).style(style);
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
         buffer
@@ -77,7 +86,7 @@ impl Text {
         if let Some(width) = self.widths.get(&key) {
             return *width;
         }
-        let buffer = self.buffer(text, size, weight, mono);
+        let buffer = self.buffer(text, size, weight, if mono { Face::Mono } else { Face::Sans });
         let width = buffer.layout_runs().map(|r| r.line_w).fold(0.0, f32::max);
         if self.widths.len() > 8192 {
             self.widths.clear();
@@ -98,20 +107,28 @@ impl Text {
         weight: FontWeight,
         rgba: [u8; 4],
     ) -> f32 {
-        self.draw_with(pixmap, text, (x, y), size, weight, rgba, false)
+        self.draw_with(pixmap, text, (x, y), size, weight, rgba, Face::Sans)
     }
 
     /// Desenha em fonte de largura fixa (editor de texto).
     pub fn draw_mono(&mut self, pixmap: &mut Pixmap, text: &str, x: f32, y: f32, size: f32, rgba: [u8; 4]) -> f32 {
-        self.draw_with(pixmap, text, (x, y), size, FontWeight::Regular, rgba, true)
+        self.draw_with(pixmap, text, (x, y), size, FontWeight::Regular, rgba, Face::Mono)
+    }
+
+    /// Fonte de largura fixa em negrito e/ou itálico (terminal).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_mono_styled(&mut self, pixmap: &mut Pixmap, text: &str, x: f32, y: f32, size: f32, rgba: [u8; 4], bold: bool, italic: bool) -> f32 {
+        let weight = if bold { FontWeight::Bold } else { FontWeight::Regular };
+        let face = if italic { Face::MonoItalic } else { Face::Mono };
+        self.draw_with(pixmap, text, (x, y), size, weight, rgba, face)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_with(&mut self, pixmap: &mut Pixmap, text: &str, (x, y): (f32, f32), size: f32, weight: FontWeight, rgba: [u8; 4], mono: bool) -> f32 {
-        let key = (text.to_string(), size.to_bits(), weight, rgba, mono);
+    fn draw_with(&mut self, pixmap: &mut Pixmap, text: &str, (x, y): (f32, f32), size: f32, weight: FontWeight, rgba: [u8; 4], face: Face) -> f32 {
+        let key = (text.to_string(), size.to_bits(), weight, rgba, face);
         if !self.images.contains_key(&key) {
-            let image = self.render(text, size, weight, rgba, mono);
-            if self.images.len() > 1024 {
+            let image = self.render(text, size, weight, rgba, face);
+            if self.images.len() > 4096 {
                 self.images.clear();
             }
             self.images.insert(key.clone(), image);
@@ -123,8 +140,8 @@ impl Text {
 
     /// Desenha o texto numa imagem transparente só dele: a imagem, onde ela fica em
     /// relação ao ponto do texto e a largura do texto.
-    fn render(&mut self, text: &str, size: f32, weight: FontWeight, rgba: [u8; 4], mono: bool) -> (Pixmap, i32, i32, f32) {
-        let mut buffer = self.buffer(text, size, weight, mono);
+    fn render(&mut self, text: &str, size: f32, weight: FontWeight, rgba: [u8; 4], face: Face) -> (Pixmap, i32, i32, f32) {
+        let mut buffer = self.buffer(text, size, weight, face);
         let width = buffer.layout_runs().map(|r| r.line_w).fold(0.0, f32::max);
         // Margem para letras que passam um pouco do retângulo (itálicos, acentos).
         let margin = (size * 0.5).ceil() as i32;

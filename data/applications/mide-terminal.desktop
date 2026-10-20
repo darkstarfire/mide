@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Name[en]=Terminal
+Comment=Use a linha de comando
+Exec=mide-terminal
+Icon=utilities-terminal
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;comando;linha de comando;
+StartupWMClass=mide-terminal
+OnlyShowIn=mide;

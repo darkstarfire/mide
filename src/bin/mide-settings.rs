@@ -1310,7 +1310,7 @@ fn combo_problem(combo: &str) -> Option<&'static str> {
 /// Comando que abre o app (apps de terminal abrem no terminal).
 fn app_command(app: &mide::apps::App) -> String {
     if app.terminal {
-        format!("foot -e {0} || x-terminal-emulator -e {0}", app.command)
+        format!("mide-terminal -e {}", app.command)
     } else {
         app.command.clone()
     }

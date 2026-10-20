@@ -1451,6 +1451,7 @@ dependencies = [
  "freedesktop-icons",
  "image",
  "resvg",
+ "rustix 1.1.5",
  "serde",
  "smithay",
  "smithay-client-toolkit 0.21.1",

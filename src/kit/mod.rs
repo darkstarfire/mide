@@ -36,7 +36,7 @@ pub mod textedit;
 mod theme;
 mod ui;
 
-pub use app::{run, App, Window};
-pub use input::{Input, Key};
+pub use app::{run, App, Waker, Window};
+pub use input::{Input, Key, KeyPress};
 pub use theme::{Rgba, Theme};
 pub use ui::{ArrangedScreen, Menu, Response, Tile, Ui};

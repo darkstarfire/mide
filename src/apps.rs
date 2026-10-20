@@ -216,11 +216,10 @@ pub fn load() -> Vec<App> {
     apps
 }
 
-/// Abre o app num processo separado. Apps de terminal abrem no foot (ou no
-/// terminal padrão do sistema).
+/// Abre o app num processo separado. Apps de terminal abrem no Terminal do mide.
 pub fn launch(app: &App) -> std::io::Result<()> {
     let command = if app.terminal {
-        format!("foot -e {0} || x-terminal-emulator -e {0}", app.command)
+        format!("mide-terminal -e {}", app.command)
     } else {
         app.command.clone()
     };

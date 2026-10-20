@@ -263,9 +263,8 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+shift+q", "close_window"),
     ("ctrl+shift+escape", "quit"),
     ("ctrl+shift+m", "restore_minimized"),
-    // foot é nativo de Wayland e não depende de servidor compartilhado. Sem ele,
-    // usa o terminal padrão do sistema.
-    ("ctrl+shift+t", "launch:foot || x-terminal-emulator"),
+    // Terminal do mide.
+    ("ctrl+shift+t", "launch:mide-terminal"),
     ("ctrl+shift+space", "toggle_launcher"),
     // Buscador do mide (estilo Spotlight).
     ("ctrl+space", "toggle_search"),
@@ -593,7 +592,7 @@ mod tests {
         let ctrl_shift = Modifiers { ctrl: true, shift: true, ..Default::default() };
         assert_eq!(
             c.match_binding(ctrl_shift, sym("t")),
-            Some(Action::Launch("foot || x-terminal-emulator".into()))
+            Some(Action::Launch("mide-terminal".into()))
         );
         assert_eq!(
             c.match_binding(ctrl_shift, sym("space")),

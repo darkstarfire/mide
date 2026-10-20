@@ -2,7 +2,8 @@
 # Bateria de regressão da interface: janelas, controles, popups, barra e dock.
 #
 # Usa tests/scenario.sh (autoteste por MIDE_SELFTEST) e confere o log de cada
-# cenário. Precisa de sessão gráfica, foot e gnome-calculator.
+# cenário. Usa o Terminal e a Calculadora do mide (a gnome-calculator, se
+# instalada, testa também as janelas com cabeçalho do próprio app).
 #
 # Coordenadas (saída 1366x768, a tela mais comum no Brasil; barra superior de 28 px):
 # - A primeira janela nasce em (48, 76) e a segunda em (80, 108).
@@ -13,7 +14,7 @@
 #   maximiza; borda direita em x=408.
 # - Maximizada: área útil de y=28 até 2 px acima da dock (y=701).
 # - Dock padrão (ícones de 40 px) em (541, 703) 285x57: Launchpad em (568, 728),
-#   foot em (611, 728), calculadora em (654, 728), Configurações em (697, 728),
+#   Terminal em (611, 728), Calculadora em (654, 728), Configurações em (697, 728),
 #   Downloads em (756, 728) e Lixeira em (799, 728).
 # - Menu de contexto de um app aberto (clique direito): "Manter/Remover da Dock" em
 #   y=609, "Ocultar" em y=644 e "Encerrar" em y=670. App fechado: "Remover" em y=670.
@@ -89,19 +90,21 @@ check_count() {
     fi
 }
 
-FOOT='janela "foot" popups=0'
+TERMINAL="$PWD/target/debug/mide-terminal --title Terminal"
+CALCULATOR="$PWD/target/debug/mide-calculator"
+FOOT='janela "Terminal" popups=0'
 CALC='janela "Calculadora"'
 CALC_OPEN='janela "Calculadora"'
 
 echo "== barra superior"
-check "barra no topo, largura total" 'camada "mide-bar" em \(0, 0\) 1366x28' "400 list" foot
-check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "400 list" foot
+check "barra no topo, largura total" 'camada "mide-bar" em \(0, 0\) 1366x28' "400 list" "$TERMINAL"
+check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "400 list" "$TERMINAL"
 check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 430 list"
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
-check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" foot
-check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 180 14; 440 list" foot
-check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 238 14; 430 click 250 73; 480 list" foot
-check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" foot
+check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" "$TERMINAL"
+check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 213 14; 440 list" "$TERMINAL"
+check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 268 14; 430 click 280 73; 480 list" "$TERMINAL"
+check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" "$TERMINAL"
 check "janela Sobre redimensiona" 'janela "Sobre este computador" .*visível=580x400' "400 click 25 14; 430 click 100 49; 520 list; 530 press 587 435; 535 move 607 455; 540 move 627 475; 545 release 627 475; 580 list"
 check "relógio abre o calendário" "menu aberto: Calendar" "400 click 1331 14; 440 list"
 # Calendário (x 1078..1358): "Formato da hora…" em y=323; nas opções, "Segundos" em (1323, 213).
@@ -216,66 +219,71 @@ fi
 rm -rf "$NCFG" "$HIST"
 SCEN="$SCEN_PLAIN"
 
-echo "== janela com barra do mide (foot)"
-check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 103 61; 450 list" foot
-check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 103 61; 450 click 55 43; 500 list" foot
-check "duplo clique maximiza" "$FOOT posição=\(0, 58\)" "400 click 400 61; 404 click 400 61; 450 list" foot
-check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 405 move 450 111; 410 move 500 161; 415 release 500 161; 430 list" foot
-check "redimensionar pelo canto" "$FOOT posição=\(48, 76\) visível=650x450" "400 press 745 573; 405 move 720 548; 410 move 695 523; 415 release 695 523; 450 list" foot
-check "redimensionar pela esquerda" "$FOOT posição=\(88, 76\) visível=660x500" "400 press 50 330; 405 move 70 330; 410 move 90 330; 415 release 90 330; 450 list" foot
-check "fechar pelo vermelho" "janela fechada" "400 click 63 61" foot
-check "minimizar pelo amarelo" "janela minimizada" "400 click 83 61" foot
-check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" foot
+echo "== janela com barra do mide (Terminal)"
+check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 103 61; 450 list" "$TERMINAL"
+check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 103 61; 450 click 55 43; 500 list" "$TERMINAL"
+check "duplo clique maximiza" "$FOOT posição=\(0, 58\)" "400 click 400 61; 404 click 400 61; 450 list" "$TERMINAL"
+check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 405 move 450 111; 410 move 500 161; 415 release 500 161; 430 list" "$TERMINAL"
+check "redimensionar pelo canto" "$FOOT posição=\(48, 76\) visível=650x450" "400 press 745 573; 405 move 720 548; 410 move 695 523; 415 release 695 523; 450 list" "$TERMINAL"
+check "redimensionar pela esquerda" "$FOOT posição=\(88, 76\) visível=660x500" "400 press 50 330; 405 move 70 330; 410 move 90 330; 415 release 90 330; 450 list" "$TERMINAL"
+check "fechar pelo vermelho" "janela fechada" "400 click 63 61" "$TERMINAL"
+check "minimizar pelo amarelo" "janela minimizada" "400 click 83 61" "$TERMINAL"
+check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" "$TERMINAL"
 
-echo "== janela com cabeçalho do app (calculadora)"
-check "fechar pelo X do app" "janela fechada" "400 click 384 99" gnome-calculator
-check "arrastar pelo cabeçalho do app" "$CALC popups=0 posição=\(108, 116\)" "400 press 200 98; 405 move 230 118; 410 move 260 138; 415 release 260 138; 450 list" gnome-calculator
-check "maximizar com duplo clique no cabeçalho do app" "$CALC popups=0 posição=\(0, 28\) visível=1366x673" "400 click 300 99; 405 click 300 99; 460 list" gnome-calculator
-check "abrir menu do app" "$CALC popups=1" "400 click 345 99; 440 list" gnome-calculator
-check "fechar menu clicando fora" "$CALC popups=0" "400 click 345 99; 430 click 700 400; 460 list" gnome-calculator
-check "redimensionar pela borda" "$CALC .*visível=400x509" "400 press 405 330; 405 move 425 330; 410 move 445 330; 415 release 445 330; 460 list" gnome-calculator
+# Cabeçalho desenhado pelo próprio app (GTK): só com a gnome-calculator instalada.
+if command -v gnome-calculator >/dev/null; then
+    echo "== janela com cabeçalho do app (calculadora)"
+    check "fechar pelo X do app" "janela fechada" "400 click 384 99" gnome-calculator
+    check "arrastar pelo cabeçalho do app" "$CALC popups=0 posição=\(108, 116\)" "400 press 200 98; 405 move 230 118; 410 move 260 138; 415 release 260 138; 450 list" gnome-calculator
+    check "maximizar com duplo clique no cabeçalho do app" "$CALC popups=0 posição=\(0, 28\) visível=1366x673" "400 click 300 99; 405 click 300 99; 460 list" gnome-calculator
+    check "abrir menu do app" "$CALC popups=1" "400 click 345 99; 440 list" gnome-calculator
+    check "fechar menu clicando fora" "$CALC popups=0" "400 click 345 99; 430 click 700 400; 460 list" gnome-calculator
+    check "redimensionar pela borda" "$CALC .*visível=400x509" "400 press 405 330; 405 move 425 330; 410 move 445 330; 415 release 445 330; 460 list" gnome-calculator
+else
+    echo "pulo  janela com cabeçalho do app (gnome-calculator ausente)"
+fi
 
 echo "== várias janelas"
-check "cascata (segunda em 80,108)" "$CALC popups=0 posição=\(80, 108\)" "400 list" foot gnome-calculator
-check_last "clique traz para frente (topo = foot)" "janela \"foot\"" "400 click 700 300; 440 list" foot gnome-calculator
+check "cascata (segunda em 80,108)" "$CALC popups=0 posição=\(80, 108\)" "400 list" "$TERMINAL" "$CALCULATOR"
+check_last "clique traz para frente (topo = terminal)" "janela \"Terminal\"" "400 click 700 300; 440 list" "$TERMINAL" "$CALCULATOR"
 
 echo "== atalhos de janela (como no GNOME)"
-# Duas janelas foot: a de cima (80, 108) tem o foco. Alt+Tab escolhe a outra ao soltar o Alt.
-check "Alt+Tab foca a outra janela" "alternador: janela [0-9]+ escolhida" "500 combo alt+tab; 560 list" foot foot
-check "Super+← põe a janela na metade esquerda" "$FOOT posição=\(0, 58\) visível=683x643" "500 combo super+left; 560 list" foot
-check "Super+→ põe a janela na metade direita" "$FOOT posição=\(683, 58\) visível=683x643" "500 combo super+right; 560 list" foot
-check "Super+↑ maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "500 combo super+up; 560 list" foot
-check "Super+↓ restaura" "$FOOT posição=\(48, 76\) visível=700x500" "500 combo super+up; 560 combo super+down; 640 list" foot
-check "Super+H minimiza" "janela minimizada" "500 combo super+h; 560 list" foot
-check "Alt+F4 fecha a janela" "fechar janela pedido pelo atalho" "500 combo alt+f4; 560 list" foot
+# Dois Terminais: a de cima (80, 108) tem o foco. Alt+Tab escolhe a outra ao soltar o Alt.
+check "Alt+Tab foca a outra janela" "alternador: janela [0-9]+ escolhida" "500 combo alt+tab; 560 list" "$TERMINAL" "$TERMINAL"
+check "Super+← põe a janela na metade esquerda" "$FOOT posição=\(0, 58\) visível=683x643" "500 combo super+left; 560 list" "$TERMINAL"
+check "Super+→ põe a janela na metade direita" "$FOOT posição=\(683, 58\) visível=683x643" "500 combo super+right; 560 list" "$TERMINAL"
+check "Super+↑ maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "500 combo super+up; 560 list" "$TERMINAL"
+check "Super+↓ restaura" "$FOOT posição=\(48, 76\) visível=700x500" "500 combo super+up; 560 combo super+down; 640 list" "$TERMINAL"
+check "Super+H minimiza" "janela minimizada" "500 combo super+h; 560 list" "$TERMINAL"
+check "Alt+F4 fecha a janela" "fechar janela pedido pelo atalho" "500 combo alt+f4; 560 list" "$TERMINAL"
 
 echo "== saída redimensionada (janela do mide maximizada no host)"
-check "dock volta ao centro inferior" 'camada "mide-dock" em \(458, 735\) 285x57' "400 resize 1200 800; 420 list" foot
-check "barra acompanha a largura" 'camada "mide-bar" em \(0, 0\) 1200x28' "400 resize 1200 800; 420 list" foot
-check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x675" "400 click 103 61; 440 resize 1200 800; 460 list" foot
+check "dock volta ao centro inferior" 'camada "mide-dock" em \(458, 735\) 285x57' "400 resize 1200 800; 420 list" "$TERMINAL"
+check "barra acompanha a largura" 'camada "mide-bar" em \(0, 0\) 1200x28' "400 resize 1200 800; 420 list" "$TERMINAL"
+check "maximizada acompanha a nova área" "$FOOT posição=\(0, 58\) visível=1200x675" "400 click 103 61; 440 resize 1200 800; 460 list" "$TERMINAL"
 
 echo "== dock"
 check "clique no ícone abre o app" "nova janela criada" "400 click 611 728"
 # App em foco: o clique minimiza (como o "minimize or previews" do dash-to-dock); outro
 # clique traz de volta, sem abrir outra janela.
-check "clique no ícone do app em foco minimiza" "em foco: minimizado pela dock" "400 click 611 728; 480 list" foot
-check_count "clique de novo restaura, sem abrir outro" "janela \"foot\"" 1 "400 click 611 728; 460 click 611 728; 540 list" foot
-check "app em foco com duas janelas: o clique mostra as prévias" "em foco com 2 janelas: prévias" "400 click 611 728; 480 list" foot foot
-check_count "ctrl+clique abre nova instância" "janela \"foot\"" 2 "390 ctrl on; 400 click 611 728; 480 list" foot
-check "clique no ícone restaura minimizada" "janela restaurada" "400 combo super+h; 440 click 654 728" gnome-calculator
+check "clique no ícone do app em foco minimiza" "em foco: minimizado pela dock" "400 click 611 728; 480 list" "$TERMINAL"
+check_count "clique de novo restaura, sem abrir outro" "janela \"Terminal\"" 1 "400 click 611 728; 460 click 611 728; 540 list" "$TERMINAL"
+check "app em foco com duas janelas: o clique mostra as prévias" "em foco com 2 janelas: prévias" "400 click 611 728; 480 list" "$TERMINAL" "$TERMINAL"
+check_count "ctrl+clique abre nova instância" "janela \"Terminal\"" 2 "390 ctrl on; 400 click 611 728; 480 list" "$TERMINAL"
+check "clique no ícone restaura minimizada" "janela restaurada" "400 combo super+h; 440 click 654 728" "$CALCULATOR"
 check "Launchpad na dock abre o launcher" 'camada "mide-launcher"' "400 click 568 728; 470 list"
-check "abrir pela dock sai do ícone (lâmpada)" "abrindo pela dock: org.gnome.calculator" "400 click 654 728; 700 list"
+check "abrir pela dock sai do ícone (lâmpada)" "abrindo pela dock: mide-calculator" "400 click 654 728; 700 list"
 check "Configurações fixadas na dock abrem" 'janela "Configurações do Sistema"' "400 click 697 728; 560 list"
-check "menu do app: Ocultar" "janela minimizada" "400 rclick 611 728; 440 click 611 644" foot
-check "menu do app: Encerrar" "janela fechada" "400 rclick 611 728; 440 click 611 670" foot
-check "menu do app lista as janelas e foca a escolhida" "controle: janela [0-9]+ focada" "400 rclick 611 728; 440 click 611 513; 480 list" foot foot
-check "prévias ao parar o mouse no ícone" "prévias: 2 janela" "400 move 623 728; 405 move 611 728; 470 list" foot gnome-calculator foot
-check "clique na prévia escolhe a janela" "prévia: janela [0-9]+ escolhida" "400 move 623 728; 405 move 611 728; 470 move 520 598; 480 click 503 588; 520 list" foot gnome-calculator foot
+check "menu do app: Ocultar" "janela minimizada" "400 rclick 611 728; 440 click 611 644" "$TERMINAL"
+check "menu do app: Encerrar" "janela fechada" "400 rclick 611 728; 440 click 611 670" "$TERMINAL"
+check "menu do app lista as janelas e foca a escolhida" "controle: janela [0-9]+ focada" "400 rclick 611 728; 440 click 611 513; 480 list" "$TERMINAL" "$TERMINAL"
+check "prévias ao parar o mouse no ícone" "prévias: 2 janela" "400 move 623 728; 405 move 611 728; 470 list" "$TERMINAL" "$CALCULATOR" "$TERMINAL"
+check "clique na prévia escolhe a janela" "prévia: janela [0-9]+ escolhida" "400 move 623 728; 405 move 611 728; 470 move 520 598; 480 click 503 588; 520 list" "$TERMINAL" "$CALCULATOR" "$TERMINAL"
 # Com o Launchpad aberto, escolher uma janela nas prévias fecha o launcher.
-check_count "prévia com o launcher aberto: escolher fecha o launcher" 'camada "mide-launcher"' 0 "400 combo ctrl+shift+space; 460 move 623 728; 465 move 611 728; 530 move 520 598; 540 click 503 588; 600 list" foot gnome-calculator foot
-check "× da prévia fecha a janela" "prévia: fechar janela" "400 move 623 728; 405 move 611 728; 470 move 520 598; 475 move 600 533; 480 click 600 533; 540 list" foot gnome-calculator foot
-check "clique direito abre o menu do app" "menu de Foot aberto" "400 rclick 611 728; 470 list" foot
-check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 combo super+h; 420 click 654 728" gnome-calculator
+check_count "prévia com o launcher aberto: escolher fecha o launcher" 'camada "mide-launcher"' 0 "400 combo ctrl+shift+space; 460 move 623 728; 465 move 611 728; 530 move 520 598; 540 click 503 588; 600 list" "$TERMINAL" "$CALCULATOR" "$TERMINAL"
+check "× da prévia fecha a janela" "prévia: fechar janela" "400 move 623 728; 405 move 611 728; 470 move 520 598; 475 move 600 533; 480 click 600 533; 540 list" "$TERMINAL" "$CALCULATOR" "$TERMINAL"
+check "clique direito abre o menu do app" "menu de Terminal aberto" "400 rclick 611 728; 470 list" "$TERMINAL"
+check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 combo super+h; 420 click 654 728" "$CALCULATOR"
 
 echo "== dock: Downloads e Lixeira (pastas temporárias)"
 # Downloads de teste com 3 itens (o mais novo é "projeto") e uma Lixeira de teste.
@@ -355,20 +363,20 @@ echo "== dock: fixar, desafixar e reordenar (configuração temporária)"
 DOCKCFG="$(mktemp -d)"
 mkdir -p "$DOCKCFG/mide"
 dock_pins() { printf 'pinned = [%s]\n' "$1" > "$DOCKCFG/mide/dock.toml"; }
-FOOT_ID='"org.codeberg.dnkl.foot"'
-CALC_ID='"org.gnome.Calculator"'
+FOOT_ID='"mide-terminal"'
+CALC_ID='"mide-calculator"'
 # Atenção: "VAR=x funcao" não exporta VAR para os programas que a função chama.
 # Por isso a variável é exportada só nesta seção e restaurada no fim.
 OLD_XDG_CONFIG_HOME="${XDG_CONFIG_HOME-}"
 export XDG_CONFIG_HOME="$DOCKCFG"
 dock_pins "$FOOT_ID"
-check "app aberto não fixado entra na dock" 'camada "mide-dock" em \(554, 703\) 258x57' "500 list" gnome-calculator
+check "app aberto não fixado entra na dock" 'camada "mide-dock" em \(554, 703\) 258x57' "500 list" "$CALCULATOR"
 dock_pins "$FOOT_ID"
-check "menu do app: Manter na Dock" "dock salva: org.codeberg.dnkl.foot, org.gnome.Calculator" "500 rclick 683 728; 540 click 683 613" gnome-calculator
+check "menu do app: Manter na Dock" "dock salva: mide-terminal, mide-calculator" "500 rclick 683 728; 540 click 683 613" "$CALCULATOR"
 dock_pins "$FOOT_ID, $CALC_ID"
-check "menu do app: Remover da Dock" "dock salva: org.gnome.Calculator$" "300 rclick 632 728; 340 click 632 674"
+check "menu do app: Remover da Dock" "dock salva: mide-calculator$" "300 rclick 632 728; 340 click 632 674"
 dock_pins "$FOOT_ID, $CALC_ID"
-check "arrastar reordena" "dock salva: org.gnome.Calculator, org.codeberg.dnkl.foot" "300 press 632 728; 305 move 643 728; 310 move 658 728; 315 move 675 728; 320 release 675 728"
+check "arrastar reordena" "dock salva: mide-calculator, mide-terminal" "300 press 632 728; 305 move 643 728; 310 move 658 728; 315 move 675 728; 320 release 675 728"
 if [ -n "$OLD_XDG_CONFIG_HOME" ]; then export XDG_CONFIG_HOME="$OLD_XDG_CONFIG_HOME"; else unset XDG_CONFIG_HOME; fi
 rm -rf "$DOCKCFG"
 
@@ -513,7 +521,7 @@ else
     echo "FALHA ocultar inteligente: sem janela por cima, a dock fica à mostra"; FAIL=$((FAIL + 1))
 fi
 # Em 1366x768 a janela nova não chega na dock: maximizada, ela cobre a dock.
-if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "400 click 103 61; 700 list" -- foot 2>&1 | grep -q "dock escondida"; then
+if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "400 click 103 61; 700 list" -- "$TERMINAL" 2>&1 | grep -q "dock escondida"; then
     echo "ok    ocultar inteligente: janela sobre a dock a esconde"; PASS=$((PASS + 1))
 else
     echo "FALHA ocultar inteligente: janela sobre a dock a esconde"; FAIL=$((FAIL + 1))
@@ -718,7 +726,7 @@ SCENARIO_WAIT=34 check "Monitores: sem confirmar, volta ao anterior em 15 s" 'ca
 # Principal à direita da outra: a lâmpada (minimizar) vai até o ícone na dock dela,
 # e não para a tela da esquerda. Janela em (1968, 76): minimizar em (2003, 61).
 printf '[monitors]\nprimary = "HEADLESS-1"\n[monitors.outputs."HEADLESS-2"]\nx = 0\ny = 0\n[monitors.outputs."HEADLESS-1"]\nx = 1920\ny = 0\n' > "$MONCFG/mide/config.toml"
-check "principal à direita: a lâmpada vai até a dock dela" "alvo no ícone da dock em Point.*x: 2511" "300 click 2003 61; 400 list" foot
+check "principal à direita: a lâmpada vai até a dock dela" "alvo no ícone da dock em Point.*x: 2511" "300 click 2003 61; 400 list" "$TERMINAL"
 unset MIDE_HEADLESS_OUTPUTS
 printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$MONCFG/mide/config.toml"
 MIDE_HEADLESS_OUTPUTS=1920x1080 check "escala 125%: tela de 1920x1080 com 1536x864 pontos" 'tela HEADLESS-1 em \(0, 0\) 1536x864' "300 list"

@@ -135,7 +135,7 @@ const DRAG_THRESHOLD: f64 = 6.0;
 
 /// Apps fixados quando o usuário não definiu nenhum.
 /// Como no macOS, as Configurações do Sistema vêm fixadas.
-const DEFAULT_PINNED: &[&str] = &["org.codeberg.dnkl.foot", "org.gnome.Calculator", "mide-settings"];
+const DEFAULT_PINNED: &[&str] = &["mide-terminal", "mide-calculator", "mide-settings"];
 
 #[derive(Deserialize, Default)]
 #[serde(default)]

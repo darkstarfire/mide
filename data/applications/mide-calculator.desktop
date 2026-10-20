@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Calculadora
+Name[en]=Calculator
+Comment=Faça contas
+Exec=mide-calculator
+Icon=accessories-calculator
+Categories=Utility;Calculator;
+Keywords=conta;somar;calcular;
+StartupWMClass=mide-calculator
+OnlyShowIn=mide;
