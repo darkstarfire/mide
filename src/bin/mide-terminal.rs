@@ -1909,6 +1909,10 @@ fn draw_pane(
         };
         fill(pixmap, x0 + 1.0, py0 + y * cell.1 + 2.0, 3.0, cell.1 - 4.0, color);
     }
+    // Duas passadas: primeiro todos os fundos, depois todas as letras. Letras em
+    // itálico ou negrito passam um pouco da célula (para o lado e para baixo); se o
+    // fundo da célula seguinte viesse depois, ele apagaria esse pedaço ("d" virava "a").
+    let mut glyphs: Vec<(f32, f32, f32, (u64, usize), &mide::terminal::screen::Cell, Rgb, bool)> = Vec::new();
     for y in 0..term.rows() {
         let row = term.visible_row(y, scroll);
         let abs = term.visible_abs(y, scroll);
@@ -1957,33 +1961,36 @@ fn draw_pane(
             if bg != background {
                 fill(pixmap, px, py, width, cell.1, bg);
             }
-            if at_cursor {
-                let color = term.cursor_color();
-                match term.cursor_shape {
-                    CursorShape::Bar => fill(pixmap, px, py, 2.0, cell.1, color),
-                    CursorShape::Underline => fill(pixmap, px, py + cell.1 - 2.0, width, 2.0, color),
-                    CursorShape::Block => {}
-                }
+            glyphs.push((px, py, width, at, c, fg, at_cursor));
+        }
+    }
+    for (px, py, width, at, c, fg, at_cursor) in glyphs {
+        if c.c != ' ' && c.pen.attr & attr::HIDDEN == 0 {
+            let rgba = [fg[0], fg[1], fg[2], 255];
+            let (bold, italic) = (c.pen.attr & attr::BOLD != 0, c.pen.attr & attr::ITALIC != 0);
+            let mut buf = [0u8; 4];
+            let s = if c.combining.is_some() { c.text() } else { c.c.encode_utf8(&mut buf).to_string() };
+            text.draw_mono_styled(pixmap, &s, px, py + 1.0, font, rgba, bold, italic);
+        }
+        if at_cursor {
+            let color = term.cursor_color();
+            match term.cursor_shape {
+                CursorShape::Bar => fill(pixmap, px, py, 2.0, cell.1, color),
+                CursorShape::Underline => fill(pixmap, px, py + cell.1 - 2.0, width, 2.0, color),
+                CursorShape::Block => {}
             }
-            if c.c != ' ' && c.pen.attr & attr::HIDDEN == 0 {
-                let rgba = [fg[0], fg[1], fg[2], 255];
-                let (bold, italic) = (c.pen.attr & attr::BOLD != 0, c.pen.attr & attr::ITALIC != 0);
-                let mut buf = [0u8; 4];
-                let s = if c.combining.is_some() { c.text() } else { c.c.encode_utf8(&mut buf).to_string() };
-                text.draw_mono_styled(pixmap, &s, px, py + 1.0, font, rgba, bold, italic);
+        }
+        if link.is_some_and(|(a, b)| at >= a && at <= b) {
+            fill(pixmap, px, py + cell.1 - 2.0, width, 1.0, fg);
+        }
+        if c.pen.attr & (attr::UNDERLINE | attr::DOUBLE_UNDERLINE) != 0 {
+            fill(pixmap, px, py + cell.1 - 2.0, width, 1.0, fg);
+            if c.pen.attr & attr::DOUBLE_UNDERLINE != 0 {
+                fill(pixmap, px, py + cell.1 - 4.0, width, 1.0, fg);
             }
-            if link.is_some_and(|(a, b)| at >= a && at <= b) {
-                fill(pixmap, px, py + cell.1 - 2.0, width, 1.0, fg);
-            }
-            if c.pen.attr & (attr::UNDERLINE | attr::DOUBLE_UNDERLINE) != 0 {
-                fill(pixmap, px, py + cell.1 - 2.0, width, 1.0, fg);
-                if c.pen.attr & attr::DOUBLE_UNDERLINE != 0 {
-                    fill(pixmap, px, py + cell.1 - 4.0, width, 1.0, fg);
-                }
-            }
-            if c.pen.attr & attr::STRIKE != 0 {
-                fill(pixmap, px, py + cell.1 / 2.0, width, 1.0, fg);
-            }
+        }
+        if c.pen.attr & attr::STRIKE != 0 {
+            fill(pixmap, px, py + cell.1 / 2.0, width, 1.0, fg);
         }
     }
     draw_images(pixmap, pane, (x0, y0, w, h), cell, top_abs, bottom_abs);
