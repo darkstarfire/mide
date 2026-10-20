@@ -645,4 +645,4 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Configurações → Monitores com os dois monitores: os dois acendem; arrastar a segunda tela para o outro lado; trocar a principal (barra e dock mudam); trocar resolução/frequência/escala e "Manter"; "Reverter" ou esperar 15 s volta ao anterior; desconectar um cabo com o mide aberto.
 - Print: seleção, janela, tela inteira; desenhar seta/círculo/quadrado nas 6 cores; colar a imagem num app.
 - VS Code pelo XWayland (com o `xwayland-satellite`): a barra mostra os menus dele.
-- Efeitos: desligar "Animação dos menus" e "Transições no Arquivos" e conferir que somem.
+- Efeitos: desligar "Animação dos menus" e "Transições suaves" e conferir que somem.

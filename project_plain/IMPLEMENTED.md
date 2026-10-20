@@ -889,7 +889,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ### Animações (B14), cada uma com interruptor em Efeitos
 - **Animação dos menus** (`menu_animation`): menus da barra, da dock, dos apps (popups) e os de contexto do mide-ui entram esmaecendo e descendo 6 px em 120 ms; o vidro atrás deles esmaece junto.
-- **Transições no Arquivos** (`view_animation`): itens da pasta que abre na lista aparecem em cascata; trocar entre ícones e lista esmaece o conteúdo novo.
+- **Transições suaves** (`transitions`, antes "Transições no Arquivos"): itens da pasta que abre na lista aparecem em cascata; trocar entre ícones e lista esmaece o conteúdo novo.
 - mide-ui: quadros no ritmo da tela (16 ms) enquanto algo anima, 40 ms parado.
 
 ### Dock (B16) e área de transferência
@@ -908,3 +908,11 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **`restart all` travava:** depois de publicar o ambiente, o mide esperava o systemd reiniciar o portal, e o portal, ao subir, esperava o mide. Agora o reinício do portal é pedido sem esperar (`--no-block`).
 - **Captura aberta pelo launcher saía com o launcher na imagem:** espera o launcher fechar antes de capturar.
 - **Captura mais leve:** a imagem escurecida é feita uma vez; cada quadro só copia bytes (antes misturava a tela inteira a cada movimento do mouse). Medido em 1920x1080: 14–19 ms por quadro. Mostra o tamanho da área escolhida e o painel não corta mais o botão Copiar.
+
+## Monitores do tamanho de verdade, confirmação em janelinha, pasta do launcher com transição e lâmpada na tela certa
+
+- **Arranjo em milímetros:** as telas aparecem do tamanho físico. Vale o que o monitor informa quando é plausível; valores que são só proporção (como `160x90 mm`) são ignorados e o tamanho é estimado pela resolução. Nova opção **"Tamanho da tela"** (Automático, 13,3" a 43") para corrigir monitores que não informam (`diagonal` no `[monitors.outputs."NOME"]`). As telas são desenhadas a partir de quem encosta em quem (densidades diferentes ficam coladas no desenho) e, ao soltar, o encaixe em milímetros vira a posição lógica (`physical_layout`, `snap_physical`, com testes).
+- **"Manter estas configurações?" em janelinha (modal)**, por cima da janela inteira, como os diálogos do Arquivos.
+- **Pasta do launcher abre e fecha com transição** (cresce do ícone até o lugar, esmaecendo; fecha voltando ao ícone), como o launcher abrindo. Preparada uma vez (grade escurecida e o painel sobre fundo transparente); cada quadro leva 3,5–4,7 ms em 1366x768.
+- **"Transições suaves"** em Efeitos (`[effects] transitions`): agrupa a pasta do launcher e as transições do Arquivos (antes "Transições no Arquivos").
+- **Lâmpada na tela certa com a tela principal à direita:** a posição do ícone na dock não somava a posição da tela da dock; minimizar e abrir pela dock saíam da outra tela. Corrigido também o alvo sem ícone e o `workarea` (agora relativo à tela principal; com a principal à direita, os ícones da área de trabalho sairiam da camada).

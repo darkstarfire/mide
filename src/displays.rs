@@ -16,7 +16,13 @@ pub struct Display {
     pub scale: f64,
     pub enabled: bool,
     pub primary: bool,
+    /// Diagonal em polegadas escolhida pelo usuário (`diagonal` no config), para telas
+    /// que não informam o tamanho de verdade.
+    pub diagonal: Option<f64>,
 }
+
+/// Diagonais oferecidas em "Tamanho da tela" (polegadas).
+pub const DIAGONALS: [f64; 12] = [13.3, 14.0, 15.6, 17.0, 19.0, 21.5, 23.8, 24.0, 27.0, 32.0, 34.0, 43.0];
 
 /// Escalas oferecidas.
 pub const SCALES: [f64; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
@@ -37,6 +43,7 @@ pub fn parse_line(line: &str) -> Option<Display> {
         enabled: f[5] == "ligada",
         primary: f[6] == "principal",
         modes: f[7].split_whitespace().filter_map(parse_mode).collect(),
+        diagonal: None,
     })
 }
 
@@ -66,6 +73,36 @@ impl Display {
         rates.sort_by(|a, b| b.total_cmp(a));
         rates.dedup_by(|a, b| (*a - *b).abs() < 0.5);
         rates
+    }
+
+    /// Tamanho que o monitor informa (`530x300 mm`), se for de verdade: alguns
+    /// monitores e TVs informam só a proporção (`160x90`, `16x9`) ou nada.
+    pub fn reported_mm(&self) -> Option<(f32, f32)> {
+        let text = self.description.trim().strip_suffix("mm")?.trim();
+        let (w, h) = text.split_once('x')?;
+        let (w, h): (f32, f32) = (w.trim().parse().ok()?, h.trim().parse().ok()?);
+        let aspect_only = [(160.0, 90.0), (160.0, 100.0), (16.0, 9.0), (16.0, 10.0), (4.0, 3.0), (5.0, 4.0)].contains(&(w, h));
+        // Plausível: maior que 10 cm de largura e com a proporção da resolução.
+        let (pw, ph) = (self.current.0.max(1) as f32, self.current.1.max(1) as f32);
+        let same_shape = ((w / h) / (pw / ph) - 1.0).abs() < 0.2;
+        (!aspect_only && w >= 100.0 && h >= 60.0 && same_shape).then_some((w, h))
+    }
+
+    /// Tamanho físico para o arranjo, em milímetros: pela diagonal escolhida, pelo que
+    /// o monitor informa ou, sem nada confiável, estimado pela resolução (96 pontos por
+    /// polegada).
+    pub fn physical_mm(&self) -> (f32, f32) {
+        let (pw, ph) = (self.current.0.max(1) as f32, self.current.1.max(1) as f32);
+        if let Some(d) = self.diagonal.filter(|d| *d > 1.0) {
+            let diag_px = (pw * pw + ph * ph).sqrt();
+            let mm_per_px = d as f32 * 25.4 / diag_px;
+            return (pw * mm_per_px, ph * mm_per_px);
+        }
+        if let Some(mm) = self.reported_mm() {
+            return mm;
+        }
+        let (lw, lh) = self.logical_size();
+        (lw as f32 * 25.4 / 96.0, lh as f32 * 25.4 / 96.0)
     }
 
     /// Tamanho no arranjo (pixels lógicos: o modo dividido pela escala).
@@ -108,6 +145,9 @@ pub fn write_monitors(text: &str, displays: &[Display]) -> Result<String, String
         }
         t["mode"] = value(format!("{}x{}@{}", d.current.0, d.current.1, trim_hz(d.current.2)));
         t["scale"] = value(d.scale);
+        if let Some(diagonal) = d.diagonal {
+            t["diagonal"] = value(diagonal);
+        }
         if d.enabled {
             t["x"] = value((d.position.0 - min_x) as i64);
             t["y"] = value((d.position.1 - min_y) as i64);
@@ -134,7 +174,21 @@ pub fn save(displays: &[Display]) -> Result<(), String> {
 
 /// Telas que o compositor informa agora.
 pub fn load() -> Vec<Display> {
-    crate::control_client::ask_compositor("outputs").unwrap_or_default().iter().filter_map(|l| parse_line(l)).collect()
+    let mut list: Vec<Display> =
+        crate::control_client::ask_compositor("outputs").unwrap_or_default().iter().filter_map(|l| parse_line(l)).collect();
+    // A diagonal escolhida fica só no config (o compositor não precisa dela).
+    let text = crate::settings_file::config_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    if let Ok(doc) = text.parse::<DocumentMut>() {
+        for d in &mut list {
+            d.diagonal = doc
+                .get("monitors")
+                .and_then(|m| m.get("outputs"))
+                .and_then(|o| o.get(&d.name))
+                .and_then(|t| t.get("diagonal"))
+                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|n| n as f64)));
+        }
+    }
+    list
 }
 
 fn trim_hz(hz: f64) -> String {
@@ -179,5 +233,20 @@ mod tests {
         assert_eq!(doc["monitors"]["outputs"]["eDP-1"]["y"].as_integer(), Some(312));
         assert_eq!(doc["monitors"]["outputs"]["eDP-1"]["scale"].as_float(), Some(1.25));
         assert_eq!(doc["monitors"]["outputs"]["DP-1"]["mode"].as_str(), Some("1920x1080@60"));
+    }
+
+    #[test]
+    fn tamanho_fisico_da_tela() {
+        let mut d = parse_line(LINE).unwrap();
+        // 530x300 mm informados, com a proporção de 1920x1080: valem.
+        assert_eq!(d.physical_mm(), (530.0, 300.0));
+        // 160x90 é só a proporção: estima pela resolução (96 pontos por polegada).
+        d.description = "160x90 mm".into();
+        let (w, _) = d.physical_mm();
+        assert!((w - 508.0).abs() < 1.0, "w = {w}");
+        // Com a diagonal escolhida (27"): 597,7 mm de largura.
+        d.diagonal = Some(27.0);
+        let (w, h) = d.physical_mm();
+        assert!((w - 597.7).abs() < 1.0 && (h - 336.2).abs() < 1.0, "{w}x{h}");
     }
 }

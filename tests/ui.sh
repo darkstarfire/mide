@@ -670,8 +670,9 @@ printf '[monitors.outputs."HEADLESS-2"]\nenabled = false\n' > "$MONCFG/mide/conf
 check_count "tela desligada fica de fora" 'tela HEADLESS' 1 "300 list"
 : > "$MONCFG/mide/config.toml"
 # Configurações → Monitores: HEADLESS-2 no arranjo em (654, 255); "Usar como tela
-# principal" em (404, 526); "Aplicar" em (430, 422); "Manter" em (446, 482).
-check "Monitores: tornar principal e manter" 'camada "mide-bar" em \(1366, 0\) 1920x28' "300 click 654 255; 330 click 404 526; 360 click 430 422; 460 click 446 482; 520 list" "$SETTINGS displays"
+# principal" em (404, 526); "Aplicar" em (430, 422); na janelinha de confirmação,
+# "Manter" em (426, 289).
+check "Monitores: tornar principal e manter" 'camada "mide-bar" em \(1366, 0\) 1920x28' "300 click 654 255; 330 click 404 526; 360 click 430 422; 460 click 426 289; 520 list" "$SETTINGS displays"
 if grep -q 'primary = "HEADLESS-2"' "$MONCFG/mide/config.toml"; then
     echo "ok    Monitores grava a tela principal no config.toml"; PASS=$((PASS + 1))
 else
@@ -680,6 +681,10 @@ fi
 : > "$MONCFG/mide/config.toml"
 # Sem confirmar, volta sozinho em 15 s (a barra volta para a primeira tela).
 SCENARIO_WAIT=34 check "Monitores: sem confirmar, volta ao anterior em 15 s" 'camada "mide-bar" em \(0, 0\) 1366x28' "300 click 654 255; 330 click 404 526; 360 click 430 422; 1500 list" "$SETTINGS displays"
+# Principal à direita da outra: a lâmpada (minimizar) vai até o ícone na dock dela,
+# e não para a tela da esquerda. Janela em (1968, 76): minimizar em (2003, 61).
+printf '[monitors]\nprimary = "HEADLESS-1"\n[monitors.outputs."HEADLESS-2"]\nx = 0\ny = 0\n[monitors.outputs."HEADLESS-1"]\nx = 1920\ny = 0\n' > "$MONCFG/mide/config.toml"
+check "principal à direita: a lâmpada vai até a dock dela" "alvo no ícone da dock em Point.*x: 2511" "300 click 2003 61; 400 list" foot
 unset MIDE_HEADLESS_OUTPUTS
 printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$MONCFG/mide/config.toml"
 MIDE_HEADLESS_OUTPUTS=1920x1080 check "escala 125%: tela de 1920x1080 com 1536x864 pontos" 'tela HEADLESS-1 em \(0, 0\) 1536x864' "300 list"

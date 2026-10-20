@@ -168,6 +168,20 @@ struct Drag {
 /// Durações das animações.
 const CLOSE_MS: f32 = 1000.0;
 const PAGE_MS: f32 = 320.0;
+/// Pasta abrindo ou fechando (cresce a partir do ícone, como o launcher abrindo).
+const FOLDER_MS: f32 = 240.0;
+
+/// Transição da pasta (`[effects] transitions`): a grade sem a pasta e a tela com a
+/// pasta aberta são desenhadas uma vez; cada quadro copia a grade e desenha o painel
+/// em escala, saindo do ícone da pasta.
+struct FolderAnim {
+    start: std::time::Instant,
+    opening: bool,
+    folder: usize,
+    /// Ícone da pasta na grade (de onde o painel sai e para onde volta).
+    origin: (f32, f32, f32, f32),
+    frames: Option<(Pixmap, Pixmap, (f32, f32, f32, f32))>,
+}
 const POP_MS: f32 = 340.0;
 
 /// Desaceleração suave (cúbica).
@@ -287,6 +301,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         started: Some(started),
         closing: None,
         page_anim: None,
+        folder_anim: None,
+        panel_only: false,
         last_frame: None,
         scaled: HashMap::new(),
         warmed: false,
@@ -446,6 +462,9 @@ struct Launcher {
     /// Animações: fechar (pedido ao compositor), trocar de página e a pasta surgindo.
     closing: Option<std::time::Instant>,
     page_anim: Option<PageAnim>,
+    folder_anim: Option<FolderAnim>,
+    /// Desenhando só o painel da pasta, sobre fundo transparente (para a transição).
+    panel_only: bool,
     /// Último quadro mostrado, no formato da tela (a página antiga do carrossel).
     last_frame: Option<Vec<u8>>,
     /// Ícones já reduzidos, por (app, tamanho×4).
@@ -691,7 +710,30 @@ impl Launcher {
     /// Alguma animação em andamento (pede quadros seguidos). Abrir e fechar são
     /// animados pelo compositor, na GPU: aqui só o carrossel e a pasta surgindo.
     fn animating(&self) -> bool {
-        self.page_anim.is_some() || self.pop.is_some_and(|(_, t)| Self::elapsed_ms(t) < POP_MS)
+        self.page_anim.is_some() || self.folder_anim.is_some() || self.pop.is_some_and(|(_, t)| Self::elapsed_ms(t) < POP_MS)
+    }
+
+    /// Ícone da pasta `f` na grade principal (página atual), para a transição.
+    fn folder_icon_rect(&self, f: usize) -> Option<(f32, f32, f32, f32)> {
+        let grid = self.grid();
+        let index = self.entries().iter().position(|e| matches!(e, Entry::Folder(x) if *x == f))?;
+        let slot = index % grid.per_page();
+        let (cx, cy) = grid.cell(slot);
+        Some(((cx + (grid.cell_w - grid.icon) / 2) as f32, (cy + 8) as f32, grid.icon as f32, grid.icon as f32))
+    }
+
+    /// Começa a transição da pasta, se ligada em Configurações → Efeitos.
+    fn start_folder_anim(&mut self, folder: usize, opening: bool) {
+        if !mide::settings_file::effect("transitions") {
+            return;
+        }
+        // O ícone é procurado na grade principal (sem a pasta aberta).
+        let open = self.open_folder.take();
+        let origin = self.folder_icon_rect(folder);
+        self.open_folder = open;
+        if let Some(origin) = origin {
+            self.folder_anim = Some(FolderAnim { start: std::time::Instant::now(), opening, folder, origin, frames: None });
+        }
     }
 
     fn current_page(&self) -> usize {
@@ -719,6 +761,7 @@ impl Launcher {
             }
             Some(Entry::Folder(f)) => {
                 tracing::info!("pasta {} aberta", self.folders[f].name);
+                self.start_folder_anim(f, true);
                 self.editing = None;
                 self.open_folder = Some(f);
                 self.folder_page = 0;
@@ -733,6 +776,9 @@ impl Launcher {
     fn close_folder(&mut self) {
         self.commit_rename();
         self.page_anim = None;
+        if let Some(f) = self.open_folder {
+            self.start_folder_anim(f, false);
+        }
         if self.open_folder.take().is_some() {
             tracing::info!("pasta fechada");
             self.folder_rect = None;
@@ -785,6 +831,15 @@ impl Launcher {
         if self.width == 0 || self.height == 0 {
             return;
         }
+        // Pasta abrindo ou fechando.
+        if let Some(t) = self.folder_anim.as_ref().map(|a| Self::elapsed_ms(a.start) / FOLDER_MS) {
+            if t < 1.0 {
+                self.present_folder_anim(t);
+                tracing::debug!("quadro do launcher (pasta): {:.1} ms", frame_start.elapsed().as_secs_f32() * 1000.0);
+                return;
+            }
+            self.folder_anim = None;
+        }
         // Carrossel: as duas páginas são desenhadas uma vez, já no formato final, e
         // cada quadro só copia as linhas deslocadas (sem desenhar nada).
         let sliding = self.page_anim.as_ref().map(|a| (a.folder, a.from, a.to, Self::elapsed_ms(a.start) / PAGE_MS));
@@ -820,6 +875,59 @@ impl Launcher {
             tracing::info!("launcher desenhado em {} ms", started.elapsed().as_millis());
         }
         tracing::debug!("quadro do launcher: {:.1} ms", frame_start.elapsed().as_secs_f32() * 1000.0);
+    }
+
+    /// Um quadro da transição da pasta: a grade, o escurecido e o painel (com o nome)
+    /// crescendo do ícone até o lugar dele (ou voltando, ao fechar).
+    fn present_folder_anim(&mut self, t: f32) {
+        if self.folder_anim.as_ref().is_some_and(|a| a.frames.is_none()) {
+            let Some(folder) = self.folder_anim.as_ref().map(|a| a.folder) else {
+                return;
+            };
+            let current = self.open_folder;
+            self.open_folder = None;
+            let mut grid = self.paint_scene(None, false);
+            // A grade já escurecida (como com a pasta aberta), feita uma vez só.
+            let mut dim = Paint::default();
+            dim.set_color(rgba(0, 0, 0, 60));
+            if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, grid.width() as f32, grid.height() as f32) {
+                grid.fill_rect(rect, &dim, Transform::identity(), None);
+            }
+            self.open_folder = Some(folder);
+            self.panel_only = true;
+            let open = self.paint_scene(None, false);
+            self.panel_only = false;
+            // Painel e o nome em cima dele.
+            let panel = self.folder_rect.map(|(x, y, w, h)| (x, y - 56.0, w, h + 56.0)).unwrap_or((0.0, 0.0, 1.0, 1.0));
+            self.open_folder = current;
+            if let Some(anim) = self.folder_anim.as_mut() {
+                anim.frames = Some((grid, open, panel));
+            }
+        }
+        let Some(anim) = self.folder_anim.as_ref() else {
+            return;
+        };
+        let Some((grid, open, panel)) = anim.frames.as_ref() else {
+            return;
+        };
+        let eased = 1.0 - (1.0 - t).powi(3);
+        let e = if anim.opening { eased } else { 1.0 - eased };
+        let mut out = grid.clone();
+        // O painel sai do ícone: tamanho e posição entre o ícone e o lugar final.
+        let (px, py, pw, ph) = *panel;
+        let (ox, oy, ow, oh) = anim.origin;
+        let s = 0.25 + 0.75 * e;
+        let (cx0, cy0) = (ox + ow / 2.0, oy + oh / 2.0);
+        let (cx1, cy1) = (px + pw / 2.0, py + ph / 2.0);
+        let (cx, cy) = (cx0 + (cx1 - cx0) * e, cy0 + (cy1 - cy0) * e);
+        if let Some(crop) = tiny_skia::IntRect::from_xywh(px.max(0.0) as i32, py.max(0.0) as i32, pw as u32, ph as u32).and_then(|r| open.clone_rect(r)) {
+            // Quase no tamanho final, sem filtro (mais barato e já nítido).
+            let quality = if s > 0.97 { tiny_skia::FilterQuality::Nearest } else { tiny_skia::FilterQuality::Bilinear };
+            let paint = tiny_skia::PixmapPaint { opacity: e.clamp(0.0, 1.0), quality, ..Default::default() };
+            let transform = Transform::from_row(s, 0.0, 0.0, s, cx - pw * s / 2.0, cy - ph * s / 2.0);
+            out.draw_pixmap(0, 0, crop.as_ref(), &paint, transform, None);
+        }
+        self.present(&out);
     }
 
     /// Parado e com os ícones carregados: desenha uma vez, fora da tela, as outras
@@ -919,8 +1027,10 @@ impl Launcher {
         let (w, h) = (self.width, self.height);
         let mut pixmap = Pixmap::new(w, h).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         // Véu leve: o papel de parede (desfocado pelo compositor) continua aparecendo.
-        mide::ui::draw::fill_vertical_fast(&mut pixmap, [8, 10, 30, 95], [6, 6, 20, 130]);
-        self.draw_search(&mut pixmap);
+        if !self.panel_only {
+            mide::ui::draw::fill_vertical_fast(&mut pixmap, [8, 10, 30, 95], [6, 6, 20, 130]);
+            self.draw_search(&mut pixmap);
+        }
 
         // Grade principal. Com uma pasta aberta, ela some (no macOS fica desfocada
         // atrás do painel) e só o painel da pasta aparece.
@@ -943,10 +1053,12 @@ impl Launcher {
         self.folder_rect = None;
         self.title_rect = None;
         if let Some(f) = self.open_folder {
-            let mut dim = Paint::default();
-            dim.set_color(rgba(0, 0, 0, 60));
-            if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, w as f32, h as f32) {
-                pixmap.fill_rect(rect, &dim, Transform::identity(), None);
+            if !self.panel_only {
+                let mut dim = Paint::default();
+                dim.set_color(rgba(0, 0, 0, 60));
+                if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, w as f32, h as f32) {
+                    pixmap.fill_rect(rect, &dim, Transform::identity(), None);
+                }
             }
             let fg = self.folder_grid();
             let pw = (fg.cols * fg.cell_w + 48) as f32;

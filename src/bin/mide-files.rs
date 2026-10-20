@@ -62,7 +62,7 @@ struct Files {
     /// Lista: pastas abertas na própria lista e o que há dentro delas.
     expanded: HashSet<PathBuf>,
     children: HashMap<PathBuf, Vec<Entry>>,
-    /// Transições (`[effects] view_animation`): pasta que acabou de abrir na lista e
+    /// Transições (`[effects] transitions`, "Transições suaves"): pasta que acabou de abrir na lista e
     /// troca entre ícones e lista, com o momento em que começaram.
     expanding: Option<(PathBuf, std::time::Instant)>,
     view_switched: Option<std::time::Instant>,
@@ -210,7 +210,7 @@ impl Files {
             sort_list(&mut list, self.sort);
             self.children.insert(path.to_path_buf(), list);
             self.expanded.insert(path.to_path_buf());
-            if mide::settings_file::effect("view_animation") {
+            if mide::settings_file::effect("transitions") {
                 self.expanding = Some((path.to_path_buf(), std::time::Instant::now()));
             }
             tracing::info!("pasta aberta na lista: {}", path.display());
@@ -594,7 +594,7 @@ impl Files {
             self.go_forward();
         }
         if let Some(list) = toggle {
-            if list != self.list_view && mide::settings_file::effect("view_animation") {
+            if list != self.list_view && mide::settings_file::effect("transitions") {
                 self.view_switched = Some(std::time::Instant::now());
             }
             self.list_view = list;

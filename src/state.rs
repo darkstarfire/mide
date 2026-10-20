@@ -961,7 +961,10 @@ impl State {
         let map = layer_map_for_output(&output);
         let dock = map.layers().find(|l| l.namespace() == "mide-dock")?;
         let geo = map.layer_geometry(dock)?;
-        Some(smithay::utils::Rectangle::new(geo.loc + icon.loc, icon.size))
+        // Em coordenadas globais: a dock fica na tela principal, que pode não ser a
+        // primeira (com a principal à direita, a lâmpada sairia da tela errada).
+        let screen = self.space.output_geometry(&output)?;
+        Some(smithay::utils::Rectangle::new(screen.loc + geo.loc + icon.loc, icon.size))
     }
 
     /// Depois de a saída mudar de tamanho: reorganiza as camadas (a dock volta ao

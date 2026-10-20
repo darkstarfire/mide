@@ -306,10 +306,15 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // só some nesse caso.)
         Some("dock_covered") => if state.dock_covered() { "yes\n".into() } else { "no\n".into() },
         // Área útil (sem a barra e a dock reservada): `x y largura altura`.
-        Some("workarea") => match state.usable_area() {
-            Some(r) => format!("{} {} {} {}\n", r.loc.x, r.loc.y, r.size.w, r.size.h),
-            None => "none\n".into(),
-        },
+        // Área útil da tela principal, relativa a ela (a área de trabalho usa para pôr os
+        // ícones dentro da própria camada).
+        Some("workarea") => {
+            let screen = state.primary_output().and_then(|o| state.space.output_geometry(&o)).map(|g| g.loc).unwrap_or_default();
+            match state.usable_area() {
+                Some(r) => format!("{} {} {} {}\n", r.loc.x - screen.x, r.loc.y - screen.y, r.size.w, r.size.h),
+                None => "none\n".into(),
+            }
+        }
         // Abre ou fecha o buscador.
         Some("search") => {
             state.toggle_search();

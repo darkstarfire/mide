@@ -67,7 +67,7 @@ const EFFECTS: &[(&str, &str, &str)] = &[
     ("liquid_glass", "Vidro líquido", "Dock com bordas que refratam a luz e reflexo, sobre o desfoque"),
     ("panel_glass", "Vidro em barras e menus", "Barra superior, menus, notificações e prévias das janelas com vidro"),
     ("menu_animation", "Animação dos menus", "Menus e listas aparecem com um esmaecer curto"),
-    ("view_animation", "Transições no Arquivos", "Abrir pastas na lista e trocar entre ícones e lista com transição suave"),
+    ("transitions", "Transições suaves", "Pastas do launcher abrindo e fechando, pastas na lista do Arquivos e troca entre ícones e lista"),
 ];
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela.
@@ -94,7 +94,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Vidro líquido", "efeitos vidro liquid glass transparencia", Section::Effects),
     ("Vidro em barras e menus", "efeitos vidro barra menus notificacoes transparencia", Section::Effects),
     ("Animação dos menus", "efeitos animacao menus contexto esmaecer", Section::Effects),
-    ("Transições no Arquivos", "efeitos animacao arquivos lista icones pastas transicao", Section::Effects),
+    ("Transições suaves", "efeitos animacao transicao suave launcher pastas arquivos lista icones", Section::Effects),
     ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
     ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
     ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
@@ -332,7 +332,6 @@ impl Settings {
     /// resolução, frequência e escala. "Aplicar" grava e o compositor muda na hora;
     /// sem confirmar em 15 s, volta ao que era (se a tela ficar preta, basta esperar).
     fn displays(&mut self, ui: &mut Ui) {
-        const KEEP_SECS: u64 = 15;
         ui.title("Monitores");
         if self.screens_applied.is_empty() {
             self.screens_applied = displays::load();
@@ -349,7 +348,7 @@ impl Settings {
             .iter()
             .map(|&i| {
                 let d = &self.screens[i];
-                ArrangedScreen { name: d.name.clone(), pos: d.position, size: d.logical_size(), primary: d.primary }
+                ArrangedScreen { name: d.name.clone(), pos: d.position, size: d.logical_size(), primary: d.primary, mm: d.physical_mm() }
             })
             .collect();
         let mut pick = on.iter().position(|&i| i == self.screen_selected).unwrap_or(0);
@@ -387,36 +386,6 @@ impl Settings {
             });
         }
 
-        // Confirmação: manter ou voltar ao que era (sozinho, depois de 15 s). Fica
-        // logo abaixo do arranjo, à vista.
-        if let Some((at, previous)) = self.screens_revert.clone() {
-            let left = KEEP_SECS.saturating_sub(at.elapsed().as_secs());
-            let mut keep = false;
-            let mut revert = left == 0;
-            ui.card(|ui| {
-                ui.label("Manter estas configurações?");
-                ui.note(&format!("Voltando às anteriores em {left} s."));
-                ui.row(|ui| {
-                    revert |= ui.button("Reverter").clicked();
-                    keep = ui.primary_button("Manter").clicked();
-                });
-            });
-            if keep {
-                tracing::info!("monitores: mantido");
-                self.screens_revert = None;
-                self.screens_applied = displays::load();
-                self.screens = self.screens_applied.clone();
-            } else if revert {
-                tracing::info!("monitores: revertido");
-                if displays::save(&previous).is_ok() {
-                    ask_compositor("outputs apply");
-                }
-                self.screens_revert = None;
-                self.screens_applied = Vec::new();
-            } else {
-                ui.wake_after(Duration::from_millis(500));
-            }
-        }
         let names: Vec<String> = self
             .screens
             .iter()
@@ -464,12 +433,60 @@ impl Settings {
             if ui.dropdown("Frequência", &labels, &mut rate_i).changed() {
                 d.current.2 = rates[rate_i];
             }
+            // Tamanho físico (o arranjo desenha as telas do tamanho de verdade): o que o
+            // monitor informa, ou a diagonal escolhida para quem não informa direito.
+            let auto = match d.reported_mm() {
+                Some((w, h)) => format!("Automático ({:.0}\")", ((w * w + h * h).sqrt() / 25.4).round()),
+                None => "Automático (estimado)".to_string(),
+            };
+            let mut sizes_label = vec![auto];
+            sizes_label.extend(displays::DIAGONALS.iter().map(|d| format!("{}\"", d.to_string().replace('.', ","))));
+            let mut diag_i = d.diagonal.and_then(|v| displays::DIAGONALS.iter().position(|x| (x - v).abs() < 0.05)).map(|i| i + 1).unwrap_or(0);
+            if ui.dropdown("Tamanho da tela", &sizes_label, &mut diag_i).changed() {
+                d.diagonal = (diag_i > 0).then(|| displays::DIAGONALS[diag_i - 1]);
+            }
             let mut scale_i = displays::SCALES.iter().position(|s| (s - d.scale).abs() < 0.01).unwrap_or(0);
             let labels: Vec<String> = displays::SCALES.iter().map(|s| displays::scale_label(*s)).collect();
             if ui.dropdown("Escala", &labels, &mut scale_i).changed() {
                 d.scale = displays::SCALES[scale_i];
             }
         });
+    }
+
+    /// Depois de aplicar as telas: janelinha (modal) "Manter estas configurações?", por
+    /// cima da janela inteira. Sem confirmar em 15 s, volta ao que era (se a tela
+    /// ficar preta, basta esperar).
+    fn displays_confirm(&mut self, ui: &mut Ui) {
+        const KEEP_SECS: u64 = 15;
+        let Some((at, previous)) = self.screens_revert.clone() else {
+            return;
+        };
+        let left = KEEP_SECS.saturating_sub(at.elapsed().as_secs());
+        let mut keep = false;
+        let mut revert = left == 0;
+        ui.modal(360.0, |ui| {
+            ui.heading("Manter estas configurações?");
+            ui.note(&format!("As telas voltam ao que eram em {left} s."));
+            ui.row(|ui| {
+                revert |= ui.button("Reverter").clicked();
+                keep = ui.primary_button("Manter").clicked();
+            });
+        });
+        if keep {
+            tracing::info!("monitores: mantido");
+            self.screens_revert = None;
+            self.screens_applied = displays::load();
+            self.screens = self.screens_applied.clone();
+        } else if revert {
+            tracing::info!("monitores: revertido");
+            if displays::save(&previous).is_ok() {
+                ask_compositor("outputs apply");
+            }
+            self.screens_revert = None;
+            self.screens_applied = Vec::new();
+        } else {
+            ui.wake_after(Duration::from_millis(500));
+        }
     }
 
     fn sound(&mut self, ui: &mut Ui) {
@@ -1011,6 +1028,10 @@ impl App for Settings {
                 Section::About => self.about(ui),
             }
         });
+        // Confirmação das telas por cima da janela inteira.
+        if self.screens_revert.is_some() {
+            self.displays_confirm(ui);
+        }
         // Diálogo de atalho por cima da janela inteira (fora da área de conteúdo).
         if self.shortcut.is_some() {
             let mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));

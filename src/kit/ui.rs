@@ -166,12 +166,128 @@ impl Menu<'_> {
 
 /// Tela no arranjo das Configurações → Monitores (`Ui::arrangement`), em pixels
 /// lógicos.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ArrangedScreen {
     pub name: String,
     pub pos: (i32, i32),
     pub size: (i32, i32),
     pub primary: bool,
+    /// Tamanho físico em milímetros: o arranjo desenha as telas do tamanho de verdade.
+    pub mm: (f32, f32),
+}
+
+/// Lado em que uma tela encosta na vizinha.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Right,
+    Left,
+    Below,
+    Above,
+}
+
+/// Milímetros por ponto da tela (largura e altura).
+fn mm_per_px(s: &ArrangedScreen) -> (f32, f32) {
+    (s.mm.0 / s.size.0.max(1) as f32, s.mm.1 / s.size.1.max(1) as f32)
+}
+
+/// Onde cada tela fica no desenho do arranjo, em milímetros: a principal em (0, 0) e as
+/// outras a partir de quem elas encostam (nas posições lógicas), para telas de
+/// densidades diferentes ficarem coladas no desenho também.
+pub fn physical_layout(screens: &[ArrangedScreen]) -> Vec<(f32, f32)> {
+    let n = screens.len();
+    let mut out: Vec<Option<(f32, f32)>> = vec![None; n];
+    if n == 0 {
+        return Vec::new();
+    }
+    let first = screens.iter().position(|s| s.primary).unwrap_or(0);
+    out[first] = Some((0.0, 0.0));
+    let touches = |i: usize, j: usize| -> Option<Side> {
+        let (a, b) = (&screens[i], &screens[j]);
+        let y_overlap = a.pos.1 < b.pos.1 + b.size.1 && b.pos.1 < a.pos.1 + a.size.1;
+        let x_overlap = a.pos.0 < b.pos.0 + b.size.0 && b.pos.0 < a.pos.0 + a.size.0;
+        if y_overlap && a.pos.0 == b.pos.0 + b.size.0 {
+            Some(Side::Right)
+        } else if y_overlap && a.pos.0 + a.size.0 == b.pos.0 {
+            Some(Side::Left)
+        } else if x_overlap && a.pos.1 == b.pos.1 + b.size.1 {
+            Some(Side::Below)
+        } else if x_overlap && a.pos.1 + a.size.1 == b.pos.1 {
+            Some(Side::Above)
+        } else {
+            None
+        }
+    };
+    for _ in 0..n {
+        for i in 0..n {
+            if out[i].is_some() {
+                continue;
+            }
+            let neighbor = (0..n).filter(|&j| out[j].is_some()).find_map(|j| touches(i, j).map(|side| (j, side)));
+            if let Some((j, side)) = neighbor {
+                let (jx, jy) = out[j].unwrap_or_default();
+                let (kx, ky) = mm_per_px(&screens[j]);
+                let (a, b) = (&screens[i], &screens[j]);
+                out[i] = Some(match side {
+                    Side::Right => (jx + b.mm.0, jy + (a.pos.1 - b.pos.1) as f32 * ky),
+                    Side::Left => (jx - a.mm.0, jy + (a.pos.1 - b.pos.1) as f32 * ky),
+                    Side::Below => (jx + (a.pos.0 - b.pos.0) as f32 * kx, jy + b.mm.1),
+                    Side::Above => (jx + (a.pos.0 - b.pos.0) as f32 * kx, jy - a.mm.1),
+                });
+            }
+        }
+    }
+    // Telas soltas (sem encostar em nenhuma): pela escala da principal.
+    let (kx, ky) = mm_per_px(&screens[first]);
+    let origin = screens[first].pos;
+    (0..n)
+        .map(|i| out[i].unwrap_or(((screens[i].pos.0 - origin.0) as f32 * kx, (screens[i].pos.1 - origin.1) as f32 * ky)))
+        .collect()
+}
+
+/// Encaixa a tela `i`, solta em `pos` (milímetros, no desenho), na vizinha mais
+/// próxima sem sobrepor nenhuma, e devolve a posição lógica nova dela: encostada do
+/// lado escolhido e com o deslocamento ao longo da borda convertido pela vizinha.
+pub fn snap_physical(screens: &[ArrangedScreen], layout: &[(f32, f32)], i: usize, pos: (f32, f32)) -> (i32, i32) {
+    let me = &screens[i];
+    let (w, h) = me.mm;
+    let overlaps = |p: (f32, f32)| {
+        (0..screens.len()).filter(|&j| j != i).any(|j| {
+            let (ox, oy) = layout[j];
+            let (ow, oh) = screens[j].mm;
+            p.0 < ox + ow - 0.5 && ox < p.0 + w - 0.5 && p.1 < oy + oh - 0.5 && oy < p.1 + h - 0.5
+        })
+    };
+    let mut best: Option<(usize, Side, f32, f32)> = None;
+    for j in (0..screens.len()).filter(|&j| j != i) {
+        let (ox, oy) = layout[j];
+        let (ow, oh) = screens[j].mm;
+        let y = pos.1.clamp(oy - h + 1.0, oy + oh - 1.0);
+        let x = pos.0.clamp(ox - w + 1.0, ox + ow - 1.0);
+        for (side, candidate) in [(Side::Right, (ox + ow, y)), (Side::Left, (ox - w, y)), (Side::Below, (x, oy + oh)), (Side::Above, (x, oy - h))] {
+            if overlaps(candidate) {
+                continue;
+            }
+            let d = (candidate.0 - pos.0).powi(2) + (candidate.1 - pos.1).powi(2);
+            let along = match side {
+                Side::Right | Side::Left => candidate.1 - oy,
+                Side::Below | Side::Above => candidate.0 - ox,
+            };
+            if best.is_none_or(|(_, _, _, bd)| d < bd) {
+                best = Some((j, side, along, d));
+            }
+        }
+    }
+    let Some((j, side, along, _)) = best else {
+        return if screens.len() == 1 { (0, 0) } else { me.pos };
+    };
+    let other = &screens[j];
+    let (kx, ky) = mm_per_px(other);
+    match side {
+        Side::Right => (other.pos.0 + other.size.0, other.pos.1 + (along / ky).round() as i32),
+        Side::Left => (other.pos.0 - me.size.0, other.pos.1 + (along / ky).round() as i32),
+        Side::Below => (other.pos.0 + (along / kx).round() as i32, other.pos.1 + other.size.1),
+        Side::Above => (other.pos.0 + (along / kx).round() as i32, other.pos.1 - me.size.1),
+    }
 }
 
 /// Arrasto em andamento: componente, tela, ponto agarrado (na tela, em pixels da
@@ -187,34 +303,6 @@ struct ArrangeDrag {
     min: (i32, i32),
 }
 
-/// Encaixa a tela `i`, solta em `pos`, na vizinha mais próxima: encostada à direita, à
-/// esquerda, embaixo ou em cima de outra, sem sobrepor nenhuma (como no macOS).
-pub fn snap_screen(screens: &[ArrangedScreen], i: usize, pos: (i32, i32)) -> (i32, i32) {
-    let (w, h) = screens[i].size;
-    let others: Vec<&ArrangedScreen> = screens.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, s)| s).collect();
-    if others.is_empty() {
-        return (0, 0);
-    }
-    let overlaps = |p: (i32, i32)| {
-        others.iter().any(|o| p.0 < o.pos.0 + o.size.0 && o.pos.0 < p.0 + w && p.1 < o.pos.1 + o.size.1 && o.pos.1 < p.1 + h)
-    };
-    let mut best: Option<((i32, i32), i64)> = None;
-    for o in &others {
-        let (ox, oy, ow, oh) = (o.pos.0, o.pos.1, o.size.0, o.size.1);
-        let y = pos.1.clamp(oy - h + 1, oy + oh - 1);
-        let x = pos.0.clamp(ox - w + 1, ox + ow - 1);
-        for candidate in [(ox + ow, y), (ox - w, y), (x, oy + oh), (x, oy - h)] {
-            if overlaps(candidate) {
-                continue;
-            }
-            let d = (candidate.0 - pos.0) as i64 * (candidate.0 - pos.0) as i64 + (candidate.1 - pos.1) as i64 * (candidate.1 - pos.1) as i64;
-            if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((candidate, d));
-            }
-        }
-    }
-    best.map(|(p, _)| p).unwrap_or(screens[i].pos)
-}
 
 /// O que dura entre quadros: componente apertado, foco do teclado e rolagens.
 #[derive(Default)]
@@ -1121,59 +1209,61 @@ impl<'a> Ui<'a> {
         if screens.is_empty() {
             return r;
         }
-        // Escala e origem: todas as telas cabem com folga, centralizadas.
+        // Desenho em milímetros: cada tela do tamanho físico dela.
+        let layout = physical_layout(screens);
         let drag = self.ctx.memory.arrange_drag.filter(|d| d.id == id);
         let (k, origin, min) = match drag {
             Some(d) => (d.k, d.origin, d.min),
             None => {
-                let min = (screens.iter().map(|s| s.pos.0).min().unwrap_or(0), screens.iter().map(|s| s.pos.1).min().unwrap_or(0));
-                let max = (
-                    screens.iter().map(|s| s.pos.0 + s.size.0).max().unwrap_or(1),
-                    screens.iter().map(|s| s.pos.1 + s.size.1).max().unwrap_or(1),
-                );
-                let (bw, bh) = ((max.0 - min.0).max(1) as f32, (max.1 - min.1).max(1) as f32);
+                let min_x = layout.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
+                let min_y = layout.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
+                let max_x = layout.iter().zip(screens.iter()).map(|(p, s)| p.0 + s.mm.0).fold(f32::NEG_INFINITY, f32::max);
+                let max_y = layout.iter().zip(screens.iter()).map(|(p, s)| p.1 + s.mm.1).fold(f32::NEG_INFINITY, f32::max);
+                let (bw, bh) = ((max_x - min_x).max(1.0), (max_y - min_y).max(1.0));
                 let k = ((rect.2 - 60.0) / bw).min((rect.3 - 50.0) / bh) * 0.85;
                 let origin = (rect.0 + (rect.2 - bw * k) / 2.0, rect.1 + (rect.3 - bh * k) / 2.0);
-                (k, origin, min)
+                (k, origin, ((min_x * 1000.0) as i32, (min_y * 1000.0) as i32))
             }
         };
-        let to_view = |p: (i32, i32)| (origin.0 + (p.0 - min.0) as f32 * k, origin.1 + (p.1 - min.1) as f32 * k);
+        let min = (min.0 as f32 / 1000.0, min.1 as f32 / 1000.0);
+        let to_view = |p: (f32, f32)| (origin.0 + (p.0 - min.0) * k, origin.1 + (p.1 - min.1) * k);
         let pointer = self.pointer();
+        let mut drawn: Vec<(f32, f32)> = layout.clone();
         // Começa o arrasto na tela sob o ponteiro (a de cima primeiro).
         if self.ctx.input.pressed && drag.is_none() {
             if let Some((px, py)) = pointer {
                 if let Some(i) = (0..screens.len()).rev().find(|&i| {
-                    let (x, y) = to_view(screens[i].pos);
-                    px >= x && px <= x + screens[i].size.0 as f32 * k && py >= y && py <= y + screens[i].size.1 as f32 * k
+                    let (x, y) = to_view(layout[i]);
+                    px >= x && px <= x + screens[i].mm.0 * k && py >= y && py <= y + screens[i].mm.1 * k
                 }) {
-                    let (x, y) = to_view(screens[i].pos);
+                    let (x, y) = to_view(layout[i]);
                     *selected = i;
                     r.clicked = true;
                     self.ctx.memory.active = Some(id);
-                    self.ctx.memory.arrange_drag = Some(ArrangeDrag { id, index: i, grab: (px - x, py - y), k, origin, min });
+                    let min_milli = ((min.0 * 1000.0) as i32, (min.1 * 1000.0) as i32);
+                    self.ctx.memory.arrange_drag = Some(ArrangeDrag { id, index: i, grab: (px - x, py - y), k, origin, min: min_milli });
                     self.ctx.repaint = true;
                 }
             }
         }
         if let (Some(d), Some((px, py))) = (self.ctx.memory.arrange_drag.filter(|d| d.id == id), pointer) {
-            let pos = (
-                ((px - d.grab.0 - origin.0) / k).round() as i32 + min.0,
-                ((py - d.grab.1 - origin.1) / k).round() as i32 + min.1,
-            );
+            // Posição no desenho (milímetros) de onde a tela está sendo arrastada.
+            let pos = ((px - d.grab.0 - origin.0) / k + min.0, (py - d.grab.1 - origin.1) / k + min.1);
             if self.ctx.input.down {
-                screens[d.index].pos = pos;
+                drawn[d.index] = pos;
                 self.ctx.repaint = true;
             } else {
-                // Soltou: encaixa na vizinha.
-                screens[d.index].pos = snap_screen(screens, d.index, pos);
+                // Soltou: encaixa na vizinha e vira posição lógica.
+                screens[d.index].pos = snap_physical(screens, &layout, d.index, pos);
+                drawn = physical_layout(screens);
                 self.ctx.memory.arrange_drag = None;
                 r.changed = true;
                 self.ctx.repaint = true;
             }
         }
         for (i, screen) in screens.iter().enumerate() {
-            let (x, y) = to_view(screen.pos);
-            let (w, h) = (screen.size.0 as f32 * k, screen.size.1 as f32 * k);
+            let (x, y) = to_view(drawn[i]);
+            let (w, h) = (screen.mm.0 * k, screen.mm.1 * k);
             let chosen = i == *selected;
             fill_rounded(self.canvas, x, y, w, h, 6.0, color(if chosen { [92, 150, 245, 255] } else { [120, 130, 150, 255] }));
             if screen.primary {
@@ -2639,18 +2729,21 @@ mod tests {
     }
 
     #[test]
-    fn tela_arrastada_encaixa_na_vizinha() {
+    fn arranjo_em_milimetros() {
+        // Tela grande (530 mm) à esquerda e uma de 17" (340 mm) à direita, topo alinhado.
         let screens = vec![
-            ArrangedScreen { name: "A".into(), pos: (0, 0), size: (1920, 1080), primary: true },
-            ArrangedScreen { name: "B".into(), pos: (1920, 0), size: (1366, 768), primary: false },
+            ArrangedScreen { name: "A".into(), pos: (0, 0), size: (1920, 1080), primary: true, mm: (530.0, 300.0) },
+            ArrangedScreen { name: "B".into(), pos: (1920, 0), size: (1280, 1024), primary: false, mm: (340.0, 270.0) },
         ];
-        // Solta um pouco à direita e abaixo da borda: encosta na direita, alinhada.
-        assert_eq!(snap_screen(&screens, 1, (2000, 100)), (1920, 100));
-        // Solta à esquerda: encosta na esquerda.
-        assert_eq!(snap_screen(&screens, 1, (-1500, 10)), (-1366, 10));
-        // Solta embaixo: encosta embaixo, sem sobrepor.
-        assert_eq!(snap_screen(&screens, 1, (300, 1200)), (300, 1080));
-        // Uma tela só fica na origem.
-        assert_eq!(snap_screen(&screens[..1], 0, (50, 50)), (0, 0));
+        let layout = physical_layout(&screens);
+        assert_eq!(layout[0], (0.0, 0.0));
+        // B começa onde A termina (530 mm), mesmo com densidades diferentes.
+        assert_eq!(layout[1], (530.0, 0.0));
+        // Soltar B do lado esquerdo de A: encosta à esquerda (posição lógica -1280).
+        assert_eq!(snap_physical(&screens, &layout, 1, (-300.0, 0.0)), (-1280, 0));
+        // Soltar B à direita, 30 mm abaixo do topo: 30 mm de A são ~108 pontos.
+        let (x, y) = snap_physical(&screens, &layout, 1, (540.0, 30.0));
+        assert_eq!(x, 1920);
+        assert!((y - 108).abs() <= 1, "y = {y}");
     }
 }

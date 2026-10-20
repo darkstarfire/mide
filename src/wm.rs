@@ -409,10 +409,8 @@ impl State {
         )
             .into();
         let area = self
-            .space
-            .outputs()
-            .next()
-            .and_then(|o| self.space.output_geometry(o))
+            .primary_output()
+            .and_then(|o| self.space.output_geometry(&o))
             .unwrap_or_else(|| smithay::utils::Rectangle::new((0, 0).into(), (1280, 800).into()));
         let x = area.loc.x + area.size.w / 2 - small.w / 2;
         let y = area.loc.y + area.size.h - small.h - 12;
