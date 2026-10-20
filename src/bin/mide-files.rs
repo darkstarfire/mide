@@ -562,8 +562,8 @@ impl Files {
         let mut empty_trash = false;
         let mut search = std::mem::take(&mut self.search);
         ui.toolbar(|ui| {
-            back = ui.icon_button("go-previous", "‹", can_back).clicked();
-            forward = ui.icon_button("go-next", "›", can_forward).clicked();
+            back = ui.icon_button("go-previous-symbolic", "‹", can_back).clicked();
+            forward = ui.icon_button("go-next-symbolic", "›", can_forward).clicked();
             ui.space(4.0);
             ui.strong(&title);
             let right = if in_trash { 110.0 } else { 2.0 * 32.0 + 220.0 + 2.0 * 8.0 };

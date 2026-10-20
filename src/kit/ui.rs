@@ -1971,6 +1971,12 @@ impl<'a> Ui<'a> {
         }
         let pix = self.ctx.icon(&[icon], 16, false);
         match pix {
+            // Ícones "symbolic" na cor do texto (como os da barra superior; no tema
+            // escuro acompanham); desativados, na cor secundária.
+            Some(pix) if icon.ends_with("-symbolic") => {
+                let c = if enabled { t.text } else { t.text_secondary };
+                crate::ui::draw::blit_tinted(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 6.0) as i32, [c[0], c[1], c[2]]);
+            }
             Some(pix) => {
                 crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 6.0) as i32, if enabled { 1.0 } else { 0.35 });
             }

@@ -94,26 +94,68 @@ impl State {
         self.move_grab = Some(MoveGrab { window, offset });
     }
 
-    /// Maximiza a janela na área útil, com animação.
+    /// Área útil da tela onde a janela está (sem a barra e a dock, se estiverem nela).
+    fn area_for(&self, window: &Window) -> Option<smithay::utils::Rectangle<i32, Logical>> {
+        let output = self
+            .space
+            .element_location(window)
+            .and_then(|loc| {
+                let center = loc + Point::from((window.geometry().size.w / 2, window.geometry().size.h / 2));
+                self.space.output_under(center.to_f64()).next().cloned()
+            })
+            .or_else(|| self.primary_output())?;
+        self.usable_area_of(&output)
+    }
+
+    /// Maximiza a janela na área útil da tela dela, com animação.
     pub fn maximize(&mut self, surface: &ToplevelSurface) {
         let Some(window) = self.window_for(surface.wl_surface()) else {
             surface.send_configure();
             return;
         };
-        // Área útil: a saída sem as zonas exclusivas das camadas (barra superior).
-        let Some(area) = self.usable_area() else {
+        let Some(area) = self.area_for(&window) else {
             surface.send_configure();
             return;
         };
+        self.fill_area(surface, &window, area, None);
+    }
+
+    /// Metade esquerda (`left`) ou direita da área útil da tela da janela (Super+← e
+    /// Super+→, como no GNOME). Super+↓ volta ao tamanho de antes.
+    pub fn tile(&mut self, surface: &ToplevelSurface, left: bool) {
+        let Some(window) = self.window_for(surface.wl_surface()) else {
+            return;
+        };
+        let Some(area) = self.area_for(&window) else {
+            return;
+        };
+        let half = area.size.w / 2;
+        let rect = if left {
+            smithay::utils::Rectangle::new(area.loc, (half, area.size.h).into())
+        } else {
+            smithay::utils::Rectangle::new((area.loc.x + half, area.loc.y).into(), (area.size.w - half, area.size.h).into())
+        };
+        tracing::info!("janela na metade {} da tela", if left { "esquerda" } else { "direita" });
+        self.fill_area(surface, &window, rect, Some(left));
+    }
+
+    /// Ocupa `area` (maximizada, ou numa metade com `tiled`), guardando a posição e o
+    /// tamanho de antes para restaurar.
+    fn fill_area(&mut self, surface: &ToplevelSurface, window: &Window, area: smithay::utils::Rectangle<i32, Logical>, tiled: Option<bool>) {
+        let window = window.clone();
+        let already = surface.current_state().states.contains(XdgState::Maximized) || self.tiled.contains(surface.wl_surface());
 
         let from_loc = self.space.element_location(&window);
-        if let Some(loc) = from_loc {
-            self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
-            self.restore_positions.push((surface.wl_surface().clone(), loc));
-        }
         let from_size = window.geometry().size;
-        self.restore_sizes.retain(|(s, _)| s != surface.wl_surface());
-        self.restore_sizes.push((surface.wl_surface().clone(), from_size));
+        // Já maximizada ou numa metade: o "antes" continua o de quando estava solta.
+        if !already {
+            if let Some(loc) = from_loc {
+                self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
+                self.restore_positions.push((surface.wl_surface().clone(), loc));
+            }
+            self.restore_sizes.retain(|(s, _)| s != surface.wl_surface());
+            self.restore_sizes.push((surface.wl_surface().clone(), from_size));
+        }
         let to_loc: Point<i32, Logical> = (area.loc.x, area.loc.y + bar_height_for(&window)).into();
         let bar_h = bar_height_for(&window);
         let to_size: Size<i32, Logical> = (area.size.w, (area.size.h - bar_h).max(1)).into();
@@ -138,10 +180,27 @@ impl State {
         }
 
         surface.with_pending_state(|s| {
-            s.states.set(XdgState::Maximized);
+            match tiled {
+                None => {
+                    s.states.set(XdgState::Maximized);
+                    s.states.unset(XdgState::TiledLeft);
+                    s.states.unset(XdgState::TiledRight);
+                }
+                Some(left) => {
+                    s.states.unset(XdgState::Maximized);
+                    s.states.set(XdgState::TiledTop);
+                    s.states.set(XdgState::TiledBottom);
+                    s.states.set(if left { XdgState::TiledLeft } else { XdgState::TiledRight });
+                    s.states.unset(if left { XdgState::TiledRight } else { XdgState::TiledLeft });
+                }
+            }
             s.size = Some(to_size);
         });
         surface.send_configure();
+        self.tiled.retain(|s| s != surface.wl_surface());
+        if tiled.is_some() {
+            self.tiled.push(surface.wl_surface().clone());
+        }
         // O conteúdo começa abaixo da barra de título, que fica no topo da área.
         self.space.map_element(window, to_loc, true);
     }
@@ -154,10 +213,12 @@ impl State {
         };
         // Apps GTK pedem "desmaximizar" ao abrir, sem estarem maximizados. Nesse caso
         // não há o que restaurar, e a janela não pode sair do lugar.
-        if !surface.current_state().states.contains(XdgState::Maximized) {
+        let tiled = self.tiled.contains(surface.wl_surface());
+        if !surface.current_state().states.contains(XdgState::Maximized) && !tiled {
             surface.send_configure();
             return;
         }
+        self.tiled.retain(|s| s != surface.wl_surface());
         // Pede de volta o tamanho que a janela tinha antes de maximizar, para a
         // animação saber o destino. Sem registro, o app escolhe o tamanho.
         let restore_size = self
@@ -167,6 +228,9 @@ impl State {
             .map(|i| self.restore_sizes.remove(i).1);
         surface.with_pending_state(|s| {
             s.states.unset(XdgState::Maximized);
+            for tiled in [XdgState::TiledLeft, XdgState::TiledRight, XdgState::TiledTop, XdgState::TiledBottom] {
+                s.states.unset(tiled);
+            }
             s.size = restore_size;
         });
         surface.send_configure();

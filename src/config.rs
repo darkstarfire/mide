@@ -26,6 +26,24 @@ pub enum Action {
     ToggleLauncher,
     /// Abre o buscador (estilo Spotlight), ou fecha se já estiver aberto.
     ToggleSearch,
+    /// Janela em foco: maximizar, restaurar (sair de maximizada ou da metade da tela),
+    /// alternar entre os dois, minimizar e ocupar a metade esquerda ou direita.
+    Maximize,
+    Unmaximize,
+    ToggleMaximize,
+    Minimize,
+    TileLeft,
+    TileRight,
+    /// Alternar janelas (Alt+Tab): para a próxima, ou para a anterior.
+    SwitchWindows,
+    SwitchWindowsBack,
+    /// Minimiza todas as janelas (mostra a área de trabalho).
+    ShowDesktop,
+    /// Bloqueia a tela.
+    LockScreen,
+    /// Teclas no estilo Mac num terminal: ⌘+letra vira Ctrl+Shift+letra (⌘C copia e ⌘V
+    /// cola, como no Terminal do Mac). Interno, não vem do arquivo.
+    TerminalKey(char),
     /// Troca para o console de texto `n` (Ctrl+Alt+F`n` no backend DRM). Fixo, não
     /// vem do arquivo: é o jeito de sair do mide para outro console.
     SwitchVt(i32),
@@ -103,6 +121,9 @@ pub struct Effects {
     pub panel_glass: bool,
     /// Menus (da barra, da dock, dos apps e de contexto) aparecem com um esmaecer curto.
     pub menu_animation: bool,
+    /// Transições suaves: prévias da dock e alternador entram esmaecendo, pastas do
+    /// launcher e do Arquivos com transição.
+    pub transitions: bool,
 }
 
 impl Default for Effects {
@@ -117,6 +138,7 @@ impl Default for Effects {
             liquid_glass: true,
             panel_glass: true,
             menu_animation: true,
+            transitions: true,
         }
     }
 }
@@ -227,6 +249,21 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+space", "toggle_search"),
     // Captura de tela do mide (seleção, janela ou tela inteira, com marcações).
     ("print", "launch:mide-screenshot"),
+    // Janelas, como no GNOME.
+    ("alt+tab", "switch_windows"),
+    ("alt+shift+tab", "switch_windows_back"),
+    ("super+tab", "switch_windows"),
+    ("super+shift+tab", "switch_windows_back"),
+    ("super+up", "maximize"),
+    ("super+down", "unmaximize"),
+    ("alt+f10", "toggle_maximize"),
+    ("super+h", "minimize"),
+    ("super+left", "tile_left"),
+    ("super+right", "tile_right"),
+    ("alt+f4", "close_window"),
+    ("super+d", "show_desktop"),
+    ("super+a", "toggle_launcher"),
+    ("super+l", "lock_screen"),
 ];
 
 /// Configuração carregada, com os atalhos já convertidos.
@@ -415,6 +452,21 @@ fn parse_action(action: &str) -> Result<Action, Box<dyn Error>> {
     if action == "toggle_search" {
         return Ok(Action::ToggleSearch);
     }
+    let simple = [
+        ("maximize", Action::Maximize),
+        ("unmaximize", Action::Unmaximize),
+        ("toggle_maximize", Action::ToggleMaximize),
+        ("minimize", Action::Minimize),
+        ("tile_left", Action::TileLeft),
+        ("tile_right", Action::TileRight),
+        ("switch_windows", Action::SwitchWindows),
+        ("switch_windows_back", Action::SwitchWindowsBack),
+        ("show_desktop", Action::ShowDesktop),
+        ("lock_screen", Action::LockScreen),
+    ];
+    if let Some((_, a)) = simple.into_iter().find(|(name, _)| *name == action) {
+        return Ok(a);
+    }
     if let Some(command) = action.strip_prefix("launch:") {
         if command.trim().is_empty() {
             return Err("ação launch: sem comando".into());
@@ -433,7 +485,18 @@ impl fmt::Display for Action {
             Action::RestoreMinimized => write!(f, "restore_minimized"),
             Action::ToggleLauncher => write!(f, "toggle_launcher"),
             Action::ToggleSearch => write!(f, "toggle_search"),
+            Action::Maximize => write!(f, "maximize"),
+            Action::Unmaximize => write!(f, "unmaximize"),
+            Action::ToggleMaximize => write!(f, "toggle_maximize"),
+            Action::Minimize => write!(f, "minimize"),
+            Action::TileLeft => write!(f, "tile_left"),
+            Action::TileRight => write!(f, "tile_right"),
+            Action::SwitchWindows => write!(f, "switch_windows"),
+            Action::SwitchWindowsBack => write!(f, "switch_windows_back"),
+            Action::ShowDesktop => write!(f, "show_desktop"),
+            Action::LockScreen => write!(f, "lock_screen"),
             Action::SwitchVt(n) => write!(f, "switch_vt:{n}"),
+            Action::TerminalKey(c) => write!(f, "terminal_key:{c}"),
         }
     }
 }

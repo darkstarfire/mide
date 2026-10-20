@@ -67,7 +67,7 @@ const EFFECTS: &[(&str, &str, &str)] = &[
     ("liquid_glass", "Vidro líquido", "Dock com bordas que refratam a luz e reflexo, sobre o desfoque"),
     ("panel_glass", "Vidro em barras e menus", "Barra superior, menus, notificações e prévias das janelas com vidro"),
     ("menu_animation", "Animação dos menus", "Menus e listas aparecem com um esmaecer curto"),
-    ("transitions", "Transições suaves", "Pastas do launcher abrindo e fechando, pastas na lista do Arquivos e troca entre ícones e lista"),
+    ("transitions", "Transições suaves", "Prévias da dock e Alt+Tab, pastas do launcher e do Arquivos e troca entre ícones e lista"),
 ];
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela.

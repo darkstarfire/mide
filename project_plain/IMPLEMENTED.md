@@ -916,3 +916,18 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Pasta do launcher abre e fecha com transição** (cresce do ícone até o lugar, esmaecendo; fecha voltando ao ícone), como o launcher abrindo. Preparada uma vez (grade escurecida e o painel sobre fundo transparente); cada quadro leva 3,5–4,7 ms em 1366x768.
 - **"Transições suaves"** em Efeitos (`[effects] transitions`): agrupa a pasta do launcher e as transições do Arquivos (antes "Transições no Arquivos").
 - **Lâmpada na tela certa com a tela principal à direita:** a posição do ícone na dock não somava a posição da tela da dock; minimizar e abrir pela dock saíam da outra tela. Corrigido também o alvo sem ícone e o `workarea` (agora relativo à tela principal; com a principal à direita, os ícones da área de trabalho sairiam da camada).
+
+## Atalhos de janela (como no GNOME), Alt+Tab, setas do Arquivos, nomes sem diferenciar maiúsculas e prévias com transição
+
+- **Atalhos novos (padrão, mudam nas Configurações):** Alt+Tab e Super+Tab (alternador de janelas: painel com as miniaturas no meio da tela, cada Tab avança, Shift volta, soltar o Alt escolhe, Esc cancela; o mouse também escolhe), Super+↑ maximizar, Super+↓ restaurar, Alt+F10 maximizar/restaurar, Super+H minimizar, Super+← e Super+→ metade esquerda/direita da tela (estado "tiled" para os apps), Alt+F4 fechar, Super+D mostrar a área de trabalho, Super+A launcher, Super+L bloquear a tela. Maximizar e as metades usam a tela onde a janela está (com várias telas).
+- **Setas do Arquivos** (voltar/avançar) como os outros ícones da barra de ferramentas: ícones "symbolic" na cor do texto (desativadas, na cor secundária); acompanham o tema escuro quando ele existir.
+- **Nomes sem diferenciar maiúsculas** (como no macOS): com "Nova Pasta" na pasta, a sugestão é "Nova pasta (1)", e criar "nova pasta" avisa que já existe "Nova Pasta".
+- **Prévias da dock e o alternador entram esmaecendo** (sobem 8 px em 160 ms), no grupo "Transições suaves".
+- **Cursor nas prévias:** em cima do painel das prévias o ponteiro é do mide (seta), e a janela de trás não recebe o movimento (antes aparecia o cursor de texto do terminal).
+
+## Refinos do launcher, vidro depois da lâmpada e terminal no estilo Mac
+
+- **Pasta do launcher:** durante a transição, os ícones da grade somem aos poucos no fundo escurecido, no mesmo ritmo do painel crescendo (antes a grade sumia de uma vez no fim). Ao fechar, o contrário. Cada quadro mistura duas imagens prontas (grade e fundo sem a grade).
+- **Bolinhas das páginas paradas:** no carrossel (launcher e pastas), só o conteúdo desliza; a linha das bolinhas fica parada, já com a página de destino acesa.
+- **Vidro da janela depois da lâmpada:** o vidro (desfoque atrás da barra lateral do Arquivos) entra esmaecendo em 220 ms quando a animação termina, em vez de aparecer de uma vez (`Genie::glass_since`).
+- **Teclas no estilo Mac num terminal** (foot, kitty, GNOME Terminal, Konsole e outros): o Ctrl continua Ctrl (Ctrl+C interrompe, como no Terminal do Mac) e ⌘+C/⌘+V (a tecla Windows) copiam e colam (viram Ctrl+Shift+C/V). Antes, com o estilo Mac, copiar e colar no terminal exigia Windows+Shift+C/V.

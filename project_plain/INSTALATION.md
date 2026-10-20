@@ -11,3 +11,11 @@
 - `Xwayland` (pacote `xwayland`) e `xwayland-satellite`, para abrir apps X11 dentro do mide (A14). O satellite pode vir do pacote da distribuição, quando houver, ou de `cargo install --git https://github.com/Supreeeme/xwayland-satellite`. O instalador deve colocar o satellite no PATH (ou ao lado do binário do mide); sem ele, o mide funciona, só sem apps X11.
 - Tema de cursores (ex.: `adwaita-icon-theme`), para o cursor do mide no console (A13); sem tema, o mide desenha uma seta própria.
 
+- **Bibliotecas do sistema usadas pelos binários** (medido com `ldd` em 2026-10-20): `libinput`, `libseat`, `libudev`/`libgudev`, `libgbm` + `libdrm` (Mesa), `libEGL`/GLES (Mesa, carregado na hora), `libxkbcommon`, `libsystemd`, `glib` e as que elas puxam (`libevdev`, `libmtdev`, `libwacom`). As **dependências do Rust (crates) ficam dentro dos binários**: quem só instala não precisa de Rust nem de `cargo`.
+- **Programas usados em tempo de execução:** D-Bus (sessão), `systemd --user`, `xdg-desktop-portal` + `xdg-desktop-portal-gtk` (configurações do sistema para os apps GTK), `dbus-update-activation-environment`, fontes do sistema (fontconfig), tema de ícones; opcionais: `foot` (terminal), `nmcli`, `bluetoothctl`, `wpctl`, `loginctl`.
+- Para compilar o `xwayland-satellite` no Debian/Ubuntu: `libxcb-cursor-dev` e `clang` (além de `libxcb1-dev` e `pkg-config`).
+
+## Estratégia de instalação (sem compilar na máquina do usuário)
+
+- O script de instalação baixa os **binários prontos** (release do GitHub, por arquitetura) e instala com o gerenciador da distribuição só as bibliotecas e programas de execução acima (são pacotes comuns de qualquer desktop: em Debian/Ubuntu, algo como `libinput10 libseat1 libgbm1 libegl1 libxkbcommon0 xdg-desktop-portal-gtk dbus-user-session`). Compilar do código fica como opção para desenvolvimento (aí sim com Rust e os pacotes `-dev`).
+- Instala: binários em `/usr/local/bin` (ou `/usr/bin` no pacote), dados em `/usr/share/mide` (`applications`, `xdg-desktop-portal/mide-portals.conf`), a sessão em `/usr/share/wayland-sessions/mide.desktop` e o `mide-session`.

@@ -238,6 +238,16 @@ echo "== várias janelas"
 check "cascata (segunda em 80,108)" "$CALC popups=0 posição=\(80, 108\)" "400 list" foot gnome-calculator
 check_last "clique traz para frente (topo = foot)" "janela \"foot\"" "400 click 700 300; 440 list" foot gnome-calculator
 
+echo "== atalhos de janela (como no GNOME)"
+# Duas janelas foot: a de cima (80, 108) tem o foco. Alt+Tab escolhe a outra ao soltar o Alt.
+check "Alt+Tab foca a outra janela" "alternador: janela [0-9]+ escolhida" "500 combo alt+tab; 560 list" foot foot
+check "Super+← põe a janela na metade esquerda" "$FOOT posição=\(0, 58\) visível=683x643" "500 combo super+left; 560 list" foot
+check "Super+→ põe a janela na metade direita" "$FOOT posição=\(683, 58\) visível=683x643" "500 combo super+right; 560 list" foot
+check "Super+↑ maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "500 combo super+up; 560 list" foot
+check "Super+↓ restaura" "$FOOT posição=\(48, 76\) visível=700x500" "500 combo super+up; 560 combo super+down; 640 list" foot
+check "Super+H minimiza" "janela minimizada" "500 combo super+h; 560 list" foot
+check "Alt+F4 fecha a janela" "fechar janela pedido pelo atalho" "500 combo alt+f4; 560 list" foot
+
 echo "== saída redimensionada (janela do mide maximizada no host)"
 check "dock volta ao centro inferior" 'camada "mide-dock" em \(458, 735\) 285x57' "400 resize 1200 800; 420 list" foot
 check "barra acompanha a largura" 'camada "mide-bar" em \(0, 0\) 1200x28' "400 resize 1200 800; 420 list" foot

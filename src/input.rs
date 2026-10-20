@@ -132,6 +132,18 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "super" => 125,
         // Print Screen (captura de tela).
         "print" => 99,
+        "f1" => 59,
+        "f2" => 60,
+        "f3" => 61,
+        "f4" => 62,
+        "f5" => 63,
+        "f6" => 64,
+        "f7" => 65,
+        "f8" => 66,
+        "f9" => 67,
+        "f10" => 68,
+        "f11" => 87,
+        "f12" => 88,
         _ => {
             let mut chars = name.chars();
             let c = chars.next()?;
@@ -178,7 +190,10 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
     };
-    let keycode = if state.config.keyboard.mac_style { (mac_swap(keycode.raw() - 8) + 8).into() } else { keycode };
+    // No estilo Mac, Super e Ctrl trocam de lugar; num terminal não: o Ctrl continua
+    // Ctrl (Ctrl+C interrompe, como no Terminal do Mac) e ⌘ copia e cola (abaixo).
+    let terminal = state.config.keyboard.mac_style && focused_is_terminal(state);
+    let keycode = if state.config.keyboard.mac_style && !terminal { (mac_swap(keycode.raw() - 8) + 8).into() } else { keycode };
     if key_state == KeyState::Pressed {
         state.mark_input("tecla", keyboard.current_focus());
     }
@@ -193,8 +208,17 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
         serial,
         time,
         |state, mods, keysym| {
+            let switching = state.preview.as_ref().is_some_and(|p| p.switcher);
             if key_state != KeyState::Pressed {
+                // Alt (ou Super) solto: o alternador foca a janela escolhida.
+                if switching && !mods.alt && !mods.logo {
+                    finish_switcher(state, true);
+                }
                 return FilterResult::Forward;
+            }
+            if switching && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape {
+                finish_switcher(state, false);
+                return FilterResult::Intercept(None);
             }
             tracing::debug!(
                 "tecla: {} (logo={}, ctrl={}, alt={}, shift={})",
@@ -232,6 +256,13 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 tracing::info!("atalhos: combinação gravada: {combo}");
                 capture.combo = Some(combo);
                 return FilterResult::Intercept(None);
+            }
+            // Terminal no estilo Mac: ⌘C copia e ⌘V cola (Ctrl+Shift+C/V do terminal).
+            if terminal && mods.logo && !mods.ctrl && !mods.alt && !mods.shift {
+                let c = xkbcommon::xkb::keysym_to_utf32(key);
+                if c == 'c' as u32 || c == 'v' as u32 {
+                    return FilterResult::Intercept(Some(Action::TerminalKey(char::from_u32(c).unwrap_or('c'))));
+                }
             }
             match state.config.match_binding(modifiers, key) {
                 Some(action) => FilterResult::Intercept(Some(action)),
@@ -278,7 +309,120 @@ fn run_action(state: &mut State, action: Action) {
             tracing::info!("encerrando por atalho");
             state.quit_requested = true;
         }
+        Action::TerminalKey(c) => {
+            // Solta o ⌘ para o terminal, manda Ctrl+Shift+letra e aperta o ⌘ de novo (ele
+            // continua segurado de verdade).
+            let Some(letter) = evdev_code(&c.to_string()) else {
+                return;
+            };
+            let time = state.start_time.elapsed().as_millis() as u32;
+            for (code, pressed) in [(125, false), (29, true), (42, true), (letter, true), (letter, false), (42, false), (29, false), (125, true)] {
+                evdev_key(state, code, pressed, time);
+            }
+            tracing::debug!("terminal no estilo Mac: ⌘{c} → Ctrl+Shift+{c}");
+        }
+        Action::SwitchWindows => switch_windows(state, true),
+        Action::SwitchWindowsBack => switch_windows(state, false),
+        Action::Maximize | Action::Unmaximize | Action::ToggleMaximize | Action::Minimize | Action::TileLeft | Action::TileRight => {
+            use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+            let Some(toplevel) = focused_toplevel(state) else {
+                return;
+            };
+            let maximized = toplevel.current_state().states.contains(XdgState::Maximized);
+            match action {
+                Action::Maximize if !maximized => state.maximize(&toplevel),
+                Action::Unmaximize => state.unmaximize(&toplevel),
+                Action::ToggleMaximize => toggle_maximize(state, toplevel),
+                Action::Minimize => state.minimize(toplevel.wl_surface()),
+                Action::TileLeft => state.tile(&toplevel, true),
+                Action::TileRight => state.tile(&toplevel, false),
+                _ => {}
+            }
+        }
+        Action::ShowDesktop => {
+            // Minimiza todas as janelas à mostra (a área de trabalho aparece).
+            let surfaces: Vec<_> = state.space.elements().filter_map(|w| w.toplevel().map(|t| t.wl_surface().clone())).collect();
+            tracing::info!("mostrar a área de trabalho: {} janela(s) minimizada(s)", surfaces.len());
+            for surface in surfaces {
+                state.minimize(&surface);
+            }
+        }
+        Action::LockScreen => {
+            if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
+                tracing::info!("sistema (teste): loginctl lock-session");
+            } else {
+                spawn("loginctl lock-session");
+            }
+        }
     }
+}
+
+/// Apps de terminal (o estilo Mac trata o teclado como no Terminal do Mac).
+const TERMINALS: &[&str] = &[
+    "foot", "footclient", "org.codeberg.dnkl.foot", "kitty", "alacritty", "org.alacritty.alacritty", "org.gnome.terminal",
+    "gnome-terminal-server", "org.gnome.console", "kgx", "org.gnome.ptyxis", "ptyxis", "konsole", "org.kde.konsole",
+    "xterm", "uxterm", "tilix", "com.gexperts.tilix", "terminator", "wezterm", "org.wezfurlong.wezterm",
+    "com.mitchellh.ghostty", "ghostty", "xfce4-terminal",
+];
+
+/// O app com o foco do teclado é um terminal?
+fn focused_is_terminal(state: &State) -> bool {
+    let Some(toplevel) = focused_toplevel(state) else {
+        return false;
+    };
+    let app_id = smithay::wayland::compositor::with_states(toplevel.wl_surface(), |s| {
+        s.data_map
+            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+            .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
+    })
+    .unwrap_or_default()
+    .to_lowercase();
+    TERMINALS.contains(&app_id.as_str())
+}
+
+/// Janela com o foco do teclado.
+fn focused_toplevel(state: &State) -> Option<smithay::wayland::shell::xdg::ToplevelSurface> {
+    let focus = state.seat.get_keyboard()?.current_focus()?;
+    state.window_for(&focus)?.toplevel().cloned()
+}
+
+/// Alt+Tab: abre o alternador (painel com as janelas, a de cima primeiro, já na
+/// próxima) ou avança/volta a escolha. Soltar o Alt foca a escolhida.
+fn switch_windows(state: &mut State, forward: bool) {
+    let mut ids: Vec<u64> = state.space.elements().rev().map(crate::state::window_id).collect();
+    ids.extend(state.minimized.iter().rev().map(|m| crate::state::window_id(&m.window)));
+    if ids.is_empty() {
+        return;
+    }
+    let n = ids.len();
+    let step = |i: usize| if forward { (i + 1) % n } else { (i + n - 1) % n };
+    let current = state.preview.as_ref().filter(|p| p.switcher);
+    let next = match current {
+        Some(p) => step(p.hovered.unwrap_or(0)),
+        None => step(0),
+    };
+    // A entrada (esmaecer) só quando o alternador abre, não a cada Tab.
+    let since = match current {
+        Some(p) => p.since,
+        None => state.config.effects.transitions.then(std::time::Instant::now),
+    };
+    tracing::info!("alternador: janela {} de {n}", next + 1);
+    state.preview = Some(crate::preview::Preview { ids, dock_x: 0, hovered: Some(next), on_close: false, switcher: true, since });
+    state.wake();
+}
+
+/// Fecha o alternador: foca a janela escolhida (ou só fecha, com Esc).
+fn finish_switcher(state: &mut State, choose: bool) {
+    let Some(preview) = state.preview.take() else {
+        return;
+    };
+    state.wake();
+    let Some(id) = preview.hovered.and_then(|i| preview.ids.get(i).copied()).filter(|_| choose) else {
+        tracing::info!("alternador fechado");
+        return;
+    };
+    tracing::info!("alternador: janela {id} escolhida");
+    crate::control::handle(state, &format!("focus {id}"));
 }
 
 /// Inicia um comando pelo shell, com o mide como servidor Wayland.
@@ -311,8 +455,12 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         if crate::preview::keeps_open(state, &preview, pos) {
             let (hovered, on_close) = crate::preview::hit(state, &preview, pos);
             if let Some(p) = state.preview.as_mut() {
-                p.hovered = hovered;
-                p.on_close = on_close;
+                // No alternador (Alt+Tab), o mouse só troca a escolha em cima de uma
+                // miniatura (fora delas, fica a do teclado).
+                if !p.switcher || hovered.is_some() {
+                    p.hovered = hovered;
+                    p.on_close = on_close && !p.switcher;
+                }
             }
         } else {
             state.preview = None;
@@ -344,7 +492,19 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         return;
     }
 
-    let under = surface_under(state, pos);
+    // Em cima do painel das prévias (ou do alternador), o ponteiro é do mide: a janela
+    // de trás não recebe o movimento (nem troca o cursor para o de texto dela).
+    let over_preview = state
+        .preview
+        .as_ref()
+        .and_then(|p| crate::preview::layout(state, p))
+        .is_some_and(|(panel, _)| panel.to_f64().contains(pos));
+    let under = if over_preview {
+        state.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
+        None
+    } else {
+        surface_under(state, pos)
+    };
     let serial = SERIAL_COUNTER.next_serial();
     pointer.motion(
         state,

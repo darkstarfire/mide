@@ -214,7 +214,14 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 Some(dock_x) => {
                     let ids: Vec<u64> = words.filter_map(|w| w.parse().ok()).collect();
                     tracing::info!("prévias: {} janela(s)", ids.len());
-                    state.preview = (!ids.is_empty()).then_some(crate::preview::Preview { ids, dock_x, hovered: None, on_close: false });
+                    state.preview = (!ids.is_empty()).then_some(crate::preview::Preview {
+                        ids,
+                        dock_x,
+                        hovered: None,
+                        on_close: false,
+                        switcher: false,
+                        since: state.config.effects.transitions.then(std::time::Instant::now),
+                    });
                 }
                 None => state.preview = None,
             }

@@ -180,7 +180,9 @@ struct FolderAnim {
     folder: usize,
     /// Ícone da pasta na grade (de onde o painel sai e para onde volta).
     origin: (f32, f32, f32, f32),
-    frames: Option<(Pixmap, Pixmap, (f32, f32, f32, f32))>,
+    /// Grade (sem escurecer), fundo sem a grade (escurecido, como com a pasta aberta),
+    /// painel sobre transparente e o retângulo dele.
+    frames: Option<(Pixmap, Pixmap, Pixmap, (f32, f32, f32, f32))>,
 }
 const POP_MS: f32 = 340.0;
 
@@ -303,6 +305,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         page_anim: None,
         folder_anim: None,
         panel_only: false,
+        background_only: false,
         last_frame: None,
         scaled: HashMap::new(),
         warmed: false,
@@ -465,6 +468,8 @@ struct Launcher {
     folder_anim: Option<FolderAnim>,
     /// Desenhando só o painel da pasta, sobre fundo transparente (para a transição).
     panel_only: bool,
+    /// Desenhando só o fundo, sem a grade nem as bolinhas (para a transição).
+    background_only: bool,
     /// Último quadro mostrado, no formato da tela (a página antiga do carrossel).
     last_frame: Option<Vec<u8>>,
     /// Ícones já reduzidos, por (app, tamanho×4).
@@ -886,12 +891,16 @@ impl Launcher {
             };
             let current = self.open_folder;
             self.open_folder = None;
-            let mut grid = self.paint_scene(None, false);
-            // A grade já escurecida (como com a pasta aberta), feita uma vez só.
+            let grid = self.paint_scene(None, false);
+            // O fundo sem a grade, já escurecido (como com a pasta aberta): a grade some
+            // nele aos poucos, junto com o painel crescendo.
+            self.background_only = true;
+            let mut background = self.paint_scene(None, false);
+            self.background_only = false;
             let mut dim = Paint::default();
             dim.set_color(rgba(0, 0, 0, 60));
-            if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, grid.width() as f32, grid.height() as f32) {
-                grid.fill_rect(rect, &dim, Transform::identity(), None);
+            if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, background.width() as f32, background.height() as f32) {
+                background.fill_rect(rect, &dim, Transform::identity(), None);
             }
             self.open_folder = Some(folder);
             self.panel_only = true;
@@ -901,18 +910,23 @@ impl Launcher {
             let panel = self.folder_rect.map(|(x, y, w, h)| (x, y - 56.0, w, h + 56.0)).unwrap_or((0.0, 0.0, 1.0, 1.0));
             self.open_folder = current;
             if let Some(anim) = self.folder_anim.as_mut() {
-                anim.frames = Some((grid, open, panel));
+                anim.frames = Some((grid, background, open, panel));
             }
         }
         let Some(anim) = self.folder_anim.as_ref() else {
             return;
         };
-        let Some((grid, open, panel)) = anim.frames.as_ref() else {
+        let Some((grid, background, open, panel)) = anim.frames.as_ref() else {
             return;
         };
         let eased = 1.0 - (1.0 - t).powi(3);
         let e = if anim.opening { eased } else { 1.0 - eased };
-        let mut out = grid.clone();
+        // A grade vai sumindo no fundo escurecido, no mesmo ritmo do painel.
+        let mut out = background.clone();
+        let k = (e.clamp(0.0, 1.0) * 256.0) as u32;
+        for (o, g) in out.data_mut().iter_mut().zip(grid.data()) {
+            *o = ((*g as u32 * (256 - k) + *o as u32 * k) >> 8) as u8;
+        }
         // O painel sai do ícone: tamanho e posição entre o ícone e o lugar final.
         let (px, py, pw, ph) = *panel;
         let (ox, oy, ow, oh) = anim.origin;
@@ -979,7 +993,17 @@ impl Launcher {
             return;
         };
         canvas.copy_from_slice(&new[..canvas.len().min(new.len())]);
+        // As bolinhas das páginas não andam com o conteúdo: a linha delas fica parada
+        // (já mostrando a página de destino).
+        let dots_y = match self.open_folder.and(self.folder_rect) {
+            Some((_, py, _, ph)) => py + ph - 16.0,
+            None => h as f32 - DOTS_FROM_BOTTOM,
+        };
+        let dots = ((dots_y - 8.0).max(0.0) as usize, (dots_y + 8.0).max(0.0) as usize);
         for y in by0..by1 {
+            if y >= dots.0 && y < dots.1 {
+                continue;
+            }
             let row = y * stride;
             let at = |x: usize| row + x * 4;
             if dir > 0 {
@@ -1043,7 +1067,7 @@ impl Launcher {
             let mw = self.text.measure(msg, 15.0, FontWeight::Regular);
             self.text.draw(&mut pixmap, msg, (w as f32 - mw) / 2.0, h as f32 / 2.0 - 10.0, 15.0, FontWeight::Regular, [255, 255, 255, 190]);
         }
-        if self.open_folder.is_none() {
+        if self.open_folder.is_none() && !self.background_only {
             let shown = page.unwrap_or(self.page).min(pages - 1);
             self.draw_entries(&mut pixmap, &grid, &main_entries, shown, interactive);
             self.draw_dots(&mut pixmap, pages, self.page, h as f32 - DOTS_FROM_BOTTOM, true);

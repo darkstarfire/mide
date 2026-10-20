@@ -163,6 +163,8 @@ pub struct State {
     pub restore_positions: Vec<(WlSurface, Point<i32, Logical>)>,
     /// Tamanho de cada janela antes de maximizar, para pedir de volta ao restaurar.
     pub restore_sizes: Vec<(WlSurface, Size<i32, Logical>)>,
+    /// Janelas numa metade da tela (Super+← e Super+→).
+    pub tiled: Vec<WlSurface>,
     /// Forma do ponteiro (redimensionar, padrão); o backend a mostra.
     pub cursor: crate::input::CursorShape,
     /// Redimensionamento pela borda em andamento.
@@ -302,6 +304,7 @@ impl State {
             move_grab: None,
             restore_positions: Vec::new(),
             restore_sizes: Vec::new(),
+            tiled: Vec::new(),
             cursor: Default::default(),
             animations: Vec::new(),
             close_requests: Vec::new(),

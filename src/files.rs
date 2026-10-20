@@ -359,11 +359,25 @@ pub fn numbered_name(dir: &Path, stem: &str, ext: &str) -> String {
     let with = |s: &str| if ext.is_empty() { s.to_string() } else { format!("{s}.{ext}") };
     let mut name = with(stem);
     let mut n = 1;
-    while dir.join(&name).exists() {
+    while taken_name(dir, &name).is_some() {
         name = with(&format!("{stem} ({n})"));
         n += 1;
     }
     name
+}
+
+/// Nome já usado na pasta, sem diferenciar maiúsculas de minúsculas (como no macOS:
+/// "Nova Pasta" e "Nova pasta" são o mesmo nome). Devolve o nome como está no disco.
+pub fn taken_name(dir: &Path, name: &str) -> Option<String> {
+    if dir.join(name).exists() {
+        return Some(name.to_string());
+    }
+    let wanted = name.to_lowercase();
+    fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|existing| existing.to_lowercase() == wanted)
 }
 
 /// Cria um item novo com o nome dado (pasta ou arquivo vazio). Não sobrescreve: com
@@ -371,8 +385,8 @@ pub fn numbered_name(dir: &Path, stem: &str, ext: &str) -> String {
 pub fn create_named(dir: &Path, name: &str, folder: bool) -> Result<PathBuf, String> {
     let name = valid_name(name)?;
     let path = dir.join(name);
-    if path.exists() {
-        return Err(format!("já existe \"{name}\" nesta pasta"));
+    if let Some(existing) = taken_name(dir, name) {
+        return Err(format!("já existe \"{existing}\" nesta pasta"));
     }
     let result = if folder { fs::create_dir(&path) } else { fs::OpenOptions::new().write(true).create_new(true).open(&path).map(|_| ()) };
     result.map_err(|e| e.to_string())?;
@@ -557,6 +571,10 @@ mod tests {
         assert!(f.is_file());
         assert!(create_named(&dir, "notas.md", false).unwrap_err().contains("já existe"));
         assert!(create_named(&dir, "a/b", true).is_err());
+        // Maiúsculas e minúsculas contam como o mesmo nome (como no macOS).
+        create_named(&dir, "Pasta Nova", true).unwrap();
+        assert_eq!(numbered_name(&dir, "Pasta nova", ""), "Pasta nova (1)");
+        assert!(create_named(&dir, "pasta nova", true).unwrap_err().contains("Pasta Nova"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

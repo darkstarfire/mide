@@ -43,6 +43,29 @@ pub struct Preview {
     /// Prévia sob o ponteiro e se o ponteiro está no × dela.
     pub hovered: Option<usize>,
     pub on_close: bool,
+    /// Alternador de janelas (Alt+Tab): painel no meio da tela, a escolhida é a
+    /// `hovered`, sem o × e sem sumir com o ponteiro.
+    pub switcher: bool,
+    /// Quando apareceu (entra esmaecendo, com "Transições suaves"); `None` sem transição.
+    pub since: Option<std::time::Instant>,
+}
+
+/// Duração da entrada das prévias e do alternador.
+pub const APPEAR: std::time::Duration = std::time::Duration::from_millis(160);
+
+impl Preview {
+    /// Quanto já apareceu (0 a 1, suavizado).
+    pub fn appear(&self) -> f32 {
+        let Some(since) = self.since else {
+            return 1.0;
+        };
+        let t = (since.elapsed().as_secs_f32() / APPEAR.as_secs_f32()).clamp(0.0, 1.0);
+        1.0 - (1.0 - t).powi(3)
+    }
+
+    pub fn appearing(&self) -> bool {
+        self.since.is_some_and(|t| t.elapsed() < APPEAR)
+    }
 }
 
 /// Uma miniatura posicionada.
@@ -82,12 +105,18 @@ pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logica
     if windows.is_empty() {
         return None;
     }
+    // No alternador, só as que cabem na tela.
+    let fit = ((out.size.w - 16 - 2 * PAD + GAP) / (THUMB_W + GAP)).max(1) as usize;
+    let windows: Vec<(u64, Window)> = if preview.switcher { windows.into_iter().take(fit).collect() } else { windows };
     let n = windows.len() as i32;
     let w = n * THUMB_W + (n - 1) * GAP + 2 * PAD;
     let h = THUMB_H + TITLE_H + 2 * PAD;
-    let center = dock.loc.x + preview.dock_x;
-    let x = (center - w / 2).clamp(out.loc.x + 8, out.loc.x + out.size.w - w - 8);
-    let y = dock.loc.y - 10 - h;
+    let (x, y) = if preview.switcher {
+        (out.loc.x + (out.size.w - w).max(16) / 2, out.loc.y + (out.size.h - h) / 2)
+    } else {
+        let center = dock.loc.x + preview.dock_x;
+        ((center - w / 2).clamp(out.loc.x + 8, out.loc.x + out.size.w - w - 8), dock.loc.y - 10 - h)
+    };
     let panel = Rectangle::new((x, y).into(), (w, h).into());
     let thumbs = windows
         .into_iter()
@@ -104,6 +133,9 @@ pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logica
 
 /// O ponto está sobre o painel ou sobre a dock? (Fora dos dois, as prévias somem.)
 pub fn keeps_open(state: &State, preview: &Preview, pos: Point<f64, Logical>) -> bool {
+    if preview.switcher {
+        return true;
+    }
     let Some(output) = state.primary_output() else {
         return false;
     };
@@ -146,11 +178,15 @@ pub fn elements(
     let Some((panel, mut thumbs)) = layout(state, preview) else {
         return Vec::new();
     };
+    // Entrada: sobe 8 px e esmaece (com "Transições suaves").
+    let e = preview.appear();
+    let lift = Point::<i32, Logical>::from((0, (8.0 * (1.0 - e)).round() as i32));
+    let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * e];
     // Desenho relativo à tela da dock.
-    let panel = Rectangle::new(panel.loc - origin, panel.size);
+    let panel = Rectangle::new(panel.loc - origin + lift, panel.size);
     for thumb in &mut thumbs {
-        thumb.boxed.loc -= origin;
-        thumb.close.loc -= origin;
+        thumb.boxed.loc = thumb.boxed.loc - origin + lift;
+        thumb.close.loc = thumb.close.loc - origin + lift;
     }
     let mut front: Vec<MideRenderElement> = Vec::new();
     let mut middle: Vec<MideRenderElement> = Vec::new();
@@ -159,7 +195,7 @@ pub fn elements(
         // × no canto da prévia sob o ponteiro.
         // Botão de fechar no canto da prévia sob o ponteiro, como no GNOME: círculo
         // escuro com × branco (vermelho com o ponteiro em cima).
-        if hovered {
+        if hovered && !preview.switcher {
             let glyph = Rectangle::new(thumb.close.loc + Point::from((7, 7)), (CLOSE - 14, CLOSE - 14).into());
             front.push(MideRenderElement::from(decorations::close_glyph_colored(shaders, glyph, [1.0, 1.0, 1.0, 1.0])));
             let fill = if preview.on_close { [0.92, 0.26, 0.24, 1.0] } else { [0.16, 0.16, 0.18, 0.88] };
@@ -195,7 +231,7 @@ pub fn elements(
             )
                 .into();
             let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                thumb.window.render_elements(renderer, origin, Scale::from(s), 1.0);
+                thumb.window.render_elements(renderer, origin, Scale::from(s), e);
             for element in content {
                 middle.push(MideRenderElement::Scaled(RescaleRenderElement::from_element(element, origin, scale)));
             }
@@ -204,7 +240,7 @@ pub fn elements(
                     (frame_x.round() as i32, frame_y.round() as i32).into(),
                     (shown.0.round() as i32, bar_shown.round().max(1.0) as i32).into(),
                 );
-                middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, bar, [0.90, 0.90, 0.91, 1.0], 3)));
+                middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, bar, fade([0.90, 0.90, 0.91, 1.0]), 3)));
             }
         }
         // Prévia sob o ponteiro: vidro claro, como a seleção do launcher (com o vidro
@@ -223,8 +259,8 @@ pub fn elements(
     let mut out = front;
     out.extend(middle);
     // Painel claro e translúcido, como os menus do mide, com um contorno fino.
-    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, [0.965, 0.965, 0.972, 0.95], 14)));
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade([0.965, 0.965, 0.972, 0.95]), 14)));
     let border = Rectangle::new(panel.loc - Point::from((1, 1)), (panel.size.w + 2, panel.size.h + 2).into());
-    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, [0.0, 0.0, 0.0, 0.16], 15)));
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, fade([0.0, 0.0, 0.0, 0.16]), 15)));
     out
 }

@@ -646,3 +646,19 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Print: seleção, janela, tela inteira; desenhar seta/círculo/quadrado nas 6 cores; colar a imagem num app.
 - VS Code pelo XWayland (com o `xwayland-satellite`): a barra mostra os menus dele.
 - Efeitos: desligar "Animação dos menus" e "Transições suaves" e conferir que somem.
+
+## Atalhos de janela — automáticos (`tests/ui.sh`)
+
+- Alt+Tab foca a outra janela; Super+← e Super+→ deixam a janela na metade (683x643 em 1366x768); Super+↑ maximiza; Super+↓ restaura; Super+H minimiza; Alt+F4 fecha.
+- `cargo test`: nomes sem diferenciar maiúsculas (`nomes_numerados_e_criar_com_nome`).
+
+## Atalhos e prévias — manual
+
+- Na sessão: Alt+Tab com várias janelas (segurar o Alt e apertar Tab várias vezes; Shift volta; Esc cancela); Super+D; Super+L.
+- Passar o mouse num ícone da dock com janelas abertas: as prévias entram esmaecendo; com o mouse em cima delas, o cursor é a seta.
+
+## Refinos do launcher e terminal — manual
+
+- Launchpad: abrir e fechar uma pasta; a grade some e volta junto com o painel. Trocar de página (roda, arrastar): só os ícones deslizam, as bolinhas ficam paradas.
+- Arquivos aberto pela dock: depois da lâmpada, o vidro da barra lateral aparece suave.
+- Estilo Mac ligado, no foot: ⌘C copia, ⌘V cola, Ctrl+C interrompe um comando.

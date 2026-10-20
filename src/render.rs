@@ -92,6 +92,8 @@ impl Scene {
             || self.wallpapers.values().any(|w| w.busy())
             || !state.ghosts.is_empty()
             || !state.appearing.is_empty()
+            || state.preview.as_ref().is_some_and(|p| p.appearing())
+            || self.genie.glass_since.borrow().values().any(|t| t.elapsed() < crate::genie::GLASS_FADE)
     }
 
     /// Desenha um quadro no alvo `framebuffer`: prévias, popups, camadas, janelas,
@@ -164,7 +166,8 @@ impl Scene {
             || state.launcher_anim.is_some()
             || wallpaper.busy()
             || !state.ghosts.is_empty()
-            || !state.appearing.is_empty();
+            || !state.appearing.is_empty()
+            || state.preview.as_ref().is_some_and(|p| p.appearing());
         let strength = if state.config.effects.liquid_glass { 1.0 } else { 0.0 };
         let mut regions = glass;
         regions.sort_by(|a, b| b.at.cmp(&a.at));
@@ -461,6 +464,8 @@ fn window_elements(
         // Efeito lâmpada: a janela inteira (barra, título e conteúdo) deformada
         // substitui o desenho normal durante a animação.
         if let Some((content_rect, target, progress)) = p.genie {
+            // Na lâmpada a janela é uma foto: o vidro volta esmaecendo quando ela termina.
+            genie.glass_since.borrow_mut().remove(&crate::state::window_id(&p.window));
             let bar_h = crate::state::bar_height_for(&p.window);
             let frame_rect = Rectangle::new(
                 (content_rect.loc.x, content_rect.loc.y - bar_h).into(),
@@ -553,7 +558,23 @@ fn window_elements(
         // conteúdo dela. Cobre também a faixa da barra de título acima e avança um raio
         // para dentro do conteúdo: os cantos arredondados do vidro coincidem com os da
         // janela ou ficam escondidos atrás das partes opacas.
-        if effects.panel_glass && p.alpha > 0.99 && (p.zoom - 1.0).abs() < f64::EPSILON {
+        // Vidro da janela: entra esmaecendo depois de uma animação (lâmpada, zoom), em
+        // vez de aparecer de uma vez quando ela termina.
+        let id = crate::state::window_id(&p.window);
+        let glass_ok = effects.panel_glass && p.alpha > 0.99 && (p.zoom - 1.0).abs() < f64::EPSILON;
+        let glass_alpha = if glass_ok {
+            let since = *genie.glass_since.borrow_mut().entry(id).or_insert(now);
+            if effects.animations {
+                let t = (since.elapsed().as_secs_f32() / crate::genie::GLASS_FADE.as_secs_f32()).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            } else {
+                1.0
+            }
+        } else {
+            genie.glass_since.borrow_mut().remove(&id);
+            0.0
+        };
+        if glass_ok {
             let app_id = p
                 .window
                 .toplevel()
@@ -583,7 +604,7 @@ fn window_elements(
                 r.size.w += pad;
                 r.size.h += pad;
                 if let Some(r) = r.intersection(p.frame) {
-                    glass.push(GlassRegion { at: elements.len(), rect: r, radius, name: format!("app:{app_id}:{id}#{i}"), alpha: 1.0 });
+                    glass.push(GlassRegion { at: elements.len(), rect: r, radius, name: format!("app:{app_id}:{id}#{i}"), alpha: glass_alpha });
                 }
             }
         }
