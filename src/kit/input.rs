@@ -67,6 +67,8 @@ pub struct Input {
     pub presses: Vec<KeyPress>,
     /// Itens escolhidos nos menus do app na barra superior (a ação de cada um).
     pub menu: Vec<String>,
+    /// A janela está com o foco do teclado.
+    pub focused: bool,
 }
 
 impl Input {

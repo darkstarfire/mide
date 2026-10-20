@@ -11,6 +11,7 @@
 use std::collections::VecDeque;
 
 use super::{
+    graphics::{self, Kitty, KittyAction},
     palette,
     parser::{Parser, Perform},
     width::char_width,
@@ -236,6 +237,26 @@ pub struct Finished {
     pub duration: std::time::Duration,
 }
 
+/// Imagem mostrada no terminal (protocolo de imagens do iTerm2, `OSC 1337;File=`).
+#[derive(Debug, Clone)]
+pub struct InlineImage {
+    pub id: u64,
+    /// Linha absoluta do topo e coluna da esquerda.
+    pub line: u64,
+    pub col: usize,
+    /// Tamanho desenhado, em pixels, e as células que ocupa.
+    pub width: u32,
+    pub height: u32,
+    pub rows: usize,
+    /// Pixels da imagem (RGBA, sem pré-multiplicar) e o tamanho original.
+    pub rgba: std::sync::Arc<Vec<u8>>,
+    pub source: (u32, u32),
+    /// Mostrada na tela alternativa (some ao voltar para a principal).
+    pub alt: bool,
+    /// Número dado pelo programa (protocolo do kitty), para apagar depois.
+    pub kitty_id: Option<u32>,
+}
+
 /// Linhas guardadas no histórico, por padrão.
 pub const HISTORY: usize = 10_000;
 
@@ -286,6 +307,19 @@ pub struct Terminal {
     command_started: Option<std::time::Instant>,
     /// Comandos que terminaram desde a última consulta (OSC 133;D).
     finished: Vec<Finished>,
+    /// Imagens na tela e no histórico (as mais antigas saem depois de 32).
+    images: Vec<InlineImage>,
+    next_image: u64,
+    /// Colocações virtuais do kitty (número da imagem → colunas e linhas).
+    virtual_images: std::collections::HashMap<u32, (u32, u32)>,
+    /// Sixel em recebimento (o conteúdo da DCS).
+    sixel: Option<Vec<u8>>,
+    /// Imagens do kitty: transmissões em partes e as guardadas.
+    kitty: Kitty,
+    /// Modo de controle do tmux (`tmux -CC`): o que chegou dele e se terminou.
+    tmux: bool,
+    tmux_out: Vec<u8>,
+    tmux_ended: bool,
     last_char: Option<char>,
     /// Tamanho da célula em pixels (para os relatórios de tamanho).
     pub cell_pixels: (u16, u16),
@@ -334,6 +368,14 @@ impl Terminal {
             marks: Vec::new(),
             command_started: None,
             finished: Vec::new(),
+            images: Vec::new(),
+            next_image: 1,
+            virtual_images: Default::default(),
+            sixel: None,
+            kitty: Kitty::default(),
+            tmux: false,
+            tmux_out: Vec::new(),
+            tmux_ended: false,
             last_char: None,
             cell_pixels: (8, 16),
             theme: palette::Theme::default(),
@@ -501,8 +543,9 @@ impl Terminal {
         self.bottom = rows - 1;
         self.tabs = default_tabs(cols);
         self.pending_wrap = false;
-        // As marcas apontam para linhas que mudaram de número.
+        // As marcas e as imagens apontam para linhas que mudaram de número.
         self.marks.clear();
+        self.images.clear();
     }
 
     /// Reorganiza histórico + tela principal para `cols` x `rows`. Devolve o cursor.
@@ -607,6 +650,7 @@ impl Terminal {
         }
         let dropped = self.dropped;
         self.marks.retain(|m| m.line >= dropped);
+        self.images.retain(|i| i.line + i.rows as u64 > dropped);
     }
 
     // ---- Texto, seleção e marcas ----
@@ -643,14 +687,21 @@ impl Terminal {
     /// Ocorrências de `query` no histórico e na tela, em ordem (começo e fim de cada
     /// uma). Sem diferenciar maiúsculas nem acentos; atravessa as quebras automáticas.
     pub fn search(&self, query: &str) -> Vec<((u64, usize), (u64, usize))> {
+        let (first, last) = self.abs_range();
+        self.search_lines(query, first, last)
+    }
+
+    /// Como `search`, só nas linhas absolutas de `from` a `to` (as linhas lógicas que
+    /// começam nelas).
+    pub fn search_lines(&self, query: &str, from: u64, to: u64) -> Vec<((u64, usize), (u64, usize))> {
         let fold_char = |c: char| crate::apps::fold(&c.to_string()).chars().next().unwrap_or(c);
         let needle: Vec<char> = query.chars().map(fold_char).collect();
-        if needle.is_empty() {
+        if needle.is_empty() || to < from {
             return Vec::new();
         }
         let mut found = Vec::new();
-        let total = self.history_len() + self.rows;
-        let mut i = 0;
+        let total = (self.history_len() + self.rows).min(to.saturating_sub(self.dropped) as usize + 1);
+        let mut i = from.saturating_sub(self.dropped) as usize;
         while i < total && found.len() < 10_000 {
             // Uma linha lógica: as linhas seguidas por quebra automática.
             let mut chars: Vec<char> = Vec::new();
@@ -805,6 +856,112 @@ impl Terminal {
         } else {
             self.marks.iter().rev().map(|m| m.line).find(|&m| m < from)
         }
+    }
+
+    /// Imagens da tela em uso (principal ou alternativa).
+    pub fn images(&self) -> impl Iterator<Item = &InlineImage> {
+        let alt = self.alt;
+        self.images.iter().filter(move |i| i.alt == alt)
+    }
+
+    /// Mostra uma imagem (arquivo PNG ou JPEG) no cursor, no tamanho pedido
+    /// (`width`/`height` do protocolo: `N` células, `Npx`, `N%` ou `auto`), e
+    /// desce o cursor para baixo dela.
+    fn place_image(&mut self, bytes: &[u8], width: &str, height: &str, keep_aspect: bool) {
+        let Ok(image) = image::load_from_memory(bytes) else {
+            tracing::debug!("imagem no terminal: formato não reconhecido");
+            return;
+        };
+        if image.width() as u64 * image.height() as u64 > 40_000_000 {
+            return;
+        }
+        let (w, h) = (image.width(), image.height());
+        let rgba = graphics::Rgba { width: w, height: h, pixels: image.to_rgba8().into_raw() };
+        self.place_rgba(rgba, width, height, keep_aspect, true, None);
+    }
+
+    /// Mostra pixels já decodificados no cursor (ver `place_image`).
+    fn place_rgba(&mut self, image: graphics::Rgba, width: &str, height: &str, keep_aspect: bool, move_cursor: bool, kitty_id: Option<u32>) {
+        let (iw, ih) = (image.width.max(1), image.height.max(1));
+        let (cw, ch) = (self.cell_pixels.0.max(1) as f32, self.cell_pixels.1.max(1) as f32);
+        let avail_w = (self.cols - self.col) as f32 * cw;
+        let avail_h = self.rows as f32 * ch;
+        let size = |spec: &str, cell: f32, avail: f32, natural: f32| -> Option<f32> {
+            let spec = spec.trim();
+            if spec.is_empty() || spec == "auto" {
+                None
+            } else if let Some(px) = spec.strip_suffix("px") {
+                px.parse::<f32>().ok()
+            } else if let Some(p) = spec.strip_suffix('%') {
+                p.parse::<f32>().ok().map(|p| avail * p / 100.0)
+            } else {
+                spec.parse::<f32>().ok().map(|n| n * cell).or(Some(natural))
+            }
+        };
+        let (mut w, mut h) = match (size(width, cw, avail_w, iw as f32), size(height, ch, avail_h, ih as f32)) {
+            (None, None) => (iw as f32, ih as f32),
+            (Some(w), None) => (w, w * ih as f32 / iw as f32),
+            (None, Some(h)) => (h * iw as f32 / ih as f32, h),
+            (Some(w), Some(h)) if keep_aspect => {
+                let k = (w / iw as f32).min(h / ih as f32);
+                (iw as f32 * k, ih as f32 * k)
+            }
+            (Some(w), Some(h)) => (w, h),
+        };
+        // Não passa da largura do terminal (diminui mantendo a proporção).
+        if w > avail_w {
+            h *= avail_w / w;
+            w = avail_w;
+        }
+        let (w, h) = (w.max(1.0).round() as u32, h.max(1.0).round() as u32);
+        let rows = ((h as f32 / ch).ceil() as usize).max(1);
+        let cols = ((w as f32 / cw).ceil() as usize).max(1);
+        // Abre espaço: o cursor desce até a última linha da imagem.
+        self.pending_wrap = false;
+        let (row, col) = (self.row, self.col);
+        let line = self.dropped + (self.history_len() + self.row) as u64;
+        for _ in 1..rows {
+            self.linefeed();
+        }
+        let id = self.next_image;
+        self.next_image += 1;
+        self.images.push(InlineImage {
+            id,
+            line,
+            col,
+            width: w,
+            height: h,
+            rows,
+            rgba: std::sync::Arc::new(image.pixels),
+            source: (iw, ih),
+            alt: self.alt,
+            kitty_id,
+        });
+        if self.images.len() > 32 {
+            self.images.remove(0);
+        }
+        if move_cursor {
+            self.col = (col + cols).min(self.cols - 1);
+        } else {
+            self.set_cursor(row.min(self.row), col);
+        }
+    }
+
+    /// Imagem de uma colocação virtual do kitty (para os placeholders): os pixels e as
+    /// colunas e linhas que ela ocupa.
+    pub fn placeholder_image(&self, id: u32) -> Option<(&graphics::Rgba, u32, u32)> {
+        let (cols, rows) = *self.virtual_images.get(&id)?;
+        Some((self.kitty.image(id)?, cols, rows))
+    }
+
+    /// Saída do `tmux -CC` desde a última consulta, e se o modo de controle acabou.
+    pub fn take_tmux(&mut self) -> (Vec<u8>, bool) {
+        (std::mem::take(&mut self.tmux_out), std::mem::take(&mut self.tmux_ended))
+    }
+
+    /// O `tmux -CC` está rodando neste terminal.
+    pub fn tmux_active(&self) -> bool {
+        self.tmux
     }
 
     /// Os prompts guardados (para as marcas ao lado das linhas).
@@ -1288,6 +1445,71 @@ impl Terminal {
 }
 
 impl Perform for Terminal {
+    fn dcs_start(&mut self, params: &[Vec<u16>], _private: Option<u8>, intermediates: &[u8], action: u8) {
+        match (action, intermediates) {
+            (b'q', []) => self.sixel = Some(Vec::new()),
+            // `tmux -CC`: o resto da sessão vem dentro desta DCS.
+            (b'p', []) if params.first().map(|p| p[0]) == Some(1000) => {
+                self.tmux = true;
+                self.tmux_out.clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn dcs_put(&mut self, data: &[u8]) {
+        if self.tmux {
+            self.tmux_out.extend_from_slice(data);
+        } else if let Some(sixel) = &mut self.sixel {
+            if sixel.len() < 64 << 20 {
+                sixel.extend_from_slice(data);
+            }
+        }
+    }
+
+    fn dcs_end(&mut self) {
+        if std::mem::take(&mut self.tmux) {
+            self.tmux_ended = true;
+        }
+        if let Some(data) = self.sixel.take() {
+            if let Some(image) = graphics::decode_sixel(&data) {
+                self.place_rgba(image, "", "", true, true, None);
+                // O Sixel deixa o cursor no começo da linha de baixo da imagem.
+                self.col = 0;
+                self.linefeed();
+            }
+        }
+    }
+
+    fn apc(&mut self, data: &[u8]) {
+        let (action, reply) = self.kitty.command(data);
+        match action {
+            Some(KittyAction::Display { image, cols, rows, move_cursor }) => {
+                let (w, h) = (cols.map(|c| c.to_string()).unwrap_or_default(), rows.map(|r| r.to_string()).unwrap_or_default());
+                let id = data.split(|&b| b == b',' || b == b';').find_map(|kv| kv.strip_prefix(b"i=").or_else(|| kv.strip_prefix(b"Gi=")));
+                let id = id.and_then(|v| std::str::from_utf8(v).ok()).and_then(|v| v.parse().ok());
+                self.place_rgba(image, &w, &h, cols.is_none() || rows.is_none(), move_cursor, id);
+            }
+            Some(KittyAction::Virtual { id, cols, rows }) => {
+                self.virtual_images.insert(id, (cols, rows));
+            }
+            Some(KittyAction::Delete { id }) => {
+                match id {
+                    Some(id) => {
+                        self.virtual_images.remove(&id);
+                    }
+                    None => self.virtual_images.clear(),
+                }
+                let alt = self.alt;
+                self.images.retain(|i| i.alt != alt || i.kitty_id.is_none() || (id.is_some() && i.kitty_id != id));
+            }
+            None => {}
+        }
+        if let Some(reply) = reply {
+            self.respond(&reply);
+        }
+    }
+
     fn print(&mut self, c: char) {
         let c = if self.charsets[self.gl] == Charset::DecGraphics { dec_graphics(c) } else { c };
         let width = char_width(c);
@@ -1410,11 +1632,19 @@ impl Perform for Terminal {
                     self.erase_rows(0, row);
                     self.erase_cells(row, 0, col + 1);
                 }
-                2 => self.erase_rows(0, self.rows),
+                2 => {
+                    self.erase_rows(0, self.rows);
+                    // Imagens que estavam na tela somem com ela.
+                    let top = self.dropped + self.history_len() as u64;
+                    let alt = self.alt;
+                    self.images.retain(|i| i.alt != alt || i.line + i.rows as u64 <= top);
+                }
                 3 => {
                     self.dropped += self.history.len() as u64;
                     self.history.clear();
                     self.marks.clear();
+                    let dropped = self.dropped;
+                    self.images.retain(|i| i.line >= dropped);
                 }
                 _ => {}
             },
@@ -1450,7 +1680,8 @@ impl Perform for Terminal {
                     }
                 }
             }
-            (None, [], b'c') if raw(0) == 0 => self.respond("\x1b[?62;22c"),
+            // VT220 com Sixel (4) e cores ANSI (22).
+            (None, [], b'c') if raw(0) == 0 => self.respond("\x1b[?62;4;22c"),
             (Some(b'>'), [], b'c') if raw(0) == 0 => self.respond("\x1b[>1;10;0c"),
             (None, [], b'd') => {
                 let row = p(0, 1) - 1;
@@ -1619,6 +1850,22 @@ impl Perform for Terminal {
                 }
             }
             "7" => self.cwd = parse_file_url(rest),
+            "1337" => {
+                // File=[argumentos]:conteúdo em base64 (só imagens com inline=1).
+                let Some(file) = rest.strip_prefix("File=") else {
+                    return;
+                };
+                let (args, payload) = file.split_once(':').unwrap_or((file, ""));
+                let arg = |key: &str| args.split(';').find_map(|a| a.split_once('=').filter(|(k, _)| *k == key).map(|(_, v)| v.to_string()));
+                if arg("inline").as_deref() != Some("1") {
+                    return;
+                }
+                let Some(bytes) = decode_base64(payload) else {
+                    return;
+                };
+                let keep = arg("preserveAspectRatio").as_deref() != Some("0");
+                self.place_image(&bytes, &arg("width").unwrap_or_default(), &arg("height").unwrap_or_default(), keep);
+            }
             "133" => match rest.chars().next() {
                 Some('A') => {
                     let line = self.dropped + (self.history_len() + self.row) as u64;
@@ -1733,6 +1980,11 @@ fn parse_color(spec: &str) -> Option<Rgb> {
 
 fn color_spec(rgb: Rgb) -> String {
     format!("rgb:{:02x}{0:02x}/{:02x}{1:02x}/{:02x}{2:02x}", rgb[0], rgb[1], rgb[2])
+}
+
+/// Base64 (para os protocolos de imagem).
+pub(crate) fn decode_base64_pub(s: &str) -> Option<Vec<u8>> {
+    decode_base64(s)
 }
 
 fn decode_base64(s: &str) -> Option<Vec<u8>> {
@@ -1891,7 +2143,7 @@ mod tests {
     fn respostas_ao_programa() {
         let mut t = term(80, 24, "\x1b[5;10H\x1b[6n\x1b[c\x1b[18t\x1b[?2004h\x1b[?2004$p");
         let r = String::from_utf8(t.take_responses()).unwrap();
-        assert_eq!(r, "\x1b[5;10R\x1b[?62;22c\x1b[8;24;80t\x1b[?2004;1$y");
+        assert_eq!(r, "\x1b[5;10R\x1b[?62;4;22c\x1b[8;24;80t\x1b[?2004;1$y");
         t.feed(b"\x1b]11;?\x07");
         assert_eq!(String::from_utf8(t.take_responses()).unwrap(), "\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
     }
@@ -1949,6 +2201,8 @@ mod tests {
         let found = t.search("acao");
         assert_eq!(found, vec![((0, 0), (0, 3)), ((1, 3), (2, 0))]);
         assert!(t.search("").is_empty());
+        assert_eq!(t.search_lines("acao", 1, 2), vec![((1, 3), (2, 0))]);
+        assert_eq!(t.search_lines("acao", 0, 0), vec![((0, 0), (0, 3))]);
     }
 
     #[test]
@@ -1963,6 +2217,71 @@ mod tests {
         assert_eq!(t.url_at(1, 2).unwrap().2, "http://ab.cd/efgh");
         let t = term(30, 1, "(mailto:eu@ex.com)");
         assert_eq!(t.url_at(0, 3).unwrap().2, "mailto:eu@ex.com");
+    }
+
+    #[test]
+    fn imagem_do_protocolo_do_iterm2() {
+        // PNG de 20x32 pixels.
+        let mut png = Vec::new();
+        let img = image::RgbaImage::from_pixel(20, 32, image::Rgba([255, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let b64 = encode_base64(&png);
+        let mut t = Terminal::new(20, 6);
+        t.cell_pixels = (10, 16);
+        t.feed(b"ab");
+        t.feed(format!("\x1b]1337;File=inline=1:{b64}\x07").as_bytes());
+        let imgs: Vec<_> = t.images().collect();
+        assert_eq!(imgs.len(), 1);
+        assert_eq!((imgs[0].line, imgs[0].col, imgs[0].width, imgs[0].height, imgs[0].rows), (0, 2, 20, 32, 2));
+        assert_eq!(t.cursor(), (1, 4));
+        // Largura em células: 4 células de 10 px = 40 px, altura proporcional.
+        t.feed(format!("\r\n\x1b]1337;File=inline=1;width=4:{b64}\x07").as_bytes());
+        let last = t.images().last().unwrap().clone();
+        assert_eq!((last.width, last.height, last.rows), (40, 64, 4));
+        // Sem inline=1 (download), nada aparece; limpar a tela tira as imagens.
+        t.feed(format!("\x1b]1337;File=name=eA==:{b64}\x07").as_bytes());
+        assert_eq!(t.images().count(), 2);
+        t.feed(b"\x1b[2J\x1b[3J");
+        assert_eq!(t.images().count(), 0);
+    }
+
+    #[test]
+    fn sixel_e_kitty_pelo_fluxo_de_bytes() {
+        let mut t = Terminal::new(20, 8);
+        t.cell_pixels = (10, 16);
+        // Sixel de 4x6 (vermelho): o cursor vai para o começo da linha de baixo.
+        t.feed(b"x\x1bPq#1;2;100;0;0#1~~~~\x1b\\");
+        assert_eq!(t.images().count(), 1);
+        assert_eq!(t.cursor(), (1, 0));
+        // Kitty: RGB 1x1 mostrado em 2x1 células, com número 5; depois apagado.
+        t.feed(b"\x1b_Ga=T,f=24,s=1,v=1,i=5,c=2,r=1;/wAA\x1b\\");
+        assert_eq!(t.images().count(), 2);
+        assert_eq!(String::from_utf8(t.take_responses()).unwrap(), "\x1b_Gi=5;OK\x1b\\");
+        t.feed(b"\x1b_Ga=d,d=i,i=5\x1b\\");
+        assert_eq!(t.images().count(), 1);
+        // tmux -CC: o conteúdo da DCS vai para o tmux, não para a tela.
+        t.feed(b"\x1bP1000p%begin 1 2 0\n");
+        assert!(t.tmux_active());
+        assert_eq!(t.take_tmux(), (b"%begin 1 2 0\n".to_vec(), false));
+        t.feed(b"%exit\n\x1b\\");
+        assert_eq!(t.take_tmux(), (b"%exit\n".to_vec(), true));
+        assert!(!t.tmux_active());
+    }
+
+    fn encode_base64(bytes: &[u8]) -> String {
+        const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
+            for k in 0..4 {
+                if k <= chunk.len() {
+                    out.push(ABC[(n >> (18 - 6 * k) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
     }
 
     #[test]

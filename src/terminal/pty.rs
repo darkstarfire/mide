@@ -121,6 +121,11 @@ impl Pty {
         Ok(Pty { master, child, writes })
     }
 
+    /// Canal de escrita (para quem escreve no PTY de outra parte, como o tmux).
+    pub fn writer(&self) -> mpsc::Sender<Vec<u8>> {
+        self.writes.clone()
+    }
+
     pub fn write(&self, bytes: Vec<u8>) {
         if !bytes.is_empty() {
             let _ = self.writes.send(bytes);

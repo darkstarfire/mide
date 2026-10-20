@@ -4,11 +4,16 @@
 //! Segue a máquina de estados dos terminais DEC VT500 (a mesma que os terminais
 //! modernos seguem), sem interpretar nada: cada sequência completa vira uma chamada
 //! de [`Perform`], e quem decide o que ela faz é a tela ([`super::screen`]).
+//!
+//! DCS (imagens Sixel, o modo de controle do tmux) chega aos poucos: `dcs_start`, os
+//! bytes do conteúdo em `dcs_put` e `dcs_end` no terminador; o conteúdo pode ser
+//! enorme (uma sessão inteira do tmux). APC (imagens do kitty) chega inteiro.
 
 /// Limites para sequências malformadas ou maliciosas não crescerem sem fim.
 const MAX_PARAMS: usize = 32;
 const MAX_INTERMEDIATES: usize = 2;
-const MAX_OSC: usize = 1 << 20;
+/// OSC pode trazer uma imagem inteira (protocolo de imagens do iTerm2): até 48 MB.
+const MAX_OSC: usize = 48 << 20;
 
 /// O que fazer com cada parte decodificada.
 pub trait Perform {
@@ -23,6 +28,14 @@ pub trait Perform {
     fn esc(&mut self, intermediates: &[u8], byte: u8);
     /// `OSC` completa (o texto entre `ESC ]` e o terminador).
     fn osc(&mut self, data: &[u8]);
+    /// Começo de uma `DCS`: parâmetros, marcador, intermediários e o byte final.
+    fn dcs_start(&mut self, _params: &[Vec<u16>], _private: Option<u8>, _intermediates: &[u8], _action: u8) {}
+    /// Bytes do conteúdo da `DCS` (em pedaços).
+    fn dcs_put(&mut self, _data: &[u8]) {}
+    /// Fim da `DCS` (`ST`, ou cancelada).
+    fn dcs_end(&mut self) {}
+    /// `APC` completa (`ESC _ ... ST`).
+    fn apc(&mut self, _data: &[u8]) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,7 +49,11 @@ enum State {
     CsiIntermediate,
     CsiIgnore,
     OscString,
-    /// DCS, SOS, PM e APC: o conteúdo é ignorado até o terminador.
+    /// Cabeçalho da DCS (parâmetros como na CSI) e o conteúdo dela.
+    DcsEntry,
+    DcsPassthrough,
+    ApcString,
+    /// SOS e PM: o conteúdo é ignorado até o terminador.
     IgnoredString,
 }
 
@@ -49,6 +66,8 @@ pub struct Parser {
     private: Option<u8>,
     intermediates: Vec<u8>,
     osc: Vec<u8>,
+    /// Conteúdo da DCS ainda não entregue (vai em pedaços para `dcs_put`).
+    dcs: Vec<u8>,
     /// UTF-8: bytes já lidos do caractere atual e quantos faltam.
     utf8: [u8; 4],
     utf8_len: usize,
@@ -64,6 +83,7 @@ impl Parser {
         for &byte in bytes {
             self.byte(perform, byte);
         }
+        self.flush(perform);
     }
 
     fn byte(&mut self, perform: &mut impl Perform, byte: u8) {
@@ -89,13 +109,26 @@ impl Parser {
         // Valem em qualquer estado: cancelar e começar outra sequência.
         match byte {
             0x18 | 0x1A => {
+                if self.state == State::DcsPassthrough {
+                    self.flush_dcs(perform);
+                    perform.dcs_end();
+                }
                 self.state = State::Ground;
                 perform.execute(byte);
                 return;
             }
             0x1B => {
-                if self.state == State::OscString {
-                    self.dispatch_osc(perform);
+                match self.state {
+                    State::OscString => self.dispatch_osc(perform),
+                    State::DcsPassthrough => {
+                        self.flush_dcs(perform);
+                        perform.dcs_end();
+                    }
+                    State::ApcString => {
+                        perform.apc(&self.osc);
+                        self.osc.clear();
+                    }
+                    _ => {}
                 }
                 self.enter_escape();
                 return;
@@ -121,7 +154,12 @@ impl Parser {
                     self.osc.clear();
                     self.state = State::OscString;
                 }
-                b'P' | b'X' | b'^' | b'_' => self.state = State::IgnoredString,
+                b'P' => self.enter(State::DcsEntry),
+                b'_' => {
+                    self.osc.clear();
+                    self.state = State::ApcString;
+                }
+                b'X' | b'^' => self.state = State::IgnoredString,
                 0x30..=0x7E => {
                     perform.esc(&self.intermediates, byte);
                     self.state = State::Ground;
@@ -188,7 +226,47 @@ impl Parser {
                     }
                 }
             },
+            State::DcsEntry => match byte {
+                b'0'..=b'9' => self.digit(byte),
+                b';' => self.next_param(),
+                b':' => self.next_subparam(),
+                0x3C..=0x3F if self.params.is_empty() && self.private.is_none() => self.private = Some(byte),
+                0x20..=0x2F => self.collect(byte),
+                0x40..=0x7E => {
+                    perform.dcs_start(&self.params, self.private, &self.intermediates, byte);
+                    self.dcs.clear();
+                    self.state = State::DcsPassthrough;
+                }
+                _ => {}
+            },
+            State::DcsPassthrough => {
+                self.dcs.push(byte);
+                if self.dcs.len() >= 4096 {
+                    self.flush_dcs(perform);
+                }
+            }
+            State::ApcString => {
+                if self.osc.len() < MAX_OSC {
+                    self.osc.push(byte);
+                }
+            }
             State::IgnoredString => {}
+        }
+    }
+
+    /// Entrega o conteúdo da DCS acumulado até agora.
+    fn flush_dcs(&mut self, perform: &mut impl Perform) {
+        if !self.dcs.is_empty() {
+            perform.dcs_put(&self.dcs);
+            self.dcs.clear();
+        }
+    }
+
+    /// Fim de um pedaço de bytes: o que a DCS juntou já vai para quem usa (o tmux
+    /// precisa da saída sem esperar o fim da sessão).
+    pub fn flush(&mut self, perform: &mut impl Perform) {
+        if self.state == State::DcsPassthrough {
+            self.flush_dcs(perform);
         }
     }
 
@@ -299,6 +377,18 @@ mod tests {
         fn osc(&mut self, data: &[u8]) {
             self.0.push(format!("osc{}", String::from_utf8_lossy(data)));
         }
+        fn dcs_start(&mut self, params: &[Vec<u16>], _private: Option<u8>, _intermediates: &[u8], action: u8) {
+            self.0.push(format!("dcs{params:?}{}", action as char));
+        }
+        fn dcs_put(&mut self, data: &[u8]) {
+            self.0.push(format!("put{}", String::from_utf8_lossy(data)));
+        }
+        fn dcs_end(&mut self) {
+            self.0.push("fim".into());
+        }
+        fn apc(&mut self, data: &[u8]) {
+            self.0.push(format!("apc{}", String::from_utf8_lossy(data)));
+        }
     }
 
     fn parse(bytes: &[u8]) -> Vec<String> {
@@ -344,6 +434,18 @@ mod tests {
     #[test]
     fn esc_e_strings_ignoradas() {
         assert_eq!(parse(b"\x1b7\x1b(0\x1b#8"), ["esc7", "esc(0", "esc#8"]);
-        assert_eq!(parse(b"\x1bPq#0;2;0;0;0\x1b\\a"), ["esc\\", "pa"]);
+        assert_eq!(parse(b"\x1bXnada\x1b\\a"), ["esc\\", "pa"]);
+    }
+
+    #[test]
+    fn dcs_em_pedacos_e_apc() {
+        assert_eq!(parse(b"\x1bP0;1q#0;2;0;0;0\x1b\\a"), ["dcs[[0], [1]]q", "put#0;2;0;0;0", "fim", "esc\\", "pa"]);
+        // Cada chamada a `advance` entrega o que a DCS juntou (o tmux não espera o fim).
+        let mut log = Log::default();
+        let mut p = Parser::new();
+        p.advance(&mut log, b"\x1bP1000p%begin");
+        p.advance(&mut log, b" 1\n");
+        assert_eq!(log.0, ["dcs[[1000]]p", "put%begin", "put 1\n"]);
+        assert_eq!(parse(b"\x1b_Ga=T;QUJD\x1b\\"), ["apcGa=T;QUJD", "esc\\"]);
     }
 }

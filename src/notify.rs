@@ -185,3 +185,26 @@ mod tests {
         assert_eq!(decode("12\tApp\tTítulo").unwrap().body, "");
     }
 }
+
+/// Manda uma notificação ao servidor de notificações da sessão (o do mide, ou outro),
+/// numa thread: quem chama não espera o barramento.
+pub fn send(app: &str, summary: &str, body: &str) {
+    let (app, summary, body) = (app.to_string(), summary.to_string(), body.to_string());
+    std::thread::spawn(move || {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return;
+        };
+        let hints: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
+        let result = conn.call_method(
+            Some("org.freedesktop.Notifications"),
+            "/org/freedesktop/Notifications",
+            Some("org.freedesktop.Notifications"),
+            "Notify",
+            &(app.as_str(), 0u32, "", summary.as_str(), body.as_str(), Vec::<&str>::new(), hints, -1i32),
+        );
+        if let Err(err) = result {
+            tracing::debug!("notificação não enviada: {err}");
+        }
+    });
+}
+

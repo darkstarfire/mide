@@ -270,6 +270,8 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+space", "toggle_search"),
     // Captura de tela do mide (seleção, janela ou tela inteira, com marcações).
     ("print", "launch:mide-screenshot"),
+    // Terminal de atalho: desce do topo e some com a mesma tecla (como o Guake).
+    ("f12", "launch:mide-terminal --hotkey"),
     // Janelas, como no GNOME.
     ("alt+tab", "switch_windows"),
     ("alt+shift+tab", "switch_windows_back"),

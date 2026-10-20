@@ -685,7 +685,8 @@ echo "== captura de tela (Print)"
 # A imagem vai para Imagens/Capturas de tela: no teste, uma pasta temporária.
 SHOTS="$(mktemp -d)"
 printf 'XDG_PICTURES_DIR="%s"\n' "$SHOTS" > "$TESTCFG/user-dirs.dirs"
-timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo ctrl+s; 720 list" >/dev/null 2>&1
+# O Ctrl+S vem uns 11 s depois da partida: com a espera padrão (10 s) o teste ficava no limite.
+SCENARIO_WAIT=16 timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo ctrl+s; 720 list" >/dev/null 2>&1
 if ls "$SHOTS/Capturas de tela/"*.png >/dev/null 2>&1 && python3 -c "
 import sys, glob
 from PIL import Image
@@ -695,7 +696,7 @@ sys.exit(0 if img.size == (400, 250) else 1)" "$SHOTS"; then
 else
     echo "FALHA captura de uma área salva em Imagens/Capturas de tela"; FAIL=$((FAIL + 1))
 fi
-check "captura: Enter copia a imagem para a área de transferência" "bytes de image/png copiados" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 key enter; 720 list"
+SCENARIO_WAIT=16 check "captura: Enter copia a imagem para a área de transferência" "bytes de image/png copiados" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 key enter; 720 list"
 rm -f "$TESTCFG/user-dirs.dirs"
 rm -rf "$SHOTS"
 

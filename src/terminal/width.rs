@@ -158,7 +158,7 @@ pub fn char_width(c: char) -> usize {
     if c < 0xA0 {
         return 0;
     }
-    if in_table(ZERO, c) {
+    if in_table(ZERO, c) || super::graphics::diacritic_index(char::from_u32(c).unwrap_or(' ')).is_some() {
         0
     } else if in_table(WIDE, c) {
         2

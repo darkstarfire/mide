@@ -1335,6 +1335,7 @@ fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
         "show_desktop" => "Mostrar a área de trabalho".into(),
         "lock_screen" => "Bloquear a tela".into(),
         "launch:mide-screenshot" => "Captura de tela".into(),
+        "launch:mide-terminal --hotkey" => "Mostrar ou esconder o terminal de atalho".into(),
         other => match other.strip_prefix("launch:") {
             Some(cmd) => match apps.iter().find(|a| a.command == cmd || app_command(a) == cmd) {
                 Some(app) => format!("Abrir {}", app.name),

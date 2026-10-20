@@ -86,6 +86,8 @@ pub struct Window {
     pub overlay: Option<String>,
     /// Camada de fundo, atrás das janelas (`Window::desktop`).
     pub desktop: bool,
+    /// Camada que desce do topo, por cima das janelas (`Window::dropdown`).
+    pub dropdown: bool,
 }
 
 impl Window {
@@ -99,7 +101,18 @@ impl Window {
             theme: Theme::default(),
             overlay: None,
             desktop: false,
+            dropdown: false,
         }
+    }
+
+    /// Camada por cima das janelas, na área útil (abaixo da barra), com o teclado só
+    /// para ela enquanto aparece: para painéis que descem do topo (o terminal de
+    /// atalho). O app desenha só a parte de cima e diz onde recebe cliques
+    /// (`Ui::input_area`); o resto deixa passar. Esconde e volta com `Ui::set_hidden`.
+    pub fn dropdown(mut self, namespace: &str) -> Self {
+        self.overlay = Some(namespace.into());
+        self.dropdown = true;
+        self
     }
 
     /// Camada de fundo, atrás das janelas e na frente do papel de parede (a área de
@@ -165,7 +178,13 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     let shell = match &window.overlay {
         Some(namespace) => {
             let layer_shell = LayerShell::bind(&globals, &qh)?;
-            let kind = if window.desktop { Layer::Bottom } else { Layer::Overlay };
+            let kind = if window.desktop {
+                Layer::Bottom
+            } else if window.dropdown {
+                Layer::Top
+            } else {
+                Layer::Overlay
+            };
             let layer = layer_shell.create_layer_surface(&qh, surface, kind, Some(namespace.clone()), None);
             layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
             if window.desktop {
@@ -173,6 +192,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
                 // quando clicada.
                 layer.set_exclusive_zone(0);
                 layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+            } else if window.dropdown {
+                layer.set_exclusive_zone(0);
+                layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
             } else {
                 layer.set_exclusive_zone(-1);
                 layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -222,6 +244,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app: Box::new(app),
         menus: None,
         maximized: false,
+        compositor,
+        hidden: false,
     };
 
     // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
@@ -329,6 +353,9 @@ struct Runner {
     /// Menus publicados na barra superior.
     menus: Option<super::menubar::Published>,
     maximized: bool,
+    compositor: CompositorState,
+    /// A superfície foi escondida (`Ui::set_hidden`): sem imagem até voltar.
+    hidden: bool,
 }
 
 impl Runner {
@@ -384,6 +411,23 @@ impl Runner {
                 break;
             }
         }
+        // Esconder e mostrar (camadas): sem imagem a superfície some; para voltar, um
+        // commit vazio pede outra configuração ao compositor.
+        match self.ctx.hide_request.take() {
+            Some(true) if !self.hidden => {
+                self.hidden = true;
+                let surface = self.shell.wl_surface();
+                surface.attach(None, 0, 0);
+                self.shell.commit();
+                self.last_frame = None;
+            }
+            Some(false) if self.hidden => {
+                self.hidden = false;
+                self.configured = false;
+                self.shell.commit();
+            }
+            _ => {}
+        }
         let groups = self.app.menu_bar();
         match &mut self.menus {
             Some(menus) => menus.update(groups),
@@ -395,6 +439,9 @@ impl Runner {
         };
         if self.ctx.close_requested {
             self.exit = true;
+            return;
+        }
+        if self.hidden || !self.configured {
             return;
         }
         // Painéis de vidro (`ui.glass_panel`): o compositor desenha o vidro atrás.
@@ -419,6 +466,16 @@ impl Runner {
         to_argb8888(&pixmap, canvas);
         tracing::debug!("quadro do app: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
         let surface = self.shell.wl_surface();
+        // Só onde o app desenha recebe cliques (`Ui::input_area`).
+        match self.ctx.input_region.take() {
+            Some((x, y, rw, rh)) => {
+                if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+                    region.add(x as i32, y as i32, rw as i32, rh as i32);
+                    surface.set_input_region(Some(region.wl_region()));
+                }
+            }
+            None => surface.set_input_region(None),
+        }
         surface.damage_buffer(0, 0, w as i32, h as i32);
         if buffer.attach_to(surface).is_ok() {
             self.shell.commit();
@@ -552,8 +609,19 @@ impl PointerHandler for Runner {
 }
 
 impl KeyboardHandler for Runner {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {
+        self.ctx.input.focused = true;
+        self.dirty = true;
+    }
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {
+        self.ctx.input.focused = false;
+        // Sem foco, nenhuma tecla continua "segurada" para o app.
+        self.ctx.input.ctrl = false;
+        self.ctx.input.shift = false;
+        self.ctx.input.alt = false;
+        self.ctx.input.logo = false;
+        self.dirty = true;
+    }
 
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, serial: u32, event: KeyEvent) {
         self.serial = serial;

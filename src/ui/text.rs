@@ -42,6 +42,8 @@ pub struct Text {
     /// mesmos rótulos a cada quadro, e colar a imagem pronta é muito mais rápido que
     /// compor as letras de novo.
     images: HashMap<(String, u32, FontWeight, [u8; 4], Face), (Pixmap, i32, i32, f32)>,
+    /// Família da fonte de largura fixa (`None`: a monoespaçada padrão do sistema).
+    mono_family: Option<String>,
 }
 
 impl Default for Text {
@@ -57,18 +59,48 @@ impl Text {
             swash: SwashCache::new(),
             widths: HashMap::new(),
             images: HashMap::new(),
+            mono_family: None,
         }
     }
 
     fn buffer(&mut self, text: &str, size: f32, weight: FontWeight, face: Face) -> Buffer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, size * 1.25));
         buffer.set_size(Some(100_000.0), Some(size * 1.5));
-        let family = if face == Face::Sans { Family::SansSerif } else { Family::Monospace };
+        let family = match (face, &self.mono_family) {
+            (Face::Sans, _) => Family::SansSerif,
+            (_, Some(name)) => Family::Name(name),
+            (_, None) => Family::Monospace,
+        };
         let style = if face == Face::MonoItalic { Style::Italic } else { Style::Normal };
         let attrs = Attrs::new().family(family).weight(weight.to_cosmic()).style(style);
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
         buffer
+    }
+
+    /// Troca a família da fonte de largura fixa (terminal, editor). Uma família que
+    /// não existe volta à padrão do sistema.
+    pub fn set_mono_family(&mut self, name: Option<&str>) {
+        let name = name.map(str::trim).filter(|n| !n.is_empty()).filter(|n| self.monospace_families().iter().any(|f| f == n)).map(str::to_string);
+        if name != self.mono_family {
+            self.mono_family = name;
+            self.widths.clear();
+            self.images.clear();
+        }
+    }
+
+    /// Famílias de fonte de largura fixa instaladas, em ordem alfabética.
+    pub fn monospace_families(&mut self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .fonts
+            .db()
+            .faces()
+            .filter(|f| f.monospaced)
+            .filter_map(|f| f.families.first().map(|(name, _)| name.clone()))
+            .collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup();
+        names
     }
 
     /// Largura do texto em pixels.

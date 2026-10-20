@@ -284,7 +284,7 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             // abre um terminal vira "nova aba" nele.
             if focused_app_id(state).as_deref() == Some("mide-terminal") {
                 return match state.config.match_binding(modifiers, key) {
-                    Some(Action::Launch(command)) if command.trim_start().starts_with("mide-terminal") => FilterResult::Forward,
+                    Some(Action::Launch(command)) if command.trim() == "mide-terminal" => FilterResult::Forward,
                     Some(action) => FilterResult::Intercept(Some(action)),
                     None => FilterResult::Forward,
                 };

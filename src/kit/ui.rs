@@ -379,6 +379,10 @@ pub struct Ctx {
     pub paste_requested: bool,
     /// Acorda a janela de outra thread (`Ui::waker`).
     pub waker: Option<super::app::Waker>,
+    /// Área que recebe cliques neste quadro (`Ui::input_area`; `None`: a superfície toda).
+    pub input_region: Option<(f32, f32, f32, f32)>,
+    /// Pedido para esconder (`true`) ou mostrar a superfície (`Ui::set_hidden`).
+    pub hide_request: Option<bool>,
 }
 
 impl Ctx {
@@ -408,6 +412,8 @@ impl Ctx {
             clipboard_out: None,
             paste_requested: false,
             waker: None,
+            input_region: None,
+            hide_request: None,
         }
     }
 
@@ -1184,6 +1190,17 @@ impl<'a> Ui<'a> {
     /// `input().paste`.
     pub fn request_paste(&mut self) {
         self.ctx.paste_requested = true;
+    }
+
+    /// Só esta área (na janela) recebe cliques; fora dela, eles passam para o que
+    /// está atrás (camadas transparentes, como `Window::dropdown`). Vale por quadro.
+    pub fn input_area(&mut self, rect: (f32, f32, f32, f32)) {
+        self.ctx.input_region = Some(rect);
+    }
+
+    /// Esconde a superfície (sem fechar o app) ou mostra de novo.
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.ctx.hide_request = Some(hidden);
     }
 
     /// Para acordar a janela de outra thread (ver [`Waker`](super::Waker)).

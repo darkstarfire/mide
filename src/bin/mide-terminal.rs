@@ -24,10 +24,11 @@ use std::{
 use mide::{
     kit::{run, window_menu, App, Key, KeyPress, MenuGroup, MenuItem, Ui, Waker, Window},
     terminal::{
+        graphics::PLACEHOLDER,
         keys::{key_bytes, paste_bytes},
         layout::{Direction, Divider, Layout, PaneId, Rect, Split},
         palette::{self, THEMES},
-        profile::{self, Cursor, Profile, Profiles, StartDir, COLOR_SLOTS},
+        profile::{self, parse_hex, Cursor, Profile, Profiles, StartDir, Trigger, TriggerAction, COLOR_SLOTS},
         pty::{Pty, Size, Spawn},
         session::{Saved, SavedLayout, SavedTab},
         screen::{attr, CursorShape, MouseButton, MouseEvent, MouseMode, Rgb, Wide},
@@ -52,6 +53,8 @@ struct Options {
     title: Option<String>,
     profile: Option<String>,
     preferences: bool,
+    /// Terminal de atalho: desce do topo e some com o mesmo atalho.
+    hotkey: bool,
 }
 
 impl Options {
@@ -70,6 +73,7 @@ impl Options {
                 "--title" | "-T" => options.title = args.next(),
                 "--profile" => options.profile = args.next(),
                 "--preferences" => options.preferences = true,
+                "--hotkey" => options.hotkey = true,
                 _ => {
                     if let Some(dir) = arg.strip_prefix("--working-directory=") {
                         options.spawn.directory = Some(PathBuf::from(dir));
@@ -110,9 +114,18 @@ impl Selection {
     }
 }
 
+/// De onde vem a saída e para onde vai o que se digita.
+enum Backend {
+    /// Um programa num PTY.
+    Local(Pty),
+    /// Um painel de uma sessão do tmux (`tmux -CC`): a saída chega pelo `%output` e o
+    /// que se digita vai como `send-keys` pelo painel que roda o tmux.
+    Tmux { gateway: mpsc::Sender<Vec<u8>>, pane: u32 },
+}
+
 struct Pane {
     term: Terminal,
-    pty: Pty,
+    backend: Backend,
     output: mpsc::Receiver<Vec<u8>>,
     profile: String,
     /// Linhas roladas para cima no histórico (0 = no fim).
@@ -128,9 +141,84 @@ struct Pane {
     opacity: f32,
     blur: bool,
     visual_bell: bool,
+    /// Gatilhos do perfil, a próxima linha a conferir e os trechos destacados por eles.
+    triggers: Vec<Trigger>,
+    scanned: u64,
+    highlights: Vec<((u64, usize), (u64, usize), Rgb)>,
+    /// Imagens já convertidas para desenhar (pelo número da imagem).
+    image_cache: std::cell::RefCell<HashMap<u64, Pixmap>>,
+    /// Imagens dos placeholders do kitty já no tamanho da grade (número, colunas,
+    /// linhas e tamanho da célula).
+    placeholder_cache: std::cell::RefCell<HashMap<(u32, u32, u32, u32, u32), Pixmap>>,
 }
 
 impl Pane {
+    fn new(term: Terminal, backend: Backend, output: mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            term,
+            backend,
+            output,
+            profile: String::new(),
+            scroll: 0,
+            scroll_rest: 0.0,
+            selection: None,
+            mouse_held: None,
+            mouse_cell: None,
+            bell_at: None,
+            opacity: 1.0,
+            blur: false,
+            visual_bell: true,
+            triggers: Vec::new(),
+            scanned: 0,
+            highlights: Vec::new(),
+            image_cache: Default::default(),
+            placeholder_cache: Default::default(),
+        }
+    }
+
+    fn write(&self, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        match &self.backend {
+            Backend::Local(pty) => pty.write(bytes),
+            Backend::Tmux { gateway, pane } => {
+                for command in mide::terminal::tmux::send_keys(*pane, &bytes) {
+                    let _ = gateway.send(format!("{command}\n").into_bytes());
+                }
+            }
+        }
+    }
+
+    /// Avisa o programa do tamanho novo (no tmux, quem decide é o tmux).
+    fn resize(&self, size: Size) {
+        if let Backend::Local(pty) = &self.backend {
+            pty.resize(size);
+        }
+    }
+
+    fn cwd(&self) -> Option<PathBuf> {
+        match &self.backend {
+            Backend::Local(pty) => pty.cwd(),
+            Backend::Tmux { .. } => None,
+        }
+    }
+
+    fn foreground(&self) -> Option<(String, bool)> {
+        match &self.backend {
+            Backend::Local(pty) => pty.foreground(),
+            Backend::Tmux { .. } => None,
+        }
+    }
+
+    /// Número do painel no tmux, se for um.
+    fn tmux_pane(&self) -> Option<u32> {
+        match &self.backend {
+            Backend::Tmux { pane, .. } => Some(*pane),
+            Backend::Local(_) => None,
+        }
+    }
+
     /// Saída nova. Devolve (chegou algo, o programa terminou).
     fn read(&mut self, ui: &mut Ui, copy: &mut Option<String>) -> (bool, bool) {
         let history_before = self.term.history_len();
@@ -151,7 +239,11 @@ impl Pane {
         if read >= CHUNK {
             ui.request_tick();
         }
-        self.pty.write(self.term.take_responses());
+        // Respostas ao programa (no tmux, o próprio tmux responde por ele).
+        let responses = self.term.take_responses();
+        if self.tmux_pane().is_none() {
+            self.write(responses);
+        }
         if let Some(text) = self.term.take_clipboard() {
             *copy = Some(text);
         }
@@ -161,10 +253,49 @@ impl Pane {
         if self.scroll > 0 {
             self.scroll = (self.scroll + self.term.history_len().saturating_sub(history_before)).min(self.term.history_len());
         }
+        if read > 0 {
+            self.run_triggers();
+        }
         if ended {
-            self.pty.reap();
+            if let Backend::Local(pty) = &mut self.backend {
+                pty.reap();
+            }
         }
         (read > 0, ended)
+    }
+
+    /// Gatilhos nas linhas que terminaram desde a última vez (acima do cursor).
+    fn run_triggers(&mut self) {
+        let (first, _) = self.term.abs_range();
+        let cursor = self.term.visible_abs(self.term.cursor().0, 0);
+        self.scanned = self.scanned.max(first);
+        self.highlights.retain(|(a, _, _)| a.0 >= first);
+        if self.triggers.is_empty() || cursor <= self.scanned {
+            self.scanned = self.scanned.max(cursor);
+            return;
+        }
+        let mut notices = 0;
+        for trigger in &self.triggers {
+            for (a, b) in self.term.search_lines(&trigger.text, self.scanned, cursor - 1) {
+                match trigger.action {
+                    TriggerAction::Highlight => {
+                        let color = parse_hex(&trigger.color).unwrap_or([255, 216, 77]);
+                        if self.highlights.len() < 5_000 {
+                            self.highlights.push((a, b, color));
+                        }
+                    }
+                    TriggerAction::Notify if notices < 3 => {
+                        notices += 1;
+                        let cols = self.term.cols();
+                        let line = self.term.text_between((a.0, 0), (a.0, cols - 1));
+                        mide::notify::send("Terminal", &format!("Gatilho: {}", trigger.text), line.trim());
+                    }
+                    TriggerAction::Notify => {}
+                    TriggerAction::Bell => self.bell_at = Some(Instant::now()),
+                }
+            }
+        }
+        self.scanned = cursor;
     }
 
     /// Título da aba: o que o programa pediu, ou o nome do programa em primeiro plano.
@@ -172,7 +303,7 @@ impl Pane {
         if let Some(t) = self.term.title.as_ref().filter(|t| !t.trim().is_empty()) {
             return t.clone();
         }
-        self.pty.foreground().map(|(name, _)| name).unwrap_or_else(|| TITLE.into())
+        self.foreground().map(|(name, _)| name).unwrap_or_else(|| TITLE.into())
     }
 
     fn selected_text(&self) -> Option<String> {
@@ -185,6 +316,7 @@ impl Pane {
         self.opacity = profile.opacity;
         self.blur = profile.blur;
         self.visual_bell = profile.visual_bell;
+        self.triggers = profile.triggers.iter().filter(|t| !t.text.trim().is_empty()).cloned().collect();
         self.term.bold_bright = profile.bold_bright;
         self.term.set_history_limit(profile.scrollback);
         self.term.cursor_shape = match profile.cursor {
@@ -192,7 +324,6 @@ impl Pane {
             Cursor::Bar => CursorShape::Bar,
             Cursor::Underline => CursorShape::Underline,
         };
-        self.profile = profile.name.clone();
     }
 }
 
@@ -203,6 +334,8 @@ struct Tab {
     zoom: bool,
     /// Saída nova enquanto a aba estava em segundo plano.
     activity: bool,
+    /// Janela de uma sessão do tmux: o painel que roda o tmux e o número da janela.
+    tmux: Option<(PaneId, u32)>,
 }
 
 struct Find {
@@ -236,6 +369,8 @@ struct TerminalApp {
     tabs: Vec<Tab>,
     active: usize,
     font_size: f32,
+    /// Família da fonte da janela (vazio: a padrão do sistema).
+    font_family: String,
     cell: (f32, f32),
     find: Option<Find>,
     dialog: Option<Dialog>,
@@ -259,12 +394,53 @@ struct TerminalApp {
     first_spawn: Option<Spawn>,
     /// Teclado no estilo Mac (os menus mostram os atalhos com ⌘).
     mac: bool,
+    /// Terminal de atalho: pedidos de mostrar/esconder e se está aparecendo.
+    hotkey: Option<Hotkey>,
+    /// Sessões do tmux em modo de controle (`tmux -CC`) abertas nos painéis.
+    tmux: Vec<TmuxSession>,
+}
+
+/// O que se espera da resposta de cada comando mandado ao tmux.
+#[derive(Debug, Clone, Copy)]
+enum Expect {
+    Windows,
+    Capture(u32),
+    Cursor(u32),
+    Ignore,
+}
+
+/// Sessão do tmux rodando num painel (o "portal"): as janelas dela viram abas e os
+/// painéis, painéis do mide-terminal.
+struct TmuxSession {
+    gateway: PaneId,
+    client: mide::terminal::tmux::Client<Expect>,
+    /// Escreve no PTY do portal (os comandos para o tmux).
+    writer: mpsc::Sender<Vec<u8>>,
+    /// Painel do tmux → painel do mide e o canal da saída dele.
+    panes: HashMap<u32, (PaneId, mpsc::Sender<Vec<u8>>)>,
+    /// Tamanho pedido ao tmux (colunas e linhas).
+    size: (usize, usize),
+}
+
+impl TmuxSession {
+    fn command(&mut self, command: &str, expect: Expect) {
+        let bytes = self.client.send(command, expect);
+        let _ = self.writer.send(bytes);
+    }
+}
+
+struct Hotkey {
+    toggles: mpsc::Receiver<()>,
+    /// Quem acorda a janela quando chega um pedido (preenchido no primeiro quadro).
+    waker: std::sync::Arc<std::sync::Mutex<Option<Waker>>>,
+    visible: bool,
 }
 
 impl TerminalApp {
     fn new(options: Options) -> Self {
         let profiles = Profiles::load();
-        let font_size = options.profile.as_deref().map_or_else(|| profiles.default_profile().font_size, |p| profiles.get(p).font_size);
+        let start_profile = profiles.get(options.profile.as_deref().unwrap_or("")).clone();
+        let (font_size, font_family) = (start_profile.font_size, start_profile.font.clone());
         let first_spawn = Some(options.spawn.clone());
         Self {
             options,
@@ -276,7 +452,8 @@ impl TerminalApp {
             tabs: Vec::new(),
             active: 0,
             font_size,
-            cell: cell_size(&mut Text::new(), font_size),
+            cell: cell_size(font_size, &font_family),
+            font_family,
             find: None,
             dialog: None,
             selecting: None,
@@ -291,6 +468,8 @@ impl TerminalApp {
             confirmed_close: false,
             first_spawn,
             mac: mac_style(),
+            hotkey: None,
+            tmux: Vec::new(),
         }
     }
 
@@ -305,7 +484,10 @@ impl TerminalApp {
 
     /// Como `spawn_pane`, numa pasta escolhida (sessão restaurada).
     fn spawn_pane_in(&mut self, near: Option<PaneId>, profile: Option<&str>, dir: Option<PathBuf>) -> Option<PaneId> {
-        let profile = self.profiles.get(profile.filter(|p| !p.is_empty()).unwrap_or(&self.profile_name())).clone();
+        // Perfil escolhido (menu Perfis, --profile) fica preso ao painel; sem escolha,
+        // o painel segue o padrão, mesmo que o padrão mude depois.
+        let chosen = profile.filter(|p| !p.is_empty()).map(str::to_string).or_else(|| self.options.profile.clone()).unwrap_or_default();
+        let profile = self.profiles.get(&chosen).clone();
         let mut spawn = self.first_spawn.take().unwrap_or_default();
         if dir.is_some() {
             spawn.directory = dir;
@@ -313,8 +495,11 @@ impl TerminalApp {
         if spawn.command.is_none() && !profile.command.trim().is_empty() {
             spawn.command = Some(("sh".into(), vec!["-c".into(), profile.command.clone()]));
         }
+        if profile.shell_integration {
+            mide::terminal::integration::apply(&mut spawn);
+        }
         if spawn.directory.is_none() && profile.start_dir == StartDir::Same {
-            spawn.directory = near.and_then(|id| self.panes.get(&id)).and_then(|p| p.pty.cwd());
+            spawn.directory = near.and_then(|id| self.panes.get(&id)).and_then(|p| p.cwd());
         }
         let (tx, output) = mpsc::channel();
         let waker = self.waker.clone();
@@ -329,7 +514,8 @@ impl TerminalApp {
             Ok(pty) => {
                 let mut term = Terminal::new(cols as usize, rows as usize);
                 term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
-                let mut pane = Pane { term, pty, output, profile: profile.name.clone(), scroll: 0, scroll_rest: 0.0, selection: None, mouse_held: None, mouse_cell: None, bell_at: None, opacity: 1.0, blur: false, visual_bell: true };
+                let mut pane = Pane::new(term, Backend::Local(pty), output);
+                pane.profile = chosen;
                 pane.apply(&profile);
                 let id = self.next_id;
                 self.next_id += 1;
@@ -355,7 +541,7 @@ impl TerminalApp {
     fn new_tab_with(&mut self, profile: Option<&str>) {
         let near = self.focused();
         if let Some(id) = self.spawn_pane(near, profile) {
-            self.tabs.push(Tab { layout: Layout::Pane(id), focus: id, zoom: false, activity: false });
+            self.tabs.push(Tab { layout: Layout::Pane(id), focus: id, zoom: false, activity: false, tmux: None });
             self.active = self.tabs.len() - 1;
         }
     }
@@ -399,7 +585,7 @@ impl TerminalApp {
 
     /// Programas rodando (além do shell) nos painéis.
     fn running(&self, panes: &[PaneId]) -> Vec<String> {
-        panes.iter().filter_map(|id| self.panes.get(id)).filter_map(|p| p.pty.foreground()).filter(|(_, other)| *other).map(|(name, _)| name).collect()
+        panes.iter().filter_map(|id| self.panes.get(id)).filter_map(|p| p.foreground()).filter(|(_, other)| *other).map(|(name, _)| name).collect()
     }
 
     /// Fecha (ou pergunta antes, se há programas rodando).
@@ -420,7 +606,9 @@ impl TerminalApp {
     fn close_now(&mut self, what: Closing, ui: &mut Ui) {
         match what {
             Closing::Window => {
-                self.save_session();
+                if self.hotkey.is_none() {
+                    self.save_session();
+                }
                 self.confirmed_close = true;
                 ui.close();
             }
@@ -437,6 +625,209 @@ impl TerminalApp {
         }
     }
 
+    // ---- tmux (modo de controle) ----
+
+    /// Sessão do tmux e número do painel no tmux de um painel do mide.
+    fn tmux_of(&self, id: PaneId) -> Option<(usize, u32)> {
+        self.tmux.iter().enumerate().find_map(|(i, s)| s.panes.iter().find(|(_, (l, _))| *l == id).map(|(r, _)| (i, *r)))
+    }
+
+    /// Começo, conversa e fim das sessões do tmux nos painéis.
+    fn tmux_step(&mut self) {
+        let ids: Vec<PaneId> = self.panes.keys().copied().collect();
+        for gid in ids {
+            let Some(pane) = self.panes.get_mut(&gid) else {
+                continue;
+            };
+            let active = pane.term.tmux_active();
+            let (data, ended) = pane.term.take_tmux();
+            let known = self.tmux.iter().position(|s| s.gateway == gid);
+            if known.is_none() && (active || !data.is_empty()) {
+                // tmux dentro de um painel do tmux: fica como está.
+                let Backend::Local(pty) = &pane.backend else {
+                    continue;
+                };
+                // Nada pode ser escrito no terminal deste painel enquanto o tmux fala
+                // (estamos dentro da sequência dele); o aviso é desenhado por cima.
+                let writer = pty.writer();
+                let mut session = TmuxSession { gateway: gid, client: Default::default(), writer, panes: HashMap::new(), size: (0, 0) };
+                session.command(mide::terminal::tmux::LIST_WINDOWS, Expect::Windows);
+                self.tmux.push(session);
+            }
+            if let Some(i) = self.tmux.iter().position(|s| s.gateway == gid) {
+                if !data.is_empty() {
+                    let messages = self.tmux[i].client.feed(&data);
+                    self.tmux_messages(i, messages);
+                }
+                if ended {
+                    if let Some(i) = self.tmux.iter().position(|s| s.gateway == gid) {
+                        self.tmux_end(i);
+                    }
+                }
+            }
+        }
+        // O painel do tmux fechou: a sessão acaba junto.
+        while let Some(i) = self.tmux.iter().position(|s| !self.panes.contains_key(&s.gateway)) {
+            self.tmux_end(i);
+        }
+    }
+
+    fn tmux_messages(&mut self, i: usize, messages: Vec<mide::terminal::tmux::Message<Expect>>) {
+        use mide::terminal::tmux::{Event, Message};
+        let mut relist = false;
+        let mut exit = false;
+        for message in messages {
+            match message {
+                Message::Event(Event::Output { pane, data }) => {
+                    if let Some((_, tx)) = self.tmux[i].panes.get(&pane) {
+                        let _ = tx.send(data);
+                    }
+                }
+                Message::Event(Event::Exit(_)) => exit = true,
+                Message::Event(Event::PaneActive { .. } | Event::WindowActive { .. }) => {}
+                Message::Event(_) => relist = true,
+                Message::Reply(Expect::Windows, reply) if reply.ok => self.tmux_windows(i, &reply.lines),
+                Message::Reply(Expect::Capture(remote), reply) if reply.ok => {
+                    if let Some(pane) = self.tmux[i].panes.get(&remote).and_then(|(l, _)| self.panes.get_mut(l)) {
+                        pane.term.feed(reply.lines.join("\r\n").as_bytes());
+                    }
+                }
+                Message::Reply(Expect::Cursor(remote), reply) if reply.ok => {
+                    let pos: Vec<usize> = reply.lines.first().map(|l| l.split(' ').filter_map(|n| n.parse().ok()).collect()).unwrap_or_default();
+                    if let (Some(&x), Some(&y), Some(pane)) = (pos.first(), pos.get(1), self.tmux[i].panes.get(&remote).and_then(|(l, _)| self.panes.get_mut(l))) {
+                        pane.term.feed(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
+                    }
+                }
+                Message::Reply(..) => {}
+            }
+        }
+        if relist {
+            self.tmux[i].command(mide::terminal::tmux::LIST_WINDOWS, Expect::Windows);
+        }
+        if exit {
+            self.tmux_end(i);
+        }
+        if let Some(w) = &self.waker {
+            w.wake();
+        }
+    }
+
+    /// Acerta abas e painéis com a lista de janelas do tmux.
+    fn tmux_windows(&mut self, i: usize, lines: &[String]) {
+        use mide::terminal::tmux::{capture, cursor, parse_window_line};
+        let gid = self.tmux[i].gateway;
+        let profile = self.panes.get(&gid).map(|p| self.profiles.get(&p.profile).clone()).unwrap_or_default();
+        let mut windows = Vec::new();
+        let mut remotes = std::collections::HashSet::new();
+        for line in lines {
+            let Some((window, layout, active, name)) = parse_window_line(line) else {
+                continue;
+            };
+            windows.push(window);
+            for remote in layout.panes() {
+                remotes.insert(remote);
+                if self.tmux[i].panes.contains_key(&remote) {
+                    continue;
+                }
+                let (tx, rx) = mpsc::channel();
+                let mut term = Terminal::new(80, 24);
+                term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
+                let mut pane = Pane::new(term, Backend::Tmux { gateway: self.tmux[i].writer.clone(), pane: remote }, rx);
+                pane.apply(&profile);
+                let id = self.next_id;
+                self.next_id += 1;
+                self.panes.insert(id, pane);
+                self.tmux[i].panes.insert(remote, (id, tx));
+                self.tmux[i].command(&capture(remote), Expect::Capture(remote));
+                self.tmux[i].command(&cursor(remote), Expect::Cursor(remote));
+            }
+            let session = &self.tmux[i];
+            let Some(tree) = layout.to_layout(&|r| session.panes.get(&r).map(|(l, _)| *l)) else {
+                continue;
+            };
+            let panes = tree.panes();
+            for id in &panes {
+                if let Some(p) = self.panes.get_mut(id) {
+                    if p.term.title.is_none() {
+                        p.term.title = Some(name.clone());
+                    }
+                }
+            }
+            match self.tabs.iter_mut().find(|t| t.tmux == Some((gid, window))) {
+                Some(tab) => {
+                    if !panes.contains(&tab.focus) {
+                        tab.focus = panes[0];
+                    }
+                    tab.layout = tree;
+                    tab.zoom = false;
+                }
+                None => {
+                    self.tabs.push(Tab { layout: tree, focus: panes[0], zoom: false, activity: false, tmux: Some((gid, window)) });
+                    if active {
+                        self.active = self.tabs.len() - 1;
+                    }
+                }
+            }
+        }
+        // Janelas e painéis que não existem mais no tmux.
+        let gone: Vec<u32> = self.tmux[i].panes.keys().filter(|r| !remotes.contains(r)).copied().collect();
+        for remote in gone {
+            if let Some((local, _)) = self.tmux[i].panes.remove(&remote) {
+                self.panes.remove(&local);
+            }
+        }
+        self.tabs.retain(|t| !matches!(t.tmux, Some((g, w)) if g == gid && !windows.contains(&w)));
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+    }
+
+    /// Fim de uma sessão do tmux: as abas dela fecham e o painel do tmux volta.
+    fn tmux_end(&mut self, i: usize) {
+        let session = self.tmux.remove(i);
+        for (local, _) in session.panes.values() {
+            self.panes.remove(local);
+        }
+        self.tabs.retain(|t| t.tmux.is_none_or(|(g, _)| g != session.gateway));
+        if let Some(pane) = self.panes.get_mut(&session.gateway) {
+            pane.term.feed("\r\n\x1b[2m[tmux desanexado]\x1b[0m\r\n".as_bytes());
+            if let Some(t) = self.tabs.iter().position(|t| t.layout.panes().contains(&session.gateway)) {
+                self.active = t;
+            }
+        }
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+    }
+
+    /// Tamanho da área do terminal: a janela toda, ou só a parte de cima da tela no
+    /// terminal de atalho (o resto fica transparente e deixa os cliques passarem).
+    fn view_size(&self, ui: &mut Ui) -> (f32, f32, f32, f32) {
+        let (x, y, w, h) = ui.region();
+        if self.hotkey.is_none() {
+            return (x, y, w, h);
+        }
+        let panel = (h * self.profiles.hotkey_height).round().max(120.0).min(h);
+        ui.input_area((0.0, 0.0, w, panel));
+        (x, y, w, panel)
+    }
+
+    /// Comandos demorados que terminaram com a janela sem foco (ou numa aba de trás):
+    /// avisa com uma notificação, como o iTerm2.
+    fn command_alerts(&mut self, ui: &mut Ui, active_panes: &[PaneId]) {
+        let focused = ui.input().focused;
+        for (id, pane) in &mut self.panes {
+            let after = self.profiles.get(&pane.profile).notify_after;
+            for done in pane.term.take_finished() {
+                let visible = focused && active_panes.contains(id);
+                if after == 0 || visible || done.duration < Duration::from_secs(after as u64) {
+                    continue;
+                }
+                let cols = pane.term.cols();
+                let command = pane.term.text_between((done.line, 0), (done.line, cols - 1));
+                let summary = if done.status == 0 { "Comando terminado".to_string() } else { format!("Comando falhou (código {})", done.status) };
+                let body = format!("{} — em {}", command.trim(), duration_text(done.duration));
+                mide::notify::send("Terminal", &summary, &body);
+            }
+        }
+    }
+
     /// Guarda abas e painéis (com as pastas) para a próxima janela, se o usuário quer.
     fn save_session(&self) {
         if !self.profiles.restore || self.tabs.is_empty() {
@@ -444,11 +835,12 @@ impl TerminalApp {
         }
         let info = |id: PaneId| {
             let pane = self.panes.get(&id);
-            (pane.and_then(|p| p.pty.cwd()), pane.map(|p| p.profile.clone()).unwrap_or_default())
+            (pane.and_then(|p| p.cwd()), pane.map(|p| p.profile.clone()).unwrap_or_default())
         };
         let tabs = self
             .tabs
             .iter()
+            .filter(|t| t.tmux.is_none())
             .map(|t| SavedTab { layout: SavedLayout::from_layout(&t.layout, &info), focus: t.layout.panes().iter().position(|&p| p == t.focus).unwrap_or(0) })
             .collect();
         let saved = Saved { tabs, active: self.active, font_size: Some(self.font_size) };
@@ -470,7 +862,7 @@ impl TerminalApp {
             if let Some(layout) = layout {
                 let panes = layout.panes();
                 let focus = panes.get(tab.focus).copied().unwrap_or(panes[0]);
-                self.tabs.push(Tab { layout, focus, zoom: false, activity: false });
+                self.tabs.push(Tab { layout, focus, zoom: false, activity: false, tmux: None });
             }
         }
         self.active = saved.active.min(self.tabs.len().saturating_sub(1));
@@ -479,7 +871,7 @@ impl TerminalApp {
 
     fn set_font(&mut self, size: f32) {
         self.font_size = size.clamp(8.0, 32.0);
-        self.cell = cell_size(&mut Text::new(), self.font_size);
+        self.cell = cell_size(self.font_size, &self.font_family);
         for pane in self.panes.values_mut() {
             pane.term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
         }
@@ -498,15 +890,16 @@ impl TerminalApp {
             return;
         }
         self.profiles_mtime = mtime;
-        let old_size = self.profiles.get(&self.profile_name()).font_size;
+        let old = self.profiles.get(&self.profile_name()).clone();
         self.profiles = Profiles::load();
         for pane in self.panes.values_mut() {
             let profile = self.profiles.get(&pane.profile).clone();
             pane.apply(&profile);
         }
-        let new_size = self.profiles.get(&self.profile_name()).font_size;
-        if new_size != old_size {
-            self.set_font(new_size);
+        let new = self.profiles.get(&self.profile_name()).clone();
+        if new.font_size != old.font_size || new.font != old.font {
+            self.font_family = new.font.clone();
+            self.set_font(new.font_size);
         }
     }
 
@@ -551,6 +944,27 @@ impl TerminalApp {
 
     fn action(&mut self, ui: &mut Ui, action: Action, area: Rect) {
         let focus = self.focused();
+        // Num painel do tmux, abas e painéis novos (e fechar) são pedidos ao tmux.
+        if let Some((i, remote)) = focus.and_then(|id| self.tmux_of(id)) {
+            let command = match action {
+                Action::NewTab => Some("new-window".to_string()),
+                Action::SplitSide => Some(format!("split-window -h -t %{remote}")),
+                Action::SplitStack => Some(format!("split-window -v -t %{remote}")),
+                Action::ClosePane => Some(format!("kill-pane -t %{remote}")),
+                Action::TmuxDetach => Some("detach-client".to_string()),
+                _ => None,
+            };
+            if let Some(command) = command {
+                self.tmux[i].command(&command, Expect::Ignore);
+                return;
+            }
+        }
+        if action == Action::TmuxDetach {
+            if let Some(i) = focus.and_then(|id| self.tmux.iter().position(|s| s.gateway == id)) {
+                self.tmux[i].command("detach-client", Expect::Ignore);
+            }
+            return;
+        }
         match action {
             Action::Copy => {
                 if let Some(text) = focus.and_then(|id| self.panes.get(&id)).and_then(Pane::selected_text) {
@@ -566,7 +980,7 @@ impl TerminalApp {
                 }
             }
             Action::NewWindow => {
-                let dir = focus.and_then(|id| self.panes.get(&id)).and_then(|p| p.pty.cwd());
+                let dir = focus.and_then(|id| self.panes.get(&id)).and_then(|p| p.cwd());
                 if let Ok(exe) = std::env::current_exe() {
                     let mut command = std::process::Command::new(exe);
                     if let Some(dir) = dir {
@@ -595,7 +1009,7 @@ impl TerminalApp {
                     pane.term.feed(b"\x1b[3J");
                     pane.scroll = 0;
                     pane.selection = None;
-                    pane.pty.write(b"\x0c".to_vec());
+                    pane.write(b"\x0c".to_vec());
                 }
             }
             Action::Preferences => {
@@ -638,6 +1052,8 @@ impl TerminalApp {
                     tab.zoom = false;
                 }
             }
+            // Tratado no começo (só vale com o tmux).
+            Action::TmuxDetach => {}
             Action::PageUp | Action::PageDown | Action::Top | Action::Bottom | Action::PreviousPrompt | Action::NextPrompt => {
                 if let Some(pane) = focus.and_then(|id| self.panes.get_mut(&id)) {
                     scroll_action(pane, action);
@@ -712,20 +1128,29 @@ impl TerminalApp {
             if press.keysym == 0xff1b && self.find.is_some() && !self.panes.is_empty() && press.text.is_none() {
                 self.find = None;
             }
+            // O painel que roda o tmux -CC não recebe teclas (seriam comandos para o
+            // tmux); Esc nele desanexa.
+            if let Some(i) = self.focused().and_then(|id| self.tmux.iter().position(|s| s.gateway == id)) {
+                if press.keysym == 0xff1b {
+                    self.tmux[i].command("detach-client", Expect::Ignore);
+                }
+                continue;
+            }
             let Some(pane) = self.focused().and_then(|id| self.panes.get_mut(&id)) else {
                 return;
             };
             if let Some(bytes) = key_bytes(press, &pane.term.modes) {
                 pane.scroll = 0;
                 pane.selection = None;
-                pane.pty.write(bytes);
+                pane.write(bytes);
             }
         }
+        let gateway = self.focused().is_some_and(|id| self.tmux.iter().any(|s| s.gateway == id));
         if let Some(text) = &input.paste {
-            if !typing && self.dialog.is_none() {
+            if !typing && self.dialog.is_none() && !gateway {
                 if let Some(pane) = self.focused().and_then(|id| self.panes.get_mut(&id)) {
                     pane.scroll = 0;
-                    pane.pty.write(paste_bytes(text, pane.term.modes.bracketed_paste));
+                    pane.write(paste_bytes(text, pane.term.modes.bracketed_paste));
                 }
             }
         }
@@ -805,7 +1230,7 @@ impl TerminalApp {
                     }
                     pane.mouse_cell = Some((col, row));
                     let bytes: Vec<u8> = reports.into_iter().filter_map(|(b, e)| pane.term.mouse_report(b, e, col, row, mods)).flatten().collect();
-                    pane.pty.write(bytes);
+                    pane.write(bytes);
                 }
                 continue;
             }
@@ -843,7 +1268,7 @@ impl TerminalApp {
                 if lines != 0 {
                     if pane.term.alt_screen() {
                         let arrow: &[u8] = if lines > 0 { b"\x1bOB" } else { b"\x1bOA" };
-                        pane.pty.write(arrow.repeat(lines.unsigned_abs() as usize));
+                        pane.write(arrow.repeat(lines.unsigned_abs() as usize));
                     } else {
                         let history = pane.term.history_len() as i64;
                         pane.scroll = (pane.scroll as i64 - lines as i64).clamp(0, history) as usize;
@@ -1007,7 +1432,15 @@ impl TerminalApp {
             text.draw(pixmap, "+", px + 11.0, y0 + 4.0, 17.0, FontWeight::Regular, c.dim);
         });
         if let Some(i) = close {
-            self.close(Closing::Tab(i), ui);
+            match self.tabs[i].tmux {
+                // Aba do tmux: quem fecha a janela é o tmux.
+                Some((gid, window)) => {
+                    if let Some(s) = self.tmux.iter_mut().find(|s| s.gateway == gid) {
+                        s.command(&format!("kill-window -t @{window}"), Expect::Ignore);
+                    }
+                }
+                None => self.close(Closing::Tab(i), ui),
+            }
         } else if let Some(i) = clicked {
             self.active = i;
         }
@@ -1075,12 +1508,15 @@ impl TerminalApp {
         }
         let mut flashing = false;
         let dividers = self.tabs.get(self.active).filter(|t| !t.zoom).map(|t| t.layout.dividers(area)).unwrap_or_default();
+        let gateways: Vec<PaneId> = self.tmux.iter().map(|s| s.gateway).collect();
+        let family = self.font_family.clone();
         // Painéis translúcidos com vidro: o compositor desfoca o que está atrás. Um
         // vidro só para a área toda (vários, um por painel, deixam emendas).
         if rects.iter().any(|(id, _)| self.panes.get(id).is_some_and(|p| p.opacity < 1.0 && p.blur)) {
             ui.glass_behind(area, 0.0);
         }
         ui.paint_text(|pixmap, text, (ox, oy)| {
+            text.set_mono_family(Some(&family));
             for (id, rect) in &rects {
                 let Some(pane) = self.panes.get(id) else {
                     continue;
@@ -1090,6 +1526,17 @@ impl TerminalApp {
                 flashing |= flash;
                 let link = self.hover_url.filter(|(p, _, _)| p == id).map(|(_, a, b)| (a, b));
                 draw_pane(pixmap, text, pane, (ox + rect.0, oy + rect.1, rect.2, rect.3), cell, font, matches, link, Some(*id) == focus && !blink_off);
+                if gateways.contains(id) {
+                    // Painel que roda o tmux -CC: um aviso no lugar do protocolo.
+                    fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, pane.term.default_bg(), 0.92);
+                    let msg = "O tmux está em modo de controle: as janelas dele abriram em abas.";
+                    let sub = "Esc aqui (ou Shell → Desanexar do tmux) desanexa.";
+                    let fg = pane.term.default_fg();
+                    let rgba = [fg[0], fg[1], fg[2], 255];
+                    let (tx, ty) = (ox + rect.0 + 16.0, oy + rect.1 + 16.0);
+                    text.draw(pixmap, msg, tx, ty, 13.5, FontWeight::Semibold, rgba);
+                    text.draw(pixmap, sub, tx, ty + 22.0, 12.5, FontWeight::Regular, rgba);
+                }
                 if several && Some(*id) != focus {
                     // Painéis sem foco ficam um pouco apagados (como no iTerm2): um véu da
                     // cor do fundo aproxima o texto do fundo, no tema claro e no escuro.
@@ -1145,12 +1592,28 @@ impl App for TerminalApp {
         if self.waker.is_none() {
             self.waker = ui.waker();
         }
+        // Terminal de atalho: o mesmo atalho mostra e esconde.
+        if let Some(hotkey) = &mut self.hotkey {
+            if let Ok(mut w) = hotkey.waker.lock() {
+                if w.is_none() {
+                    *w = ui.waker();
+                }
+            }
+            let mut toggled = false;
+            while hotkey.toggles.try_recv().is_ok() {
+                toggled = !toggled;
+            }
+            if toggled {
+                hotkey.visible = !hotkey.visible;
+                ui.set_hidden(!hotkey.visible);
+            }
+        }
         if self.tabs.is_empty() && self.error.is_none() {
             if let Some(title) = &self.options.title {
                 ui.set_title(title);
             }
             // Sem nada pedido na linha de comando: reabre a última sessão (se ligado).
-            let plain = self.options.spawn.command.is_none() && self.options.spawn.directory.is_none();
+            let plain = self.options.spawn.command.is_none() && self.options.spawn.directory.is_none() && self.hotkey.is_none();
             if !(plain && self.profiles.restore && self.restore_session()) {
                 self.new_tab();
             }
@@ -1180,6 +1643,8 @@ impl App for TerminalApp {
         if let Some(text) = copy {
             ui.copy(&text);
         }
+        self.tmux_step();
+        self.command_alerts(ui, &active_panes);
         for id in ended {
             self.remove_pane(id);
         }
@@ -1192,7 +1657,7 @@ impl App for TerminalApp {
             tab.activity = false;
         }
 
-        let (_, _, w, h) = ui.region();
+        let (_, _, w, h) = self.view_size(ui);
         let (_, _, area) = self.areas((w, h));
         // Painéis da aba ativa com o tamanho da área deles.
         for (id, rect) in self.pane_rects(area) {
@@ -1201,9 +1666,23 @@ impl App for TerminalApp {
             if let Some(pane) = self.panes.get_mut(&id) {
                 if (pane.term.cols(), pane.term.rows()) != grid {
                     pane.term.resize(grid.0, grid.1);
-                    pane.pty.resize(Size { cols: grid.0 as u16, rows: grid.1 as u16, width: (grid.0 as f32 * cell.0) as u16, height: (grid.1 as f32 * cell.1) as u16 });
+                    pane.resize(Size { cols: grid.0 as u16, rows: grid.1 as u16, width: (grid.0 as f32 * cell.0) as u16, height: (grid.1 as f32 * cell.1) as u16 });
                     pane.selection = None;
                     pane.scroll = pane.scroll.min(pane.term.history_len());
+                    // As linhas mudaram de número com o reflow.
+                    pane.highlights.clear();
+                    pane.scanned = pane.term.visible_abs(pane.term.cursor().0, 0);
+                }
+            }
+        }
+
+        // Aba do tmux: o tmux precisa saber o tamanho da área (ele arruma os painéis).
+        if let Some((gid, _)) = self.tabs.get(self.active).and_then(|t| t.tmux) {
+            let grid = self.grid_for(area);
+            if let Some(session) = self.tmux.iter_mut().find(|s| s.gateway == gid) {
+                if session.size != grid {
+                    session.size = grid;
+                    session.command(&format!("refresh-client -C {}x{}", grid.0, grid.1), Expect::Ignore);
                 }
             }
         }
@@ -1232,6 +1711,10 @@ impl App for TerminalApp {
         // Um atalho pode ter aberto a busca ou uma aba: as áreas mudam.
         let (tab_bar, find_bar, area) = self.areas((w, h));
         self.draw(ui, area);
+        if self.hotkey.is_some() {
+            // Borda de baixo do painel que desceu do topo.
+            ui.paint(|pixmap, (ox, oy)| fill_alpha(pixmap, ox, oy + h - 1.0, w, 1.0, [0, 0, 0], 0.3));
+        }
         self.mouse(ui, area);
         if let Some(rect) = tab_bar.filter(|_| self.tabs.len() > 1) {
             self.tab_bar(ui, rect);
@@ -1243,6 +1726,9 @@ impl App for TerminalApp {
     }
 
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
+        if self.hotkey.is_some() {
+            return Vec::new();
+        }
         let mac = self.mac;
         let item = |a: Action| a.item(mac);
         let pane = self.focused().and_then(|id| self.panes.get(&id));
@@ -1252,6 +1738,7 @@ impl App for TerminalApp {
         let several_tabs = self.tabs.len() > 1;
         let zoom = tab.is_some_and(|t| t.zoom);
         let finding = self.find.is_some();
+        let in_tmux = self.focused().is_some_and(|id| self.tmux_of(id).is_some() || self.tmux.iter().any(|s| s.gateway == id));
         let mut profiles: Vec<MenuItem> = self
             .profiles
             .profiles
@@ -1289,6 +1776,8 @@ impl App for TerminalApp {
                     MenuItem::Separator,
                     item(Action::ClosePane),
                     item(Action::CloseWindow),
+                    MenuItem::Separator,
+                    item(Action::TmuxDetach).enabled(in_tmux),
                 ],
             },
             MenuGroup {
@@ -1332,11 +1821,23 @@ impl App for TerminalApp {
         let all: Vec<PaneId> = self.panes.keys().copied().collect();
         let running = self.running(&all);
         if running.is_empty() {
-            self.save_session();
+            if self.hotkey.is_none() {
+                self.save_session();
+            }
             return true;
         }
         self.dialog = Some(Dialog::ConfirmClose(Closing::Window, running));
         false
+    }
+}
+
+/// "1 min 5 s", "42 s".
+fn duration_text(d: Duration) -> String {
+    let s = d.as_secs();
+    match (s / 3600, s / 60 % 60, s % 60) {
+        (0, 0, s) => format!("{s} s"),
+        (0, m, s) => format!("{m} min {s} s"),
+        (h, m, _) => format!("{h} h {m} min"),
     }
 }
 
@@ -1397,11 +1898,39 @@ fn draw_pane(
         .unwrap_or_default();
     let current = matches.map(|(_, c)| c);
     let (px0, py0) = (x0 + PAD, y0 + PAD);
+    // Marcas dos prompts (integração do shell) na margem esquerda: azul se o comando
+    // deu certo, vermelha se falhou, cinza enquanto não houve comando.
+    for mark in term.marks().iter().filter(|m| m.line >= top_abs && m.line <= bottom_abs) {
+        let y = (mark.line - top_abs) as f32;
+        let color = match mark.status {
+            Some(0) => [10, 110, 235],
+            Some(_) => [230, 60, 50],
+            None => [150, 150, 158],
+        };
+        fill(pixmap, x0 + 1.0, py0 + y * cell.1 + 2.0, 3.0, cell.1 - 4.0, color);
+    }
     for y in 0..term.rows() {
         let row = term.visible_row(y, scroll);
         let abs = term.visible_abs(y, scroll);
         let py = py0 + y as f32 * cell.1;
+        // Placeholder anterior desta linha (imagem, linha e coluna), para os que vêm
+        // sem coluna (a seguinte) ou sem linha (a mesma).
+        let mut previous: Option<(u32, usize, usize)> = None;
         for (x, c) in row.cells.iter().enumerate() {
+            if c.c == PLACEHOLDER {
+                let px = px0 + x as f32 * cell.0;
+                let bg_rgb = term.cell_colors(&c.pen).1;
+                if bg_rgb != background {
+                    fill(pixmap, px, py, cell.0, cell.1, bg_rgb);
+                }
+                let place = placeholder_place(c, previous);
+                previous = place;
+                if let Some((id, prow, pcol)) = place {
+                    draw_placeholder(pixmap, pane, id, prow, pcol, (px, py), cell);
+                }
+                continue;
+            }
+            previous = None;
             if c.wide == Wide::Spacer {
                 continue;
             }
@@ -1409,6 +1938,10 @@ fn draw_pane(
             let width = if c.wide == Wide::Lead { 2.0 } else { 1.0 } * cell.0;
             let (mut fg, mut bg) = term.cell_colors(&c.pen);
             let at = (abs, x);
+            if let Some((_, _, color)) = pane.highlights.iter().find(|(a, b, _)| at >= *a && at <= *b) {
+                bg = *color;
+                fg = [24, 24, 28];
+            }
             if let Some((i, _)) = visible.iter().find(|(_, (a, b))| at >= *a && at <= *b) {
                 bg = if Some(*i) == current { [255, 170, 60] } else { [255, 230, 140] };
                 fg = [24, 24, 28];
@@ -1453,6 +1986,7 @@ fn draw_pane(
             }
         }
     }
+    draw_images(pixmap, pane, (x0, y0, w, h), cell, top_abs, bottom_abs);
     // Lendo o histórico: barra fina à direita mostrando onde está.
     let history = term.history_len();
     if scroll > 0 && history > 0 {
@@ -1462,6 +1996,113 @@ fn draw_pane(
         let top = (history - scroll) as f32 / (total - term.rows() as f32) * (track - bar);
         fill(pixmap, x0 + w - 7.0, y0 + 4.0 + top, 4.0, bar, [150, 150, 158]);
     }
+}
+
+/// Imagem, linha e coluna de um placeholder do kitty: a linha e a coluna vêm dos
+/// acentos (ou do placeholder anterior), o número da imagem vem da cor do texto e,
+/// o byte alto dele, do terceiro acento.
+fn placeholder_place(c: &mide::terminal::screen::Cell, previous: Option<(u32, usize, usize)>) -> Option<(u32, usize, usize)> {
+    use mide::terminal::{graphics::diacritic_index, screen::Color};
+    let marks: Vec<usize> = c.combining.as_deref().unwrap_or("").chars().filter_map(diacritic_index).collect();
+    let mut id = match c.pen.fg {
+        Color::Rgb(r, g, b) => (r as u32) << 16 | (g as u32) << 8 | b as u32,
+        Color::Indexed(i) => i as u32,
+        Color::Default => 0,
+    };
+    if let Some(&msb) = marks.get(2) {
+        id |= (msb as u32) << 24;
+    }
+    let same = previous.filter(|(pid, _, _)| *pid == id);
+    let row = marks.first().copied().or(same.map(|(_, r, _)| r))?;
+    let col = match marks.get(1) {
+        Some(&col) => col,
+        None => same.filter(|(_, r, _)| *r == row).map(|(_, _, c)| c + 1).unwrap_or(0),
+    };
+    Some((id, row, col))
+}
+
+/// Desenha, na célula, o pedaço (linha, coluna) da imagem do placeholder: a imagem
+/// cabe inteira em colunas x linhas células, centrada e na proporção dela.
+fn draw_placeholder(pixmap: &mut Pixmap, pane: &Pane, id: u32, row: usize, col: usize, (x, y): (f32, f32), cell: (f32, f32)) {
+    let Some((image, cols, rows)) = pane.term.placeholder_image(id) else {
+        return;
+    };
+    let (cw, ch) = (cell.0.max(1.0) as u32, cell.1.max(1.0) as u32);
+    if row as u32 >= rows || col as u32 >= cols {
+        return;
+    }
+    let mut cache = pane.placeholder_cache.borrow_mut();
+    let key = (id, cols, rows, cw, ch);
+    if !cache.contains_key(&key) {
+        if cache.len() > 16 {
+            cache.clear();
+        }
+        let (tw, th) = (cols * cw, rows * ch);
+        let Some(source) = to_pixmap(&image.pixels, (image.width, image.height)) else {
+            return;
+        };
+        let Some(mut scaled) = Pixmap::new(tw, th) else {
+            return;
+        };
+        let k = (tw as f32 / image.width as f32).min(th as f32 / image.height as f32);
+        let (dw, dh) = (image.width as f32 * k, image.height as f32 * k);
+        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        scaled.draw_pixmap(0, 0, source.as_ref(), &paint, Transform::from_row(k, 0.0, 0.0, k, (tw as f32 - dw) / 2.0, (th as f32 - dh) / 2.0), None);
+        cache.insert(key, scaled);
+    }
+    let Some(scaled) = cache.get(&key) else {
+        return;
+    };
+    let Some(rect) = tiny_skia::IntRect::from_xywh((col as u32 * cw) as i32, (row as u32 * ch) as i32, cw, ch) else {
+        return;
+    };
+    if let Some(part) = scaled.clone_rect(rect) {
+        pixmap.draw_pixmap(x.round() as i32, y.round() as i32, part.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+    }
+}
+
+/// Imagens do terminal visíveis no painel, recortadas na área dele.
+fn draw_images(pixmap: &mut Pixmap, pane: &Pane, (x0, y0, w, h): Rect, cell: (f32, f32), top: u64, bottom: u64) {
+    let visible: Vec<_> = pane.term.images().filter(|i| i.line <= bottom && i.line + i.rows as u64 > top).collect();
+    let mut cache = pane.image_cache.borrow_mut();
+    // Esquece as que já saíram do terminal.
+    cache.retain(|id, _| pane.term.images().any(|i| i.id == *id));
+    if visible.is_empty() {
+        return;
+    }
+    let Some(mask) = clip_mask(pixmap.width(), pixmap.height(), (x0, y0, w, h)) else {
+        return;
+    };
+    for image in visible {
+        let source = cache.entry(image.id).or_insert_with(|| to_pixmap(&image.rgba, image.source).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+        // O desenho usa o tamanho da célula do momento (a fonte pode ter mudado).
+        let (cw, ch) = pane.term.cell_pixels;
+        let k = (cell.0 / cw.max(1) as f32).min(cell.1 / ch.max(1) as f32);
+        let (dw, dh) = (image.width as f32 * k, image.height as f32 * k);
+        let x = x0 + PAD + image.col as f32 * cell.0;
+        let y = y0 + PAD + (image.line as f32 - top as f32) * cell.1;
+        let (sx, sy) = (dw / source.width() as f32, dh / source.height() as f32);
+        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        pixmap.draw_pixmap(0, 0, source.as_ref(), &paint, Transform::from_row(sx, 0.0, 0.0, sy, x, y), Some(&mask));
+    }
+}
+
+fn clip_mask(width: u32, height: u32, (x, y, w, h): Rect) -> Option<tiny_skia::Mask> {
+    let mut mask = tiny_skia::Mask::new(width, height)?;
+    let path = tiny_skia::PathBuilder::from_rect(SkRect::from_xywh(x, y, w, h)?);
+    mask.fill_path(&path, tiny_skia::FillRule::Winding, false, Transform::identity());
+    Some(mask)
+}
+
+/// RGBA comum (sem pré-multiplicar) para o formato do tiny-skia.
+fn to_pixmap(rgba: &[u8], (w, h): (u32, u32)) -> Option<Pixmap> {
+    let mut pixmap = Pixmap::new(w, h)?;
+    for (dst, src) in pixmap.pixels_mut().iter_mut().zip(rgba.chunks_exact(4)) {
+        let a = src[3] as u32;
+        let p = |c: u8| (c as u32 * a / 255) as u8;
+        *dst = tiny_skia::PremultipliedColorU8::from_rgba(p(src[0]), p(src[1]), p(src[2]), src[3])?;
+    }
+    Some(pixmap)
 }
 
 /// Ações do terminal (atalhos e menus).
@@ -1497,10 +2138,11 @@ enum Action {
     Bottom,
     PreviousPrompt,
     NextPrompt,
+    TmuxDetach,
 }
 
 /// Ações sem dados (as que aparecem nos menus por nome).
-const SIMPLE: [Action; 26] = [
+const SIMPLE: [Action; 27] = [
     Action::Copy,
     Action::Paste,
     Action::SelectAll,
@@ -1527,6 +2169,7 @@ const SIMPLE: [Action; 26] = [
     Action::Bottom,
     Action::PreviousPrompt,
     Action::NextPrompt,
+    Action::TmuxDetach,
 ];
 
 impl Action {
@@ -1559,6 +2202,7 @@ impl Action {
             Action::Bottom => "Fim do histórico",
             Action::PreviousPrompt => "Prompt anterior",
             Action::NextPrompt => "Próximo prompt",
+            Action::TmuxDetach => "Desanexar do tmux",
             Action::Tab(_) | Action::PaneDirection(_) | Action::PageUp | Action::PageDown => "",
         }
     }
@@ -1767,7 +2411,9 @@ fn mac_style() -> bool {
 
 /// Tamanho de uma célula na fonte de largura fixa (largura média de 10 letras,
 /// arredondada para as colunas caírem em pixels inteiros).
-fn cell_size(text: &mut Text, font: f32) -> (f32, f32) {
+fn cell_size(font: f32, family: &str) -> (f32, f32) {
+    let text = &mut Text::new();
+    text.set_mono_family(Some(family));
     let width = text.measure_mono("MMMMMMMMMM", font) / 10.0;
     (width.max(1.0).round(), (font * 1.3).round())
 }
@@ -1785,6 +2431,8 @@ struct Preferences {
     color_text: String,
     /// Perfil mostrado no quadro anterior.
     shown: Option<usize>,
+    /// Fontes de largura fixa instaladas.
+    families: Vec<String>,
 }
 
 const CURSORS: [(&str, Cursor); 3] = [("Bloco", Cursor::Block), ("Barra", Cursor::Bar), ("Sublinhado", Cursor::Underline)];
@@ -1810,9 +2458,10 @@ impl App for Preferences {
         // Outro perfil escolhido: o campo de cor mostra a cor dele.
         let profile_changed = self.shown != Some(selected);
         self.shown = Some(selected);
-        let Profiles { profiles, restore, .. } = &mut self.profiles;
+        let Profiles { profiles, restore, hotkey_height, .. } = &mut self.profiles;
         let profile = &mut profiles[selected];
         let (color_slot, color_text) = (&mut self.color_slot, &mut self.color_text);
+        let families = &self.families;
         let mut make_default = false;
         self.selected = ui.sidebar(&items, selected, |ui, _| {
             ui.title(&profile.name);
@@ -1847,6 +2496,13 @@ impl App for Preferences {
                         fill(pixmap, x + 28.0 + i as f32 * 18.0, y + 5.0, 16.0, 16.0, *c);
                     }
                 });
+                let mut fonts = vec!["Padrão do sistema".to_string()];
+                fonts.extend(families.iter().cloned());
+                let mut f = families.iter().position(|n| *n == profile.font).map_or(0, |i| i + 1);
+                if ui.dropdown("Fonte", &fonts, &mut f).changed() {
+                    profile.font = if f == 0 { String::new() } else { families[f - 1].clone() };
+                    changed = true;
+                }
                 let mut size = profile.font_size;
                 if ui.slider("Tamanho da fonte", &mut size, 9.0, 24.0).changed() {
                     profile.font_size = size.round();
@@ -1890,12 +2546,47 @@ impl App for Preferences {
                         }
                     });
                     ui.custom(32.0, |pixmap, (x, y, _, h)| {
-                        mide::ui::draw::fill_rounded(pixmap, x, y, 48.0, h, 6.0, mide::ui::draw::rgba(current[0], current[1], current[2], 255));
+                        // Borda cinza: a amostra aparece mesmo branca no cartão branco.
+                        mide::ui::draw::fill_rounded(pixmap, x, y, 48.0, h, 6.0, mide::ui::draw::rgba(170, 170, 178, 255));
+                        mide::ui::draw::fill_rounded(pixmap, x + 1.0, y + 1.0, 46.0, h - 2.0, 5.0, mide::ui::draw::rgba(current[0], current[1], current[2], 255));
                     });
                 });
                 if !profile.colors.is_empty() && ui.button("Usar as cores do tema").clicked() {
                     profile.colors.clear();
                     *color_text = profile.color_hex(COLOR_SLOTS[*color_slot].0);
+                    changed = true;
+                }
+            });
+            ui.heading("Gatilhos");
+            ui.card(|ui| {
+                ui.note("Quando o texto aparece na saída (sem diferenciar maiúsculas nem acentos).");
+                let actions = ["Destacar", "Notificar", "Piscar"].map(String::from);
+                let mut remove = None;
+                for (i, trigger) in profile.triggers.iter_mut().enumerate() {
+                    ui.row(|ui| {
+                        ui.sized(200.0, |ui| changed |= ui.text_input(&mut trigger.text, "Texto (ex.: erro)").changed());
+                        let mut a = match trigger.action {
+                            TriggerAction::Highlight => 0,
+                            TriggerAction::Notify => 1,
+                            TriggerAction::Bell => 2,
+                        };
+                        ui.sized(170.0, |ui| {
+                            if ui.dropdown("", &actions, &mut a).changed() {
+                                trigger.action = [TriggerAction::Highlight, TriggerAction::Notify, TriggerAction::Bell][a];
+                                changed = true;
+                            }
+                        });
+                        if ui.button("Remover").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    profile.triggers.remove(i);
+                    changed = true;
+                }
+                if ui.button("Novo gatilho").clicked() {
+                    profile.triggers.push(Trigger::default());
                     changed = true;
                 }
             });
@@ -1908,10 +2599,25 @@ impl App for Preferences {
                     changed = true;
                 }
                 changed |= ui.switch_detail("Reabrir abas e painéis", "Volta como estava a última janela fechada", restore).changed();
+                let mut height = *hotkey_height * 100.0;
+                if ui.slider("Altura do terminal de atalho (F12)", &mut height, 20.0, 95.0).changed() {
+                    *hotkey_height = (height.round() / 100.0).clamp(0.2, 0.95);
+                    changed = true;
+                }
                 let dirs = vec!["Na mesma pasta".to_string(), "Na pasta pessoal".to_string()];
                 let mut d = if profile.start_dir == StartDir::Same { 0 } else { 1 };
                 if ui.dropdown("Abas e painéis novos abrem", &dirs, &mut d).changed() {
                     profile.start_dir = if d == 0 { StartDir::Same } else { StartDir::Home };
+                    changed = true;
+                }
+                changed |= ui
+                    .switch_detail("Integração do shell", "Marca os prompts, avisa quando um comando termina e traz o imgcat (bash e zsh)", &mut profile.shell_integration)
+                    .changed();
+                let waits = ["Nunca", "5 segundos", "10 segundos", "30 segundos", "1 minuto"].map(String::from);
+                const WAITS: [u32; 5] = [0, 5, 10, 30, 60];
+                let mut w = WAITS.iter().position(|&s| s == profile.notify_after).unwrap_or(2);
+                if ui.dropdown("Avisar comando demorado após", &waits, &mut w).changed() {
+                    profile.notify_after = WAITS[w];
                     changed = true;
                 }
                 ui.label("Comando ao abrir");
@@ -1982,10 +2688,56 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse(std::env::args().skip(1));
     if options.preferences {
         let window = Window::new("Preferências do Terminal").app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420);
-        return run(window, Preferences { profiles: Profiles::load(), selected: 0, message: None, color_slot: 1, color_text: String::new(), shown: None });
+        return run(window, Preferences { profiles: Profiles::load(), selected: 0, message: None, color_slot: 1, color_text: String::new(), shown: None, families: Text::new().monospace_families() });
+    }
+    if options.hotkey {
+        return run_hotkey(options);
     }
     let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120);
     run(window, TerminalApp::new(options))
+}
+
+/// Socket do terminal de atalho desta sessão (um por display Wayland).
+fn hotkey_socket() -> PathBuf {
+    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("mide").join(format!("terminal-atalho-{display}.sock"))
+}
+
+/// `mide-terminal --hotkey`: se o terminal de atalho já existe, pede para ele aparecer
+/// ou sumir e sai; senão, vira o terminal de atalho (e atende os próximos pedidos).
+fn run_hotkey(options: Options) -> Result<(), Box<dyn Error>> {
+    use std::io::Write;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let path = hotkey_socket();
+    if let Ok(mut stream) = UnixStream::connect(&path) {
+        stream.write_all(b"alternar\n")?;
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+    let (tx, toggles) = mpsc::channel();
+    let waker: std::sync::Arc<std::sync::Mutex<Option<Waker>>> = Default::default();
+    let thread_waker = waker.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            drop(stream);
+            if tx.send(()).is_err() {
+                break;
+            }
+            if let Some(w) = thread_waker.lock().ok().and_then(|w| w.clone()) {
+                w.wake();
+            }
+        }
+    });
+    let mut app = TerminalApp::new(options);
+    app.hotkey = Some(Hotkey { toggles, waker, visible: true });
+    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho");
+    let result = run(window, app);
+    let _ = std::fs::remove_file(&path);
+    result
 }
 
 #[cfg(test)]
@@ -2029,6 +2781,7 @@ mod tests {
         assert_eq!(o.profile.as_deref(), Some("Escuro"));
         assert_eq!(o.spawn.command, Some(("ls".into(), vec!["-l".into()])));
         assert!(Options::parse(["--preferences".to_string()]).preferences);
+        assert!(Options::parse(["--hotkey".to_string()]).hotkey);
     }
 
     #[test]
@@ -2040,6 +2793,13 @@ mod tests {
         assert_eq!(Action::from_id("aba:2"), Some(Action::Tab(2)));
         assert_eq!(Action::NewTab.shortcut(true), "Super+T");
         assert_eq!(Action::NewTab.shortcut(false), "Ctrl+Shift+T");
+    }
+
+    #[test]
+    fn duracao_por_extenso() {
+        assert_eq!(duration_text(Duration::from_secs(42)), "42 s");
+        assert_eq!(duration_text(Duration::from_secs(65)), "1 min 5 s");
+        assert_eq!(duration_text(Duration::from_secs(3720)), "1 h 2 min");
     }
 
     #[test]

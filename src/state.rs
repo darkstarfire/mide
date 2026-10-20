@@ -50,6 +50,14 @@ use smithay::{
     },
 };
 
+/// Estado de uma camada: já recebeu a configuração inicial, e está aparecendo (com
+/// imagem).
+#[derive(Default)]
+struct LayerFlags {
+    configured: std::sync::atomic::AtomicBool,
+    mapped: std::sync::atomic::AtomicBool,
+}
+
 /// Estado de cada cliente Wayland conectado.
 #[derive(Default)]
 pub struct ClientState {
@@ -356,7 +364,7 @@ impl State {
     /// Reorganiza as camadas da saída quando uma camada faz commit. Sem isso, a
     /// configuração inicial da camada nunca é enviada ao cliente.
     pub fn arrange_layer_if_any(&mut self, surface: &WlSurface) {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::Ordering;
         for output in self.space.outputs().cloned().collect::<Vec<_>>() {
             let before = self.usable_area();
             let mut map = layer_map_for_output(&output);
@@ -371,14 +379,22 @@ impl State {
                 self.fit_windows_to_area();
             }
             // A configuração inicial vem uma vez, em resposta ao primeiro commit.
-            // O arrange só envia configurações depois dessa.
-            layer.user_data().insert_if_missing_threadsafe(|| AtomicBool::new(false));
-            let configured = layer
-                .user_data()
-                .get::<AtomicBool>()
-                .map(|flag| flag.swap(true, Ordering::Relaxed))
-                .unwrap_or(true);
-            if !configured {
+            // O arrange só envia configurações depois dessa. Uma camada que se escondeu
+            // (commit sem imagem depois de aparecer) volta a esperar a configuração
+            // inicial: o próximo commit dela recebe uma (o terminal de atalho some e
+            // volta assim).
+            layer.user_data().insert_if_missing_threadsafe(LayerFlags::default);
+            let Some(flags) = layer.user_data().get::<LayerFlags>() else {
+                return;
+            };
+            let has_buffer = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer().is_some()).unwrap_or(false);
+            if has_buffer {
+                flags.mapped.store(true, Ordering::Relaxed);
+            } else if flags.mapped.swap(false, Ordering::Relaxed) {
+                flags.configured.store(false, Ordering::Relaxed);
+                return;
+            }
+            if !flags.configured.swap(true, Ordering::Relaxed) {
                 layer.layer_surface().send_configure();
             }
             return;

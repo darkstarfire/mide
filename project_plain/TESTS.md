@@ -719,3 +719,31 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - `cargo test`: endereços sob a célula (parênteses equilibrados, pontuação final, quebrado em duas linhas, `mailto:`).
 - Manual: `echo https://github.com/fabioaacarneiro/mide`, segurar Ctrl (ou ⌘) e passar o mouse: sublinha; clicar abre no navegador; botão direito em cima: "Abrir endereço" e "Copiar endereço".
 
+## Terminal: integração do shell, gatilhos e imagens — automáticos
+
+- `cargo test`: bash de verdade com o script de integração num PTY (marca A, C e D;1 depois de `false`, `imgcat` disponível); marcas com código de saída, D sem C não conta; busca por faixa de linhas (gatilhos); imagem PNG pelo `OSC 1337` (posição, tamanho automático e em células, cursor abaixo, sem `inline=1` não aparece, `clear` tira); duração por extenso.
+
+## Terminal: integração do shell, gatilhos e imagens — manual
+
+- No bash (e no zsh, se tiver): `false`, `ls`: marcas vermelha e azul na margem; ⌘⇧↑ volta ao prompt anterior.
+- `sleep 12`, trocar para outra janela: ao terminar chega a notificação "Comando terminado".
+- Preferências → Gatilhos: "erro" → Destacar; `echo deu erro`: "erro" em amarelo.
+- `imgcat` com uma foto: a imagem aparece e rola com o texto; `clear` tira.
+
+## Terminal de atalho, tmux e imagens — automáticos
+
+- `cargo test`: DCS em pedaços e APC no decodificador; Sixel (cores, repetição, faixas, HLS); kitty (partes, mostrar, guardar, apagar, consulta, silêncio, formato desconhecido); Sixel, kitty e o fluxo do tmux pela tela; protocolo do tmux (escapes octais, avisos, respostas casadas com os comandos com avisos no meio, layout com divisões aninhadas e proporções, `send-keys` em hexadecimal); `--hotkey`.
+- Manual na cópia de teste: F12 abre a camada `mide-terminal-atalho` (1366x673 abaixo da barra), F12 esconde (0x0), F12 mostra de novo; `tmux -L mide-teste -f /dev/null -CC new-session`: a janela vira aba, `echo` e `pwd` vão ao painel do tmux, Ctrl+Shift+D divide pelo tmux; Sixel 120x48 e kitty 64x24 aparecem.
+
+## Terminal de atalho, tmux e imagens — manual (na sessão)
+
+- F12 em qualquer lugar: o terminal desce; digitar; F12 esconde; F12 volta com o mesmo histórico. Preferências → Sessão: altura do terminal de atalho.
+- `tmux -CC` (ou `tmux -CC attach`): janelas viram abas; dividir, nova aba, fechar aba; Esc no painel do tmux desanexa e as abas somem.
+- `img2sixel foto.png` (pacote libsixel-bin), `kitty +kitten icat foto.png` (se tiver o kitty) ou `chafa -f sixels foto.png`.
+
+## Perfil padrão, fonte e placeholders — automáticos e manuais
+
+- `cargo test`: colocação virtual do kitty (`U=1`), acentos de linha/coluna, perfil vazio é o padrão.
+- Manual (cópia de teste): perfil padrão com opacidade 0,6 e fonte "Courier 10 Pitch": o terminal aberto sem escolher perfil fica translúcido e com a fonte; placeholders 8x2 de uma imagem 4x2 aparecem; `SNACKS_KITTY=1 nvim --clean -u mini.lua imagem.png` mostra a imagem.
+- Manual (sessão): trocar o perfil padrão nas Preferências muda os terminais abertos; Fonte → outra família; abrir uma imagem no Neovim com a linha do `SNACKS_KITTY` na configuração.
+

@@ -20,6 +20,35 @@ pub enum Cursor {
     Underline,
 }
 
+/// O que um gatilho faz quando o texto aparece.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TriggerAction {
+    /// Pinta o fundo do texto encontrado.
+    #[default]
+    Highlight,
+    /// Notificação do mide com a linha.
+    Notify,
+    /// O painel pisca (como o sino).
+    Bell,
+}
+
+/// Gatilho (ideia do iTerm2): quando `text` aparece na saída, faz `action`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Trigger {
+    pub text: String,
+    pub action: TriggerAction,
+    /// Cor do destaque (`#rrggbb`).
+    pub color: String,
+}
+
+impl Default for Trigger {
+    fn default() -> Self {
+        Self { text: String::new(), action: TriggerAction::Highlight, color: "#ffd84d".into() }
+    }
+}
+
 /// Pasta onde abas e painéis novos começam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -37,6 +66,8 @@ pub struct Profile {
     /// Nome do tema de cores (`palette::THEMES`).
     pub theme: String,
     pub font_size: f32,
+    /// Família da fonte (vazio: a de largura fixa padrão do sistema).
+    pub font: String,
     pub cursor: Cursor,
     pub cursor_blink: bool,
     /// Linhas guardadas no histórico.
@@ -54,6 +85,13 @@ pub struct Profile {
     pub blur: bool,
     /// Cores trocadas pelo usuário por cima do tema (`COLOR_SLOTS` → `#rrggbb`).
     pub colors: BTreeMap<String, String>,
+    /// Integração do shell (marcas dos prompts, aviso de comando terminado, `imgcat`).
+    pub shell_integration: bool,
+    /// Avisar quando um comando que levou pelo menos estes segundos termina com a
+    /// janela sem foco (0: nunca).
+    pub notify_after: u32,
+    /// Gatilhos: texto na saída → destacar, avisar ou piscar.
+    pub triggers: Vec<Trigger>,
 }
 
 /// Cores que o usuário pode trocar: chave e nome na tela.
@@ -129,6 +167,7 @@ impl Default for Profile {
             name: "Padrão".into(),
             theme: "Claro".into(),
             font_size: 13.0,
+            font: String::new(),
             cursor: Cursor::Block,
             cursor_blink: false,
             scrollback: super::screen::HISTORY,
@@ -139,6 +178,9 @@ impl Default for Profile {
             opacity: 1.0,
             blur: true,
             colors: BTreeMap::new(),
+            shell_integration: true,
+            notify_after: 10,
+            triggers: Vec::new(),
         }
     }
 }
@@ -150,12 +192,14 @@ pub struct Profiles {
     pub default: String,
     /// Reabrir as abas e painéis da última janela fechada (com as pastas).
     pub restore: bool,
+    /// Altura do terminal de atalho (fração da área útil da tela).
+    pub hotkey_height: f32,
     pub profiles: Vec<Profile>,
 }
 
 impl Default for Profiles {
     fn default() -> Self {
-        Self { default: "Padrão".into(), restore: false, profiles: vec![Profile::default()] }
+        Self { default: "Padrão".into(), restore: false, hotkey_height: 0.45, profiles: vec![Profile::default()] }
     }
 }
 
@@ -202,13 +246,16 @@ impl Profiles {
             p.opacity = p.opacity.clamp(0.3, 1.0);
             p.colors.retain(|k, v| COLOR_SLOTS.iter().any(|(s, _)| s == k) && parse_hex(v).is_some());
         }
+        self.hotkey_height = self.hotkey_height.clamp(0.2, 0.95);
         if !self.profiles.iter().any(|p| p.name == self.default) {
             self.default = self.profiles[0].name.clone();
         }
         self
     }
 
+    /// Perfil pelo nome; vazio é o padrão (o que estiver marcado como padrão agora).
     pub fn get(&self, name: &str) -> &Profile {
+        let name = if name.is_empty() { self.default.as_str() } else { name };
         self.profiles.iter().find(|p| p.name == name).unwrap_or(&self.profiles[0])
     }
 
