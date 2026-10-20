@@ -80,6 +80,7 @@ struct FileConfig {
     keyboard: Keyboard,
     monitors: Monitors,
     input: Input,
+    lock: Lock,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -162,6 +163,26 @@ pub struct Input {
 impl Default for Input {
     fn default() -> Self {
         Self { pointer_speed: 0.0, mouse_acceleration: true, mouse_natural_scroll: false, touchpad_natural_scroll: true, tap_to_click: true }
+    }
+}
+
+/// Bloqueio de tela, na seção `[lock]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Lock {
+    /// Bloquear depois de tantos minutos sem uso (0: nunca). Só na sessão de verdade
+    /// (DRM); num mide em janela, o desktop de baixo é que bloqueia.
+    pub idle_minutes: u32,
+    /// Bloquear antes de suspender.
+    pub on_suspend: bool,
+    /// Apagar a tela depois de tantos minutos sem uso (0: nunca). Com a tela já
+    /// bloqueada, ela apaga depois de 1 minuto.
+    pub blank_minutes: u32,
+}
+
+impl Default for Lock {
+    fn default() -> Self {
+        Self { idle_minutes: 5, on_suspend: true, blank_minutes: 10 }
     }
 }
 
@@ -298,12 +319,13 @@ pub struct Config {
     pub keyboard: Keyboard,
     pub monitors: Monitors,
     pub input: Input,
+    pub lock: Lock,
 }
 
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
-        let (user, effects, desktop, keyboard, monitors, input) = match config_path() {
+        let (user, effects, desktop, keyboard, monitors, input, lock) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
                 let mut file = toml::from_str::<FileConfig>(&text)
@@ -313,9 +335,10 @@ impl Config {
                 let keyboard = std::mem::take(&mut file.keyboard);
                 let monitors = std::mem::take(&mut file.monitors);
                 let input = std::mem::take(&mut file.input);
-                (file.all_bindings(), effects, desktop, keyboard, monitors, input)
+                let lock = std::mem::take(&mut file.lock);
+                (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock)
             }
-            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default()),
+            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default()),
         };
         let mut config = Self::from_entries(&user)?;
         config.effects = effects;
@@ -323,6 +346,7 @@ impl Config {
         config.keyboard = keyboard;
         config.monitors = monitors;
         config.input = input;
+        config.lock = lock;
         Ok(config)
     }
 
@@ -353,6 +377,7 @@ impl Config {
             keyboard: Keyboard::default(),
             monitors: Monitors::default(),
             input: Input::default(),
+            lock: Lock::default(),
         })
     }
 

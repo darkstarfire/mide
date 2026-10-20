@@ -1,0 +1,4 @@
+#%PAM-1.0
+# Tela de bloqueio do mide (mide-lock): confere a senha do mesmo jeito que o login.
+# Instalar em /etc/pam.d/mide-lock (sem ele, o mide-lock usa o serviço "login").
+auth include login

@@ -14,6 +14,7 @@ mod cursor;
 mod decorations;
 mod genie;
 mod input;
+mod lock;
 mod outputs;
 mod selftest;
 mod session;
@@ -98,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = config::Config::load()?;
     tracing::info!("{} atalho(s) configurado(s)", config.bindings.len());
-    let mut state = State::new(display_handle, config)?;
+    let mut state = State::new(display_handle, config, loop_handle.clone())?;
 
     // DRM: o mide direto na tela (iniciado de um console de texto). Winit: numa janela
     // dentro do desktop atual (desenvolvimento). `MIDE_BACKEND=drm|winit|headless` escolhe;
@@ -125,6 +126,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         backend_winit::init(&event_loop, &loop_handle, &mut state)?;
     }
 
+    // Bloqueio: pelo tempo sem uso e pelos pedidos do logind, só na sessão de verdade
+    // (num mide em janela, quem bloqueia é o desktop de baixo).
+    state.idle_lock = drm || std::env::var_os("MIDE_LOCK_IDLE").is_some();
+    if drm {
+        let (sender, requests) = smithay::reexports::calloop::channel::channel::<&'static str>();
+        loop_handle.insert_source(requests, |event, _, state: &mut State| {
+            if let smithay::reexports::calloop::channel::Event::Msg(reason) = event {
+                if reason == "suspender" && !state.config.lock.on_suspend {
+                    return;
+                }
+                lock::request(state, reason);
+            }
+        })?;
+        lock::watch_logind(sender);
+    }
+
     // Apps X11 dentro do mide (xwayland-satellite); encerrado junto com o mide.
     let _xwayland = xwayland::start(socket_name());
 
@@ -148,6 +165,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Err(err) = state.display_handle.flush_clients() {
             tracing::warn!("falha ao enviar eventos: {err}");
         }
+        lock::tick(state);
         if state.quit_requested {
             stop.stop();
         }

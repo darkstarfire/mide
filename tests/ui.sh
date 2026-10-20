@@ -80,7 +80,7 @@ check_count() {
     local name="$1" pattern="$2" want="$3" script="$4"
     shift 4
     local got
-    got="$(timeout 150 "$SCEN" "$script" -- "$@" 2>&1 | grep -E "autoteste: (janela|camada)" | grep -Ec "$pattern")"
+    got="$(timeout 150 "$SCEN" "$script" -- "$@" 2>&1 | grep -E "autoteste: (janela|camada|tela)" | grep -Ec "$pattern")"
     if [ "$got" = "$want" ]; then
         echo "ok    $name"
         PASS=$((PASS + 1))
@@ -680,6 +680,29 @@ if command -v xclock >/dev/null && { command -v xwayland-satellite >/dev/null ||
 else
     echo "pulo  apps X11 (falta xclock ou xwayland-satellite)"
 fi
+
+echo "== bloqueio de tela (mide-lock)"
+# Senha só dos testes (vale apenas nas compilações de desenvolvimento).
+export MIDE_LOCK_TEST_PASSWORD=teste
+SCENARIO_WAIT=16 check "Super+L bloqueia a tela" "autoteste: tela bloqueada \(1 tela" "430 combo super+l; 650 list" "$TERMINAL"
+SCENARIO_WAIT=16 check "senha errada mantém bloqueada" "autoteste: tela bloqueada" "430 combo super+l; 620 type errada; 622 key enter; 760 list" "$TERMINAL"
+SCENARIO_WAIT=16 check "senha certa desbloqueia" "autoteste: tela livre, desbloqueios: 1" "430 combo super+l; 620 type teste; 622 key enter; 760 list" "$TERMINAL"
+unset MIDE_LOCK_TEST_PASSWORD
+# Dois monitores: uma tela de bloqueio em cada.
+MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=16 check "bloqueio cobre os dois monitores" "autoteste: tela bloqueada \(2 tela" "400 combo super+l; 650 list"
+# Tempo sem uso (contado em segundos nos testes): apaga e acende ao mexer.
+IDLECFG="$(mktemp -d)"
+mkdir -p "$IDLECFG/mide"
+printf '[lock]\nidle_minutes = 0\nblank_minutes = 3\n' > "$IDLECFG/mide/config.toml"
+OLD_IDLE_CFG="$XDG_CONFIG_HOME"
+export XDG_CONFIG_HOME="$IDLECFG" MIDE_LOCK_IDLE=1 MIDE_IDLE_UNIT=seconds
+check "tela apaga depois do tempo sem uso" "autoteste: tela apagada" "200 move 500 400; 600 list"
+check_count "mexer o mouse acende a tela" "autoteste: tela apagada" 0 "200 move 500 400; 600 move 520 420; 610 list"
+printf '[lock]\nidle_minutes = 3\nblank_minutes = 0\n' > "$IDLECFG/mide/config.toml"
+SCENARIO_WAIT=16 check "bloqueia sozinho depois do tempo sem uso" "autoteste: tela bloqueada" "200 move 500 400; 700 list"
+export XDG_CONFIG_HOME="$OLD_IDLE_CFG"
+unset MIDE_LOCK_IDLE MIDE_IDLE_UNIT
+rm -rf "$IDLECFG"
 
 echo "== captura de tela (Print)"
 # A imagem vai para Imagens/Capturas de tela: no teste, uma pasta temporária.

@@ -747,3 +747,16 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Manual (cópia de teste): perfil padrão com opacidade 0,6 e fonte "Courier 10 Pitch": o terminal aberto sem escolher perfil fica translúcido e com a fonte; placeholders 8x2 de uma imagem 4x2 aparecem; `SNACKS_KITTY=1 nvim --clean -u mini.lua imagem.png` mostra a imagem.
 - Manual (sessão): trocar o perfil padrão nas Preferências muda os terminais abertos; Fonte → outra família; abrir uma imagem no Neovim com a linha do `SNACKS_KITTY` na configuração.
 
+## Bloqueio de tela — automáticos
+
+- `cargo test`: o PAM de verdade recusa uma senha errada (sem travar); usuário e serviço do PAM.
+- `tests/ui.sh` (senha de teste `MIDE_LOCK_TEST_PASSWORD`, só em compilação de desenvolvimento): Super+L bloqueia (1 tela de bloqueio); senha errada mantém bloqueada; senha certa desbloqueia.
+- Conferido à parte: o que se digita com a tela bloqueada não chega às janelas (o terminal de trás fica limpo); matar o `mide-lock` com a tela bloqueada: o mide abre outro e a tela não desbloqueia.
+
+## Bloqueio de tela — manual (sessão de verdade)
+
+- Super+L; senha errada e certa; `loginctl lock-session`; suspender e voltar (pede a senha); ficar 5 min sem usar; Configurações → Bloqueio de tela → "Bloquear agora"; com dois monitores, a outra tela fica escura.
+- Instalar o serviço do PAM: `sudo cp data/pam/mide-lock /etc/pam.d/` (sem ele, o mide-lock usa o `login`).
+- `tests/ui.sh`: o bloqueio cobre os dois monitores (2 telas de bloqueio); a tela apaga depois do tempo sem uso e acende ao mexer o mouse; bloqueia sozinha depois do tempo sem uso.
+- Manual (sessão de verdade): os monitores desligam (DPMS) e ligam com uma tecla; um vídeo tocando no Firefox ou no mpv impede o bloqueio e o apagar.
+

@@ -204,6 +204,15 @@ fn run(state: &mut State, step: Step, frame: u32) {
 
 /// Registra janelas e camadas com a posição no Space, a geometria e a moldura.
 fn list(state: &State) {
+    if state.blanked {
+        tracing::info!("autoteste: tela apagada");
+    }
+    if state.lock.locked {
+        let alive = state.lock.surfaces.iter().filter(|(_, s)| s.alive()).count();
+        tracing::info!("autoteste: tela bloqueada ({alive} tela(s) de bloqueio)");
+    } else if state.lock.unlocks > 0 {
+        tracing::info!("autoteste: tela livre, desbloqueios: {}", state.lock.unlocks);
+    }
     for window in state.space.elements() {
         let Some(loc) = state.space.element_location(window) else {
             continue;

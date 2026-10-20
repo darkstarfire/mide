@@ -233,6 +233,22 @@ pub struct State {
     pub popups: PopupManager,
     /// Superfícies de camada (barra, dock, buscador) do protocolo wlr-layer-shell.
     pub layer_shell_state: WlrLayerShellState,
+    pub session_lock_state: smithay::wayland::session_lock::SessionLockManagerState,
+    /// Bloqueio de tela (`crate::lock`).
+    pub lock: crate::lock::Lock,
+    /// Última entrada do usuário (para bloquear depois do tempo sem uso).
+    pub last_activity: Instant,
+    /// Bloquear sozinho depois do tempo sem uso (só na sessão de verdade).
+    pub idle_lock: bool,
+    /// Aviso de "usuário ocioso" para os programas (`ext-idle-notify-v1`).
+    pub idle_notifier_state: smithay::wayland::idle_notify::IdleNotifierState<State>,
+    /// Programas que pedem para a tela não apagar nem bloquear (vídeo tocando). O
+    /// estado só precisa existir (o protocolo fica anunciado).
+    #[allow(dead_code)]
+    pub idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState,
+    pub inhibitors: Vec<WlSurface>,
+    /// A tela está apagada (DPMS desligado no DRM; preto nos outros backends).
+    pub blanked: bool,
     /// Estado da decoração de servidor (barra de título). Guardado para manter o global vivo.
     #[allow(dead_code)]
     pub decoration_state: XdgDecorationState,
@@ -273,7 +289,7 @@ pub struct MoveGrab {
 }
 
 impl State {
-    pub fn new(display_handle: DisplayHandle, config: Config) -> Result<Self, Box<dyn Error>> {
+    pub fn new(display_handle: DisplayHandle, config: Config, loop_handle: smithay::reexports::calloop::LoopHandle<'static, State>) -> Result<Self, Box<dyn Error>> {
         // Teclado virtual: deixa ferramentas como o wtype digitarem nos testes automáticos.
         VirtualKeyboardManagerState::new::<Self, _>(&display_handle, |_| true);
         // Pedidos de recorte e escala de superfície (wp_viewporter) e posição lógica das
@@ -285,6 +301,9 @@ impl State {
         let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
+        let session_lock_state = smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&display_handle, |_| true);
+        let idle_notifier_state = smithay::wayland::idle_notify::IdleNotifierState::new(&display_handle, loop_handle);
+        let idle_inhibit_state = smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(&display_handle);
         let decoration_state = XdgDecorationState::new::<Self>(&display_handle);
 
         let mut seat_state = SeatState::new();
@@ -341,6 +360,14 @@ impl State {
             resize_grab: None,
             popups: PopupManager::default(),
             layer_shell_state,
+            session_lock_state,
+            lock: Default::default(),
+            last_activity: Instant::now(),
+            idle_lock: false,
+            idle_notifier_state,
+            idle_inhibit_state,
+            inhibitors: Vec::new(),
+            blanked: false,
             decoration_state,
             title_press: false,
             last_title_click: None,
@@ -430,8 +457,22 @@ impl State {
     }
 
     /// Marca uma entrada entregue a `surface` para medir a resposta do app.
+    /// O usuário mexeu (tecla, clique, movimento): conta o tempo sem uso de novo,
+    /// avisa os programas e acende a tela apagada.
+    pub fn activity(&mut self) {
+        self.last_activity = Instant::now();
+        let seat = self.seat.clone();
+        self.idle_notifier_state.notify_activity(&seat);
+        if self.blanked {
+            tracing::info!("tela acesa");
+            self.blanked = false;
+            self.wake();
+        }
+    }
+
     pub fn mark_input(&mut self, kind: &'static str, surface: Option<WlSurface>) {
         use smithay::reexports::wayland_server::Resource;
+        self.activity();
         if let Some(client) = surface.and_then(|s| s.client()) {
             self.input_mark = Some((Instant::now(), kind, client.id()));
         }

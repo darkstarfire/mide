@@ -383,6 +383,8 @@ pub struct Ctx {
     pub input_region: Option<(f32, f32, f32, f32)>,
     /// Pedido para esconder (`true`) ou mostrar a superfície (`Ui::set_hidden`).
     pub hide_request: Option<bool>,
+    /// Tela de bloqueio: a senha foi aceita (`Ui::unlock`).
+    pub unlock_request: bool,
 }
 
 impl Ctx {
@@ -414,6 +416,7 @@ impl Ctx {
             waker: None,
             input_region: None,
             hide_request: None,
+            unlock_request: false,
         }
     }
 
@@ -1198,6 +1201,11 @@ impl<'a> Ui<'a> {
         self.ctx.input_region = Some(rect);
     }
 
+    /// Tela de bloqueio (`Window::lock`): desbloqueia a sessão e fecha o app.
+    pub fn unlock(&mut self) {
+        self.ctx.unlock_request = true;
+    }
+
     /// Esconde a superfície (sem fechar o app) ou mostra de novo.
     pub fn set_hidden(&mut self, hidden: bool) {
         self.ctx.hide_request = Some(hidden);
@@ -1551,6 +1559,56 @@ impl<'a> Ui<'a> {
             left = right;
         }
         value.len()
+    }
+
+    /// Campo de senha (telas de bloqueio e de senha): mostra bolinhas, recebe o
+    /// teclado sempre (é o único campo da tela) e não copia. Enter responde
+    /// `submitted`; Esc e Ctrl+U apagam tudo; Backspace apaga o último caractere.
+    pub fn password_input(&mut self, value: &mut String, placeholder: &str) -> Response {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, t.row + 6.0);
+        let id = self.ctx.id();
+        let mut r = Response { rect, id, ..Default::default() };
+        let input = self.ctx.input.clone();
+        let before = value.len();
+        value.extend(input.text.chars().filter(|c| !c.is_control()));
+        if let Some(pasted) = &input.paste {
+            value.extend(pasted.chars().filter(|c| !c.is_control()));
+        }
+        for (key, ctrl, _) in input.key_events() {
+            match key {
+                Key::Backspace if ctrl => value.clear(),
+                Key::Backspace => {
+                    value.pop();
+                }
+                Key::Escape => value.clear(),
+                Key::Enter => r.submitted = true,
+                _ => {}
+            }
+        }
+        for shortcut in &input.shortcuts {
+            match shortcut.as_str() {
+                "u" => value.clear(),
+                "v" => self.ctx.paste_requested = true,
+                _ => {}
+            }
+        }
+        r.changed = value.len() != before;
+        if r.changed || r.submitted {
+            self.ctx.repaint = true;
+        }
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, rect.3 / 2.0, color([255, 255, 255, 120]));
+        let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
+        let x = rect.0 + 16.0;
+        if value.is_empty() {
+            self.draw_text(placeholder, x, ty, t.font, FontWeight::Regular, [40, 40, 48, 170]);
+        } else {
+            let dots = "•".repeat(value.chars().count().min(40));
+            let w = self.measure(&dots, t.font + 2.0, FontWeight::Regular);
+            self.draw_text(&dots, x, ty - 1.0, t.font + 2.0, FontWeight::Regular, [24, 24, 28, 255]);
+            fill_rounded(self.canvas, x + w + 2.0, rect.1 + 8.0, 1.5, rect.3 - 16.0, 0.5, color([24, 24, 28, 255]));
+        }
+        r
     }
 
     /// Área de texto de várias linhas (editor): números de linha, cursor, seleção com

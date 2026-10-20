@@ -48,6 +48,9 @@ smithay::backend::renderer::element::render_elements! {
     ClippedTexture=crate::clip::Clipped<smithay::backend::renderer::element::texture::TextureRenderElement<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
+/// Fundo da tela bloqueada enquanto a tela de bloqueio não aparece.
+const LOCKED_BACKGROUND: [f32; 4] = [0.05, 0.05, 0.07, 1.0];
+
 /// Cor de fundo do desktop se o papel de parede não puder ser desenhado.
 const BACKGROUND: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
 
@@ -136,6 +139,24 @@ impl Scene {
             Some(cursors) if !capturing => cursors.elements(renderer, state, origin),
             _ => Vec::new(),
         };
+        // Tela apagada (no DRM o monitor desliga; aqui, preto).
+        if state.blanked {
+            let result = render_output(output, renderer, framebuffer, scale as f32, 0, Vec::<&Space<Window>>::new(), &Vec::<MideRenderElement>::new(), damage_tracker, [0.0, 0.0, 0.0, 1.0])?;
+            dump_frame_if_requested(renderer, framebuffer, output)?;
+            return Ok(result.sync);
+        }
+        // Tela bloqueada: só a tela de bloqueio desta saída (sem ela, tudo escuro).
+        // Nada do que está por trás aparece, nem num quadro.
+        if state.lock.locked {
+            if let Some(surface) = state.lock.surface_for(output) {
+                let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                    render_elements_from_surface_tree(renderer, surface.wl_surface(), Point::from((0, 0)), crate::clip::scale(), 1.0, Kind::Unspecified);
+                custom.extend(elements.into_iter().map(MideRenderElement::Surface));
+            }
+            let result = render_output(output, renderer, framebuffer, scale as f32, 0, Vec::<&Space<Window>>::new(), &custom, damage_tracker, LOCKED_BACKGROUND)?;
+            dump_frame_if_requested(renderer, framebuffer, output)?;
+            return Ok(result.sync);
+        }
         // Prévias das janelas: só na tela da dock (a posição delas vem da dock).
         if layer_map_for_output(output).layers().any(|l| l.namespace() == "mide-dock") {
             custom.extend(crate::preview::elements(renderer, state, origin, shaders, titles));
@@ -872,6 +893,10 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
                 |_, _| Some(output.clone()),
             );
         }
+    }
+    // Tela de bloqueio desta saída.
+    if let Some(surface) = state.lock.surface_for(output) {
+        send_frames_surface_tree(surface.wl_surface(), output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
     }
     // Cursor pedido por um app (desenhado pelo mide no DRM): também pode ser animado.
     if let smithay::input::pointer::CursorImageStatus::Surface(surface) = &state.cursor_status {

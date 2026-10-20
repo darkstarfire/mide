@@ -77,6 +77,8 @@ struct Gpu {
     formats: Vec<smithay::backend::allocator::Format>,
     heads: Vec<Head>,
     scene: Scene,
+    /// Telas apagadas (DPMS desligado).
+    blanked: bool,
 }
 
 /// Abre a sessão, a placa de vídeo, as telas e a entrada, e agenda o desenho.
@@ -111,7 +113,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     crate::clip::set_flipped(false);
 
     let scene = Scene::new(&mut renderer, state)?.with_cursor();
-    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene }));
+    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false }));
     state.session = Some(session.clone());
 
     // Telas: liga as conectadas e arranja. O ponteiro começa no meio da principal.
@@ -494,10 +496,46 @@ fn set_output_mode(output: &Output, mode: DrmMode, scale: f64) {
     output.set_preferred(wl_mode);
 }
 
+/// Liga ou desliga os monitores (propriedade DPMS dos conectores: 0 ligado, 3
+/// desligado; o kernel aceita também com o modo atômico).
+fn set_dpms(gpu: &Gpu, on: bool) {
+    for head in &gpu.heads {
+        let Ok(props) = gpu.drm.get_properties(head.connector) else {
+            continue;
+        };
+        let (handles, _) = props.as_props_and_values();
+        for &prop in handles {
+            let is_dpms = gpu.drm.get_property(prop).is_ok_and(|info| info.name().to_bytes() == b"DPMS");
+            if is_dpms {
+                match gpu.drm.set_property(head.connector, prop, if on { 0 } else { 3 }) {
+                    Ok(()) => tracing::info!("monitor {}: {}", head.output.name(), if on { "ligado" } else { "desligado (DPMS)" }),
+                    Err(err) => tracing::warn!("monitor {}: DPMS não mudou: {err}", head.output.name()),
+                }
+            }
+        }
+    }
+}
+
 /// Desenha um quadro em cada tela que não espera vblank e o entrega (aparece no
 /// próximo vblank dela).
 fn render(gpu: &mut Gpu, state: &mut State) {
     if !gpu.drm.is_active() {
+        return;
+    }
+    // Tela apagada (tempo sem uso): desliga os monitores e não desenha; ao acender,
+    // liga de novo e recomeça os quadros (o que esperava o vblank não vai chegar).
+    if state.blanked != gpu.blanked {
+        gpu.blanked = state.blanked;
+        set_dpms(gpu, !state.blanked);
+        if !state.blanked {
+            for head in gpu.heads.iter_mut() {
+                head.pending = false;
+                head.surface.reset_buffers();
+            }
+            state.redraw = true;
+        }
+    }
+    if gpu.blanked {
         return;
     }
     let wanted = state.redraw;

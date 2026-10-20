@@ -88,6 +88,8 @@ pub struct Window {
     pub desktop: bool,
     /// Camada que desce do topo, por cima das janelas (`Window::dropdown`).
     pub dropdown: bool,
+    /// Tela de bloqueio (`Window::lock`).
+    pub lock: bool,
 }
 
 impl Window {
@@ -102,7 +104,16 @@ impl Window {
             overlay: None,
             desktop: false,
             dropdown: false,
+            lock: false,
         }
+    }
+
+    /// Tela de bloqueio (protocolo `ext-session-lock-v1`): o compositor esconde tudo e
+    /// só esta tela recebe teclado e mouse até `Ui::unlock`. O app desenha na primeira
+    /// tela; as outras ficam escuras.
+    pub fn lock(mut self) -> Self {
+        self.lock = true;
+        self
     }
 
     /// Camada por cima das janelas, na área útil (abaixo da barra), com o teclado só
@@ -175,7 +186,21 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     let shm = Shm::bind(&globals, &qh)?;
 
     let surface = compositor.create_surface(&qh);
-    let shell = match &window.overlay {
+    let output_state = OutputState::new(&globals, &qh);
+    let shell = if window.lock {
+        use smithay_client_toolkit::session_lock::SessionLockState;
+        let lock_state = SessionLockState::new(&globals, &qh);
+        let session = lock_state.lock(&qh).map_err(|e| format!("o compositor não aceita bloqueio de tela: {e}"))?;
+        let outputs: Vec<wl_output::WlOutput> = output_state.outputs().collect();
+        let Some(first) = outputs.first() else {
+            return Err("sem tela para bloquear".into());
+        };
+        // A primeira tela de bloqueio é a do app (o compositor dá o teclado a ela).
+        let main = session.create_lock_surface(surface, first, &qh);
+        let others = outputs[1..].iter().map(|o| (session.create_lock_surface(compositor.create_surface(&qh), o, &qh), None)).collect();
+        Shell::Lock { session, surface: main, others }
+    } else {
+        match &window.overlay {
         Some(namespace) => {
             let layer_shell = LayerShell::bind(&globals, &qh)?;
             let kind = if window.desktop {
@@ -211,6 +236,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             xdg.commit();
             Shell::Xdg(xdg)
         }
+    }
     };
 
     let mut event_loop: EventLoop<Runner> = EventLoop::try_new()?;
@@ -223,7 +249,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         loop_handle: event_loop.handle(),
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
-        output_state: OutputState::new(&globals, &qh),
+        output_state,
         pool: SlotPool::new((window.size.0 * window.size.1 * 4) as usize, &shm)?,
         shm,
         shell,
@@ -291,13 +317,23 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             runner.clipboard();
         }
     }
+    // O desbloqueio (e o resto) precisa chegar ao compositor antes de sair.
+    let _ = conn.flush();
     Ok(())
 }
 
-/// A superfície do app: janela comum ou camada (com o nome dela).
+/// A superfície do app: janela comum, camada (com o nome dela) ou tela de bloqueio
+/// (a do app e as das outras telas, que ficam escuras).
 enum Shell {
     Xdg(XdgWindow),
     Layer(LayerSurface, String),
+    Lock {
+        session: smithay_client_toolkit::session_lock::SessionLock,
+        surface: smithay_client_toolkit::session_lock::SessionLockSurface,
+        /// As telas de bloqueio dos outros monitores e o tamanho de cada uma (depois
+        /// da configuração): mostram a mesma tela do app, sem receber teclas.
+        others: Vec<(smithay_client_toolkit::session_lock::SessionLockSurface, Option<(u32, u32)>)>,
+    },
 }
 
 impl Shell {
@@ -305,6 +341,7 @@ impl Shell {
         match self {
             Shell::Xdg(w) => w.wl_surface(),
             Shell::Layer(l, _) => l.wl_surface(),
+            Shell::Lock { surface, .. } => surface.wl_surface(),
         }
     }
 
@@ -312,6 +349,7 @@ impl Shell {
         match self {
             Shell::Xdg(w) => w.commit(),
             Shell::Layer(l, _) => l.commit(),
+            Shell::Lock { surface, .. } => surface.wl_surface().commit(),
         }
     }
 }
@@ -411,6 +449,14 @@ impl Runner {
                 break;
             }
         }
+        // Senha aceita: desbloqueia e fecha (o app de bloqueio termina aqui).
+        if std::mem::take(&mut self.ctx.unlock_request) {
+            if let Shell::Lock { session, .. } = &self.shell {
+                session.unlock();
+            }
+            self.exit = true;
+            return;
+        }
         // Esconder e mostrar (camadas): sem imagem a superfície some; para voltar, um
         // commit vazio pede outra configuração ao compositor.
         match self.ctx.hide_request.take() {
@@ -444,6 +490,7 @@ impl Runner {
         if self.hidden || !self.configured {
             return;
         }
+        self.draw_other_lock_screens();
         // Painéis de vidro (`ui.glass_panel`): o compositor desenha o vidro atrás.
         if let (Shell::Layer(_, namespace), true) = (&self.shell, self.ctx.layer) {
             let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
@@ -484,6 +531,46 @@ impl Runner {
     }
 }
 
+impl Runner {
+    /// Tela de bloqueio nos outros monitores: o mesmo `view` do app, desenhado no
+    /// tamanho de cada um e sem entrada (as teclas são só da tela principal).
+    fn draw_other_lock_screens(&mut self) {
+        let targets: Vec<(wl_surface::WlSurface, (u32, u32))> = match &self.shell {
+            Shell::Lock { others, .. } => others.iter().filter_map(|(s, size)| size.map(|sz| (s.wl_surface().clone(), sz))).collect(),
+            _ => return,
+        };
+        if targets.is_empty() {
+            return;
+        }
+        let input = std::mem::take(&mut self.ctx.input);
+        let (unlock, close) = (self.ctx.unlock_request, self.ctx.close_requested);
+        for (surface, (w, h)) in targets {
+            let Some(mut canvas) = Pixmap::new(w, h) else {
+                continue;
+            };
+            self.ctx.begin_frame();
+            {
+                let mut ui = Ui::root(&mut canvas, &mut self.ctx);
+                self.app.view(&mut ui);
+            }
+            let _ = self.ctx.take_overlay();
+            self.ctx.end_frame();
+            let Ok((buffer, data)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+                continue;
+            };
+            to_argb8888(&canvas, data);
+            surface.damage_buffer(0, 0, w as i32, h as i32);
+            if buffer.attach_to(&surface).is_ok() {
+                surface.commit();
+            }
+        }
+        // O que importa (teclas, desbloquear) é da tela principal.
+        self.ctx.input = input;
+        self.ctx.unlock_request = unlock;
+        self.ctx.close_requested = close;
+    }
+}
+
 impl CompositorHandler for Runner {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}
     fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
@@ -520,6 +607,44 @@ impl WindowHandler for Runner {
             self.size.1 = h.max(self.min_size.1);
         }
         self.configured = true;
+        self.dirty = true;
+    }
+}
+
+impl smithay_client_toolkit::session_lock::SessionLockHandler for Runner {
+    fn locked(&mut self, _: &Connection, _: &QueueHandle<Self>, _: smithay_client_toolkit::session_lock::SessionLock) {
+        tracing::debug!("tela bloqueada pelo compositor");
+    }
+
+    /// O compositor recusou o bloqueio (outro programa já bloqueou): sai.
+    fn finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: smithay_client_toolkit::session_lock::SessionLock) {
+        tracing::info!("bloqueio recusado ou encerrado pelo compositor");
+        self.exit = true;
+    }
+
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        surface: smithay_client_toolkit::session_lock::SessionLockSurface,
+        configure: smithay_client_toolkit::session_lock::SessionLockSurfaceConfigure,
+        _: u32,
+    ) {
+        let (w, h) = configure.new_size;
+        if &surface.wl_surface() == &self.shell.wl_surface() {
+            if w > 0 && h > 0 {
+                self.size = (w, h);
+            }
+            self.configured = true;
+            self.dirty = true;
+            return;
+        }
+        // Outra tela: guarda o tamanho; o próximo quadro desenha nela também.
+        if let Shell::Lock { others, .. } = &mut self.shell {
+            if let Some(entry) = others.iter_mut().find(|(s, _)| s.wl_surface() == surface.wl_surface()) {
+                entry.1 = Some((w.max(1), h.max(1)));
+            }
+        }
         self.dirty = true;
     }
 }

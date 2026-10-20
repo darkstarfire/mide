@@ -1013,3 +1013,18 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Neovim com `snacks.nvim`:** ele só tenta imagens em terminais que conhece (kitty, ghostty, wezterm, pelo XTVERSION). Testado com `SNACKS_KITTY=1`: a imagem aparece. Na configuração do usuário: `if vim.env.TERM_PROGRAM == "mide" then vim.env.SNACKS_KITTY = "1" end` (o certo é o snacks conhecer o mide-terminal; ver anotações).
 - **Letras em itálico e negrito cortadas** (com temas que pintam o fundo de toda célula, como no Neovim): o fundo de cada célula era pintado depois da letra anterior e apagava o pedaço dela que passa da célula ("nada" virava "naaa", "NORMAL" virava "NCRMAL"). Agora o painel pinta todos os fundos primeiro e todas as letras depois.
 
+## Bloqueio de tela (C1)
+
+- **Compositor (`src/lock.rs`):** atende o protocolo `ext-session-lock-v1`. Com a tela bloqueada, a cena desenha só a tela de bloqueio de cada saída (sem ela, um fundo escuro: nada de trás aparece nem por um quadro), o teclado vai só para a primeira tela de bloqueio do programa e o mouse só alcança a tela de bloqueio da saída onde está; nenhum atalho do mide funciona, só trocar de console (Ctrl+Alt+Fn). Se o programa de bloqueio fechar ou cair, a tela continua bloqueada e o mide abre outro.
+- **Quem bloqueia:** Super+L (agora abre o `mide-lock`, antes chamava o `loginctl` sem ninguém atender), o logind (`loginctl lock-session` e antes de suspender, sinais `Lock` e `PrepareForSleep`) e o tempo sem uso (`[lock] idle_minutes`, padrão 5) — esses dois só na sessão de verdade (DRM); num mide em janela quem bloqueia é o desktop de baixo (`MIDE_LOCK_IDLE=1` liga mesmo assim).
+- **App `mide-lock` (mide-ui):** papel de parede desfocado e escurecido, relógio e data, a inicial e o nome de quem usa, campo de senha (novo no mide-ui: `Ui::password_input`, com bolinhas e sem copiar); a senha é conferida pelo PAM numa thread (interface própria com a `libpam.so.0`, sem crate e sem o pacote de desenvolvimento), com o serviço `mide-lock` (arquivo em `data/pam/mide-lock`) ou o `login`; senha errada mostra "Senha incorreta" e o campo balança. Novo no mide-ui: `Window::lock` (tela de bloqueio em todas as saídas; a interface na primeira) e `Ui::unlock`.
+- **Configurações → Bloqueio de tela:** bloquear após (nunca, 1, 2, 5, 10, 15, 30 minutos), bloquear ao suspender e "Bloquear agora".
+
+## Bloqueio de tela: apagar a tela, ociosidade e todos os monitores
+
+- **Apagar a tela (`[lock] blank_minutes`, padrão 10):** depois do tempo sem uso (ou 1 minuto com a tela bloqueada), o DRM desliga os monitores pela propriedade DPMS dos conectores e para de desenhar; qualquer tecla, clique ou movimento liga de novo e recomeça os quadros. No mide em janela e sem tela, "apagada" é preto. Configurações → Bloqueio de tela → "Apagar a tela após".
+- **`ext-idle-notify-v1`:** programas (como o swayidle) sabem quando o usuário está ocioso.
+- **`idle-inhibit`:** um programa que pede (vídeo tocando no navegador ou no mpv) impede bloquear e apagar enquanto a superfície dele existe.
+- **Tela de bloqueio em todos os monitores:** o mide-ui desenha a mesma tela do app em cada monitor (sem entrada nos outros; as teclas vão para o primeiro).
+- **Testes de tempo sem uso:** `MIDE_IDLE_UNIT=seconds` conta os minutos da configuração como segundos; `MIDE_LOCK_IDLE=1` liga o bloqueio por tempo fora da sessão de verdade.
+

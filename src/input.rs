@@ -221,6 +221,17 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
         state.mark_input("tecla", keyboard.current_focus());
     }
     let serial = SERIAL_COUNTER.next_serial();
+    // Tela bloqueada: as teclas só vão para a tela de bloqueio.
+    let locked = state.lock.locked;
+    if locked {
+        let lock_focus = state
+            .primary_output()
+            .and_then(|o| state.lock.surface_for(&o).map(|s| s.wl_surface().clone()))
+            .or_else(|| state.lock.surfaces.iter().find(|(_, s)| s.alive()).map(|(_, s)| s.wl_surface().clone()));
+        if keyboard.current_focus() != lock_focus && lock_focus.is_some() {
+            keyboard.set_focus(state, lock_focus, serial);
+        }
+    }
 
     // Um atalho casado é interceptado: a tecla não chega ao app com foco. Gravando um
     // atalho (Configurações), a combinação é guardada e também não chega ao app.
@@ -236,6 +247,16 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 // Alt (ou Super) solto: o alternador foca a janela escolhida.
                 if switching && !mods.alt && !mods.logo {
                     finish_switcher(state, true);
+                }
+                return FilterResult::Forward;
+            }
+            // Tela bloqueada: nenhum atalho do mide, só trocar de console (Ctrl+Alt+Fn);
+            // o resto vai para a tela de bloqueio (sem ela, a nenhum lugar).
+            if locked {
+                let vt = keysym.modified_sym().raw();
+                if (xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1..=xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12).contains(&vt) {
+                    let n = (vt - xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
+                    return FilterResult::Intercept(Some(Action::SwitchVt(n)));
                 }
                 return FilterResult::Forward;
             }
@@ -379,13 +400,8 @@ fn run_action(state: &mut State, action: Action) {
                 state.minimize(&surface);
             }
         }
-        Action::LockScreen => {
-            if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
-                tracing::info!("sistema (teste): loginctl lock-session");
-            } else {
-                spawn("loginctl lock-session");
-            }
-        }
+        // A tela de bloqueio do mide (`mide-lock`), pelo protocolo de bloqueio.
+        Action::LockScreen => crate::lock::request(state, "atalho"),
     }
 }
 
@@ -459,7 +475,7 @@ fn finish_switcher(state: &mut State, choose: bool) {
 }
 
 /// Inicia um comando pelo shell, com o mide como servidor Wayland.
-fn spawn(command: &str) {
+pub(crate) fn spawn(command: &str) {
     let mut process = std::process::Command::new("sh");
     process.arg("-c").arg(command);
     crate::child_env(&mut process);
@@ -482,6 +498,14 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         return;
     };
     state.pointer_location = pos;
+    state.activity();
+    // Tela bloqueada: o ponteiro só vê a tela de bloqueio da tela onde está.
+    if state.lock.locked {
+        let under = lock_surface_under(state, pos);
+        pointer.motion(state, under, &MotionEvent { location: pos, serial: SERIAL_COUNTER.next_serial(), time });
+        pointer.frame(state);
+        return;
+    }
 
     // Prévias da dock: acompanham o ponteiro e somem quando ele sai da dock e do painel.
     if let Some(preview) = state.preview.clone() {
@@ -563,6 +587,18 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
     let kind = if button_state == ButtonState::Pressed { "apertar" } else { "soltar" };
     state.mark_input(kind, pointer.current_focus());
     let serial = SERIAL_COUNTER.next_serial();
+
+    // Tela bloqueada: o clique vai só para a tela de bloqueio (que também pega o teclado).
+    if state.lock.locked {
+        if let Some((surface, _)) = lock_surface_under(state, pointer.current_location()) {
+            if let Some(keyboard) = state.seat.get_keyboard() {
+                keyboard.set_focus(state, Some(surface), serial);
+            }
+        }
+        pointer.button(state, &ButtonEvent { button: code, state: button_state.into(), serial, time });
+        pointer.frame(state);
+        return;
+    }
 
     if button_state == ButtonState::Pressed && code == BTN_LEFT {
         let pos = pointer.current_location();
@@ -751,6 +787,14 @@ fn back_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurfac
         }
     }
     None
+}
+
+/// Tela de bloqueio da tela sob `pos`, com a origem dela (o canto da tela).
+fn lock_surface_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    let output = state.space.output_under(pos).next()?;
+    let origin = state.space.output_geometry(output)?.loc.to_f64();
+    let surface = state.lock.surface_for(output)?;
+    Some((surface.wl_surface().clone(), origin))
 }
 
 /// Superfície sob `pos`, com a origem dela em coordenadas globais.

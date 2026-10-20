@@ -35,6 +35,7 @@ enum Section {
     Dock,
     Bar,
     Effects,
+    Lock,
     Mouse,
     Keyboard,
     About,
@@ -52,6 +53,7 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Dock), "Dock", "user-desktop", [52, 199, 89]),
     (Some(Section::Bar), "Barra superior", "gnome-panel", [88, 86, 214]),
     (Some(Section::Effects), "Efeitos", "preferences-desktop-theme", [191, 90, 242]),
+    (Some(Section::Lock), "Bloqueio de tela", "system-lock-screen", [255, 59, 48]),
     (None, "", "", [0, 0, 0]),
     (Some(Section::Mouse), "Mouse e trackpad", "input-mouse", [142, 142, 147]),
     (Some(Section::Keyboard), "Teclado", "preferences-desktop-keyboard", [142, 142, 147]),
@@ -74,6 +76,9 @@ const EFFECTS: &[(&str, &str, &str)] = &[
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela.
 const SEARCHABLE: &[(&str, &str, Section)] = &[
+    ("Bloquear a tela após", "bloqueio bloquear senha inatividade tempo sem uso protetor de tela", Section::Lock),
+    ("Bloquear ao suspender", "bloqueio suspender dormir senha", Section::Lock),
+    ("Apagar a tela após", "apagar tela monitor desligar energia dpms protetor", Section::Lock),
     ("Wi-Fi", "rede internet wireless conectar senha", Section::Wifi),
     ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
     ("Volume de saída", "som audio alto-falante volume", Section::Sound),
@@ -679,6 +684,65 @@ impl Settings {
         ui.note("Sem ocultar, as janelas maximizadas ficam acima da dock. Para fixar um app, clique com o botão direito no ícone dele e escolha \"Manter na Dock\".");
     }
 
+    /// Bloqueio de tela (`[lock]`): depois de quanto tempo sem uso e ao suspender.
+    fn lock(&mut self, ui: &mut Ui) {
+        ui.title("Bloqueio de tela");
+        const MINUTES: [i64; 7] = [0, 1, 2, 5, 10, 15, 30];
+        let current = match settings_file::get("lock", "idle_minutes") {
+            Some(Value::Int(n)) => n,
+            _ => 5,
+        };
+        let options: Vec<String> = MINUTES.iter().map(|m| match m {
+            0 => "Nunca".to_string(),
+            1 => "1 minuto".to_string(),
+            n => format!("{n} minutos"),
+        }).collect();
+        let mut index = MINUTES.iter().position(|m| *m == current).unwrap_or(3);
+        const BLANK: [i64; 8] = [0, 1, 2, 5, 10, 15, 30, 60];
+        let blank_current = match settings_file::get("lock", "blank_minutes") {
+            Some(Value::Int(n)) => n,
+            _ => 10,
+        };
+        let blank_options: Vec<String> = BLANK.iter().map(|m| match m {
+            0 => "Nunca".to_string(),
+            1 => "1 minuto".to_string(),
+            60 => "1 hora".to_string(),
+            n => format!("{n} minutos"),
+        }).collect();
+        let mut blank_index = BLANK.iter().position(|m| *m == blank_current).unwrap_or(4);
+        let mut on_suspend = settings_file::flag("lock", "on_suspend", true);
+        ui.card(|ui| {
+            if ui.dropdown("Bloquear a tela após ficar sem uso", &options, &mut index).changed() {
+                let n = MINUTES[index];
+                match settings_file::set("lock", "idle_minutes", (n != 5).then_some(Value::Int(n))) {
+                    Ok(()) => tracing::info!("bloqueio: após {n} min sem uso"),
+                    Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
+                }
+            }
+            if ui.dropdown("Apagar a tela após ficar sem uso", &blank_options, &mut blank_index).changed() {
+                let n = BLANK[blank_index];
+                match settings_file::set("lock", "blank_minutes", (n != 10).then_some(Value::Int(n))) {
+                    Ok(()) => tracing::info!("apagar a tela após {n} min sem uso"),
+                    Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
+                }
+            }
+            if ui.switch_detail("Bloquear ao suspender", "Ao voltar da suspensão, a senha é pedida", &mut on_suspend).changed() {
+                match settings_file::set("lock", "on_suspend", (!on_suspend).then_some(Value::Bool(false))) {
+                    Ok(()) => tracing::info!("bloqueio ao suspender {}", if on_suspend { "ligado" } else { "desligado" }),
+                    Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
+                }
+            }
+        });
+        if ui.primary_button("Bloquear agora").clicked() {
+            if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
+                tracing::info!("sistema (teste): mide-lock");
+            } else if let Err(err) = std::process::Command::new("mide-lock").spawn() {
+                tracing::warn!("não foi possível abrir a tela de bloqueio: {err}");
+            }
+        }
+        ui.note("Super+L também bloqueia. Com a tela bloqueada, ela apaga depois de 1 minuto. Vídeos tocando (no navegador, no mpv) impedem o bloqueio e o apagar. Num mide aberto em janela (desenvolvimento), quem bloqueia por tempo sem uso é o desktop de baixo.");
+    }
+
     /// Itens da direita da barra superior (`[bar]`): todos à mostra por padrão.
     fn bar(&mut self, ui: &mut Ui) {
         ui.title("Barra superior");
@@ -1107,6 +1171,7 @@ impl App for Settings {
                 Section::Displays => self.displays(ui),
                 Section::Wallpaper => self.wallpaper(ui),
                 Section::Dock => self.dock(ui),
+                Section::Lock => self.lock(ui),
                 Section::Bar => self.bar(ui),
                 Section::Effects => self.effects(ui),
                 Section::Mouse => self.mouse(ui),
@@ -1358,6 +1423,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("dock") => Section::Dock,
         Some("bar") => Section::Bar,
         Some("effects") => Section::Effects,
+        Some("lock") => Section::Lock,
         Some("mouse") => Section::Mouse,
         Some("keyboard") => Section::Keyboard,
         Some("about") => Section::About,
