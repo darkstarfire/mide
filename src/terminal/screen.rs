@@ -219,6 +219,23 @@ impl Default for Modes {
     }
 }
 
+/// Um prompt na tela ou no histórico.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromptMark {
+    /// Linha absoluta do prompt.
+    pub line: u64,
+    /// Código de saída do comando digitado nele (`None`: nenhum, ou ainda rodando).
+    pub status: Option<i32>,
+}
+
+/// Um comando que terminou: a linha do prompt dele, o código e quanto levou.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Finished {
+    pub line: u64,
+    pub status: i32,
+    pub duration: std::time::Duration,
+}
+
 /// Linhas guardadas no histórico, por padrão.
 pub const HISTORY: usize = 10_000;
 
@@ -263,8 +280,12 @@ pub struct Terminal {
     pub bell: bool,
     /// Pasta atual informada pelo shell (OSC 7).
     pub cwd: Option<String>,
-    /// Linhas onde começa um prompt (OSC 133;A), em números absolutos.
-    marks: Vec<u64>,
+    /// Prompts (OSC 133;A), em ordem, com o resultado do comando digitado em cada um.
+    marks: Vec<PromptMark>,
+    /// Um comando está rodando desde (OSC 133;C).
+    command_started: Option<std::time::Instant>,
+    /// Comandos que terminaram desde a última consulta (OSC 133;D).
+    finished: Vec<Finished>,
     last_char: Option<char>,
     /// Tamanho da célula em pixels (para os relatórios de tamanho).
     pub cell_pixels: (u16, u16),
@@ -311,6 +332,8 @@ impl Terminal {
             bell: false,
             cwd: None,
             marks: Vec::new(),
+            command_started: None,
+            finished: Vec::new(),
             last_char: None,
             cell_pixels: (8, 16),
             theme: palette::Theme::default(),
@@ -583,7 +606,7 @@ impl Terminal {
             self.dropped += 1;
         }
         let dropped = self.dropped;
-        self.marks.retain(|&m| m >= dropped);
+        self.marks.retain(|m| m.line >= dropped);
     }
 
     // ---- Texto, seleção e marcas ----
@@ -707,6 +730,55 @@ impl Terminal {
         Some((first, last))
     }
 
+    /// Endereço (`https://`, `http://`, `file://`, `ftp://`, `mailto:`) sob a célula,
+    /// com o começo e o fim. Atravessa as quebras automáticas e deixa de fora a
+    /// pontuação do fim de frase.
+    pub fn url_at(&self, abs: u64, col: usize) -> Option<((u64, usize), (u64, usize), String)> {
+        let ((first, _), (last, _)) = self.line_bounds(abs)?;
+        let mut chars: Vec<char> = Vec::new();
+        let mut cells: Vec<(u64, usize)> = Vec::new();
+        for line in first..=last {
+            let row = self.line_abs(line)?;
+            for (c, cell) in row.cells.iter().enumerate() {
+                if cell.wide != Wide::Spacer {
+                    chars.push(cell.c);
+                    cells.push((line, c));
+                }
+            }
+        }
+        let at = cells.iter().position(|&p| p == (abs, col)).or_else(|| cells.iter().position(|&p| p == (abs, col.saturating_sub(1))))?;
+        const SCHEMES: [&str; 5] = ["https://", "http://", "file://", "ftp://", "mailto:"];
+        let stop = |c: char| c.is_whitespace() || c.is_control() || "\"'<>`{}|\\^".contains(c);
+        let mut start = 0;
+        while start < chars.len() {
+            let rest: String = chars[start..].iter().collect();
+            if let Some(scheme) = SCHEMES.iter().find(|s| rest.starts_with(**s)) {
+                let mut end = start + scheme.chars().count();
+                while end < chars.len() && !stop(chars[end]) {
+                    end += 1;
+                }
+                let mut url: String = chars[start..end].iter().collect();
+                // Pontuação final não faz parte (fim de frase), nem um ")" sem "(".
+                while let Some(last) = url.chars().last() {
+                    let unbalanced = last == ')' && url.matches('(').count() < url.matches(')').count();
+                    if ".,;:!?'".contains(last) || unbalanced || last == ']' {
+                        url.pop();
+                        end -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                if end > start + scheme.chars().count() && (start..end).contains(&at) {
+                    return Some((cells[start], cells[end - 1], url));
+                }
+                start = end.max(start + 1);
+            } else {
+                start += 1;
+            }
+        }
+        None
+    }
+
     /// Linha inteira (com as continuações por quebra automática), para o triplo clique.
     pub fn line_bounds(&self, abs: u64) -> Option<((u64, usize), (u64, usize))> {
         self.line_abs(abs)?;
@@ -729,10 +801,20 @@ impl Terminal {
     /// Prompt anterior (ou seguinte) a partir da linha absoluta `from`.
     pub fn prompt_near(&self, from: u64, forward: bool) -> Option<u64> {
         if forward {
-            self.marks.iter().copied().find(|&m| m > from)
+            self.marks.iter().map(|m| m.line).find(|&m| m > from)
         } else {
-            self.marks.iter().rev().copied().find(|&m| m < from)
+            self.marks.iter().rev().map(|m| m.line).find(|&m| m < from)
         }
+    }
+
+    /// Os prompts guardados (para as marcas ao lado das linhas).
+    pub fn marks(&self) -> &[PromptMark] {
+        &self.marks
+    }
+
+    /// Comandos que terminaram desde a última consulta.
+    pub fn take_finished(&mut self) -> Vec<Finished> {
+        std::mem::take(&mut self.finished)
     }
 
     // ---- Mouse ----
@@ -1537,14 +1619,26 @@ impl Perform for Terminal {
                 }
             }
             "7" => self.cwd = parse_file_url(rest),
-            "133" => {
-                if rest.starts_with('A') {
-                    let abs = self.dropped + (self.history_len() + self.row) as u64;
-                    if self.marks.last() != Some(&abs) {
-                        self.marks.push(abs);
+            "133" => match rest.chars().next() {
+                Some('A') => {
+                    let line = self.dropped + (self.history_len() + self.row) as u64;
+                    if self.marks.last().is_none_or(|m| m.line != line) {
+                        self.marks.push(PromptMark { line, status: None });
                     }
                 }
-            }
+                Some('C') => self.command_started = Some(std::time::Instant::now()),
+                Some('D') => {
+                    // Só vale o fim de um comando que começou (o shell manda D a cada prompt).
+                    if let Some(started) = self.command_started.take() {
+                        let status = rest.split(';').nth(1).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+                        if let Some(mark) = self.marks.last_mut() {
+                            mark.status = Some(status);
+                            self.finished.push(Finished { line: mark.line, status, duration: started.elapsed() });
+                        }
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -1808,10 +1902,17 @@ mod tests {
         assert_eq!(t.title.as_deref(), Some("meu título"));
         assert_eq!(t.take_clipboard().as_deref(), Some("olá"));
         assert_eq!(t.cwd.as_deref(), Some("/home/eu/a b"));
-        t.feed(b"\x1b]133;A\x07$ ls\r\nx\r\n\x1b]133;A\x07$ ");
+        t.feed(b"\x1b]133;A\x07$ ls\r\n\x1b]133;C\x07x\r\n\x1b]133;D;2\x07\x1b]133;A\x07$ ");
         assert_eq!(t.prompt_near(10, false), Some(2));
         assert_eq!(t.prompt_near(2, false), Some(0));
         assert_eq!(t.prompt_near(0, true), Some(2));
+        assert_eq!(t.marks()[0].status, Some(2));
+        assert_eq!(t.marks()[1].status, None);
+        let done = t.take_finished();
+        assert_eq!((done.len(), done[0].line, done[0].status), (1, 0, 2));
+        // D sem C (prompt vazio) não conta como comando.
+        t.feed(b"\x1b]133;D;0\x07");
+        assert!(t.take_finished().is_empty());
     }
 
     #[test]
@@ -1848,6 +1949,20 @@ mod tests {
         let found = t.search("acao");
         assert_eq!(found, vec![((0, 0), (0, 3)), ((1, 3), (2, 0))]);
         assert!(t.search("").is_empty());
+    }
+
+    #[test]
+    fn enderecos_para_abrir_com_clique() {
+        let t = term(40, 3, "veja https://exemplo.com/a_(b). fim");
+        let (a, b, url) = t.url_at(0, 10).unwrap();
+        assert_eq!(url, "https://exemplo.com/a_(b)");
+        assert_eq!((a, b), ((0, 5), (0, 29)));
+        assert!(t.url_at(0, 1).is_none());
+        // Quebrado em duas linhas.
+        let t = term(10, 3, "x http://ab.cd/efgh y");
+        assert_eq!(t.url_at(1, 2).unwrap().2, "http://ab.cd/efgh");
+        let t = term(30, 1, "(mailto:eu@ex.com)");
+        assert_eq!(t.url_at(0, 3).unwrap().2, "mailto:eu@ex.com");
     }
 
     #[test]

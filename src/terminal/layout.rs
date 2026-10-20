@@ -12,7 +12,8 @@ pub const GAP: f32 = 1.0;
 /// Menor proporção de um lado (os painéis não somem ao arrastar).
 const MIN_RATIO: f32 = 0.1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Split {
     /// Lado a lado (divisor vertical).
     Side,

@@ -22,13 +22,14 @@ use std::{
 };
 
 use mide::{
-    kit::{run, App, Key, KeyPress, Ui, Waker, Window},
+    kit::{run, window_menu, App, Key, KeyPress, MenuGroup, MenuItem, Ui, Waker, Window},
     terminal::{
         keys::{key_bytes, paste_bytes},
         layout::{Direction, Divider, Layout, PaneId, Rect, Split},
         palette::{self, THEMES},
-        profile::{self, Cursor, Profile, Profiles, StartDir},
+        profile::{self, Cursor, Profile, Profiles, StartDir, COLOR_SLOTS},
         pty::{Pty, Size, Spawn},
+        session::{Saved, SavedLayout, SavedTab},
         screen::{attr, CursorShape, MouseButton, MouseEvent, MouseMode, Rgb, Wide},
         Terminal,
     },
@@ -123,6 +124,10 @@ struct Pane {
     mouse_cell: Option<(usize, usize)>,
     /// Quando o sino tocou (para o aviso visual).
     bell_at: Option<Instant>,
+    /// Do perfil: fundo translúcido, vidro atrás dele e o aviso visual do sino.
+    opacity: f32,
+    blur: bool,
+    visual_bell: bool,
 }
 
 impl Pane {
@@ -150,7 +155,7 @@ impl Pane {
         if let Some(text) = self.term.take_clipboard() {
             *copy = Some(text);
         }
-        if std::mem::take(&mut self.term.bell) {
+        if std::mem::take(&mut self.term.bell) && self.visual_bell {
             self.bell_at = Some(Instant::now());
         }
         if self.scroll > 0 {
@@ -176,7 +181,10 @@ impl Pane {
     }
 
     fn apply(&mut self, profile: &Profile) {
-        self.term.theme = palette::theme(&profile.theme);
+        self.term.theme = profile.theme();
+        self.opacity = profile.opacity;
+        self.blur = profile.blur;
+        self.visual_bell = profile.visual_bell;
         self.term.bold_bright = profile.bold_bright;
         self.term.set_history_limit(profile.scrollback);
         self.term.cursor_shape = match profile.cursor {
@@ -239,10 +247,18 @@ struct TerminalApp {
     title: String,
     error: Option<String>,
     waker: Option<Waker>,
+    /// Aba sendo arrastada (posição atual e onde o arrasto começou).
+    tab_drag: Option<(usize, f32)>,
+    /// Endereço sob o ponteiro (com Ctrl ou ⌘): painel, começo e fim (sublinhado).
+    hover_url: Option<(PaneId, (u64, usize), (u64, usize))>,
+    /// Endereço sob o clique direito (para "Abrir endereço" no menu).
+    menu_url: Option<String>,
     /// Fechar sem perguntar (já confirmado).
     confirmed_close: bool,
-    /// Primeiro arquivo de ajustes a abrir na primeira aba.
+    /// O que abrir na primeira aba (da linha de comando).
     first_spawn: Option<Spawn>,
+    /// Teclado no estilo Mac (os menus mostram os atalhos com ⌘).
+    mac: bool,
 }
 
 impl TerminalApp {
@@ -269,8 +285,12 @@ impl TerminalApp {
             title: TITLE.into(),
             error: None,
             waker: None,
+            tab_drag: None,
+            hover_url: None,
+            menu_url: None,
             confirmed_close: false,
             first_spawn,
+            mac: mac_style(),
         }
     }
 
@@ -279,9 +299,17 @@ impl TerminalApp {
     }
 
     /// Abre um shell num painel novo (`near`: painel cuja pasta a nova herda).
-    fn spawn_pane(&mut self, near: Option<PaneId>) -> Option<PaneId> {
-        let profile = self.profiles.get(&self.profile_name()).clone();
+    fn spawn_pane(&mut self, near: Option<PaneId>, profile: Option<&str>) -> Option<PaneId> {
+        self.spawn_pane_in(near, profile, None)
+    }
+
+    /// Como `spawn_pane`, numa pasta escolhida (sessão restaurada).
+    fn spawn_pane_in(&mut self, near: Option<PaneId>, profile: Option<&str>, dir: Option<PathBuf>) -> Option<PaneId> {
+        let profile = self.profiles.get(profile.filter(|p| !p.is_empty()).unwrap_or(&self.profile_name())).clone();
         let mut spawn = self.first_spawn.take().unwrap_or_default();
+        if dir.is_some() {
+            spawn.directory = dir;
+        }
         if spawn.command.is_none() && !profile.command.trim().is_empty() {
             spawn.command = Some(("sh".into(), vec!["-c".into(), profile.command.clone()]));
         }
@@ -301,7 +329,7 @@ impl TerminalApp {
             Ok(pty) => {
                 let mut term = Terminal::new(cols as usize, rows as usize);
                 term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
-                let mut pane = Pane { term, pty, output, profile: profile.name.clone(), scroll: 0, scroll_rest: 0.0, selection: None, mouse_held: None, mouse_cell: None, bell_at: None };
+                let mut pane = Pane { term, pty, output, profile: profile.name.clone(), scroll: 0, scroll_rest: 0.0, selection: None, mouse_held: None, mouse_cell: None, bell_at: None, opacity: 1.0, blur: false, visual_bell: true };
                 pane.apply(&profile);
                 let id = self.next_id;
                 self.next_id += 1;
@@ -320,8 +348,13 @@ impl TerminalApp {
     }
 
     fn new_tab(&mut self) {
+        self.new_tab_with(None);
+    }
+
+    /// Aba nova com o perfil escolhido (ou o padrão).
+    fn new_tab_with(&mut self, profile: Option<&str>) {
         let near = self.focused();
-        if let Some(id) = self.spawn_pane(near) {
+        if let Some(id) = self.spawn_pane(near, profile) {
             self.tabs.push(Tab { layout: Layout::Pane(id), focus: id, zoom: false, activity: false });
             self.active = self.tabs.len() - 1;
         }
@@ -331,7 +364,8 @@ impl TerminalApp {
         let Some(focus) = self.focused() else {
             return;
         };
-        if let Some(id) = self.spawn_pane(Some(focus)) {
+        let profile = self.panes.get(&focus).map(|p| p.profile.clone());
+        if let Some(id) = self.spawn_pane(Some(focus), profile.as_deref()) {
             let tab = &mut self.tabs[self.active];
             tab.layout.split(focus, id, dir);
             tab.focus = id;
@@ -386,6 +420,7 @@ impl TerminalApp {
     fn close_now(&mut self, what: Closing, ui: &mut Ui) {
         match what {
             Closing::Window => {
+                self.save_session();
                 self.confirmed_close = true;
                 ui.close();
             }
@@ -400,6 +435,46 @@ impl TerminalApp {
             self.confirmed_close = true;
             ui.close();
         }
+    }
+
+    /// Guarda abas e painéis (com as pastas) para a próxima janela, se o usuário quer.
+    fn save_session(&self) {
+        if !self.profiles.restore || self.tabs.is_empty() {
+            return;
+        }
+        let info = |id: PaneId| {
+            let pane = self.panes.get(&id);
+            (pane.and_then(|p| p.pty.cwd()), pane.map(|p| p.profile.clone()).unwrap_or_default())
+        };
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|t| SavedTab { layout: SavedLayout::from_layout(&t.layout, &info), focus: t.layout.panes().iter().position(|&p| p == t.focus).unwrap_or(0) })
+            .collect();
+        let saved = Saved { tabs, active: self.active, font_size: Some(self.font_size) };
+        if let Err(err) = saved.save() {
+            tracing::warn!("sessão do terminal não gravada: {err}");
+        }
+    }
+
+    /// Reabre a sessão guardada. Devolve se abriu alguma aba.
+    fn restore_session(&mut self) -> bool {
+        let Some(saved) = Saved::load() else {
+            return false;
+        };
+        if let Some(size) = saved.font_size {
+            self.set_font(size);
+        }
+        for tab in &saved.tabs {
+            let layout = tab.layout.to_layout(&mut |dir, profile| self.spawn_pane_in(None, Some(profile), dir.cloned()));
+            if let Some(layout) = layout {
+                let panes = layout.panes();
+                let focus = panes.get(tab.focus).copied().unwrap_or(panes[0]);
+                self.tabs.push(Tab { layout, focus, zoom: false, activity: false });
+            }
+        }
+        self.active = saved.active.min(self.tabs.len().saturating_sub(1));
+        !self.tabs.is_empty()
     }
 
     fn set_font(&mut self, size: f32) {
@@ -417,6 +492,7 @@ impl TerminalApp {
             return;
         }
         self.profiles_checked = Instant::now();
+        self.mac = mac_style();
         let mtime = profile::path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok());
         if mtime == self.profiles_mtime {
             return;
@@ -482,6 +558,24 @@ impl TerminalApp {
                 }
             }
             Action::Paste => ui.request_paste(),
+            Action::SelectAll => {
+                if let Some(pane) = focus.and_then(|id| self.panes.get_mut(&id)) {
+                    let (first, last) = pane.term.abs_range();
+                    let cols = pane.term.cols();
+                    pane.selection = Some(Selection { anchor: (first, 0), head: (last, cols - 1), unit: Unit::Char });
+                }
+            }
+            Action::NewWindow => {
+                let dir = focus.and_then(|id| self.panes.get(&id)).and_then(|p| p.pty.cwd());
+                if let Ok(exe) = std::env::current_exe() {
+                    let mut command = std::process::Command::new(exe);
+                    if let Some(dir) = dir {
+                        command.arg("-D").arg(dir);
+                    }
+                    let _ = command.spawn();
+                }
+            }
+            Action::CloseWindow => self.close(Closing::Window, ui),
             Action::NewTab => self.new_tab(),
             Action::ClosePane => {
                 if let Some(id) = focus {
@@ -671,6 +765,7 @@ impl TerminalApp {
         }
 
         let mut menu_action = None;
+        let (mut open_link, mut copy_link) = (None::<String>, None::<String>);
         for (id, rect) in rects {
             let response = ui.background(rect);
             let Some(pane) = self.panes.get(&id) else {
@@ -713,6 +808,29 @@ impl TerminalApp {
                     pane.pty.write(bytes);
                 }
                 continue;
+            }
+
+            // Endereços: com Ctrl ou ⌘ ficam sublinhados e o clique abre (como no
+            // iTerm2); o clique direito guarda o endereço para o menu.
+            let url = input.pointer.filter(|_| response.hovered).and_then(|pos| {
+                let (_, at) = self.cell_at(rect, pane, pos);
+                pane.term.url_at(at.0, at.1)
+            });
+            if response.secondary_clicked {
+                self.menu_url = url.as_ref().map(|u| u.2.clone());
+            }
+            if input.ctrl || input.logo {
+                if let Some((a, b, link)) = &url {
+                    self.hover_url = Some((id, *a, *b));
+                    if response.clicked {
+                        mide::places::open(link);
+                        continue;
+                    }
+                } else if self.hover_url.is_some_and(|(p, _, _)| p == id) {
+                    self.hover_url = None;
+                }
+            } else if self.hover_url.is_some_and(|(p, _, _)| p == id) {
+                self.hover_url = None;
             }
 
             // Rolagem: no histórico, ou setas para programas de tela cheia (less, man).
@@ -763,46 +881,52 @@ impl TerminalApp {
                 }
             }
 
+            // Os mesmos itens (e nomes) dos menus da barra superior.
             let has_selection = self.panes.get(&id).is_some_and(|p| p.selection.is_some());
             let several = self.tabs.get(self.active).is_some_and(|t| t.layout.panes().len() > 1);
+            let sections: [&[Action]; 4] = [
+                &[Action::Copy, Action::Paste, Action::SelectAll],
+                &[Action::SplitSide, Action::SplitStack, Action::Zoom, Action::NewTab],
+                &[Action::Find, Action::Clear, Action::Preferences],
+                &[Action::ClosePane],
+            ];
+            let link = self.menu_url.clone();
             ui.context_menu(&response, |menu| {
-                if has_selection && menu.item("Copiar") {
-                    menu_action = Some(Action::Copy);
+                if let Some(link) = &link {
+                    if menu.item("Abrir endereço") {
+                        open_link = Some(link.clone());
+                    }
+                    if menu.item("Copiar endereço") {
+                        copy_link = Some(link.clone());
+                    }
+                    menu.separator();
                 }
-                if menu.item("Colar") {
-                    menu_action = Some(Action::Paste);
-                }
-                menu.separator();
-                if menu.item("Dividir lado a lado") {
-                    menu_action = Some(Action::SplitSide);
-                }
-                if menu.item("Dividir em cima e embaixo") {
-                    menu_action = Some(Action::SplitStack);
-                }
-                if several && menu.item("Ampliar painel") {
-                    menu_action = Some(Action::Zoom);
-                }
-                if menu.item("Nova aba") {
-                    menu_action = Some(Action::NewTab);
-                }
-                menu.separator();
-                if menu.item("Buscar…") {
-                    menu_action = Some(Action::Find);
-                }
-                if menu.item("Limpar") {
-                    menu_action = Some(Action::Clear);
-                }
-                if menu.item("Preferências…") {
-                    menu_action = Some(Action::Preferences);
-                }
-                menu.separator();
-                if menu.danger("Fechar painel") {
-                    menu_action = Some(Action::ClosePane);
+                for (i, section) in sections.iter().enumerate() {
+                    if i > 0 {
+                        menu.separator();
+                    }
+                    for &action in section.iter() {
+                        let shown = match action {
+                            Action::Copy => has_selection,
+                            Action::Zoom => several,
+                            _ => true,
+                        };
+                        let chosen = if action == Action::ClosePane { menu.danger(action.label()) } else { shown && menu.item(action.label()) };
+                        if chosen {
+                            menu_action = Some(action);
+                        }
+                    }
                 }
             });
         }
         if let Some(action) = menu_action {
             self.action(ui, action, area);
+        }
+        if let Some(link) = open_link {
+            mide::places::open(&link);
+        }
+        if let Some(link) = copy_link {
+            ui.copy(&link);
         }
     }
 
@@ -830,35 +954,57 @@ impl TerminalApp {
             }
         }
         let new_tab = ui.background((rect.0 + n as f32 * width, rect.1, plus, rect.3)).clicked;
+        // Arrastar uma aba para os lados muda a ordem.
+        let input = ui.input().clone();
+        if let (Some(i), Some((px, _))) = (clicked, input.pointer) {
+            self.tab_drag = Some((i, px));
+        }
+        if let Some((from, start)) = self.tab_drag {
+            if !input.down || input.released {
+                self.tab_drag = None;
+            } else if let Some((px, _)) = input.pointer {
+                if (px - start).abs() > 6.0 {
+                    let to = (((px - rect.0) / width).floor().max(0.0) as usize).min(n - 1);
+                    if to != from {
+                        let tab = self.tabs.remove(from);
+                        self.tabs.insert(to, tab);
+                        self.active = to;
+                        self.tab_drag = Some((to, px));
+                        clicked = None;
+                    }
+                }
+            }
+        }
         let (active, activity): (usize, Vec<bool>) = (self.active, self.tabs.iter().map(|t| t.activity).collect());
+        let c = bar_colors(self.focused().and_then(|id| self.panes.get(&id)).map(|p| p.term.default_bg()));
         ui.paint_text(|pixmap, text, (ox, oy)| {
             let (x0, y0) = (ox + rect.0, oy + rect.1);
-            fill(pixmap, x0, y0, rect.2, rect.3, [222, 222, 227]);
-            fill(pixmap, x0, y0 + rect.3 - 1.0, rect.2, 1.0, [200, 200, 206]);
+            fill(pixmap, x0, y0, rect.2, rect.3, c.bar);
+            fill(pixmap, x0, y0 + rect.3 - 1.0, rect.2, 1.0, c.line);
             for (i, title) in titles.iter().enumerate() {
                 let x = x0 + i as f32 * width;
                 if i == active {
-                    fill(pixmap, x, y0, width, rect.3, [246, 246, 248]);
+                    fill(pixmap, x, y0, width, rect.3, c.active);
                 } else if hovered == Some(i) {
-                    fill(pixmap, x, y0, width, rect.3 - 1.0, [212, 212, 218]);
+                    fill(pixmap, x, y0, width, rect.3 - 1.0, c.hover);
                 }
                 if i > 0 {
-                    fill(pixmap, x, y0 + 6.0, 1.0, rect.3 - 12.0, [196, 196, 204]);
+                    fill(pixmap, x, y0 + 6.0, 1.0, rect.3 - 12.0, c.line);
                 }
                 if hovered == Some(i) && n > 1 {
-                    text.draw(pixmap, "×", x + 9.0, y0 + 5.0, 15.0, FontWeight::Regular, [90, 90, 98, 255]);
+                    text.draw(pixmap, "×", x + 9.0, y0 + 5.0, 15.0, FontWeight::Regular, c.dim);
                 }
                 let size = 12.5;
                 let label = fit(text, title, size, width - 52.0);
                 let tw = text.measure(&label, size, FontWeight::Regular);
-                let color = if i == active { [24, 24, 28, 255] } else { [90, 90, 98, 255] };
+                let color = if i == active { c.text } else { c.dim };
                 text.draw(pixmap, &label, x + (width - tw) / 2.0, y0 + (rect.3 - size * 1.25) / 2.0, size, FontWeight::Regular, color);
                 if activity[i] && i != active {
                     fill_round(pixmap, x + width - 16.0, y0 + rect.3 / 2.0 - 3.0, 6.0, [10, 110, 235]);
                 }
             }
             let px = x0 + n as f32 * width;
-            text.draw(pixmap, "+", px + 11.0, y0 + 4.0, 17.0, FontWeight::Regular, [90, 90, 98, 255]);
+            text.draw(pixmap, "+", px + 11.0, y0 + 4.0, 17.0, FontWeight::Regular, c.dim);
         });
         if let Some(i) = close {
             self.close(Closing::Tab(i), ui);
@@ -929,6 +1075,11 @@ impl TerminalApp {
         }
         let mut flashing = false;
         let dividers = self.tabs.get(self.active).filter(|t| !t.zoom).map(|t| t.layout.dividers(area)).unwrap_or_default();
+        // Painéis translúcidos com vidro: o compositor desfoca o que está atrás. Um
+        // vidro só para a área toda (vários, um por painel, deixam emendas).
+        if rects.iter().any(|(id, _)| self.panes.get(id).is_some_and(|p| p.opacity < 1.0 && p.blur)) {
+            ui.glass_behind(area, 0.0);
+        }
         ui.paint_text(|pixmap, text, (ox, oy)| {
             for (id, rect) in &rects {
                 let Some(pane) = self.panes.get(id) else {
@@ -937,10 +1088,12 @@ impl TerminalApp {
                 let matches = find.filter(|_| Some(*id) == focus).map(|f| (f.matches.as_slice(), f.current));
                 let flash = pane.bell_at.is_some_and(|t| t.elapsed() < Duration::from_millis(160));
                 flashing |= flash;
-                draw_pane(pixmap, text, pane, (ox + rect.0, oy + rect.1, rect.2, rect.3), cell, font, matches, Some(*id) == focus && !blink_off);
+                let link = self.hover_url.filter(|(p, _, _)| p == id).map(|(_, a, b)| (a, b));
+                draw_pane(pixmap, text, pane, (ox + rect.0, oy + rect.1, rect.2, rect.3), cell, font, matches, link, Some(*id) == focus && !blink_off);
                 if several && Some(*id) != focus {
-                    // Painéis sem foco ficam um pouco apagados (como no iTerm2).
-                    fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, [128, 128, 136], 0.10);
+                    // Painéis sem foco ficam um pouco apagados (como no iTerm2): um véu da
+                    // cor do fundo aproxima o texto do fundo, no tema claro e no escuro.
+                    fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, pane.term.default_bg(), 0.35);
                 }
                 if flash {
                     fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, [128, 128, 136], 0.25);
@@ -996,7 +1149,11 @@ impl App for TerminalApp {
             if let Some(title) = &self.options.title {
                 ui.set_title(title);
             }
-            self.new_tab();
+            // Sem nada pedido na linha de comando: reabre a última sessão (se ligado).
+            let plain = self.options.spawn.command.is_none() && self.options.spawn.directory.is_none();
+            if !(plain && self.profiles.restore && self.restore_session()) {
+                self.new_tab();
+            }
         }
         if let Some(error) = &self.error {
             if self.tabs.is_empty() {
@@ -1060,6 +1217,14 @@ impl App for TerminalApp {
             }
         }
 
+        // Itens escolhidos nos menus da barra superior.
+        for id in ui.input().menu.clone() {
+            if let Some(name) = id.strip_prefix("perfil:") {
+                self.new_tab_with(Some(name));
+            } else if let Some(action) = Action::from_id(&id) {
+                self.action(ui, action, area);
+            }
+        }
         self.keyboard(ui, area);
         if self.tabs.is_empty() {
             return;
@@ -1077,6 +1242,89 @@ impl App for TerminalApp {
         self.dialog(ui);
     }
 
+    fn menu_bar(&mut self) -> Vec<MenuGroup> {
+        let mac = self.mac;
+        let item = |a: Action| a.item(mac);
+        let pane = self.focused().and_then(|id| self.panes.get(&id));
+        let has_selection = pane.is_some_and(|p| p.selection.is_some());
+        let tab = self.tabs.get(self.active);
+        let several_panes = tab.is_some_and(|t| t.layout.panes().len() > 1);
+        let several_tabs = self.tabs.len() > 1;
+        let zoom = tab.is_some_and(|t| t.zoom);
+        let finding = self.find.is_some();
+        let mut profiles: Vec<MenuItem> = self
+            .profiles
+            .profiles
+            .iter()
+            .map(|p| MenuItem::action(&format!("perfil:{}", p.name), &format!("Nova aba com “{}”", p.name)))
+            .collect();
+        profiles.push(MenuItem::Separator);
+        profiles.push(item(Action::Preferences));
+        let mut window = vec![
+            item(Action::PreviousTab).enabled(several_tabs),
+            item(Action::NextTab).enabled(several_tabs),
+            item(Action::PreviousPane).enabled(several_panes),
+            item(Action::NextPane).enabled(several_panes),
+        ];
+        if several_tabs {
+            window.push(MenuItem::Separator);
+            for (i, t) in self.tabs.iter().enumerate() {
+                let title = self.panes.get(&t.focus).map(Pane::title).unwrap_or_default();
+                let mut entry = MenuItem::action(&Action::Tab(i).id(), &title).checked(i == self.active);
+                if i < 9 {
+                    entry = entry.shortcut(&format!("{}+{}", if mac { "Super" } else { "Alt" }, i + 1));
+                }
+                window.push(entry);
+            }
+        }
+        vec![
+            MenuGroup {
+                title: "Shell".into(),
+                items: vec![
+                    item(Action::NewWindow),
+                    item(Action::NewTab),
+                    MenuItem::Separator,
+                    item(Action::SplitSide),
+                    item(Action::SplitStack),
+                    MenuItem::Separator,
+                    item(Action::ClosePane),
+                    item(Action::CloseWindow),
+                ],
+            },
+            MenuGroup {
+                title: "Editar".into(),
+                items: vec![
+                    item(Action::Copy).enabled(has_selection),
+                    item(Action::Paste),
+                    item(Action::SelectAll),
+                    MenuItem::Separator,
+                    item(Action::Find),
+                    item(Action::FindNext).enabled(finding),
+                    item(Action::FindPrevious).enabled(finding),
+                    MenuItem::Separator,
+                    item(Action::Clear),
+                ],
+            },
+            MenuGroup {
+                title: "Visualizar".into(),
+                items: vec![
+                    item(Action::FontBigger),
+                    item(Action::FontSmaller),
+                    item(Action::FontReset),
+                    MenuItem::Separator,
+                    item(Action::Zoom).checked(zoom).enabled(several_panes),
+                    MenuItem::Separator,
+                    item(Action::PreviousPrompt),
+                    item(Action::NextPrompt),
+                    item(Action::Top),
+                    item(Action::Bottom),
+                ],
+            },
+            MenuGroup { title: "Perfis".into(), items: profiles },
+            window_menu(window),
+        ]
+    }
+
     fn close_requested(&mut self) -> bool {
         if self.confirmed_close {
             return true;
@@ -1084,6 +1332,7 @@ impl App for TerminalApp {
         let all: Vec<PaneId> = self.panes.keys().copied().collect();
         let running = self.running(&all);
         if running.is_empty() {
+            self.save_session();
             return true;
         }
         self.dialog = Some(Dialog::ConfirmClose(Closing::Window, running));
@@ -1129,12 +1378,15 @@ fn draw_pane(
     cell: (f32, f32),
     font: f32,
     matches: Option<(&[((u64, usize), (u64, usize))], usize)>,
+    link: Option<((u64, usize), (u64, usize))>,
     show_cursor_here: bool,
 ) {
     let term = &pane.term;
     let scroll = pane.scroll.min(term.history_len());
     let background = term.default_bg();
-    fill(pixmap, x0, y0, w, h, background);
+    // Fundo translúcido: os pixels ficam com a transparência (não misturados).
+    let alpha = (pane.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    mide::ui::draw::paint_rounded_solid(pixmap, x0, y0, w, h, 0.0, [background[0], background[1], background[2], alpha]);
     let selection = pane.selection.map(|s| s.range(term));
     let (cursor_row, cursor_col) = term.cursor();
     let show_cursor = term.modes.show_cursor && scroll == 0 && show_cursor_here;
@@ -1187,6 +1439,9 @@ fn draw_pane(
                 let s = if c.combining.is_some() { c.text() } else { c.c.encode_utf8(&mut buf).to_string() };
                 text.draw_mono_styled(pixmap, &s, px, py + 1.0, font, rgba, bold, italic);
             }
+            if link.is_some_and(|(a, b)| at >= a && at <= b) {
+                fill(pixmap, px, py + cell.1 - 2.0, width, 1.0, fg);
+            }
             if c.pen.attr & (attr::UNDERLINE | attr::DOUBLE_UNDERLINE) != 0 {
                 fill(pixmap, px, py + cell.1 - 2.0, width, 1.0, fg);
                 if c.pen.attr & attr::DOUBLE_UNDERLINE != 0 {
@@ -1214,6 +1469,9 @@ fn draw_pane(
 enum Action {
     Copy,
     Paste,
+    SelectAll,
+    NewWindow,
+    CloseWindow,
     NewTab,
     ClosePane,
     SplitSide,
@@ -1239,6 +1497,123 @@ enum Action {
     Bottom,
     PreviousPrompt,
     NextPrompt,
+}
+
+/// Ações sem dados (as que aparecem nos menus por nome).
+const SIMPLE: [Action; 26] = [
+    Action::Copy,
+    Action::Paste,
+    Action::SelectAll,
+    Action::NewWindow,
+    Action::CloseWindow,
+    Action::NewTab,
+    Action::ClosePane,
+    Action::SplitSide,
+    Action::SplitStack,
+    Action::Find,
+    Action::FindNext,
+    Action::FindPrevious,
+    Action::Clear,
+    Action::Preferences,
+    Action::FontBigger,
+    Action::FontSmaller,
+    Action::FontReset,
+    Action::Zoom,
+    Action::NextTab,
+    Action::PreviousTab,
+    Action::NextPane,
+    Action::PreviousPane,
+    Action::Top,
+    Action::Bottom,
+    Action::PreviousPrompt,
+    Action::NextPrompt,
+];
+
+impl Action {
+    /// Nome nos menus (o mesmo na barra superior e no botão direito).
+    fn label(self) -> &'static str {
+        match self {
+            Action::Copy => "Copiar",
+            Action::Paste => "Colar",
+            Action::SelectAll => "Selecionar tudo",
+            Action::NewWindow => "Nova janela",
+            Action::CloseWindow => "Fechar janela",
+            Action::NewTab => "Nova aba",
+            Action::ClosePane => "Fechar painel",
+            Action::SplitSide => "Dividir lado a lado",
+            Action::SplitStack => "Dividir em cima e embaixo",
+            Action::Find => "Buscar…",
+            Action::FindNext => "Próxima ocorrência",
+            Action::FindPrevious => "Ocorrência anterior",
+            Action::Clear => "Limpar",
+            Action::Preferences => "Preferências…",
+            Action::FontBigger => "Aumentar fonte",
+            Action::FontSmaller => "Diminuir fonte",
+            Action::FontReset => "Tamanho normal",
+            Action::Zoom => "Ampliar painel",
+            Action::NextTab => "Próxima aba",
+            Action::PreviousTab => "Aba anterior",
+            Action::NextPane => "Próximo painel",
+            Action::PreviousPane => "Painel anterior",
+            Action::Top => "Início do histórico",
+            Action::Bottom => "Fim do histórico",
+            Action::PreviousPrompt => "Prompt anterior",
+            Action::NextPrompt => "Próximo prompt",
+            Action::Tab(_) | Action::PaneDirection(_) | Action::PageUp | Action::PageDown => "",
+        }
+    }
+
+    /// Atalho mostrado nos menus, no estilo do teclado em uso (⌘ ou Ctrl+Shift).
+    fn shortcut(self, mac: bool) -> &'static str {
+        let (m, l) = match self {
+            Action::Copy => ("Super+C", "Ctrl+Shift+C"),
+            Action::Paste => ("Super+V", "Ctrl+Shift+V"),
+            Action::SelectAll => ("Super+A", "Ctrl+Shift+A"),
+            Action::NewWindow => ("Super+N", "Ctrl+Shift+N"),
+            Action::CloseWindow => ("Super+Shift+W", ""),
+            Action::NewTab => ("Super+T", "Ctrl+Shift+T"),
+            Action::ClosePane => ("Super+W", "Ctrl+Shift+W"),
+            Action::SplitSide => ("Super+D", "Ctrl+Shift+D"),
+            Action::SplitStack => ("Super+Shift+D", "Ctrl+Shift+E"),
+            Action::Find => ("Super+F", "Ctrl+Shift+F"),
+            Action::FindNext => ("Super+G", "Ctrl+Shift+G"),
+            Action::FindPrevious => ("Super+Shift+G", ""),
+            Action::Clear => ("Super+K", "Ctrl+Shift+K"),
+            Action::Preferences => ("Super+,", "Ctrl+Shift+,"),
+            Action::FontBigger => ("Super+=", "Ctrl+Shift+="),
+            Action::FontSmaller => ("Super+-", "Ctrl+Shift+-"),
+            Action::FontReset => ("Super+0", "Ctrl+Shift+0"),
+            Action::Zoom => ("Super+Shift+Return", "Ctrl+Shift+Return"),
+            Action::NextTab => ("Super+Shift+]", "Ctrl+Page_Down"),
+            Action::PreviousTab => ("Super+Shift+[", "Ctrl+Page_Up"),
+            Action::NextPane => ("Super+]", ""),
+            Action::PreviousPane => ("Super+[", ""),
+            Action::Top => ("Shift+Home", "Shift+Home"),
+            Action::Bottom => ("Shift+End", "Shift+End"),
+            Action::PreviousPrompt => ("Super+Shift+Up", "Ctrl+Shift+Up"),
+            Action::NextPrompt => ("Super+Shift+Down", "Ctrl+Shift+Down"),
+            _ => ("", ""),
+        };
+        if mac { m } else { l }
+    }
+
+    fn id(self) -> String {
+        match self {
+            Action::Tab(n) => format!("aba:{n}"),
+            other => format!("{other:?}"),
+        }
+    }
+
+    fn from_id(id: &str) -> Option<Action> {
+        if let Some(n) = id.strip_prefix("aba:") {
+            return n.parse().ok().map(Action::Tab);
+        }
+        SIMPLE.into_iter().find(|a| a.id() == id)
+    }
+
+    fn item(self, mac: bool) -> MenuItem {
+        MenuItem::action(&self.id(), self.label()).shortcut(self.shortcut(mac))
+    }
 }
 
 /// Atalho do terminal para a tecla, nas duas formas: ⌘ (Super), como no Mac, ou
@@ -1310,7 +1685,10 @@ fn shortcut(press: &KeyPress) -> Option<Action> {
     Some(match ch? {
         'c' => Action::Copy,
         'v' => Action::Paste,
+        'a' => Action::SelectAll,
+        'n' => Action::NewWindow,
         't' => Action::NewTab,
+        'w' if shifted => Action::CloseWindow,
         'w' => Action::ClosePane,
         'd' if shifted => Action::SplitStack,
         'd' => Action::SplitSide,
@@ -1329,6 +1707,25 @@ fn shortcut(press: &KeyPress) -> Option<Action> {
         ']' => Action::NextPane,
         _ => return None,
     })
+}
+
+/// Cores da barra de abas: claras, ou escuras quando o tema do painel é escuro.
+struct BarColors {
+    bar: Rgb,
+    active: Rgb,
+    hover: Rgb,
+    line: Rgb,
+    text: [u8; 4],
+    dim: [u8; 4],
+}
+
+fn bar_colors(background: Option<Rgb>) -> BarColors {
+    let dark = background.is_some_and(|b| (b[0] as u32 * 299 + b[1] as u32 * 587 + b[2] as u32 * 114) / 1000 < 110);
+    if dark {
+        BarColors { bar: [36, 36, 42], active: [58, 58, 66], hover: [47, 47, 54], line: [70, 70, 80], text: [232, 232, 238, 255], dim: [160, 160, 170, 255] }
+    } else {
+        BarColors { bar: [222, 222, 227], active: [246, 246, 248], hover: [212, 212, 218], line: [196, 196, 204], text: [24, 24, 28, 255], dim: [90, 90, 98, 255] }
+    }
 }
 
 fn fill(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: Rgb) {
@@ -1363,6 +1760,11 @@ fn fit(text: &mut Text, s: &str, size: f32, width: f32) -> String {
     String::new()
 }
 
+/// Teclado no estilo Mac (Configurações → Teclado).
+fn mac_style() -> bool {
+    matches!(mide::settings_file::get("keyboard", "mac_style"), Some(mide::settings_file::Value::Bool(true)))
+}
+
 /// Tamanho de uma célula na fonte de largura fixa (largura média de 10 letras,
 /// arredondada para as colunas caírem em pixels inteiros).
 fn cell_size(text: &mut Text, font: f32) -> (f32, f32) {
@@ -1378,6 +1780,11 @@ struct Preferences {
     profiles: Profiles,
     selected: usize,
     message: Option<String>,
+    /// Cor sendo editada (posição em `COLOR_SLOTS`) e o texto do campo.
+    color_slot: usize,
+    color_text: String,
+    /// Perfil mostrado no quadro anterior.
+    shown: Option<usize>,
 }
 
 const CURSORS: [(&str, Cursor); 3] = [("Bloco", Cursor::Block), ("Barra", Cursor::Bar), ("Sublinhado", Cursor::Underline)];
@@ -1400,7 +1807,12 @@ impl App for Preferences {
         let selected = self.selected.min(names.len() - 1);
         let count = names.len();
         let message = self.message.clone();
-        let profile = &mut self.profiles.profiles[selected];
+        // Outro perfil escolhido: o campo de cor mostra a cor dele.
+        let profile_changed = self.shown != Some(selected);
+        self.shown = Some(selected);
+        let Profiles { profiles, restore, .. } = &mut self.profiles;
+        let profile = &mut profiles[selected];
+        let (color_slot, color_text) = (&mut self.color_slot, &mut self.color_text);
         let mut make_default = false;
         self.selected = ui.sidebar(&items, selected, |ui, _| {
             ui.title(&profile.name);
@@ -1450,6 +1862,43 @@ impl App for Preferences {
                 changed |= ui.switch("Negrito em cor clara", &mut profile.bold_bright).changed();
                 changed |= ui.switch("Aviso visual do sino", &mut profile.visual_bell).changed();
             });
+            ui.heading("Transparência");
+            ui.card(|ui| {
+                let mut opacity = profile.opacity * 100.0;
+                if ui.slider("Opacidade", &mut opacity, 30.0, 100.0).changed() {
+                    profile.opacity = (opacity.round() / 100.0).clamp(0.3, 1.0);
+                    changed = true;
+                }
+                changed |= ui.switch_detail("Vidro", "Desfoca o que está atrás do fundo translúcido", &mut profile.blur).changed();
+            });
+            ui.heading("Cores");
+            ui.card(|ui| {
+                let slots: Vec<String> = COLOR_SLOTS.iter().map(|(_, name)| name.to_string()).collect();
+                let mut slot = *color_slot;
+                if ui.dropdown("Cor", &slots, &mut slot).changed() || color_text.is_empty() || profile_changed {
+                    *color_slot = slot;
+                    *color_text = profile.color_hex(COLOR_SLOTS[slot].0);
+                }
+                let current = mide::terminal::profile::parse_hex(&profile.color_hex(COLOR_SLOTS[*color_slot].0)).unwrap_or([0, 0, 0]);
+                ui.row(|ui| {
+                    ui.sized(160.0, |ui| {
+                        if ui.text_input(color_text, "#rrggbb").changed() {
+                            if let Some(rgb) = mide::terminal::profile::parse_hex(color_text) {
+                                profile.colors.insert(COLOR_SLOTS[*color_slot].0.into(), format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]));
+                                changed = true;
+                            }
+                        }
+                    });
+                    ui.custom(32.0, |pixmap, (x, y, _, h)| {
+                        mide::ui::draw::fill_rounded(pixmap, x, y, 48.0, h, 6.0, mide::ui::draw::rgba(current[0], current[1], current[2], 255));
+                    });
+                });
+                if !profile.colors.is_empty() && ui.button("Usar as cores do tema").clicked() {
+                    profile.colors.clear();
+                    *color_text = profile.color_hex(COLOR_SLOTS[*color_slot].0);
+                    changed = true;
+                }
+            });
             ui.heading("Sessão");
             ui.card(|ui| {
                 let options: Vec<String> = SCROLLBACKS.iter().map(|n| format!("{} linhas", group(*n))).collect();
@@ -1458,6 +1907,7 @@ impl App for Preferences {
                     profile.scrollback = SCROLLBACKS[i];
                     changed = true;
                 }
+                changed |= ui.switch_detail("Reabrir abas e painéis", "Volta como estava a última janela fechada", restore).changed();
                 let dirs = vec!["Na mesma pasta".to_string(), "Na pasta pessoal".to_string()];
                 let mut d = if profile.start_dir == StartDir::Same { 0 } else { 1 };
                 if ui.dropdown("Abas e painéis novos abrem", &dirs, &mut d).changed() {
@@ -1532,7 +1982,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = Options::parse(std::env::args().skip(1));
     if options.preferences {
         let window = Window::new("Preferências do Terminal").app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420);
-        return run(window, Preferences { profiles: Profiles::load(), selected: 0, message: None });
+        return run(window, Preferences { profiles: Profiles::load(), selected: 0, message: None, color_slot: 1, color_text: String::new(), shown: None });
     }
     let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120);
     run(window, TerminalApp::new(options))
@@ -1579,6 +2029,17 @@ mod tests {
         assert_eq!(o.profile.as_deref(), Some("Escuro"));
         assert_eq!(o.spawn.command, Some(("ls".into(), vec!["-l".into()])));
         assert!(Options::parse(["--preferences".to_string()]).preferences);
+    }
+
+    #[test]
+    fn acoes_dos_menus_vao_e_voltam() {
+        for a in SIMPLE {
+            assert_eq!(Action::from_id(&a.id()), Some(a), "{a:?}");
+            assert!(!a.label().is_empty(), "{a:?}");
+        }
+        assert_eq!(Action::from_id("aba:2"), Some(Action::Tab(2)));
+        assert_eq!(Action::NewTab.shortcut(true), "Super+T");
+        assert_eq!(Action::NewTab.shortcut(false), "Ctrl+Shift+T");
     }
 
     #[test]

@@ -192,6 +192,23 @@ pub fn mac_swap(evdev: u32) -> u32 {
     }
 }
 
+/// Solta todas as teclas que o mide acha que estão apertadas (sem passar pelos
+/// atalhos): os apps recebem o soltar e os modificadores voltam ao normal.
+pub fn release_all_keys(state: &mut State) {
+    let Some(keyboard) = state.seat.get_keyboard() else {
+        return;
+    };
+    let pressed = keyboard.pressed_keys();
+    if pressed.is_empty() {
+        return;
+    }
+    tracing::debug!("teclado: soltando {} tecla(s) presa(s)", pressed.len());
+    let time = state.start_time.elapsed().as_millis() as u32;
+    for code in pressed {
+        keyboard.input::<(), _>(state, code, KeyState::Released, SERIAL_COUNTER.next_serial(), time, |_, _, _| FilterResult::Forward);
+    }
+}
+
 fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_state: KeyState, time: u32) {
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;

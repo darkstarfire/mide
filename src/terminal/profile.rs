@@ -2,9 +2,14 @@
 //! cursor, histórico e o que abrir. Ficam em `~/.config/mide/terminal.toml`, mas o
 //! usuário nunca edita o arquivo: tudo muda na janela de Preferências do terminal.
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use super::{
+    palette::{self, Theme},
+    screen::Rgb,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -43,6 +48,79 @@ pub struct Profile {
     pub command: String,
     /// Avisar com um piscar quando o programa toca o sino.
     pub visual_bell: bool,
+    /// Fundo translúcido (1 = opaco).
+    pub opacity: f32,
+    /// Desfocar o que está atrás do fundo translúcido (vidro).
+    pub blur: bool,
+    /// Cores trocadas pelo usuário por cima do tema (`COLOR_SLOTS` → `#rrggbb`).
+    pub colors: BTreeMap<String, String>,
+}
+
+/// Cores que o usuário pode trocar: chave e nome na tela.
+pub const COLOR_SLOTS: [(&str, &str); 20] = [
+    ("foreground", "Texto"),
+    ("background", "Fundo"),
+    ("cursor", "Cursor"),
+    ("selection", "Seleção"),
+    ("ansi0", "Preto"),
+    ("ansi1", "Vermelho"),
+    ("ansi2", "Verde"),
+    ("ansi3", "Amarelo"),
+    ("ansi4", "Azul"),
+    ("ansi5", "Magenta"),
+    ("ansi6", "Ciano"),
+    ("ansi7", "Branco"),
+    ("ansi8", "Preto claro"),
+    ("ansi9", "Vermelho claro"),
+    ("ansi10", "Verde claro"),
+    ("ansi11", "Amarelo claro"),
+    ("ansi12", "Azul claro"),
+    ("ansi13", "Magenta claro"),
+    ("ansi14", "Ciano claro"),
+    ("ansi15", "Branco claro"),
+];
+
+impl Profile {
+    /// Tema do perfil com as cores trocadas pelo usuário.
+    pub fn theme(&self) -> Theme {
+        let mut theme = palette::theme(&self.theme);
+        for (key, value) in &self.colors {
+            if let Some(rgb) = parse_hex(value) {
+                *slot_mut(&mut theme, key) = rgb;
+            }
+        }
+        theme
+    }
+
+    /// Cor de um espaço (`COLOR_SLOTS`) como está agora, em `#rrggbb`.
+    pub fn color_hex(&self, key: &str) -> String {
+        let mut theme = self.theme();
+        let rgb = *slot_mut(&mut theme, key);
+        format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])
+    }
+}
+
+fn slot_mut<'a>(theme: &'a mut Theme, key: &str) -> &'a mut Rgb {
+    match key {
+        "foreground" => &mut theme.foreground,
+        "background" => &mut theme.background,
+        "cursor" => &mut theme.cursor,
+        "selection" => &mut theme.selection,
+        other => {
+            let i = other.strip_prefix("ansi").and_then(|n| n.parse::<usize>().ok()).unwrap_or(0).min(15);
+            &mut theme.ansi[i]
+        }
+    }
+}
+
+/// `#rrggbb` (ou `rrggbb`) em RGB.
+pub fn parse_hex(text: &str) -> Option<Rgb> {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let v = u32::from_str_radix(hex, 16).ok()?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
 impl Default for Profile {
@@ -58,6 +136,9 @@ impl Default for Profile {
             start_dir: StartDir::Same,
             command: String::new(),
             visual_bell: true,
+            opacity: 1.0,
+            blur: true,
+            colors: BTreeMap::new(),
         }
     }
 }
@@ -67,12 +148,14 @@ impl Default for Profile {
 pub struct Profiles {
     /// Perfil das janelas e abas novas.
     pub default: String,
+    /// Reabrir as abas e painéis da última janela fechada (com as pastas).
+    pub restore: bool,
     pub profiles: Vec<Profile>,
 }
 
 impl Default for Profiles {
     fn default() -> Self {
-        Self { default: "Padrão".into(), profiles: vec![Profile::default()] }
+        Self { default: "Padrão".into(), restore: false, profiles: vec![Profile::default()] }
     }
 }
 
@@ -116,6 +199,8 @@ impl Profiles {
             }
             p.font_size = p.font_size.clamp(8.0, 32.0);
             p.scrollback = p.scrollback.clamp(100, 200_000);
+            p.opacity = p.opacity.clamp(0.3, 1.0);
+            p.colors.retain(|k, v| COLOR_SLOTS.iter().any(|(s, _)| s == k) && parse_hex(v).is_some());
         }
         if !self.profiles.iter().any(|p| p.name == self.default) {
             self.default = self.profiles[0].name.clone();
@@ -166,6 +251,24 @@ mod tests {
         assert_eq!(p.default, "A");
         assert_eq!(p.get("A 2").theme, "Escuro");
         assert_eq!(p.free_name("A"), "A 3");
+    }
+
+    #[test]
+    fn cores_trocadas_por_cima_do_tema() {
+        let mut p = Profile::default();
+        p.colors.insert("background".into(), "#102030".into());
+        p.colors.insert("ansi9".into(), "ff0000".into());
+        let t = p.theme();
+        assert_eq!(t.background, [16, 32, 48]);
+        assert_eq!(t.ansi[9], [255, 0, 0]);
+        assert_eq!(t.foreground, palette::theme("Claro").foreground);
+        assert_eq!(p.color_hex("background"), "#102030");
+        assert_eq!(parse_hex("#12345"), None);
+        // Chaves desconhecidas e cores inválidas somem ao ler.
+        let text = "[[profiles]]\nname = \"A\"\nopacity = 0.1\n[profiles.colors]\nbackground = \"#000000\"\nnada = \"#ffffff\"\ncursor = \"azul\"\n";
+        let ps = toml::from_str::<Profiles>(text).unwrap().fixed();
+        assert_eq!(ps.profiles[0].opacity, 0.3);
+        assert_eq!(ps.profiles[0].colors.len(), 1);
     }
 
     #[test]

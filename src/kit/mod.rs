@@ -31,6 +31,7 @@
 
 mod app;
 mod input;
+pub mod menubar;
 pub mod textarea;
 pub mod textedit;
 mod theme;
@@ -38,5 +39,6 @@ mod ui;
 
 pub use app::{run, App, Waker, Window};
 pub use input::{Input, Key, KeyPress};
+pub use menubar::{window_menu, MenuGroup, MenuItem};
 pub use theme::{Rgba, Theme};
 pub use ui::{ArrangedScreen, Menu, Response, Tile, Ui};

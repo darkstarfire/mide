@@ -94,6 +94,9 @@ fn parse(script: &str) -> Vec<(u32, Step)> {
             // Teclas viram vários passos no mesmo frame.
             let keys: Option<Vec<Step>> = match words.get(1).copied() {
                 Some("key") => words.get(2).and_then(|n| input::evdev_code(n)).map(|c| vec![Step::Key(c, true), Step::Key(c, false)]),
+                // Segurar e soltar uma tecla (ex.: Ctrl durante um clique no app).
+                Some("keydown") => words.get(2).and_then(|n| input::evdev_code(n)).map(|c| vec![Step::Key(c, true)]),
+                Some("keyup") => words.get(2).and_then(|n| input::evdev_code(n)).map(|c| vec![Step::Key(c, false)]),
                 Some("type") => words.get(2).map(|text| {
                     text.chars()
                         .filter_map(|ch| input::evdev_code(&ch.to_string()))

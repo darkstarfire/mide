@@ -696,3 +696,26 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Selecionar com duplo e triplo clique, ⌘C/⌘V no estilo Mac, Ctrl+C interrompe.
 - Fechar com `vim` aberto: pergunta antes.
 
+## Menus do app na barra — automáticos
+
+- `cargo test`: números estáveis e ações do dbusmenu publicado pelo mide-ui, a barra lê o que o mide-ui publica (títulos, atalho, separador), atalhos com símbolos do Mac, ações dos menus do Terminal vão e voltam.
+- `tests/ui.sh`: menus padrão do mide com a Calculadora (Editar, Janela > Zoom); num barramento de teste, a barra mostra Shell, Editar, Visualizar, Perfis e Janela do Terminal, e Janela > Zoom pelo menu do app maximiza.
+
+## Menus do app e teclas presas — manual
+
+- Mide numa janela do X11: Alt+Tab para outra janela e voltar; digitar no Terminal escreve normalmente.
+- Terminal em foco: os menus da barra são os dele; Shell → Dividir lado a lado divide; Perfis → Nova aba com outro perfil.
+
+## Terminal: vidro, cores e sessão — automáticos
+
+- `cargo test`: cores trocadas por cima do tema (e limpeza de chaves e valores inválidos ao ler), opacidade com limite, sessão guardada e remontada (painéis, pastas, perfis) e painel que não abre some.
+
+## Terminal: vidro, cores e sessão — manual
+
+- Preferências → Transparência: opacidade 70% e Vidro: o papel de parede aparece desfocado atrás do texto, sem emendas entre painéis.
+- Preferências → Cores: trocar o Fundo para `#102030`; o terminal aberto muda em até 1 s; "Usar as cores do tema" volta.
+- Arrastar uma aba para o outro lado.
+- Ligar "Reabrir abas e painéis", dividir, abrir outra aba, fechar a janela e abrir o Terminal de novo pela dock.
+- `cargo test`: endereços sob a célula (parênteses equilibrados, pontuação final, quebrado em duas linhas, `mailto:`).
+- Manual: `echo https://github.com/fabioaacarneiro/mide`, segurar Ctrl (ou ⌘) e passar o mouse: sublinha; clicar abre no navegador; botão direito em cima: "Abrir endereço" e "Copiar endereço".
+

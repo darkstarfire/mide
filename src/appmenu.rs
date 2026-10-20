@@ -212,6 +212,12 @@ pub fn click(conn: &zbus::blocking::Connection, sender: &str, path: &str, id: i3
     }
 }
 
+/// Lê um nó como a barra lê (para os testes de quem publica menus).
+#[cfg(test)]
+pub(crate) fn parse_for_test(value: &Value<'_>) -> Option<Item> {
+    parse_node(value)
+}
+
 /// Nó do `GetLayout`: `(id, propriedades, filhos)`.
 fn parse_node(value: &Value<'_>) -> Option<Item> {
     let value = match value {
@@ -290,18 +296,30 @@ fn shortcut_text(value: &Value<'_>) -> String {
     let Some(Value::Array(keys)) = combos.iter().next() else {
         return String::new();
     };
-    keys.iter()
-        .filter_map(|k| <&str>::try_from(k).ok())
-        .map(|k| match k {
+    let keys: Vec<&str> = keys.iter().filter_map(|k| <&str>::try_from(k).ok()).collect();
+    // Com ⌘ (Super), como no macOS: símbolos e sem "+" (⌘⇧D).
+    let mac = keys.contains(&"Super");
+    let names: Vec<String> = keys
+        .iter()
+        .map(|k| match *k {
+            "Control" if mac => "⌃".to_string(),
+            "Shift" if mac => "⇧".to_string(),
+            "Alt" if mac => "⌥".to_string(),
+            "Super" => "⌘".to_string(),
             "Control" => "Ctrl".to_string(),
-            "Shift" => "Shift".to_string(),
-            "Alt" => "Alt".to_string(),
-            "Super" => "Super".to_string(),
+            "Return" | "KP_Enter" => "Enter".to_string(),
+            "Page_Up" => "PgUp".to_string(),
+            "Page_Down" => "PgDn".to_string(),
+            "Up" => "↑".to_string(),
+            "Down" => "↓".to_string(),
+            "Left" => "←".to_string(),
+            "Right" => "→".to_string(),
+            "Delete" => "Del".to_string(),
             other if other.chars().count() == 1 => other.to_uppercase(),
             other => other.to_string(),
         })
-        .collect::<Vec<_>>()
-        .join("+")
+        .collect();
+    names.join(if mac { "" } else { "+" })
 }
 
 #[cfg(test)]

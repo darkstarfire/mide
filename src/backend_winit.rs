@@ -192,7 +192,11 @@ pub fn init(
                 backend.window().set_cursor(winit_cursor(state.cursor));
                 backend.window().request_redraw();
             }
-            WinitEvent::Focus(_) => {}
+            // Janela do mide perdeu o foco no desktop de baixo (Alt+Tab, Super): o
+            // soltar das teclas vai para outra janela. Solta tudo, senão o Alt fica
+            // "preso" e cada letra chega aos apps como Alt+letra.
+            WinitEvent::Focus(false) => crate::input::release_all_keys(state),
+            WinitEvent::Focus(true) => {}
         }
     })?;
 

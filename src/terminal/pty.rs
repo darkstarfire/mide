@@ -25,6 +25,8 @@ pub struct Spawn {
     /// Programa e argumentos (`None`: o shell do usuário).
     pub command: Option<(String, Vec<String>)>,
     pub directory: Option<PathBuf>,
+    /// Variáveis de ambiente a mais.
+    pub env: Vec<(String, String)>,
 }
 
 /// Tamanho em células e em pixels.
@@ -62,6 +64,7 @@ impl Pty {
             .env("TERM_PROGRAM", "mide")
             .env_remove("COLUMNS")
             .env_remove("LINES")
+            .envs(spawn.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::from(slave.try_clone()?))
             .stdout(Stdio::from(slave.try_clone()?))
             .stderr(Stdio::from(slave));
@@ -154,7 +157,7 @@ fn set_size(fd: BorrowedFd, size: Size) -> std::io::Result<()> {
 }
 
 /// O shell do usuário: `$SHELL`, ou o da conta (`/etc/passwd`), ou `/bin/sh`.
-fn user_shell() -> String {
+pub fn user_shell() -> String {
     if let Some(shell) = std::env::var_os("SHELL").filter(|s| !s.is_empty()) {
         return OsString::into_string(shell).unwrap_or_else(|_| "/bin/sh".into());
     }
@@ -178,7 +181,7 @@ mod tests {
     #[test]
     fn roda_um_programa_e_le_a_saida() {
         let (tx, rx) = mpsc::channel();
-        let spawn = Spawn { command: Some(("sh".into(), vec!["-c".into(), "stty size; tty; echo fim".into()])), directory: None };
+        let spawn = Spawn { command: Some(("sh".into(), vec!["-c".into(), "stty size; tty; echo fim".into()])), directory: None, env: Vec::new() };
         let mut pty = Pty::spawn(&spawn, Size { cols: 33, rows: 7, width: 0, height: 0 }, tx, || {}).unwrap();
         let mut out = Vec::new();
         while let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_secs(5)) {

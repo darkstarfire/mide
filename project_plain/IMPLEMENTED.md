@@ -970,3 +970,21 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Compositor:** com o mide-terminal em foco, o ⌘ chega ao app (ele trata os atalhos do Mac) e o atalho que abre um terminal vira nova aba.
 - **mide-ui:** `Input::logo`/`KeyPress::logo` (tecla Super/⌘) e `Ui::custom` (desenho livre num espaço reservado no fluxo).
 
+## Menus do app na barra para os apps do mide-ui, e teclas presas no winit
+
+- **mide-ui publica os menus do app na barra superior** (`src/kit/menubar.rs`): o app descreve os menus em `App::menu_bar` (grupos, itens com ação, atalho, ativo e marcado, separadores e submenus) e o mide-ui publica pelo dbusmenu e registra no registrar da barra (de novo quando a barra reinicia). O clique chega ao app em `ui.input().menu`. O menu "Janela" (Minimizar, Zoom) vem pronto (`window_menu`) e o mide-ui trata sozinho.
+- **Terminal com menus de verdade na barra:** Shell (Nova janela, Nova aba, Dividir, Fechar painel/janela), Editar (Copiar, Colar, Selecionar tudo, Buscar, ocorrências, Limpar), Visualizar (fonte, Ampliar painel, prompts, início/fim do histórico), Perfis (nova aba com cada perfil, Preferências…) e Janela (abas e painéis, lista das abas). O menu do botão direito usa as mesmas ações e os mesmos nomes. Atalhos aparecem no estilo do teclado em uso.
+- **Atalhos nos menus da barra mais legíveis:** com ⌘ no estilo do macOS (⌘⇧D), e PgUp/PgDn, Enter e setas.
+- **Teclas presas no mide em janela (winit):** quando a janela do mide perde o foco no desktop de baixo (Alt+Tab do Cinnamon), o mide solta todas as teclas que achava apertadas. Antes o Alt ficava "preso" e cada letra chegava ao terminal como Alt+letra: o bash tocava o sino (o painel piscava) e nada aparecia.
+
+## Terminal: vidro, cores editáveis, mais temas, abas arrastáveis e sessão restaurada
+
+- **Transparência e vidro por perfil:** opacidade do fundo (30–100%) e "Vidro" (o compositor desfoca o que está atrás, como os painéis do mide). Um vidro só cobre a área dos painéis (vários deixavam emendas). Com o vidro desligado nas Configurações, o fundo fica só translúcido. Novo no mide-ui: `Ui::glass_behind(rect, raio)`.
+- **Cores editáveis:** nas Preferências, qualquer cor do perfil (texto, fundo, cursor, seleção e as 16 básicas) em `#rrggbb`, com amostra, por cima do tema escolhido; "Usar as cores do tema" desfaz. Gravadas em `[profiles.colors]`.
+- **Mais temas prontos:** Papel, Floresta, Meia-noite e Alto contraste (8 no total).
+- **Abas arrastáveis:** arrastar uma aba para os lados muda a ordem.
+- **Reabrir abas e painéis** (Preferências → Sessão, vale para todos os perfis): ao fechar a janela, as abas, a divisão dos painéis e a pasta e o perfil de cada painel ficam em `~/.local/state/mide/terminal-session.toml`; o Terminal aberto sem argumentos volta assim (um shell novo em cada pasta). Módulo `src/terminal/session.rs`.
+- **Acabamentos:** painéis sem foco apagados com um véu da cor do fundo (antes um cinza que clareava os temas escuros); barra de abas escura com temas escuros; o aviso visual do sino respeita o perfil.
+- **Abrir endereços com Ctrl/⌘+clique** (como no iTerm2): com a tecla segurada, o endereço sob o ponteiro (`https://`, `http://`, `file://`, `ftp://`, `mailto:`, mesmo quebrado em duas linhas, sem a pontuação do fim da frase) fica sublinhado e o clique abre com o app padrão (`places::open`). No botão direito sobre um endereço: "Abrir endereço" e "Copiar endereço". Detecção em `Terminal::url_at`.
+- **Autoteste:** `keydown <tecla>` e `keyup <tecla>` seguram e soltam uma tecla de verdade (o `ctrl on` só vale para o compositor).
+

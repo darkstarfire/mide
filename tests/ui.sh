@@ -102,8 +102,13 @@ check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "400 list
 check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 430 list"
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
 check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" "$TERMINAL"
-check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 213 14; 440 list" "$TERMINAL"
-check "Janela > Zoom maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 268 14; 430 click 280 73; 480 list" "$TERMINAL"
+# Menus padrão do mide (a Calculadora não publica menus): "Editar" em x=234, "Janela" em 287.
+check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 234 14; 440 list" "$CALCULATOR"
+check "Janela > Zoom maximiza" "$CALC popups=0 posição=\(0, 58\) visível=1366x643" "400 click 287 14; 430 click 299 73; 480 list" "$CALCULATOR"
+# Menus do próprio Terminal (dbusmenu, num barramento de teste): Shell em x=140,
+# Editar 194, Janela 382; no menu, a primeira linha em y=55 e a segunda em y=79.
+RUST_LOG="mide=debug,mide_bar=info" SCEN=tests/scenario-dbus.sh check "a barra mostra os menus do Terminal" "menu do app mide-terminal: Shell, Editar, Visualizar, Perfis, Janela" "500 list" "$TERMINAL"
+SCEN=tests/scenario-dbus.sh check "Terminal: Janela > Zoom pelo menu do app" "$FOOT posição=\(0, 58\) visível=1366x643" "500 click 382 14; 540 click 400 79; 600 list" "$TERMINAL"
 check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" "$TERMINAL"
 check "janela Sobre redimensiona" 'janela "Sobre este computador" .*visível=580x400' "400 click 25 14; 430 click 100 49; 520 list; 530 press 587 435; 535 move 607 455; 540 move 627 475; 545 release 627 475; 580 list"
 check "relógio abre o calendário" "menu aberto: Calendar" "400 click 1331 14; 440 list"
@@ -269,7 +274,8 @@ check "clique no ícone abre o app" "nova janela criada" "400 click 611 728"
 check "clique no ícone do app em foco minimiza" "em foco: minimizado pela dock" "400 click 611 728; 480 list" "$TERMINAL"
 check_count "clique de novo restaura, sem abrir outro" "janela \"Terminal\"" 1 "400 click 611 728; 460 click 611 728; 540 list" "$TERMINAL"
 check "app em foco com duas janelas: o clique mostra as prévias" "em foco com 2 janelas: prévias" "400 click 611 728; 480 list" "$TERMINAL" "$TERMINAL"
-check_count "ctrl+clique abre nova instância" "janela \"Terminal\"" 2 "390 ctrl on; 400 click 611 728; 480 list" "$TERMINAL"
+# A instância nova (aberta pela dock, sem --title) tem o nome do shell no título.
+check_count "ctrl+clique abre nova instância" 'janela "[^"]+"' 2 "390 ctrl on; 400 click 611 728; 480 list" "$TERMINAL"
 check "clique no ícone restaura minimizada" "janela restaurada" "400 combo super+h; 440 click 654 728" "$CALCULATOR"
 check "Launchpad na dock abre o launcher" 'camada "mide-launcher"' "400 click 568 728; 470 list"
 check "abrir pela dock sai do ícone (lâmpada)" "abrindo pela dock: mide-calculator" "400 click 654 728; 700 list"

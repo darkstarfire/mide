@@ -65,6 +65,8 @@ pub struct Input {
     pub shortcuts: Vec<String>,
     /// Todas as teclas apertadas neste quadro, cruas e na ordem (ver [`KeyPress`]).
     pub presses: Vec<KeyPress>,
+    /// Itens escolhidos nos menus do app na barra superior (a ação de cada um).
+    pub menu: Vec<String>,
 }
 
 impl Input {
@@ -80,6 +82,7 @@ impl Input {
         self.shortcuts.clear();
         self.shortcut_shift.clear();
         self.presses.clear();
+        self.menu.clear();
         self.paste = None;
     }
 

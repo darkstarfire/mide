@@ -65,6 +65,13 @@ pub trait App {
     fn close_requested(&mut self) -> bool {
         true
     }
+
+    /// Menus do app na barra superior do mide (vazio: os menus padrão do mide). Lido
+    /// depois de cada quadro; o clique num item chega em `ui.input().menu`. Inclua
+    /// [`window_menu`](super::window_menu) para o menu "Janela".
+    fn menu_bar(&mut self) -> Vec<super::MenuGroup> {
+        Vec::new()
+    }
 }
 
 /// Janela do app: título, id (para a dock e o launcher) e tamanhos.
@@ -213,6 +220,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         ctx: Ctx::new(window.theme.clone()),
         title: window.title.clone(),
         app: Box::new(app),
+        menus: None,
+        maximized: false,
     };
 
     // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
@@ -317,6 +326,9 @@ struct Runner {
     exit: bool,
     ctx: Ctx,
     app: Box<dyn App>,
+    /// Menus publicados na barra superior.
+    menus: Option<super::menubar::Published>,
+    maximized: bool,
 }
 
 impl Runner {
@@ -325,6 +337,18 @@ impl Runner {
     fn frame(&mut self) {
         let start = std::time::Instant::now();
         self.dirty = false;
+        // Cliques nos menus da barra: os da "Janela" são da janela; o resto, do app.
+        if let Some(menus) = &self.menus {
+            while let Ok(action) = menus.clicks.try_recv() {
+                match (action.as_str(), &self.shell) {
+                    (super::menubar::MINIMIZE, Shell::Xdg(xdg)) => xdg.set_minimized(),
+                    (super::menubar::ZOOM, Shell::Xdg(xdg)) => {
+                        if self.maximized { xdg.unset_maximized() } else { xdg.set_maximized() }
+                    }
+                    _ => self.ctx.input.menu.push(action),
+                }
+            }
+        }
         let mut pixmap = None;
         for _ in 0..2 {
             let Some(mut canvas) = Pixmap::new(self.size.0, self.size.1) else {
@@ -359,6 +383,12 @@ impl Runner {
             if !again {
                 break;
             }
+        }
+        let groups = self.app.menu_bar();
+        match &mut self.menus {
+            Some(menus) => menus.update(groups),
+            None if !groups.is_empty() => self.menus = super::menubar::Published::start(groups, self.ctx.waker.clone()),
+            None => {}
         }
         let Some(pixmap) = pixmap else {
             return;
@@ -424,6 +454,7 @@ impl WindowHandler for Runner {
     }
 
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow, configure: WindowConfigure, _: u32) {
+        self.maximized = configure.is_maximized();
         let (w, h) = configure.new_size;
         if let Some(w) = w.map(NonZeroU32::get) {
             self.size.0 = w.max(self.min_size.0);

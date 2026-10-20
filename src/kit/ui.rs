@@ -1157,6 +1157,18 @@ impl<'a> Ui<'a> {
         f(self.canvas, rect);
     }
 
+    /// Vidro atrás de `rect` (na janela): o compositor desfoca o que está atrás dela, e
+    /// o app desenha ali com transparência. Devolve se o vidro está ligado nas
+    /// Configurações (desligado, o app deve desenhar opaco).
+    pub fn glass_behind(&mut self, rect: (f32, f32, f32, f32), radius: f32) -> bool {
+        self.ctx.glass_capable = true;
+        let on = crate::control_client::panel_glass();
+        if on {
+            self.ctx.glass.push((self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3, radius));
+        }
+        on
+    }
+
     /// Como `paint`, com o texto do mide-ui para escrever (por exemplo, `draw_mono`).
     pub fn paint_text(&mut self, f: impl FnOnce(&mut Pixmap, &mut crate::ui::text::Text, (f32, f32))) {
         let offset = self.offset;
