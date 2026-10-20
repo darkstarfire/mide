@@ -79,6 +79,7 @@ struct FileConfig {
     desktop: Desktop,
     keyboard: Keyboard,
     monitors: Monitors,
+    input: Input,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -140,6 +141,27 @@ impl Default for Effects {
             menu_animation: true,
             transitions: true,
         }
+    }
+}
+
+/// Mouse e trackpad, na seção `[input]` (Configurações → Mouse e trackpad).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Input {
+    /// Velocidade do ponteiro, de -1 (devagar) a 1 (rápido); 0 é o padrão do libinput.
+    pub pointer_speed: f64,
+    /// Aceleração do mouse (quanto mais rápido o movimento, mais o ponteiro anda).
+    pub mouse_acceleration: bool,
+    /// Rolagem natural no mouse e no trackpad (o conteúdo segue o dedo, como no Mac).
+    pub mouse_natural_scroll: bool,
+    pub touchpad_natural_scroll: bool,
+    /// Toque no trackpad clica.
+    pub tap_to_click: bool,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self { pointer_speed: 0.0, mouse_acceleration: true, mouse_natural_scroll: false, touchpad_natural_scroll: true, tap_to_click: true }
     }
 }
 
@@ -274,12 +296,13 @@ pub struct Config {
     pub desktop: Desktop,
     pub keyboard: Keyboard,
     pub monitors: Monitors,
+    pub input: Input,
 }
 
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
-        let (user, effects, desktop, keyboard, monitors) = match config_path() {
+        let (user, effects, desktop, keyboard, monitors, input) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
                 let mut file = toml::from_str::<FileConfig>(&text)
@@ -288,15 +311,17 @@ impl Config {
                 let desktop = std::mem::take(&mut file.desktop);
                 let keyboard = std::mem::take(&mut file.keyboard);
                 let monitors = std::mem::take(&mut file.monitors);
-                (file.all_bindings(), effects, desktop, keyboard, monitors)
+                let input = std::mem::take(&mut file.input);
+                (file.all_bindings(), effects, desktop, keyboard, monitors, input)
             }
-            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default()),
+            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default()),
         };
         let mut config = Self::from_entries(&user)?;
         config.effects = effects;
         config.desktop = desktop;
         config.keyboard = keyboard;
         config.monitors = monitors;
+        config.input = input;
         Ok(config)
     }
 
@@ -326,6 +351,7 @@ impl Config {
             desktop: Desktop::default(),
             keyboard: Keyboard::default(),
             monitors: Monitors::default(),
+            input: Input::default(),
         })
     }
 
@@ -710,6 +736,16 @@ mod tests {
         assert_eq!(parse_mode("1366x768"), Some((1366, 768, None)));
         assert_eq!(parse_mode("x"), None);
         // A seção das telas não vira atalho.
+        assert!(file.all_bindings().is_empty());
+    }
+
+    #[test]
+    fn mouse_e_trackpad_no_config() {
+        let file: FileConfig = toml::from_str("[input]\npointer_speed = -0.4\ntap_to_click = false\n").unwrap();
+        assert_eq!(file.input.pointer_speed, -0.4);
+        assert!(!file.input.tap_to_click);
+        // O que não está no arquivo fica no padrão (rolagem natural no trackpad, como no Mac).
+        assert!(file.input.touchpad_natural_scroll && file.input.mouse_acceleration && !file.input.mouse_natural_scroll);
         assert!(file.all_bindings().is_empty());
     }
 }

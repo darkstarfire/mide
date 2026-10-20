@@ -587,7 +587,7 @@ fn window_elements(
                 })
                 .unwrap_or_default();
             let content_top = p.surface_origin.y + p.window.geometry().loc.y;
-            for (i, (rect, _)) in state.glass.get(&format!("app:{app_id}")).into_iter().flatten().enumerate() {
+            for (i, (rect, _, _)) in state.glass.get(&format!("app:{app_id}")).into_iter().flatten().enumerate() {
                 let mut r = Rectangle::new(p.surface_origin + rect.loc, rect.size);
                 let pad = radius.ceil() as i32;
                 if r.loc.y <= content_top {
@@ -675,7 +675,26 @@ fn layer_elements(
         }
         match layer.namespace() {
             // Atrás do launcher, o papel de parede desfocado (como o Launchpad).
-            "mide-launcher" if state.config.effects.launcher_blur => {
+            "mide-launcher" => {
+                // Pastas (ícones e o painel aberto) em vidro líquido, como no macOS: o
+                // vidro vê o papel de parede desfocado e acompanha o zoom e o esmaecer.
+                if state.config.effects.liquid_glass {
+                    let center = (geo.loc.x as f64 + geo.size.w as f64 / 2.0, geo.loc.y as f64 + geo.size.h as f64 / 2.0);
+                    for (i, (rect, radius, region_alpha)) in state.glass.get("mide-launcher").into_iter().flatten().enumerate() {
+                        let x = center.0 + (geo.loc.x as f64 + rect.loc.x as f64 - center.0) * zoom;
+                        let y = center.1 + (geo.loc.y as f64 + rect.loc.y as f64 - center.1) * zoom;
+                        let r = Rectangle::new(
+                            (x.round() as i32, y.round() as i32).into(),
+                            ((rect.size.w as f64 * zoom).round() as i32, (rect.size.h as f64 * zoom).round() as i32).into(),
+                        );
+                        if let Some(r) = r.intersection(geo) {
+                            glass.push(GlassRegion { at: elements.len(), rect: r, radius: *radius * zoom as f32, name: format!("mide-launcher#{i}"), alpha: alpha * region_alpha });
+                        }
+                    }
+                }
+                if !state.config.effects.launcher_blur {
+                    continue;
+                }
                 let out = Rectangle::new((0, 0).into(), geo.size);
                 if let Some(el) = blur.wallpaper_element(renderer, wallpaper.texture(), out, state.launcher_look().0) {
                     elements.push(MideRenderElement::Blurred(el));
@@ -691,10 +710,10 @@ fn layer_elements(
             }
             namespace if state.config.effects.panel_glass => {
                 // Regiões pedidas pela camada (barra, menus, notificações), relativas a ela.
-                for (i, (rect, radius)) in state.glass.get(namespace).into_iter().flatten().enumerate() {
+                for (i, (rect, radius, region_alpha)) in state.glass.get(namespace).into_iter().flatten().enumerate() {
                     let on_screen = Rectangle::new(geo.loc + rect.loc, rect.size);
                     if let Some(rect) = on_screen.intersection(geo) {
-                        glass.push(GlassRegion { at: elements.len(), rect, radius: *radius, name: format!("{namespace}#{i}"), alpha: appear });
+                        glass.push(GlassRegion { at: elements.len(), rect, radius: *radius, name: format!("{namespace}#{i}"), alpha: appear * region_alpha });
                     }
                 }
             }

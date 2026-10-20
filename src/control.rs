@@ -15,7 +15,7 @@
 //! - `workarea`: área útil da tela (`x y largura altura`), sem a barra e a dock.
 //! - `dock_covered`: `yes` se alguma janela está onde a dock aparece.
 //! - `force_quit`: termina o processo do app em foco (menu do mide).
-//! - `glass <camada> raio:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
+//! - `glass <camada> raio[@opacidade]:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
 //!   líquido) atrás desses retângulos, relativos a ela; sem regiões, limpa.
 
 use std::{
@@ -283,6 +283,10 @@ pub fn handle(state: &mut State, command: &str) -> String {
         Some("reload") => match crate::config::Config::load() {
             Ok(config) => {
                 state.config = config;
+                // Mouse e trackpad (Configurações → Mouse e trackpad) valem na hora.
+                if let Some(waker) = &state.input_waker {
+                    waker.ping();
+                }
                 tracing::info!("configuração recarregada");
                 "ok\n".into()
             }
@@ -345,13 +349,16 @@ pub fn handle(state: &mut State, command: &str) -> String {
 }
 
 /// Uma região de vidro no formato `raio:x,y,w,h`.
-fn parse_glass(word: &str) -> Option<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32)> {
-    let (radius, rect) = word.split_once(':')?;
+fn parse_glass(word: &str) -> Option<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32, f32)> {
+    let (look, rect) = word.split_once(':')?;
+    // `raio@opacidade` (a opacidade é opcional: 1).
+    let (radius, alpha) = look.split_once('@').unwrap_or((look, "1"));
+    let alpha = alpha.parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0);
     let n: Vec<i32> = rect.split(',').map(|v| v.parse::<f32>().map(|f| f.round() as i32)).collect::<Result<_, _>>().ok()?;
     let [x, y, w, h] = n[..] else {
         return None;
     };
-    (w > 0 && h > 0).then(|| (smithay::utils::Rectangle::new((x, y).into(), (w, h).into()), radius.parse().unwrap_or(0.0)))
+    (w > 0 && h > 0 && alpha > 0.0).then(|| (smithay::utils::Rectangle::new((x, y).into(), (w, h).into()), radius.parse().unwrap_or(0.0), alpha))
 }
 
 /// app_id e título que o app definiu para a janela.
@@ -553,9 +560,12 @@ mod tests {
 
     #[test]
     fn regioes_de_vidro_sao_interpretadas() {
-        let (rect, radius) = parse_glass("10:4,30.6,200,120").unwrap();
+        let (rect, radius, alpha) = parse_glass("10:4,30.6,200,120").unwrap();
         assert_eq!((rect.loc.x, rect.loc.y, rect.size.w, rect.size.h), (4, 31, 200, 120));
-        assert_eq!(radius, 10.0);
+        assert_eq!((radius, alpha), (10.0, 1.0));
+        // Com opacidade (vidro esmaecendo junto com o desenho).
+        let (_, radius, alpha) = parse_glass("28@0.5:0,0,10,10").unwrap();
+        assert_eq!((radius, alpha), (28.0, 0.5));
         assert!(parse_glass("10:4,30,0,120").is_none(), "sem área");
         assert!(parse_glass("lixo").is_none());
         assert!(parse_glass("3:1,2,3").is_none());

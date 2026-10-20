@@ -31,28 +31,57 @@ pub fn ask_compositor(command: &str) -> Option<Vec<String>> {
 }
 
 /// Regiões de vidro de uma camada (barra, menus, notificações). Cada camada guarda o
-/// último pedido aqui e só avisa o compositor quando muda.
+/// último pedido aqui e só avisa o compositor quando muda. O envio é feito numa thread
+/// própria, em ordem e só o pedido mais recente: o desenho não espera o compositor
+/// (nas animações do launcher, um pedido por quadro).
 #[derive(Default)]
 pub struct Glass {
     last: Option<String>,
+    sender: Option<std::sync::mpsc::Sender<String>>,
 }
 
 impl Glass {
     /// Pede vidro atrás de `rects` (x, y, largura, altura, raio), relativos à camada
     /// `namespace`. Lista vazia limpa.
     pub fn set(&mut self, namespace: &str, rects: &[(f32, f32, f32, f32, f32)]) {
+        let with_alpha: Vec<_> = rects.iter().map(|(x, y, w, h, r)| (*x, *y, *w, *h, *r, 1.0)).collect();
+        self.set_faded(namespace, &with_alpha);
+    }
+
+    /// Como `set`, com a opacidade de cada região (0 a 1): vidro que aparece ou some
+    /// junto com o desenho da camada (as pastas do launcher nas transições).
+    pub fn set_faded(&mut self, namespace: &str, rects: &[(f32, f32, f32, f32, f32, f32)]) {
         // Nunca pediu vidro e continua sem: nada a avisar.
         if rects.is_empty() && self.last.is_none() {
             return;
         }
         let mut command = format!("glass {namespace}");
-        for (x, y, w, h, r) in rects {
-            command.push_str(&format!(" {r}:{},{},{},{}", x.round(), y.round(), w.round(), h.round()));
+        for (x, y, w, h, r, a) in rects {
+            if *a >= 0.999 {
+                command.push_str(&format!(" {r}:{},{},{},{}", x.round(), y.round(), w.round(), h.round()));
+            } else if *a > 0.01 {
+                command.push_str(&format!(" {r}@{a:.2}:{},{},{},{}", x.round(), y.round(), w.round(), h.round()));
+            }
         }
         if self.last.as_deref() == Some(command.as_str()) {
             return;
         }
-        if ask_compositor(&command).is_some() {
+        let sender = self.sender.get_or_insert_with(|| {
+            let (tx, rx) = std::sync::mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                while let Ok(mut command) = rx.recv() {
+                    // Chegaram vários enquanto o anterior era enviado: só o último vale.
+                    while let Ok(newer) = rx.try_recv() {
+                        command = newer;
+                    }
+                    if ask_compositor(&command).is_none() {
+                        tracing::debug!("vidro: compositor não respondeu ao pedido");
+                    }
+                }
+            });
+            tx
+        });
+        if sender.send(command.clone()).is_ok() {
             self.last = Some(command);
         }
     }

@@ -1295,7 +1295,9 @@ impl<'a> Ui<'a> {
         let (tx, tw) = (rect.0 + label_w, rect.2 - label_w - 50.0);
         let track = (tx - 8.0, rect.1, tw + 16.0, rect.3);
         let mut r = self.interact(id, track);
-        if self.ctx.memory.active == Some(id) && self.ctx.input.down {
+        // Também no quadro em que solta: quem relê o valor a cada quadro (do arquivo)
+        // recebe o ponto final do arraste junto com o `submitted`.
+        if self.ctx.memory.active == Some(id) && (self.ctx.input.down || self.ctx.input.released) {
             if let Some((px, _)) = self.pointer() {
                 let k = ((px - tx) / tw).clamp(0.0, 1.0);
                 let new = min + k * (max - min);
@@ -1724,8 +1726,9 @@ impl<'a> Ui<'a> {
         let rect = self.alloc(None, t.row);
         self.card_line(rect.1);
         let r = self.interact(id, (rect.0 - 8.0, rect.1, rect.2 + 16.0, rect.3));
+        // Destaque como o da barra lateral: pílula arredondada com folga, cinza claro.
         if r.hovered {
-            fill_rounded(self.canvas, rect.0 - 8.0, rect.1, rect.2 + 16.0, rect.3, t.control_radius, color(t.hover));
+            fill_rounded(self.canvas, rect.0 - 8.0, rect.1 + 3.0, rect.2 + 16.0, rect.3 - 6.0, t.control_radius, color(t.control));
         }
         let dw = if detail.is_empty() { 0.0 } else { self.measure(detail, t.font_small, FontWeight::Regular) + 12.0 };
         let label = self.fit(label, t.font, FontWeight::Regular, rect.2 - dw);

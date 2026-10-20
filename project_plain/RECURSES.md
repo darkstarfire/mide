@@ -216,3 +216,7 @@ sudo apt install build-essential pkg-config \
 - **niri:** compositor em Rust, com layout em rolagem e efeitos visuais.
 - **cosmic-comp:** compositor do COSMIC, com integração completa de DE.
 - **pinnacle:** compositor em Rust configurável em Lua ou Rust.
+- **libinput (configuração de aparelhos):** velocidade (`config_accel_set_speed`), perfil de aceleração (`AccelProfile::Flat`/`Adaptive`), rolagem natural e toque para clicar, pela crate `input` (reexportada pelo Smithay).
+- **Menu global:** `com.canonical.AppMenu.Registrar` e `com.canonical.dbusmenu` (especificação do Unity/KDE); apps Electron/Chromium só publicam no X11.
+- **Vidro líquido (referência visual):** materiais "Liquid Glass" do macOS 26 (só inspiração); a refração é feita no shader de composição do mide (`blur.rs`: desvio das amostras pela distância à borda arredondada, reflexo e borda clara), sobre o desfoque "dual Kawase".
+- **Variáveis do GTK/libadwaita para testes reprodutíveis:** `GDK_DEBUG=no-portals`, `ADW_DISABLE_PORTAL=1`, `GSETTINGS_BACKEND=memory` (configurações padrão, sem portal nem dconf do usuário).

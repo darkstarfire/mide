@@ -19,3 +19,4 @@
 
 - O script de instalação baixa os **binários prontos** (release do GitHub, por arquitetura) e instala com o gerenciador da distribuição só as bibliotecas e programas de execução acima (são pacotes comuns de qualquer desktop: em Debian/Ubuntu, algo como `libinput10 libseat1 libgbm1 libegl1 libxkbcommon0 xdg-desktop-portal-gtk dbus-user-session`). Compilar do código fica como opção para desenvolvimento (aí sim com Rust e os pacotes `-dev`).
 - Instala: binários em `/usr/local/bin` (ou `/usr/bin` no pacote), dados em `/usr/share/mide` (`applications`, `xdg-desktop-portal/mide-portals.conf`), a sessão em `/usr/share/wayland-sessions/mide.desktop` e o `mide-session`.
+- Nada novo para instalar nesta etapa (vidro das pastas do launcher e guia de identidade visual são do próprio mide). Para rodar `tests/ui.sh`: `gnome-calculator`, `foot`, `xclock` (opcional) e Python 3 com Pillow.

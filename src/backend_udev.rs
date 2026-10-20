@@ -189,14 +189,29 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     // Entrada: libinput pela sessão (sem root).
     let mut libinput = Libinput::new_with_udev(LibinputSessionInterface::<LibSeatSession>::from(session.clone()));
     libinput.udev_assign_seat(&seat).map_err(|()| "libinput: não foi possível usar o assento")?;
+    // Mouses e trackpads conectados, para reaplicar `[input]` quando muda.
+    let devices: Rc<RefCell<Vec<smithay::reexports::input::Device>>> = Default::default();
+    {
+        let (ping, source) = smithay::reexports::calloop::ping::make_ping()?;
+        let devices = devices.clone();
+        loop_handle.insert_source(source, move |_, _, state: &mut State| {
+            for device in devices.borrow_mut().iter_mut() {
+                apply_input_config(device, &state.config.input);
+            }
+            tracing::info!("mouse e trackpad: configuração aplicada");
+        })?;
+        state.input_waker = Some(ping);
+    }
+    let input_devices = devices.clone();
     loop_handle.insert_source(LibinputInputBackend::new(libinput.clone()), move |event, _, state| {
         if let InputEvent::DeviceAdded { mut device } = event {
-            // Touchpad: toque para clicar, como nos outros desktops.
-            if device.config_tap_finger_count() > 0 {
-                let _ = device.config_tap_set_enabled(true);
-            }
+            apply_input_config(&mut device, &state.config.input);
             tracing::info!("dispositivo de entrada: {}", device.name());
+            input_devices.borrow_mut().push(device);
             return;
+        }
+        if let InputEvent::DeviceRemoved { device } = &event {
+            input_devices.borrow_mut().retain(|d| d != device);
         }
         // O ponteiro anda por todas as telas: a caixa que contém todas.
         let bounds = state
@@ -532,5 +547,26 @@ pub fn output_scale(scale: f64) -> Scale {
         Scale::Integer(scale.round() as i32)
     } else {
         Scale::Fractional(scale)
+    }
+}
+
+/// Velocidade, aceleração, rolagem natural e toque para clicar (`[input]`) num mouse ou
+/// trackpad. Trackpad é o que aceita toque (`tap`).
+fn apply_input_config(device: &mut smithay::reexports::input::Device, input: &crate::config::Input) {
+    use smithay::reexports::input::AccelProfile;
+    let touchpad = device.config_tap_finger_count() > 0;
+    if touchpad {
+        let _ = device.config_tap_set_enabled(input.tap_to_click);
+    }
+    if device.config_accel_is_available() {
+        let _ = device.config_accel_set_speed(input.pointer_speed.clamp(-1.0, 1.0));
+        if !touchpad {
+            let profile = if input.mouse_acceleration { AccelProfile::Adaptive } else { AccelProfile::Flat };
+            let _ = device.config_accel_set_profile(profile);
+        }
+    }
+    if device.config_scroll_has_natural_scroll() {
+        let natural = if touchpad { input.touchpad_natural_scroll } else { input.mouse_natural_scroll };
+        let _ = device.config_scroll_set_natural_scroll_enabled(natural);
     }
 }

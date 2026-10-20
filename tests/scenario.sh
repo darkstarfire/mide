@@ -14,6 +14,12 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Apps abertos pelo compositor (atalhos `launch:`, dock) vêm deste build, não do
+# instalado na sessão de quem roda os testes.
+export PATH="$ROOT/target/debug:$PATH"
+# Apps GTK do teste com as configurações padrão (sem o portal nem o dconf de quem roda
+# os testes): tema, botões do cabeçalho e tamanhos iguais em qualquer máquina.
+export GDK_DEBUG=no-portals ADW_DISABLE_PORTAL=1 GSETTINGS_BACKEND=memory
 OUT="${SCENARIO_OUT:-/tmp/mide-scenario}"
 RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_RUNTIME_DIR="$RUNTIME"
@@ -130,5 +136,5 @@ img.save(out + "/frame.png")
 PY
 fi
 
-sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -E "autoteste|clique|tratado|janela|camada|mide_dock|mide_bar|mide_launcher|mide_notifications|mide_settings|mide::places|mide::system|lâmpada|papel de parede|configuração recarregada|vidro: |abrindo pela dock|panic|ERROR|WARN" | grep -v "frame:"
+sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -E "autoteste|clique|tratado|janela|camada|mide_dock|mide_bar|mide_launcher|mide_notifications|mide_settings|mide::places|mide::system|lâmpada|papel de parede|configuração recarregada|vidro: |área de transferência|abrindo pela dock|panic|ERROR|WARN" | grep -v "frame:"
 cleanup

@@ -662,3 +662,24 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Launchpad: abrir e fechar uma pasta; a grade some e volta junto com o painel. Trocar de página (roda, arrastar): só os ícones deslizam, as bolinhas ficam paradas.
 - Arquivos aberto pela dock: depois da lâmpada, o vidro da barra lateral aparece suave.
 - Estilo Mac ligado, no foot: ⌘C copia, ⌘V cola, Ctrl+C interrompe um comando.
+
+## Atalhos em grupos e Mouse e trackpad — automáticos
+
+- `tests/ui.sh`: editar atalho usando a busca ("fechar" → "Fechar a janela" (Ctrl ⇧ Q) → gravar Ctrl+Alt+K); combinação já usada não dispara; "Restaurar os padrões" (com a busca vazia de resultados); Mouse e trackpad gravam `mouse_natural_scroll`, `tap_to_click` e `pointer_speed` no config.
+- `cargo test`: seção `[input]` (`mouse_e_trackpad_no_config`).
+
+## Mouse e trackpad — manual (na sessão)
+
+- Mudar a velocidade e ver o ponteiro mudar na hora; desligar o toque para clicar no trackpad do notebook; rolagem natural no mouse.
+
+## Identidade visual, vidro nas pastas e correções — automáticos
+
+- `tests/scenario.sh`: binários de `target/debug` na frente do `PATH` (a tecla Print abria o mide-screenshot instalado na sessão de quem roda os testes); apps GTK com configurações padrão (`GDK_DEBUG=no-portals ADW_DISABLE_PORTAL=1 GSETTINGS_BACKEND=memory`: a Calculadora não pega tema e botões do usuário); linhas da área de transferência na saída.
+- `tests/ui.sh`: Calculadora no layout padrão do GTK (só o X; maximizar com duplo clique no cabeçalho; minimizar com Super+H nos testes da dock); testes de vidro com o nome da tela no cache (`HEADLESS-1:mide-bar#0`); tela principal na origem quando o config não dá posições.
+- `cargo test`: `parse_glass` com opacidade.
+- Medido (headless, 1366x768, build de depuração, máquina com carga 5): quadro da pasta do launcher 11,8 ms de mediana com o vidro líquido e 11,3 ms sem (o vidro custa ~0,5 ms no app); carrossel 1,6 ms; compositor na GPU 1,2 ms de mediana, p95 3,6 ms.
+
+## Vidro nas pastas — manual (na sessão)
+
+- Abrir o Launchpad: o papel de parede aparece com desfoque leve; as pastas têm vidro com borda clara. Abrir uma pasta: o painel cresce em vidro; trocar de página: o vidro das pastas desliza junto. Desligar "Vidro líquido" em Efeitos: pastas no visual antigo.
+- Copiar caminho (Downloads da dock) e abrir um app do mide em seguida: Ctrl+V cola de primeira.

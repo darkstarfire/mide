@@ -8,8 +8,9 @@
 # - A primeira janela nasce em (48, 76) e a segunda em (80, 108).
 # - Barra do mide numa janela em (48, 76): moldura em y=46, botões no centro
 #   y=61: fechar x=63, minimizar x=83, maximizar x=103.
-# - Calculadora (378 px, cabeçalho próprio) em (48, 76): X em (402, 99),
-#   maximizar (364, 99), minimizar (317, 99), menu (289, 99).
+# - Calculadora (360x509, cabeçalho próprio, configurações padrão do GTK: só o X) em
+#   (48, 76): X em (384, 99), menu (345, 99); duplo clique no cabeçalho (300, 99)
+#   maximiza; borda direita em x=408.
 # - Maximizada: área útil de y=28 até 2 px acima da dock (y=701).
 # - Dock padrão (ícones de 40 px) em (541, 703) 285x57: Launchpad em (568, 728),
 #   foot em (611, 728), calculadora em (654, 728), Configurações em (697, 728),
@@ -227,12 +228,12 @@ check "minimizar pelo amarelo" "janela minimizada" "400 click 83 61" foot
 check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" foot
 
 echo "== janela com cabeçalho do app (calculadora)"
-check "fechar pelo X do app" "janela fechada" "400 click 402 99" gnome-calculator
+check "fechar pelo X do app" "janela fechada" "400 click 384 99" gnome-calculator
 check "arrastar pelo cabeçalho do app" "$CALC popups=0 posição=\(108, 116\)" "400 press 200 98; 405 move 230 118; 410 move 260 138; 415 release 260 138; 450 list" gnome-calculator
-check "maximizar pelo botão do app" "$CALC popups=0 posição=\(0, 28\) visível=1366x673" "400 click 364 99; 460 list" gnome-calculator
-check "abrir menu do app" "$CALC popups=1" "400 click 289 99; 440 list" gnome-calculator
-check "fechar menu clicando fora" "$CALC popups=0" "400 click 289 99; 430 click 700 400; 460 list" gnome-calculator
-check "redimensionar pela borda" "$CALC .*visível=418x500" "400 press 423 330; 405 move 443 330; 410 move 463 330; 415 release 463 330; 460 list" gnome-calculator
+check "maximizar com duplo clique no cabeçalho do app" "$CALC popups=0 posição=\(0, 28\) visível=1366x673" "400 click 300 99; 405 click 300 99; 460 list" gnome-calculator
+check "abrir menu do app" "$CALC popups=1" "400 click 345 99; 440 list" gnome-calculator
+check "fechar menu clicando fora" "$CALC popups=0" "400 click 345 99; 430 click 700 400; 460 list" gnome-calculator
+check "redimensionar pela borda" "$CALC .*visível=400x509" "400 press 405 330; 405 move 425 330; 410 move 445 330; 415 release 445 330; 460 list" gnome-calculator
 
 echo "== várias janelas"
 check "cascata (segunda em 80,108)" "$CALC popups=0 posição=\(80, 108\)" "400 list" foot gnome-calculator
@@ -261,7 +262,7 @@ check "clique no ícone do app em foco minimiza" "em foco: minimizado pela dock"
 check_count "clique de novo restaura, sem abrir outro" "janela \"foot\"" 1 "400 click 611 728; 460 click 611 728; 540 list" foot
 check "app em foco com duas janelas: o clique mostra as prévias" "em foco com 2 janelas: prévias" "400 click 611 728; 480 list" foot foot
 check_count "ctrl+clique abre nova instância" "janela \"foot\"" 2 "390 ctrl on; 400 click 611 728; 480 list" foot
-check "clique no ícone restaura minimizada" "janela restaurada" "400 click 317 99; 440 click 654 728" gnome-calculator
+check "clique no ícone restaura minimizada" "janela restaurada" "400 combo super+h; 440 click 654 728" gnome-calculator
 check "Launchpad na dock abre o launcher" 'camada "mide-launcher"' "400 click 568 728; 470 list"
 check "abrir pela dock sai do ícone (lâmpada)" "abrindo pela dock: org.gnome.calculator" "400 click 654 728; 700 list"
 check "Configurações fixadas na dock abrem" 'janela "Configurações do Sistema"' "400 click 697 728; 560 list"
@@ -274,7 +275,7 @@ check "clique na prévia escolhe a janela" "prévia: janela [0-9]+ escolhida" "4
 check_count "prévia com o launcher aberto: escolher fecha o launcher" 'camada "mide-launcher"' 0 "400 combo ctrl+shift+space; 460 move 623 728; 465 move 611 728; 530 move 520 598; 540 click 503 588; 600 list" foot gnome-calculator foot
 check "× da prévia fecha a janela" "prévia: fechar janela" "400 move 623 728; 405 move 611 728; 470 move 520 598; 475 move 600 533; 480 click 600 533; 540 list" foot gnome-calculator foot
 check "clique direito abre o menu do app" "menu de Foot aberto" "400 rclick 611 728; 470 list" foot
-check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 click 317 99; 420 click 654 728" gnome-calculator
+check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 combo super+h; 420 click 654 728" gnome-calculator
 
 echo "== dock: Downloads e Lixeira (pastas temporárias)"
 # Downloads de teste com 3 itens (o mais novo é "projeto") e uma Lixeira de teste.
@@ -312,10 +313,11 @@ check "menu de arquivo: Mover para a Lixeira" "movido para a lixeira: foto.jpg" 
 # Depois de agir num item, a lista continua aberta (para agir em vários); Esc fecha.
 check_count "lista de Downloads continua aberta depois de mover um item" 'camada "mide-dock-menu"' 1 "400 click 756 728; 440 rclick 756 597; 480 click 821 731; 540 list"
 check_count "Esc fecha a lista de Downloads" 'camada "mide-dock-menu"' 0 "400 click 756 728; 440 key esc; 480 list"
-# Copiar caminho chega de verdade a outro app: o editor de texto (aberto depois) cola
+# Copiar caminho chega de verdade a outro app: o editor de texto (aberto depois da
+# cópia, para o ícone dele não mexer na dock antes dos cliques) cola
 # com Ctrl+V e salva. O texto fica com o compositor.
 CPY="$(mktemp)"
-SCENARIO_WAIT=24 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1000 click 400 300; 1020 combo ctrl+v; 1050 combo ctrl+s; 1100 list" -- "sleep 8; $PWD/target/debug/mide-text '$CPY'" >/dev/null 2>&1
+SCENARIO_WAIT=24 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1000 click 400 300; 1020 combo ctrl+v; 1050 combo ctrl+s; 1100 list" -- "sleep 12; $PWD/target/debug/mide-text '$CPY'" >/dev/null 2>&1
 if grep -q "/dl/projeto" "$CPY"; then
     echo "ok    Copiar caminho da dock cola em outro app"; PASS=$((PASS + 1))
 else
@@ -428,6 +430,21 @@ else
     echo "FALHA esconder item da barra grava no config.toml"; FAIL=$((FAIL + 1))
 fi
 sed -i '/gear = false/d' "$SCFG/mide/config.toml"
+# Mouse e trackpad: "Rolagem natural no mouse" em (807, 266), "Toque para clicar" em
+# (807, 416); o trilho da velocidade vai de x=488 a 778 em y=162 (meio = padrão).
+timeout 150 "$SCEN" "400 click 807 266; 430 click 807 416; 460 press 633 162; 465 move 560 162; 470 move 500 162; 475 release 488 162; 520 list" -- "$SETTINGS mouse" >/dev/null 2>&1
+if grep -q "mouse_natural_scroll = true" "$SCFG/mide/config.toml" && grep -q "tap_to_click = false" "$SCFG/mide/config.toml" && grep -q "pointer_speed = -1" "$SCFG/mide/config.toml"; then
+    echo "ok    Mouse e trackpad gravam no config.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA Mouse e trackpad gravam no config.toml"; FAIL=$((FAIL + 1))
+fi
+python3 - "$SCFG/mide/config.toml" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+s = re.sub(r"(?ms)^\[input\]\n(.*?)(?=^\[|\Z)", "", s)
+open(p, "w").write(s)
+PY
 # Busca na barra lateral (campo em (158, 104)): "teclas" acha "Teclas no estilo Mac"; o
 # resultado (primeira linha, y=158) abre a seção Teclado, com o interruptor em (807, 169).
 timeout 150 "$SCEN" "400 click 158 104; 420 type teclas; 460 click 500 158; 500 click 807 169; 560 list" -- "$SETTINGS" >/dev/null 2>&1
@@ -437,9 +454,10 @@ else
     echo "FALHA busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; FAIL=$((FAIL + 1))
 fi
 sed -i '/mac_style = true/d' "$SCFG/mide/config.toml"
-# Teclado → Atalhos (A9): "Fechar a janela" é o 3º atalho (500, 340); no diálogo,
-# "Gravar…" em (525, 315). O compositor grava a combinação apertada.
-timeout 150 "$SCEN" "400 click 500 340; 430 click 525 315; 460 combo ctrl+alt+k; 520 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+# Teclado → Atalhos (A9): busca em (600, 224); buscando "fechar", "Fechar a janela"
+# (Ctrl ⇧ Q) fica em (500, 340) e "Fechar a janela" (Alt F4) em (500, 298); no
+# diálogo, "Gravar…" em (525, 315). O compositor grava a combinação apertada.
+timeout 150 "$SCEN" "400 click 600 224; 410 type fechar; 440 click 500 340; 470 click 525 315; 500 combo ctrl+alt+k; 560 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if grep -q '"ctrl+alt+k" = "close_window"' "$SCFG/mide/config.toml" && grep -q '"ctrl+shift+q" = "none"' "$SCFG/mide/config.toml"; then
     echo "ok    gravar atalho nas Configurações troca a combinação"; PASS=$((PASS + 1))
 else
@@ -448,14 +466,15 @@ fi
 check "atalho gravado vale no compositor" "fechar janela pedido pelo atalho" "400 combo ctrl+alt+k; 460 list" "$SETTINGS keyboard"
 check_count "combinação antiga desligada (a janela continua aberta)" 'janela "Configurações do Sistema"' 1 "400 combo ctrl+shift+q; 460 list" "$SETTINGS keyboard"
 # Combinação já usada (Ctrl+Espaço é do buscador): pede confirmação, não grava nem abre o buscador.
-check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 500 256; 430 click 525 315; 460 combo ctrl+space; 520 list" "$SETTINGS keyboard"
+check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 600 224; 410 type fechar; 440 click 500 298; 470 click 525 315; 500 combo ctrl+space; 560 list" "$SETTINGS keyboard"
 if ! grep -q '"ctrl+space" = "close_window"' "$SCFG/mide/config.toml"; then
     echo "ok    combinação de outra ação pede confirmação"; PASS=$((PASS + 1))
 else
     echo "FALHA combinação de outra ação pede confirmação"; FAIL=$((FAIL + 1))
 fi
-# "Restaurar os padrões" em (511, 514): a seção de atalhos sai do arquivo.
-timeout 150 "$SCEN" "400 click 511 514; 460 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+# "Restaurar os padrões" (buscando algo sem resultado, a lista some) em (510, 292): a
+# seção de atalhos sai do arquivo.
+timeout 150 "$SCEN" "400 click 600 224; 410 type zzz; 440 click 510 292; 500 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if ! grep -q "keybindings" "$SCFG/mide/config.toml"; then
     echo "ok    restaurar os atalhos padrão"; PASS=$((PASS + 1))
 else
@@ -467,7 +486,7 @@ rm -rf "$SCFG"
 echo "== buscador (ctrl+space)"
 SEARCH="400 combo ctrl+space"
 check "ctrl+space abre o buscador em tela cheia" 'camada "mide-search" em \(0, 0\) 1366x768' "$SEARCH; 460 list"
-check "buscador sobre vidro" 'vidro: desfoque refeito \(mide-search#0\)' "$SEARCH; 440 type calc; 480 list"
+check "buscador sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-search#0\)' "$SEARCH; 440 type calc; 480 list"
 check "buscar e Enter abre o app" "nova janela criada" "$SEARCH; 440 type calc; 470 key enter; 600 list"
 check_count "Esc fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 key esc; 490 list"
 check_count "o atalho de novo fecha o buscador" 'camada "mide-search"' 0 "$SEARCH; 450 combo ctrl+space; 490 list"
@@ -529,14 +548,14 @@ fi
 rm -rf "$DESK"
 
 echo "== vidro em barras e menus"
-check "barra superior sobre vidro" 'vidro: desfoque refeito \(mide-bar#0\)' "300 list"
-check "menu da barra sobre vidro" 'vidro: desfoque refeito \(mide-bar-menu#0\)' "300 click 25 14; 360 list"
-check "menu da dock sobre vidro" 'vidro: desfoque refeito \(mide-dock-menu#0\)' "300 rclick 799 728; 360 list"
+check "barra superior sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-bar#0\)' "300 list"
+check "menu da barra sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-bar-menu#0\)' "300 click 25 14; 360 list"
+check "menu da dock sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-dock-menu#0\)' "300 rclick 799 728; 360 list"
 GCFG="$(mktemp -d)"
 mkdir -p "$GCFG/mide"
 printf '[effects]\npanel_glass = false\n' >"$GCFG/mide/config.toml"
 GLOG="$(XDG_CONFIG_HOME="$GCFG" timeout 150 "$SCEN" "300 click 25 14; 360 list" 2>&1)"
-if ! echo "$GLOG" | grep -q 'camada "mide-bar"' || echo "$GLOG" | grep -q "vidro: desfoque refeito (mide-bar"; then
+if ! echo "$GLOG" | grep -q 'camada "mide-bar"' || echo "$GLOG" | grep -Eq "vidro: desfoque refeito \([^:]*:mide-bar"; then
     echo "FALHA sem vidro na barra e nos menus com o efeito desligado"; FAIL=$((FAIL + 1))
 else
     echo "ok    sem vidro na barra e nos menus com o efeito desligado"; PASS=$((PASS + 1))
@@ -603,7 +622,7 @@ file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" 
 file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 349; 470 type rascunhos; 490 key enter; 530 list"
 file_check "menu da pasta → Novo arquivo aqui dentro" '[ -f "$FDIR/Projetos/ideias.md" ] && [ ! -e "$FDIR/ideias.md" ]' "400 rclick 581 190; 430 click 630 375; 470 type ideias.md; 490 key enter; 530 list"
 # Barra lateral de vidro (acesso rápido): o compositor desfoca atrás da janela.
-check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \(app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
+check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
 file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581 310; 430 combo ctrl+d; 470 list"
 file_check "Ctrl+C e Ctrl+V copiam para outra pasta" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ -f "$FDIR/relatorio.pdf" ]' "400 click 581 310; 420 combo ctrl+c; 440 click 463 190; 446 click 463 190; 480 combo ctrl+v; 520 list"
 rm -rf "$(dirname "$FDIR")"
@@ -641,9 +660,9 @@ if command -v xclock >/dev/null && { command -v xwayland-satellite >/dev/null ||
     XAPP="sh -c 'sleep 2; DISPLAY=\$(cat \"\$XDG_RUNTIME_DIR/\$MIDE_SOCKET.xdisplay\") exec xclock -geometry 300x300'"
     # O xclock abre ~3 s depois do mide (espera do app e partida do Xwayland): os
     # passos começam no quadro 2000.
-    MIDE_XWAYLAND=1 SCENARIO_WAIT=30 check "app X11 (xclock) abre como janela do mide" 'janela "xclock" .*barra=30' "2000 list" "$XAPP"
+    MIDE_XWAYLAND=1 SCENARIO_WAIT=42 SCENARIO_TIMEOUT=60 check "app X11 (xclock) abre como janela do mide" 'janela "xclock" .*barra=30' "2000 list" "$XAPP"
     # Aparece na lista de antes do clique (1 vez) e some depois dele.
-    MIDE_XWAYLAND=1 SCENARIO_WAIT=30 check_count "fechar pela barra do mide fecha o app X11" 'janela "xclock"' 1 "2000 list; 2020 click 63 61; 2100 list" "$XAPP"
+    MIDE_XWAYLAND=1 SCENARIO_WAIT=42 SCENARIO_TIMEOUT=60 check_count "fechar pela barra do mide fecha o app X11" 'janela "xclock"' 1 "2000 list; 2020 click 63 61; 2100 list" "$XAPP"
 else
     echo "pulo  apps X11 (falta xclock ou xwayland-satellite)"
 fi
@@ -675,9 +694,14 @@ export MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080
 SETTINGS="$PWD/target/debug/mide-settings"
 check "duas telas lado a lado" 'tela HEADLESS-2 em \(1366, 0\) 1920x1080' "300 list"
 printf '[monitors]\nprimary = "HEADLESS-2"\n' > "$MONCFG/mide/config.toml"
-check "barra na tela principal escolhida" 'camada "mide-bar" em \(1366, 0\) 1920x28' "300 list"
+check "barra na tela principal escolhida" 'camada "mide-bar" em \(0, 0\) 1920x28' "300 list"
 printf '[monitors.outputs."HEADLESS-2"]\nenabled = false\n' > "$MONCFG/mide/config.toml"
-check_count "tela desligada fica de fora" 'tela HEADLESS' 1 "300 list"
+TELAS="$(timeout 150 "$SCEN" "300 list" 2>&1 | grep -c "autoteste: tela HEADLESS")"
+if [ "$TELAS" = 1 ]; then
+    echo "ok    tela desligada fica de fora"; PASS=$((PASS + 1))
+else
+    echo "FALHA tela desligada fica de fora (esperado 1, obtido $TELAS)"; FAIL=$((FAIL + 1))
+fi
 : > "$MONCFG/mide/config.toml"
 # Configurações → Monitores: HEADLESS-2 no arranjo em (654, 255); "Usar como tela
 # principal" em (404, 526); "Aplicar" em (430, 422); na janelinha de confirmação,

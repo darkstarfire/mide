@@ -1,5 +1,7 @@
 # mide-ui: crie apps com a interface do mide
 
+> **Antes de criar uma tela, leia o guia de identidade visual: [`design.md`](design.md).** Ele define cores, vidro, estados, menus, diálogos e as animações padrão (durações e curvas) que todo app do mide segue.
+
 O mide-ui é o framework para criar apps com a mesma cara e o mesmo comportamento das
 Configurações do Sistema do mide: cartões brancos, interruptores, trilhos, barra
 lateral, barra de rolagem fina e a barra de título com os três botões. Você escreve

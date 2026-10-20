@@ -151,7 +151,7 @@ pub struct State {
     /// (`resposta: ... ms`, em nível debug, lido pelo `tests/perf.sh`).
     /// Regiões de vidro pedidas pelas camadas (`glass` no canal de controle): pelo
     /// nome da camada, retângulos relativos a ela e o raio dos cantos.
-    pub glass: std::collections::HashMap<String, Vec<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32)>>,
+    pub glass: std::collections::HashMap<String, Vec<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32, f32)>>,
     pub input_mark: Option<(Instant, &'static str, smithay::reexports::wayland_server::backend::ClientId)>,
     /// Posição atual do cursor, em coordenadas globais.
     pub pointer_location: Point<f64, Logical>,
@@ -202,6 +202,8 @@ pub struct State {
     pub outputs_info: Vec<OutputInfo>,
     /// Pede ao backend para refazer as telas pela configuração (`outputs apply`).
     pub outputs_waker: Option<smithay::reexports::calloop::ping::Ping>,
+    /// Pede ao backend para reaplicar o mouse e o trackpad (`[input]`, depois do `reload`).
+    pub input_waker: Option<smithay::reexports::calloop::ping::Ping>,
     /// Tela onde estão a barra, a dock e a área de trabalho (para reabri-los quando a
     /// tela principal muda).
     pub shell_output: Option<String>,
@@ -322,6 +324,7 @@ impl State {
             screenshot_request: None,
             appearing: Vec::new(),
             outputs_waker: None,
+            input_waker: None,
             shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
             session: None,
@@ -474,6 +477,33 @@ impl CompositorHandler for State {
         if let Some(window) = self.window_for(surface) {
             window.on_commit();
             self.open_animation_if_launched(&window);
+            self.offer_clipboard_on_first_frame(surface);
+        }
+    }
+}
+
+/// Marca da janela que já mostrou o primeiro quadro (a área de transferência já foi
+/// oferecida a ela).
+struct ClipboardOffered;
+
+impl State {
+    /// A janela nova ganha o foco antes de desenhar, e muitos apps só criam o canal da
+    /// área de transferência depois: a seleção oferecida naquela hora se perde e colar
+    /// não funcionaria até trocar de janela. No primeiro quadro, se ela ainda está em
+    /// foco, a seleção é oferecida de novo.
+    fn offer_clipboard_on_first_frame(&mut self, surface: &WlSurface) {
+        let has_buffer = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer().is_some()).unwrap_or(false);
+        if !has_buffer {
+            return;
+        }
+        let first = with_states(surface, |states| states.data_map.insert_if_missing_threadsafe(|| ClipboardOffered));
+        if !first {
+            return;
+        }
+        let focused = self.seat.get_keyboard().and_then(|k| k.current_focus()).is_some_and(|f| &f == surface);
+        if let (true, Ok(client)) = (focused, self.display_handle.get_client(surface.id())) {
+            set_data_device_focus(&self.display_handle, &self.seat, None);
+            set_data_device_focus(&self.display_handle, &self.seat, Some(client));
         }
     }
 }

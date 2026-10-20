@@ -162,7 +162,7 @@ pub struct Blur {
 }
 
 /// Passadas do desfoque (cada uma reduz à metade) e o deslocamento das amostras.
-pub const LAUNCHER_PASSES: u32 = 5;
+pub const LAUNCHER_PASSES: u32 = 3;
 pub const DOCK_PASSES: u32 = 3;
 
 impl Blur {
@@ -351,7 +351,7 @@ impl Blur {
         let mut cache = self.wallpaper.borrow_mut();
         if cache.as_ref().map(|(k, _)| *k) != Some(key) {
             let src = Rectangle::from_size((tex_size.w as f64, tex_size.h as f64).into());
-            let (blurred, _) = self.blur(renderer, &texture, tex_size, src, LAUNCHER_PASSES, 3.0)?;
+            let (blurred, _) = self.blur(renderer, &texture, tex_size, src, LAUNCHER_PASSES, 2.5)?;
             tracing::info!("fundo do launcher desfocado ({}x{})", output.size.w, output.size.h);
             *cache = Some((key, blurred));
         }

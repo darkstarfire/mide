@@ -183,8 +183,14 @@ struct FolderAnim {
     /// Grade (sem escurecer), fundo sem a grade (escurecido, como com a pasta aberta),
     /// painel sobre transparente e o retângulo dele.
     frames: Option<(Pixmap, Pixmap, Pixmap, (f32, f32, f32, f32))>,
+    /// Vidro das pastas da grade e do painel aberto.
+    glass: (Vec<GlassRect>, Vec<GlassRect>),
 }
 const POP_MS: f32 = 340.0;
+
+/// Região de vidro líquido pedida ao compositor: x, y, largura, altura, raio e
+/// opacidade (pastas e o painel da pasta aberta).
+type GlassRect = (f32, f32, f32, f32, f32, f32);
 
 /// Desaceleração suave (cúbica).
 fn ease_out(t: f32) -> f32 {
@@ -209,6 +215,8 @@ struct PageAnim {
     /// Os dois quadros (página antiga e nova) já no formato da tela e a faixa que
     /// desliza; nos quadros seguintes só as linhas são copiadas.
     frames: Option<(Vec<u8>, Vec<u8>, (usize, usize, usize, usize))>,
+    /// Vidro das pastas na página antiga e na nova (desliza junto com elas).
+    glass: (Vec<GlassRect>, Vec<GlassRect>),
 }
 
 /// Distância mínima para um clique virar arrasto.
@@ -307,6 +315,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         panel_only: false,
         background_only: false,
         last_frame: None,
+        glass: Default::default(),
+        glass_rects: Vec::new(),
+        shown_glass: Vec::new(),
+        liquid: mide::settings_file::effect("liquid_glass"),
         scaled: HashMap::new(),
         warmed: false,
         pop: None,
@@ -472,6 +484,13 @@ struct Launcher {
     background_only: bool,
     /// Último quadro mostrado, no formato da tela (a página antiga do carrossel).
     last_frame: Option<Vec<u8>>,
+    /// Vidro líquido nas pastas (`[effects] liquid_glass`): o compositor desfoca e
+    /// refrata o que está atrás de cada região; aqui fica só um véu leve.
+    glass: mide::control_client::Glass,
+    /// Regiões de vidro do último desenho (`paint_scene`) e do último quadro mostrado.
+    glass_rects: Vec<GlassRect>,
+    shown_glass: Vec<GlassRect>,
+    liquid: bool,
     /// Ícones já reduzidos, por (app, tamanho×4).
     scaled: HashMap<(String, u32), Pixmap>,
     /// As outras páginas já foram desenhadas uma vez (caches prontos).
@@ -563,7 +582,9 @@ impl Launcher {
                 _ => "Pasta".to_string(),
             };
             if let Some(folder) = self.layout.drop_on(drag.entry, target, &name) {
-                self.pop = Some((folder, std::time::Instant::now()));
+                if mide::settings_file::effect("transitions") {
+                    self.pop = Some((folder, std::time::Instant::now()));
+                }
                 tracing::info!("pasta {:?} no lugar {folder}", self.layout.slots.get(folder).map(|s| match s {
                     Slot::Folder { name, apps } => format!("{name} ({} apps)", apps.len()),
                     Slot::App(id) => id.clone(),
@@ -692,7 +713,9 @@ impl Launcher {
         if self.open_folder.is_some() {
             if page != self.folder_page {
                 tracing::info!("página da pasta {} → {}", self.folder_page, page);
-                self.page_anim = Some(PageAnim { from: self.folder_page, to: page, folder: true, start: std::time::Instant::now(), frames: None });
+                if mide::settings_file::effect("transitions") {
+                    self.page_anim = Some(PageAnim { from: self.folder_page, to: page, folder: true, start: std::time::Instant::now(), frames: None, glass: Default::default() });
+                }
                 self.folder_page = page;
                 self.redraw();
             }
@@ -701,7 +724,9 @@ impl Launcher {
         if page != self.page {
             // Carrossel: a página atual sai para um lado e a nova entra pelo outro.
             tracing::info!("página {} → {}", self.page, page);
-            self.page_anim = Some(PageAnim { from: self.page, to: page, folder: false, start: std::time::Instant::now(), frames: None });
+            if mide::settings_file::effect("transitions") {
+                self.page_anim = Some(PageAnim { from: self.page, to: page, folder: false, start: std::time::Instant::now(), frames: None, glass: Default::default() });
+            }
             self.page = page;
             self.log_folders();
             self.redraw();
@@ -737,7 +762,7 @@ impl Launcher {
         let origin = self.folder_icon_rect(folder);
         self.open_folder = open;
         if let Some(origin) = origin {
-            self.folder_anim = Some(FolderAnim { start: std::time::Instant::now(), opening, folder, origin, frames: None });
+            self.folder_anim = Some(FolderAnim { start: std::time::Instant::now(), opening, folder, origin, frames: None, glass: Default::default() });
         }
     }
 
@@ -857,14 +882,16 @@ impl Launcher {
                         to_argb8888(p, &mut out);
                         out
                     };
-                    let old = match self.last_frame.take() {
-                        Some(frame) if frame.len() == (self.width * self.height * 4) as usize => frame,
-                        _ => bytes(&self.paint_scene(Some(from), false)),
+                    let (old, old_glass) = match self.last_frame.take() {
+                        Some(frame) if frame.len() == (self.width * self.height * 4) as usize => (frame, self.shown_glass.clone()),
+                        _ => (bytes(&self.paint_scene(Some(from), false)), self.glass_rects.clone()),
                     };
                     let new = self.paint_scene(Some(to), false);
+                    let new_glass = self.glass_rects.clone();
                     let band = self.slide_band(folder);
                     if let Some(anim) = self.page_anim.as_mut() {
                         anim.frames = Some((old, bytes(&new), band));
+                        anim.glass = (old_glass, new_glass);
                     }
                 }
                 let dir = if to > from { 1 } else { -1 };
@@ -874,8 +901,12 @@ impl Launcher {
             }
             self.page_anim = None;
         }
+        self.liquid = mide::settings_file::effect("liquid_glass");
         let pixmap = self.paint_scene(None, true);
         self.present(&pixmap);
+        self.shown_glass = self.glass_rects.clone();
+        let rects = self.shown_glass.clone();
+        self.send_glass(&rects);
         if let Some(started) = self.started.take() {
             tracing::info!("launcher desenhado em {} ms", started.elapsed().as_millis());
         }
@@ -892,6 +923,7 @@ impl Launcher {
             let current = self.open_folder;
             self.open_folder = None;
             let grid = self.paint_scene(None, false);
+            let grid_glass = self.glass_rects.clone();
             // O fundo sem a grade, já escurecido (como com a pasta aberta): a grade some
             // nele aos poucos, junto com o painel crescendo.
             self.background_only = true;
@@ -905,12 +937,14 @@ impl Launcher {
             self.open_folder = Some(folder);
             self.panel_only = true;
             let open = self.paint_scene(None, false);
+            let panel_glass = self.glass_rects.clone();
             self.panel_only = false;
             // Painel e o nome em cima dele.
             let panel = self.folder_rect.map(|(x, y, w, h)| (x, y - 56.0, w, h + 56.0)).unwrap_or((0.0, 0.0, 1.0, 1.0));
             self.open_folder = current;
             if let Some(anim) = self.folder_anim.as_mut() {
                 anim.frames = Some((grid, background, open, panel));
+                anim.glass = (grid_glass, panel_glass);
             }
         }
         let Some(anim) = self.folder_anim.as_ref() else {
@@ -941,7 +975,16 @@ impl Launcher {
             let transform = Transform::from_row(s, 0.0, 0.0, s, cx - pw * s / 2.0, cy - ph * s / 2.0);
             out.draw_pixmap(0, 0, crop.as_ref(), &paint, transform, None);
         }
+        // O vidro acompanha: o das pastas da grade some com ela; o do painel cresce
+        // e aparece com ele.
+        let (grid_glass, panel_glass) = &anim.glass;
+        let (crop_x, crop_y) = (px.max(0.0), py.max(0.0));
+        let (tx, ty) = (cx - pw * s / 2.0, cy - ph * s / 2.0);
+        let ge = e.clamp(0.0, 1.0);
+        let mut rects: Vec<GlassRect> = grid_glass.iter().map(|&(x, y, w, h, r, a)| (x, y, w, h, r, a * (1.0 - ge))).collect();
+        rects.extend(panel_glass.iter().map(|&(x, y, w, h, r, a)| (tx + (x - crop_x) * s, ty + (y - crop_y) * s, w * s, h * s, r * s, a * ge)));
         self.present(&out);
+        self.send_glass(&rects);
     }
 
     /// Parado e com os ícones carregados: desenha uma vez, fora da tela, as outras
@@ -1020,6 +1063,35 @@ impl Launcher {
         if buffer.attach_to(surface).is_ok() {
             self.layer.commit();
         }
+        // O vidro das pastas desliza com as páginas (recortado na faixa).
+        let (old_glass, new_glass) = self.page_anim.as_ref().map(|a| a.glass.clone()).unwrap_or_default();
+        let (b0, b1) = (bx0 as f32, bx1 as f32);
+        let inside = |r: &GlassRect| r.1 >= by0 as f32 && r.1 + r.3 <= by1 as f32;
+        let mut rects: Vec<GlassRect> = Vec::new();
+        let mut push = |r: &GlassRect, dx: f32| {
+            let (x0, x1) = ((r.0 + dx).max(b0), (r.0 + dx + r.2).min(b1));
+            if x1 - x0 > 1.0 {
+                rects.push((x0, r.1, x1 - x0, r.3, r.4, r.5));
+            }
+        };
+        let d = dir as f32;
+        for r in old_glass.iter().filter(|r| inside(r)) {
+            push(r, -d * shift as f32);
+        }
+        for r in &new_glass {
+            if inside(r) {
+                push(r, d * (bw - shift) as f32);
+            } else {
+                push(r, 0.0);
+            }
+        }
+        self.send_glass(&rects);
+    }
+
+    /// Pede ao compositor o vidro líquido das pastas (nada com o efeito desligado).
+    fn send_glass(&mut self, rects: &[GlassRect]) {
+        let rects = if self.liquid { rects } else { &[] };
+        self.glass.set_faded("mide-launcher", rects);
     }
 
     fn present(&mut self, pixmap: &Pixmap) {
@@ -1050,9 +1122,10 @@ impl Launcher {
     fn paint_scene(&mut self, page: Option<usize>, interactive: bool) -> Pixmap {
         let (w, h) = (self.width, self.height);
         let mut pixmap = Pixmap::new(w, h).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        self.glass_rects.clear();
         // Véu leve: o papel de parede (desfocado pelo compositor) continua aparecendo.
         if !self.panel_only {
-            mide::ui::draw::fill_vertical_fast(&mut pixmap, [8, 10, 30, 95], [6, 6, 20, 130]);
+            mide::ui::draw::fill_vertical_fast(&mut pixmap, [8, 10, 30, 70], [6, 6, 20, 105]);
             self.draw_search(&mut pixmap);
         }
 
@@ -1089,10 +1162,16 @@ impl Launcher {
             let ph = (fg.rows * fg.cell_h + 40) as f32;
             let px = (w as f32 - pw) / 2.0;
             let py = fg.y0 as f32 - 20.0 - ((fg.rows * fg.cell_h + 40 - 28).saturating_sub(fg.rows * fg.cell_h) / 2) as f32;
-            fill_rounded(&mut pixmap, px, py, pw, ph, 28.0, rgba(255, 255, 255, 46));
+            // Com o vidro líquido, o desfoque, a refração e a borda vêm do compositor:
+            // aqui só um véu leve.
+            let (fill, edge) = if self.liquid { (16, 36) } else { (46, 80) };
+            if self.liquid {
+                self.glass_rects.push((px, py, pw, ph, 28.0, 1.0));
+            }
+            fill_rounded(&mut pixmap, px, py, pw, ph, 28.0, rgba(255, 255, 255, fill));
             if let Some(path) = rounded_rect(px + 0.5, py + 0.5, pw - 1.0, ph - 1.0, 27.5) {
                 let mut border = Paint::default();
-                border.set_color(rgba(255, 255, 255, 80));
+                border.set_color(rgba(255, 255, 255, edge));
                 border.anti_alias = true;
                 pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
             }
@@ -1218,10 +1297,16 @@ impl Launcher {
     fn draw_folder_icon(&mut self, pixmap: &mut Pixmap, folder: usize, x: f32, y: f32, size: f32) {
         let inset = size * 0.04;
         let (bx, by, bs) = (x + inset, y + inset, size - 2.0 * inset);
-        fill_rounded(pixmap, bx, by, bs, bs, bs * 0.24, rgba(255, 255, 255, 62));
+        // Vidro líquido (como no macOS): o compositor desfoca e refrata o fundo atrás do
+        // quadrado; aqui só um véu leve e um contorno discreto.
+        let (fill, edge) = if self.liquid { (22, 50) } else { (62, 105) };
+        if self.liquid {
+            self.glass_rects.push((bx, by, bs, bs, bs * 0.24, 1.0));
+        }
+        fill_rounded(pixmap, bx, by, bs, bs, bs * 0.24, rgba(255, 255, 255, fill));
         if let Some(path) = rounded_rect(bx + 0.5, by + 0.5, bs - 1.0, bs - 1.0, bs * 0.24) {
             let mut border = Paint::default();
-            border.set_color(rgba(255, 255, 255, 105));
+            border.set_color(rgba(255, 255, 255, edge));
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
         }

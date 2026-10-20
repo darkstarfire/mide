@@ -931,3 +931,20 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Bolinhas das páginas paradas:** no carrossel (launcher e pastas), só o conteúdo desliza; a linha das bolinhas fica parada, já com a página de destino acesa.
 - **Vidro da janela depois da lâmpada:** o vidro (desfoque atrás da barra lateral do Arquivos) entra esmaecendo em 220 ms quando a animação termina, em vez de aparecer de uma vez (`Genie::glass_since`).
 - **Teclas no estilo Mac num terminal** (foot, kitty, GNOME Terminal, Konsole e outros): o Ctrl continua Ctrl (Ctrl+C interrompe, como no Terminal do Mac) e ⌘+C/⌘+V (a tecla Windows) copiam e colam (viram Ctrl+Shift+C/V). Antes, com o estilo Mac, copiar e colar no terminal exigia Windows+Shift+C/V.
+
+## Lista de atalhos em grupos com busca, destaque padrão nas listas e Mouse e trackpad (B7)
+
+- **Configurações → Teclado → atalhos:** em grupos (Janelas, Launcher e busca, Apps, Sistema), com **busca pelo nome** (sem diferenciar acentos; também acha pela combinação). Nomes legíveis para as ações novas ("Alternar janelas", "Janela na metade esquerda"...) e teclas com nomes melhores (Tab, ↑ ↓ ← →, Print Screen).
+- **Destaque ao passar o mouse nas listas do mide-ui** (`list_item`): a mesma pílula cinza arredondada da barra lateral (antes, um retângulo colado nas linhas, fora do padrão).
+- **Configurações → Mouse e trackpad** (`[input]` no config): velocidade do ponteiro, aceleração do mouse, rolagem natural no mouse e no trackpad (ligada no trackpad por padrão, como no Mac) e toque para clicar. O backend DRM aplica pelo libinput em cada aparelho conectado e reaplica na hora quando muda (`reload` → `input_waker`).
+- `settings_file`: valores decimais (`Value::Float`).
+
+## Identidade visual, pastas do launcher em vidro líquido e correções da bateria
+
+- **Guia de identidade visual (`docs/design.md`):** cores, tipografia, formas, vidro, estados de interação, componentes do mide-ui, menus, diálogos, movimento (durações e curvas) e lista de revisão. Seção 9, **catálogo de efeitos**: superfícies (S1–S8), tipos de efeito (Surgir, Zoom de cena, Expandir da origem, Lâmpada, Interpolar geometria, Deslizar, Cascata, Esmaecer cruzado, Encolher e sumir, Mola, Imediato), ações (A1–A16), onde cada efeito acontece hoje com o interruptor, lacunas e regras para decidir. Regra para os apps novos e padrão do mide-ui.
+- **Pastas do launcher em vidro líquido** (como no macOS): o ícone da pasta e o painel aberto pedem vidro ao compositor (desfoque, refração na borda e reflexo, o mesmo da dock), e o vidro acompanha as transições (some com a grade, cresce com o painel, desliza com as páginas, segue o zoom e o esmaecer do launcher). Interruptor "Vidro líquido" (desligado, o visual antigo).
+- **Fundo do launcher mais leve:** desfoque com 3 passadas (antes 5) e véu mais claro; o papel de parede continua reconhecível atrás.
+- **Vidro com opacidade por região** no canal de controle (`glass <camada> raio@opacidade:x,y,w,h`), e o envio do vidro pelos clientes numa thread própria (o desenho não espera o compositor; só o pedido mais recente vai).
+- **Carrossel e pasta nova do launcher com interruptor** ("Transições suaves"); antes não tinham opção.
+- **Colar num app recém-aberto:** a janela nova ganhava o foco antes de criar o canal da área de transferência, e a seleção oferecida se perdia (colar não funcionava até trocar de janela). Agora a seleção é oferecida de novo no primeiro quadro da janela em foco.
+- **Controle deslizante do mide-ui:** no quadro em que o botão é solto, o valor também vem da posição do ponteiro (a velocidade do ponteiro em Mouse e trackpad não era gravada ao soltar).

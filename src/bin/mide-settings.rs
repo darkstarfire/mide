@@ -35,6 +35,7 @@ enum Section {
     Dock,
     Bar,
     Effects,
+    Mouse,
     Keyboard,
     About,
 }
@@ -52,6 +53,7 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Bar), "Barra superior", "gnome-panel", [88, 86, 214]),
     (Some(Section::Effects), "Efeitos", "preferences-desktop-theme", [191, 90, 242]),
     (None, "", "", [0, 0, 0]),
+    (Some(Section::Mouse), "Mouse e trackpad", "input-mouse", [142, 142, 147]),
     (Some(Section::Keyboard), "Teclado", "preferences-desktop-keyboard", [142, 142, 147]),
     (Some(Section::About), "Sobre", "help-about", [142, 142, 147]),
 ];
@@ -60,14 +62,14 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
 const EFFECTS: &[(&str, &str, &str)] = &[
     ("shadows", "Sombras das janelas", "Sombra suave em volta de cada janela"),
     ("rounded_corners", "Cantos arredondados", "Janelas com cantos arredondados e contorno fino"),
-    ("animations", "Animações", "Maximizar, restaurar e minimizar com transição suave"),
+    ("animations", "Animações", "Maximizar, restaurar, fechar janelas e abrir o launcher com transição suave"),
     ("lamp", "Efeito lâmpada", "Minimizar escorre a janela até o ícone da dock"),
     ("dock_blur", "Desfoque na dock", "A dock desfoca o que está atrás dela, como vidro fosco"),
     ("launcher_blur", "Desfoque no launcher", "O fundo do launcher é o papel de parede desfocado"),
-    ("liquid_glass", "Vidro líquido", "Dock com bordas que refratam a luz e reflexo, sobre o desfoque"),
+    ("liquid_glass", "Vidro líquido", "Dock e pastas do launcher com bordas que refratam a luz e reflexo, sobre o desfoque"),
     ("panel_glass", "Vidro em barras e menus", "Barra superior, menus, notificações e prévias das janelas com vidro"),
     ("menu_animation", "Animação dos menus", "Menus e listas aparecem com um esmaecer curto"),
-    ("transitions", "Transições suaves", "Prévias da dock e Alt+Tab, pastas do launcher e do Arquivos e troca entre ícones e lista"),
+    ("transitions", "Transições suaves", "Prévias da dock e Alt+Tab, páginas e pastas do launcher, pastas do Arquivos e troca entre ícones e lista"),
 ];
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela.
@@ -95,6 +97,10 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Vidro em barras e menus", "efeitos vidro barra menus notificacoes transparencia", Section::Effects),
     ("Animação dos menus", "efeitos animacao menus contexto esmaecer", Section::Effects),
     ("Transições suaves", "efeitos animacao transicao suave launcher pastas arquivos lista icones", Section::Effects),
+    ("Velocidade do ponteiro", "mouse trackpad touchpad ponteiro velocidade cursor", Section::Mouse),
+    ("Rolagem natural", "mouse trackpad touchpad rolagem natural scroll invertida", Section::Mouse),
+    ("Toque para clicar", "trackpad touchpad toque clicar tap", Section::Mouse),
+    ("Aceleração do mouse", "mouse aceleracao ponteiro precisao", Section::Mouse),
     ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
     ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
     ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
@@ -144,6 +150,8 @@ struct Settings {
     screen_selected: usize,
     /// Mudanças aplicadas esperando confirmação: quando foram aplicadas e as anteriores.
     screens_revert: Option<(std::time::Instant, Vec<Display>)>,
+    /// Busca na lista de atalhos.
+    shortcut_query: String,
 }
 
 impl Settings {
@@ -178,6 +186,7 @@ impl Settings {
             screens: Vec::new(),
             screen_selected: 0,
             screens_revert: None,
+            shortcut_query: String::new(),
             volume: 0.0,
             dock_size: match settings_file::get("dock", "icon_size") {
                 Some(Value::Int(n)) => (n as f32).clamp(DOCK_MIN, DOCK_MAX),
@@ -710,6 +719,61 @@ impl Settings {
         ui.note("As mudanças valem na hora.");
     }
 
+    /// Mouse e trackpad (`[input]`): velocidade, aceleração, rolagem natural e toque
+    /// para clicar. Valem na hora para os aparelhos conectados.
+    fn mouse(&mut self, ui: &mut Ui) {
+        ui.title("Mouse e trackpad");
+        // Grava só o que difere do padrão (o resto sai do arquivo).
+        let save = |key: &str, value: Option<Value>| match settings_file::set("input", key, value) {
+            Ok(()) => {
+                ask_compositor("reload");
+            }
+            Err(err) => tracing::warn!("opção de mouse não gravada: {err}"),
+        };
+        let flag = |key: &str, default: bool| match settings_file::get("input", key) {
+            Some(Value::Bool(b)) => b,
+            _ => default,
+        };
+        let mut speed = match settings_file::get("input", "pointer_speed") {
+            Some(Value::Float(x)) => x as f32,
+            Some(Value::Int(n)) => n as f32,
+            _ => 0.0,
+        } * 50.0
+            + 50.0;
+        let mut accel = flag("mouse_acceleration", true);
+        let mut mouse_natural = flag("mouse_natural_scroll", false);
+        let mut pad_natural = flag("touchpad_natural_scroll", true);
+        let mut tap = flag("tap_to_click", true);
+        ui.card(|ui| {
+            if ui.slider("Velocidade do ponteiro", &mut speed, 0.0, 100.0).submitted() {
+                let value = ((speed - 50.0) / 50.0).clamp(-1.0, 1.0) as f64;
+                let value = (value * 100.0).round() / 100.0;
+                tracing::info!("mouse: velocidade {value}");
+                save("pointer_speed", (value.abs() > 0.005).then_some(Value::Float(value)));
+            }
+            if ui.switch_detail("Aceleração do mouse", "Movimentos rápidos levam o ponteiro mais longe", &mut accel).changed() {
+                tracing::info!("mouse: aceleração {}", if accel { "ligada" } else { "desligada" });
+                save("mouse_acceleration", (!accel).then_some(Value::Bool(false)));
+            }
+            if ui.switch_detail("Rolagem natural no mouse", "O conteúdo acompanha o movimento da roda", &mut mouse_natural).changed() {
+                tracing::info!("mouse: rolagem natural {}", if mouse_natural { "ligada" } else { "desligada" });
+                save("mouse_natural_scroll", mouse_natural.then_some(Value::Bool(true)));
+            }
+        });
+        ui.heading("Trackpad");
+        ui.card(|ui| {
+            if ui.switch_detail("Rolagem natural", "O conteúdo acompanha os dedos, como no Mac", &mut pad_natural).changed() {
+                tracing::info!("trackpad: rolagem natural {}", if pad_natural { "ligada" } else { "desligada" });
+                save("touchpad_natural_scroll", (!pad_natural).then_some(Value::Bool(false)));
+            }
+            if ui.switch_detail("Toque para clicar", "Um toque no trackpad clica, sem apertar", &mut tap).changed() {
+                tracing::info!("trackpad: toque para clicar {}", if tap { "ligado" } else { "desligado" });
+                save("tap_to_click", (!tap).then_some(Value::Bool(false)));
+            }
+        });
+        ui.note("As mudanças valem na hora para os mouses e trackpads conectados (na sessão do mide).");
+    }
+
     fn keyboard(&mut self, ui: &mut Ui) {
         ui.title("Teclado");
         let mut mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
@@ -725,19 +789,40 @@ impl Settings {
                 }
             }
         });
-        ui.heading("Atalhos");
+        // Busca pelo nome do atalho (ou pela combinação), sem diferenciar acentos.
+        let mut query = std::mem::take(&mut self.shortcut_query);
+        ui.text_input(&mut query, "Buscar atalho");
+        self.shortcut_query = query;
+        let wanted = mide::apps::fold(self.shortcut_query.trim());
         let bindings = self.bindings.clone();
         let mut chosen = None;
-        ui.card(|ui| {
-            if bindings.is_empty() {
-                ui.note("Nenhum atalho.");
+        let mut shown = 0;
+        // Por grupo: Janelas, Launcher e busca, Apps, Sistema.
+        for group in SHORTCUT_GROUPS {
+            let items: Vec<(String, String, String)> = bindings
+                .iter()
+                .filter(|(_, action)| shortcut_group(action) == group)
+                .map(|(combo, action)| (describe_action(action, &self.apps), combo.clone(), action.clone()))
+                .filter(|(title, combo, _)| {
+                    wanted.is_empty() || mide::apps::fold(title).contains(&wanted) || mide::apps::fold(&pretty_combo(combo, mac)).contains(&wanted)
+                })
+                .collect();
+            if items.is_empty() {
+                continue;
             }
-            for (combo, action) in &bindings {
-                if ui.list_item(&describe_action(action, &self.apps), &pretty_combo(combo, mac)).clicked() {
-                    chosen = Some((combo.clone(), action.clone()));
+            shown += items.len();
+            ui.heading(group);
+            ui.card(|ui| {
+                for (title, combo, action) in &items {
+                    if ui.list_item(title, &pretty_combo(combo, mac)).clicked() {
+                        chosen = Some((combo.clone(), action.clone()));
+                    }
                 }
-            }
-        });
+            });
+        }
+        if shown == 0 {
+            ui.note(if bindings.is_empty() { "Nenhum atalho." } else { "Nenhum atalho com esse nome." });
+        }
         let (mut add, mut reset) = (false, false);
         ui.row(|ui| {
             ui.sized(170.0, |ui| add = ui.button("Novo atalho…").clicked());
@@ -1024,6 +1109,7 @@ impl App for Settings {
                 Section::Dock => self.dock(ui),
                 Section::Bar => self.bar(ui),
                 Section::Effects => self.effects(ui),
+                Section::Mouse => self.mouse(ui),
                 Section::Keyboard => self.keyboard(ui),
                 Section::About => self.about(ui),
             }
@@ -1139,6 +1225,14 @@ fn pretty_combo(combo: &str, mac: bool) -> String {
             "space" => "Espaço".to_string(),
             "escape" => "Esc".to_string(),
             "return" => "Enter".to_string(),
+            "tab" => "Tab".to_string(),
+            "up" => "↑".to_string(),
+            "down" => "↓".to_string(),
+            "left" => "←".to_string(),
+            "right" => "→".to_string(),
+            "print" => "Print Screen".to_string(),
+            "delete" => "Delete".to_string(),
+            "backspace" => "⌫".to_string(),
             other => other.to_uppercase(),
         })
         .collect::<Vec<_>>()
@@ -1172,7 +1266,36 @@ impl ShortcutEditor {
 }
 
 /// Ações do mide que um atalho novo pode fazer (além de abrir um app).
-const FIXED_ACTIONS: &[&str] = &["toggle_search", "toggle_launcher", "close_window", "restore_minimized", "quit"];
+const FIXED_ACTIONS: &[&str] = &[
+    "switch_windows",
+    "switch_windows_back",
+    "maximize",
+    "unmaximize",
+    "toggle_maximize",
+    "minimize",
+    "tile_left",
+    "tile_right",
+    "close_window",
+    "restore_minimized",
+    "show_desktop",
+    "toggle_launcher",
+    "toggle_search",
+    "lock_screen",
+    "quit",
+];
+
+/// Grupos da lista de atalhos, na ordem em que aparecem.
+const SHORTCUT_GROUPS: [&str; 4] = ["Janelas", "Launcher e busca", "Apps", "Sistema"];
+
+/// Grupo de um atalho (pela ação).
+fn shortcut_group(action: &str) -> &'static str {
+    match action {
+        "toggle_launcher" | "toggle_search" => "Launcher e busca",
+        "lock_screen" | "quit" | "launch:mide-screenshot" => "Sistema",
+        a if a.starts_with("launch:") => "Apps",
+        _ => "Janelas",
+    }
+}
 
 /// Combinação que não serve para atalho global: sem Ctrl, Alt ou Super ela tomaria
 /// uma tecla usada para digitar. Teclas de função (F1 a F24) podem ficar sozinhas.
@@ -1201,6 +1324,17 @@ fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
         "restore_minimized" => "Restaurar a última janela minimizada".into(),
         "toggle_launcher" => "Abrir ou fechar o launcher".into(),
         "toggle_search" => "Abrir ou fechar o buscador".into(),
+        "switch_windows" => "Alternar janelas".into(),
+        "switch_windows_back" => "Alternar janelas (para trás)".into(),
+        "maximize" => "Maximizar a janela".into(),
+        "unmaximize" => "Restaurar o tamanho da janela".into(),
+        "toggle_maximize" => "Maximizar ou restaurar a janela".into(),
+        "minimize" => "Minimizar a janela".into(),
+        "tile_left" => "Janela na metade esquerda".into(),
+        "tile_right" => "Janela na metade direita".into(),
+        "show_desktop" => "Mostrar a área de trabalho".into(),
+        "lock_screen" => "Bloquear a tela".into(),
+        "launch:mide-screenshot" => "Captura de tela".into(),
         other => match other.strip_prefix("launch:") {
             Some(cmd) => match apps.iter().find(|a| a.command == cmd || app_command(a) == cmd) {
                 Some(app) => format!("Abrir {}", app.name),
@@ -1223,6 +1357,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("dock") => Section::Dock,
         Some("bar") => Section::Bar,
         Some("effects") => Section::Effects,
+        Some("mouse") => Section::Mouse,
         Some("keyboard") => Section::Keyboard,
         Some("about") => Section::About,
         _ => Section::Wifi,

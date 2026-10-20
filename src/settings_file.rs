@@ -18,6 +18,7 @@ pub fn config_path() -> Option<PathBuf> {
 pub enum Value {
     Bool(bool),
     Int(i64),
+    Float(f64),
     Text(String),
 }
 
@@ -32,6 +33,7 @@ pub fn set_in_text(text: &str, section: &str, key: &str, new: Option<Value>) -> 
     match new {
         Some(Value::Bool(b)) => table[key] = value(b),
         Some(Value::Int(n)) => table[key] = value(n),
+        Some(Value::Float(x)) => table[key] = value(x),
         Some(Value::Text(t)) => table[key] = value(t),
         None => {
             table.remove(key);
@@ -53,6 +55,9 @@ pub fn get_in_text(text: &str, section: &str, key: &str) -> Option<Value> {
     }
     if let Some(n) = item.as_integer() {
         return Some(Value::Int(n));
+    }
+    if let Some(x) = item.as_float() {
+        return Some(Value::Float(x));
     }
     item.as_str().map(|s| Value::Text(s.to_string()))
 }

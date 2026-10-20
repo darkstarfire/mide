@@ -222,3 +222,10 @@
 - **mide-ui em HiDPI pendente:** os apps do mide desenham em 1x e o compositor amplia nas telas com escala.
 - **Testes de monitores** usam `MIDE_HEADLESS_OUTPUTS`; o quadro salvo é o da primeira tela (ou `MIDE_DUMP_OUTPUT`).
 - **Memória da máquina de casa (2026-10-19):** o `systemd-oomd` fechou o VS Code do usuário durante uma compilação completa numa segunda pasta (`CARGO_TARGET_DIR`) em paralelo com a bateria. Não compilar em paralelo com a bateria nem manter duas pastas de compilação; uma coisa de cada vez.
+- **Não rodar cenários enquanto a bateria roda:** os dois usam o socket `mide-test` e um encerra o outro (`kill_test_processes`); compilar em `target/debug` no meio também estraga o resultado. Para conferir algo em paralelo, `MIDE_TEST_SOCKET=mide-test2` e uma cópia do `scenario.sh` apontando para outra pasta de binários.
+- **Estilo Mac e terminais:** o mide não troca Ctrl/Super quando o app em foco é um terminal (lista `TERMINALS` em `input.rs`); ⌘C/⌘V viram Ctrl+Shift+C/V. Terminal novo que não estiver na lista: incluir o `app_id`.
+- **Mouse e trackpad** só valem no backend DRM (libinput); no winit e no headless a configuração é gravada mas não há aparelho para aplicar.
+- **Identidade visual:** antes de criar ou mudar uma tela, seguir `docs/design.md` (cores do tema, pílula cinza no hover, pílula azul na seleção, menus com ponta, `ui.modal`, durações e curvas da tabela, interruptor em Efeitos). Ao mudar um valor de design no código, atualizar o guia junto.
+- **Testes e o ambiente de quem roda:** apps abertos pelo compositor nos testes vêm do `PATH`; o `scenario.sh` põe `target/debug` na frente (a sessão do usuário tem `target/release` no `PATH`). Apps GTK dos testes ignoram portal e dconf do usuário (tema escuro e botões do cabeçalho mudavam as coordenadas da Calculadora).
+- **Vidro por cliente é assíncrono** (`control_client::Glass`, thread própria): não usar `Glass` para algo que precise da resposta do compositor.
+- **Revisão pendente com o Fabio:** regras e lacunas da seção 9 de `docs/design.md` (pediu para ser lembrado).
