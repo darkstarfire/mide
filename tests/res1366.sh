@@ -70,8 +70,7 @@ MIDE_SIM_DRM=1 SCENARIO_OUT="$drm_out" timeout 150 "$SCEN" "250 move 700 400" 32
 if [ -f "$drm_out/frame.png" ] && python3 - "$drm_out/frame.png" "$RES_OUT/arquivos-drm.png" <<'PY'
 import sys
 from PIL import Image
-# O quadro salvo no modo DRM sai da textura sem inversão: desvira para comparar.
-img = Image.open(sys.argv[1]).transpose(Image.FLIP_TOP_BOTTOM)
+img = Image.open(sys.argv[1])
 img.save(sys.argv[2])
 bright = lambda p: sum(img.getpixel(p)[:3]) / 3
 # Barra de título (meio, y=61) e barra de ferramentas (y=90) claras.

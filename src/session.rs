@@ -14,9 +14,33 @@ use std::{
     process::Command,
 };
 
+static ACTIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Lê `MIDE_SESSION` uma vez, no começo do `main`, e a tira do ambiente: os apps abertos
+/// dentro da sessão (terminal, editor) não a herdam. Sem isso, um mide de teste aberto
+/// de um terminal da sessão se achava a sessão de login, publicava o socket de teste no
+/// D-Bus/systemd do usuário e iniciava os apps automáticos de novo.
+pub fn capture() {
+    let active = std::env::var("MIDE_SESSION").is_ok_and(|v| v == "1");
+    ACTIVE.get_or_init(|| active);
+    // SAFETY: chamado no início do `main`, antes de qualquer outra thread existir.
+    unsafe { std::env::remove_var("MIDE_SESSION") };
+}
+
+/// Apps automáticos abertos (pid e comando), passados ao mide reiniciado.
+static STARTED: std::sync::Mutex<Vec<(u32, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Lista dos apps automáticos abertos, para `MIDE_AUTOSTART` do mide reiniciado.
+pub fn started_list() -> String {
+    STARTED
+        .lock()
+        .map(|s| s.iter().map(|(pid, exec)| format!("{pid}\t{exec}")).collect::<Vec<_>>().join("\n"))
+        .unwrap_or_default()
+}
+
 /// O mide foi iniciado como sessão de login?
 pub fn active() -> bool {
-    std::env::var("MIDE_SESSION").is_ok_and(|v| v == "1")
+    *ACTIVE.get_or_init(|| std::env::var("MIDE_SESSION").is_ok_and(|v| v == "1"))
 }
 
 /// Prepara a sessão: ambiente para o D-Bus/systemd e apps de inicialização automática.
@@ -25,15 +49,36 @@ pub fn start(socket: &str) {
         return;
     }
     publish_environment(socket);
+    // Reiniciado pelo `restart all`: os apps automáticos que continuam vivos (os que
+    // não dependem do Wayland) não são abertos de novo.
+    let still_running: Vec<(u32, String)> = std::env::var("MIDE_AUTOSTART")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter_map(|(pid, exec)| Some((pid.parse::<u32>().ok()?, exec.to_string())))
+        .filter(|(pid, _)| std::path::Path::new(&format!("/proc/{pid}")).exists())
+        .collect();
+    // SAFETY: chamado na partida, antes das threads dos apps automáticos.
+    unsafe { std::env::remove_var("MIDE_AUTOSTART") };
     let entries = autostart_entries(&autostart_dirs());
     tracing::info!("sessão: {} app(s) de inicialização automática", entries.len());
     for entry in entries {
+        if let Some(running) = still_running.iter().find(|(_, exec)| *exec == entry.exec) {
+            tracing::info!("sessão: {} continua aberto", entry.name);
+            if let Ok(mut started) = STARTED.lock() {
+                started.push(running.clone());
+            }
+            continue;
+        }
         tracing::info!("sessão: iniciando {} ({})", entry.name, entry.exec);
         let mut command = Command::new("sh");
         command.arg("-c").arg(&entry.exec);
         crate::child_env(&mut command);
         match command.spawn() {
             Ok(mut child) => {
+                if let Ok(mut started) = STARTED.lock() {
+                    started.push((child.id(), entry.exec.clone()));
+                }
                 std::thread::spawn(move || {
                     let _ = child.wait();
                 });

@@ -619,3 +619,14 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 ## Orientação do DRM — manual
 
 - Entrar na sessão "mide (desenvolvimento)" (ou `data/mide-session` num console): janelas inteiras, cantos arredondados, barra de título clara, vidro da dock e da barra lateral do Arquivos mostrando o que está atrás deles.
+
+## Backend sem tela e atualizar sem deslogar — automáticos
+
+- Bateria inteira no backend headless (`tests/scenario.sh` usa ele por padrão), rodada de dentro da sessão do mide: `ui.sh` 157 ok e 6 falhas (todas da Calculadora, ambiente: ver anotações), `res1366.sh` 9 ok, testes unitários ok.
+- `mide-ctl restart shell` num mide headless: barra, dock, área de trabalho e notificações trocam de processo e o Arquivos continua aberto; `mide-ctl restart all`: o compositor reinicia no mesmo pid e volta a responder.
+
+## Atualizar sem deslogar — manual
+
+- Na sessão: `data/mide-atualizar` (barra, dock... trocam; janelas ficam) e `data/mide-atualizar --tudo` (compositor reinicia; volta sem passar pelo login; os apps automáticos como o nm-applet voltam, os que seguiam abertos não duplicam).
+- Chrome: menu ⋮ → Histórico: o submenu abre para a esquerda, dentro da tela.
+- Arquivos: a barra lateral de vidro mostra o papel de parede na posição certa.

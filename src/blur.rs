@@ -99,6 +99,8 @@ const COMPOSITE_SRC: &str = r#"
 uniform vec2 area_size;
 uniform float corner;
 uniform float glass;
+// 1 quando a cena atrás foi desenhada invertida no eixo y (winit), 0 no DRM.
+uniform float flip_y;
 
 float sd_round_box(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + vec2(r);
@@ -119,8 +121,8 @@ void main() {
     float t = clamp(1.0 + d / bevel, 0.0, 1.0);
     float bend = t * t;
     vec2 uv = v_coords - n * bend * glass * bevel * 1.3 / area_size;
-    // A cena foi desenhada na orientação do OpenGL (de baixo para cima): desvira y.
-    vec3 c = texture2D(tex, vec2(uv.x, 1.0 - uv.y)).rgb;
+    // No winit a cena atrás foi desenhada de baixo para cima (como a saída): desvira y.
+    vec3 c = texture2D(tex, vec2(uv.x, mix(uv.y, 1.0 - uv.y, flip_y))).rgb;
     float lum = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(vec3(lum), c, 1.0 + 0.3 * glass);
     c = mix(c, vec3(1.0), glass * mix(0.20, 0.07, lum));
@@ -175,6 +177,7 @@ impl Blur {
                 UniformName::new("area_size", UniformType::_2f),
                 UniformName::new("corner", UniformType::_1f),
                 UniformName::new("glass", UniformType::_1f),
+                UniformName::new("flip_y", UniformType::_1f),
             ],
         )?;
         Ok(Self {
@@ -404,6 +407,7 @@ impl Blur {
                 Uniform::new("area_size", (area.size.w as f32, area.size.h as f32)),
                 Uniform::new("corner", radius),
                 Uniform::new("glass", glass),
+                Uniform::new("flip_y", if crate::clip::flipped() { 1.0f32 } else { 0.0 }),
             ],
         )
     }

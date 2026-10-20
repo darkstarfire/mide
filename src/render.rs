@@ -697,6 +697,14 @@ fn dump_frame_if_requested(
     let region = Rectangle::from_size((w, h).into());
     let mapping = renderer.copy_framebuffer(framebuffer, region, smithay::backend::allocator::Fourcc::Abgr8888)?;
     let bytes = renderer.map_texture(&mapping)?;
+    // O arquivo sai sempre na ordem do OpenGL do winit (de baixo para cima), que os
+    // roteiros de teste desviram; alvos sem inversão (DRM, headless) são virados aqui.
+    let bytes = if crate::clip::flipped() {
+        bytes.to_vec()
+    } else {
+        let row = w as usize * 4;
+        bytes.chunks(row).rev().flatten().copied().collect()
+    };
     std::fs::write(format!("{path}.{w}x{h}.rgba"), bytes)?;
     tracing::info!("frame salvo para depuração ({w}x{h})");
     Ok(())

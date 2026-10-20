@@ -218,6 +218,8 @@ pub struct State {
     pub config: Config,
     /// Pedido para encerrar o event loop, feito por atalho.
     pub quit_requested: bool,
+    /// Reiniciar o compositor com o programa novo (`restart all`), sem sair da sessão.
+    pub reexec_requested: bool,
     pub seat: Seat<Self>,
 }
 
@@ -311,6 +313,7 @@ impl State {
             last_title_click: None,
             config,
             quit_requested: false,
+            reexec_requested: false,
             seat,
         })
     }
@@ -481,8 +484,11 @@ impl XdgShellHandler for State {
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
-        // O popup é posicionado pela geometria que o cliente pediu, relativa ao pai.
+        // O popup é posicionado pela geometria que o cliente pediu, relativa ao pai,
+        // ajustada para caber na tela (submenus que virariam para fora viram para o
+        // outro lado ou deslizam, como o protocolo pede).
         surface.with_pending_state(|s| s.geometry = positioner.get_geometry());
+        self.unconstrain_popup(&surface, &positioner);
         if let Err(err) = self.popups.track_popup(PopupKind::Xdg(surface.clone())) {
             tracing::warn!("popup sem pai válido: {err}");
         }
@@ -514,12 +520,43 @@ impl XdgShellHandler for State {
         token: u32,
     ) {
         surface.with_pending_state(|s| s.geometry = positioner.get_geometry());
+        self.unconstrain_popup(&surface, &positioner);
         surface.send_repositioned(token);
         let _ = surface.send_configure();
     }
 }
 
 delegate_xdg_shell!(State);
+
+impl State {
+    /// Ajusta a geometria do popup para caber na tela, pelas regras do posicionador
+    /// (`constraint_adjustment`: virar, deslizar, redimensionar). O alvo vai nas
+    /// coordenadas do pai: tela menos a posição da janela e dos popups acima dele.
+    fn unconstrain_popup(&self, surface: &PopupSurface, positioner: &PositionerState) {
+        use smithay::desktop::{find_popup_root_surface, get_popup_toplevel_coords};
+        let kind = PopupKind::Xdg(surface.clone());
+        let Ok(root) = find_popup_root_surface(&kind) else {
+            return;
+        };
+        let Some(window) = self.space.elements().find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == &root)) else {
+            return;
+        };
+        let Some(window_loc) = self.space.element_location(window) else {
+            return;
+        };
+        let Some(screen) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else {
+            return;
+        };
+        let mut target = screen;
+        target.loc -= get_popup_toplevel_coords(&kind);
+        target.loc -= window_loc;
+        let geometry = positioner.get_unconstrained_geometry(target);
+        if geometry != positioner.get_geometry() {
+            tracing::debug!("popup ajustado para caber na tela: {:?} → {:?}", positioner.get_geometry(), geometry);
+        }
+        surface.with_pending_state(|s| s.geometry = geometry);
+    }
+}
 
 impl SeatHandler for State {
     type KeyboardFocus = WlSurface;

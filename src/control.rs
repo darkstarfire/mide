@@ -92,6 +92,23 @@ pub fn handle(state: &mut State, command: &str) -> String {
             "ok\n".into()
         }
         Some("mods") => mods(state),
+        // Atualizar sem sair da sessão (depois de recompilar): `restart shell` reinicia
+        // barra, dock, área de trabalho, notificações e launcher com os programas novos,
+        // sem fechar as janelas; `restart all` reinicia também o compositor (as janelas
+        // dos apps fecham, a sessão de login continua).
+        Some("restart") => match words.next() {
+            Some("shell") => {
+                crate::restart_shell();
+                "ok\n".into()
+            }
+            Some("all") => {
+                tracing::info!("reiniciando o compositor com o programa novo");
+                state.reexec_requested = true;
+                state.quit_requested = true;
+                "ok\n".into()
+            }
+            _ => "uso: restart shell|all\n".into(),
+        },
         Some("quit") => {
             tracing::info!("encerrando por pedido do canal de controle");
             state.quit_requested = true;

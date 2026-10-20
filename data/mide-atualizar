@@ -1,0 +1,18 @@
+#!/bin/sh
+# Recompila o mide deste projeto e atualiza a sessão aberta, sem sair dela.
+#
+# Uso: data/mide-atualizar          barra, dock, área de trabalho, notificações e
+#                                   launcher com os programas novos (as janelas ficam)
+#      data/mide-atualizar --tudo   também o compositor: as janelas dos apps fecham,
+#                                   mas a sessão continua (sem voltar ao login)
+set -e
+cd "$(dirname "$(readlink -f "$0")")/.."
+PATH="$HOME/.cargo/bin:$PATH"
+cargo build --release
+if [ "${1:-}" = "--tudo" ]; then
+    echo "reiniciando o compositor (as janelas abertas vão fechar)..."
+    target/release/mide-ctl restart all
+else
+    target/release/mide-ctl restart shell
+    echo "barra, dock e afins atualizados. Para atualizar também o compositor: $0 --tudo"
+fi

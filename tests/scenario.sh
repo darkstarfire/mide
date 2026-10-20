@@ -34,6 +34,20 @@ rm -f "$OUT"/frame.*
 # 1366x768 por padrão; tests/res1366.sh testa nesse tamanho).
 export MIDE_WINIT_SIZE="${MIDE_WINIT_SIZE:-800x600}"
 export MIDE_WINIT_FIXED=1
+# Rodando de dentro de uma sessão do mide: o mide de teste não é a sessão de login (não
+# publica o ambiente no D-Bus/systemd nem inicia os apps automáticos).
+unset MIDE_SESSION
+# Sem janela na tela: o mide de teste desenha na GPU pelo render node (backend headless,
+# com a orientação do DRM). MIDE_TEST_BACKEND=winit usa uma janela no desktop atual.
+# Nunca herda o MIDE_BACKEND de quem chamou: dentro de uma sessão do mide ele é "drm",
+# e um mide de teste não pode tentar tomar a tela.
+if [ -n "${MIDE_TEST_BACKEND:-}" ]; then
+    export MIDE_BACKEND="$MIDE_TEST_BACKEND"
+elif [ -r /dev/dri/renderD128 ] && [ -w /dev/dri/renderD128 ]; then
+    export MIDE_BACKEND=headless
+else
+    export MIDE_BACKEND=winit
+fi
 # Sem XWayland por padrão (um Xwayland a menos por cenário); os testes de apps X11
 # ligam com MIDE_XWAYLAND=1.
 export MIDE_XWAYLAND="${MIDE_XWAYLAND:-0}"
