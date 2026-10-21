@@ -794,7 +794,9 @@ file_check "Esc no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ] && [ ! 
 # Botão Cancelar do diálogo em (495, 306).
 file_check "Cancelar no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 311; 470 click 495 306; 510 list"
 file_check "Criar sem mudar o nome: Nova pasta, depois Nova pasta (1)" '[ -d "$FDIR/Nova pasta" ] && [ -d "$FDIR/Nova pasta (1)" ]' "400 rclick 600 450; 430 click 650 311; 460 key enter; 500 rclick 600 450; 530 click 650 311; 560 key enter; 600 list"
-file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 293; 460 click 550 515; 500 list"
+# Menu de um arquivo (não pasta): "Abrir com…" logo depois de "Abrir"; "Mover para a
+# Lixeira" em y=541.
+file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 293; 460 click 550 541; 500 list"
 file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 410; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
 file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 281; 500 list"
 # Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
@@ -813,6 +815,28 @@ file_check "menu da pasta → Novo arquivo aqui dentro" '[ -f "$FDIR/Projetos/id
 check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
 file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581 310; 430 combo ctrl+d; 470 list"
 file_check "Ctrl+C e Ctrl+V copiam para outra pasta" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ -f "$FDIR/relatorio.pdf" ]' "400 click 581 310; 420 combo ctrl+c; 440 click 463 190; 446 click 463 190; 480 combo ctrl+v; 520 list"
+# Seleção múltipla (B8): relatorio.pdf e, com Ctrl, praia.jpg; Delete leva os dois.
+file_check "Ctrl+clique escolhe vários e Delete leva todos para a Lixeira" '[ ! -e "$FDIR/relatorio.pdf" ] && [ ! -e "$FDIR/praia.jpg" ] && [ -e "$TRASH/relatorio.pdf" ] && [ -e "$TRASH/praia.jpg" ]' "400 click 581 310; 420 keydown ctrl; 430 click 463 310; 440 keyup ctrl; 460 key delete; 500 list"
+# Shift+clique: de "por do sol.png" (345, 310) até relatorio.pdf (581, 310); Ctrl+C e
+# Ctrl+V dentro de Projetos copiam os três.
+file_check "Shift+clique escolhe o intervalo (e Ctrl+C/Ctrl+V copia todos)" '[ -f "$FDIR/Projetos/por do sol.png" ] && [ -f "$FDIR/Projetos/praia.jpg" ] && [ -f "$FDIR/Projetos/relatorio.pdf" ]' "400 click 345 310; 420 keydown shift; 430 click 581 310; 440 keyup shift; 450 combo ctrl+c; 470 click 581 190; 476 click 581 190; 510 combo ctrl+v; 550 list"
+# Arrastar relatorio.pdf (581, 310) até a pasta Fotos (463, 190) move o arquivo.
+file_check "arrastar um arquivo para uma pasta move" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ ! -e "$FDIR/relatorio.pdf" ]' "400 move 581 310; 410 press 581 310; 420 move 560 290; 430 move 520 240; 440 move 470 200; 450 move 463 190; 460 release 463 190; 500 list"
+# Abrir com…: com um app de teste (num XDG_DATA_DIRS próprio) que grava o caminho
+# recebido; "Abrir com…" no menu de relatorio.pdf (o menu abre ao lado, subindo:
+# (640, 230)) e o app na lista (335, 265).
+fixture
+OW="$(mktemp -d)"
+mkdir -p "$OW/applications"
+printf '#!/bin/sh\necho "$1" > "%s/aberto.txt"\n' "$OW" > "$OW/app.sh"; chmod +x "$OW/app.sh"
+printf '[Desktop Entry]\nType=Application\nName=Leitor Teste\nExec=%s/app.sh %%F\nMimeType=application/pdf;\n' "$OW" > "$OW/applications/leitor-teste.desktop"
+timeout 150 "$SCEN" "400 rclick 581 310; 430 click 640 230; 470 click 335 265; 520 list" -- "env -u MIDE_OPEN_DRY_RUN XDG_DATA_DIRS='$OW' $FILES '$FDIR'" >/dev/null 2>&1
+if [ "$(cat "$OW/aberto.txt" 2>/dev/null)" = "$FDIR/relatorio.pdf" ]; then
+    echo "ok    Abrir com… abre o arquivo no app escolhido"; PASS=$((PASS + 1))
+else
+    echo "FALHA Abrir com… abre o arquivo no app escolhido"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$OW"
 rm -rf "$(dirname "$FDIR")"
 
 echo "== editor de texto (mide-text)"

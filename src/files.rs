@@ -271,6 +271,28 @@ pub fn copy_into(path: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     Ok(target)
 }
 
+/// Move o item para a pasta `dir` (arrastar e soltar). Com o mesmo nome lá, ganha
+/// número. Entre discos diferentes, copia e apaga o original.
+pub fn move_into(path: &Path, dir: &Path) -> std::io::Result<PathBuf> {
+    if dir.starts_with(path) {
+        return Err(std::io::Error::other("não dá para mover uma pasta para dentro dela mesma"));
+    }
+    if path.parent() == Some(dir) {
+        return Ok(path.to_path_buf());
+    }
+    let (stem, ext) = split_name(path);
+    let target = dir.join(unique_name(dir, &stem, &ext));
+    if fs::rename(path, &target).is_err() {
+        copy_recursive(path, &target)?;
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(target)
+}
+
 /// Tamanho de uma pasta com tudo dentro (sem seguir atalhos). Para depois de `limit`
 /// itens, para não demorar em pastas enormes: devolve `None` nesse caso.
 pub fn dir_size(path: &Path, limit: usize) -> Option<u64> {
@@ -302,15 +324,22 @@ pub fn dir_size(path: &Path, limit: usize) -> Option<u64> {
 /// Compacta um arquivo ou pasta num .zip ao lado dele ("foto.zip", "Projetos.zip",
 /// com número se já existir). Feito pelo próprio mide, sem programa externo.
 pub fn compress(path: &Path) -> std::io::Result<PathBuf> {
+    compress_many(std::slice::from_ref(&path.to_path_buf()))
+}
+
+/// Compacta vários itens da mesma pasta num .zip só, "Arquivo.zip" (como o Finder);
+/// com um item só, o .zip leva o nome dele.
+pub fn compress_many(paths: &[PathBuf]) -> std::io::Result<PathBuf> {
     use std::io::Write;
-    let dir = path.parent().ok_or_else(|| std::io::Error::other("sem pasta"))?;
-    let (stem, _) = split_name(path);
+    let first = paths.first().ok_or_else(|| std::io::Error::other("nada para compactar"))?;
+    let dir = first.parent().ok_or_else(|| std::io::Error::other("sem pasta"))?;
+    let stem = if paths.len() == 1 { split_name(first).0 } else { "Arquivo".to_string() };
     let target = dir.join(unique_name(dir, &stem, "zip"));
     let file = fs::File::create(&target)?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let root = path.parent().unwrap_or(Path::new("/"));
-    let mut stack = vec![path.to_path_buf()];
+    let root = dir;
+    let mut stack: Vec<PathBuf> = paths.iter().rev().cloned().collect();
     while let Some(item) = stack.pop() {
         let name = item.strip_prefix(root).map_err(std::io::Error::other)?.to_string_lossy().replace('\\', "/");
         if item.is_dir() {

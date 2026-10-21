@@ -625,11 +625,14 @@ impl<'a> Ui<'a> {
     }
 
     /// Ponteiro nas coordenadas desta área.
-    fn pointer(&self) -> Option<(f32, f32)> {
+    /// Posição do ponteiro nas coordenadas desta área (`None` fora da janela).
+    pub fn pointer(&self) -> Option<(f32, f32)> {
         self.ctx.input.pointer.map(|(x, y)| (x - self.offset.0, y - self.offset.1))
     }
 
-    fn over(&self, rect: (f32, f32, f32, f32)) -> bool {
+    /// O ponteiro está sobre `rect` (desta área), mesmo com o botão segurado em outro
+    /// componente: para achar onde soltar algo arrastado.
+    pub fn over(&self, rect: (f32, f32, f32, f32)) -> bool {
         self.pointer().is_some_and(|(px, py)| px >= rect.0 && px <= rect.0 + rect.2 && py >= rect.1 && py <= rect.1 + rect.3)
     }
 

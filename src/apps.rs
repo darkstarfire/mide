@@ -219,6 +219,21 @@ pub fn load() -> Vec<App> {
     apps
 }
 
+/// Abre um arquivo com o app escolhido ("Abrir com"): o comando do app com o caminho.
+pub fn open_with(app: &App, path: &std::path::Path) -> std::io::Result<()> {
+    let quoted = format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+    let command = if app.terminal { format!("mide-terminal -e {} {quoted}", app.command) } else { format!("{} {quoted}", app.command) };
+    if std::env::var_os("MIDE_OPEN_DRY_RUN").is_some() {
+        tracing::info!("abrir com (teste): {command}");
+        return Ok(());
+    }
+    let mut child = Command::new("sh").arg("-c").arg(&command).spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 /// Abre o app num processo separado. Apps de terminal abrem no Terminal do mide.
 pub fn launch(app: &App) -> std::io::Result<()> {
     let command = if app.terminal {

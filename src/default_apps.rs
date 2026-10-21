@@ -165,9 +165,72 @@ pub fn candidates<'a>(apps: &'a [crate::apps::App], category: &Category) -> Vec<
     apps.iter().filter(|a| a.mime.iter().any(|m| m == main)).collect()
 }
 
+/// Tipo (MIME) de um arquivo pelo nome: pelas regras do shared-mime-info
+/// (`/usr/share/mime/globs2`, a de maior peso e o padrão mais longo); pastas são
+/// `inode/directory`.
+pub fn mime_for(path: &Path) -> Option<String> {
+    if path.is_dir() {
+        return Some("inode/directory".into());
+    }
+    let name = path.file_name()?.to_string_lossy().to_lowercase();
+    globs().iter().filter(|(_, pattern, _)| glob_matches(pattern, &name)).max_by_key(|(weight, pattern, _)| (*weight, pattern.len())).map(|(_, _, mime)| mime.clone())
+}
+
+/// Regras do shared-mime-info (peso, padrão em minúsculas, tipo), lidas uma vez.
+fn globs() -> &'static Vec<(u32, String, String)> {
+    static GLOBS: std::sync::OnceLock<Vec<(u32, String, String)>> = std::sync::OnceLock::new();
+    GLOBS.get_or_init(|| {
+        let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        let mut out = Vec::new();
+        for dir in data_dirs.split(':').filter(|d| !d.is_empty()).chain(["/usr/share"]) {
+            let Ok(text) = fs::read_to_string(Path::new(dir).join("mime/globs2")) else {
+                continue;
+            };
+            for line in text.lines().filter(|l| !l.starts_with('#')) {
+                let mut parts = line.splitn(4, ':');
+                if let (Some(weight), Some(mime), Some(pattern)) = (parts.next(), parts.next(), parts.next()) {
+                    out.push((weight.parse().unwrap_or(50), pattern.to_lowercase(), mime.to_string()));
+                }
+            }
+            if !out.is_empty() {
+                break;
+            }
+        }
+        out
+    })
+}
+
+/// Padrões do shared-mime-info: `*.ext`, nomes exatos e `*` simples.
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((before, after)) if !after.contains('*') => name.len() >= before.len() + after.len() && name.starts_with(before) && name.ends_with(after),
+        _ => false,
+    }
+}
+
+/// Apps que abrem o tipo do arquivo, o padrão primeiro (para "Abrir com").
+pub fn apps_for<'a>(apps: &'a [crate::apps::App], path: &Path) -> Vec<&'a crate::apps::App> {
+    let Some(mime) = mime_for(path) else {
+        return Vec::new();
+    };
+    let default = current(&mime).map(|d| d.trim_end_matches(".desktop").to_string());
+    let mut list: Vec<&crate::apps::App> = apps.iter().filter(|a| a.mime.iter().any(|m| *m == mime)).collect();
+    list.sort_by_key(|a| (Some(&a.id) != default.as_ref(), crate::apps::fold(&a.name)));
+    list
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn padroes_de_nome() {
+        assert!(glob_matches("*.txt", "notas.txt"));
+        assert!(!glob_matches("*.txt", "notas.md"));
+        assert!(glob_matches("makefile", "makefile"));
+        assert!(glob_matches("readme*", "readme.md"));
+    }
 
     #[test]
     fn le_e_grava_o_mimeapps() {

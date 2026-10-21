@@ -1143,3 +1143,10 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Suspender, reiniciar, desligar e bloquear pelo logind no D-Bus** (`org.freedesktop.login1`): funciona com o systemd e com o elogind (Slackware, Void, Gentoo sem systemd); sem resposta, cai no `systemctl`/`loginctl`.
 - **Apps padrão:** Navegador, E-mail, Pastas, Textos, Imagens, Vídeos, Músicas e PDF; a lista vem dos apps que declaram o tipo (`MimeType`) e a escolha vai para `~/.config/mimeapps.list` (`[Default Applications]`, mantendo o resto do arquivo), o mesmo do `gio open`, `xdg-open`, GNOME e Cinnamon (`src/default_apps.rs`). O mide respeita a escolha: com outro app padrão para pastas ou textos, eles não abrem mais no Arquivos/Editor do mide.
 - **Barra lateral do mide-ui rola** com a roda do mouse quando os itens não cabem, e abre mostrando o item escolhido.
+
+## Arquivos: seleção múltipla, arrastar e soltar e "Abrir com…" (B8)
+
+- **Seleção múltipla:** Ctrl+clique junta ou tira, Shift+clique escolhe do item principal até o clicado (na ordem da tela, na grade e na lista), Ctrl+A escolhe tudo. Delete, "Mover para a Lixeira", Copiar/Ctrl+C + Colar, Duplicar e Compactar valem para todos (vários itens viram "Arquivo.zip", como no Finder); o menu mostra "N itens" e esconde o que só faz sentido para um (Renomear, Copiar caminho, Abrir no Terminal). Botão direito num item de fora da seleção escolhe só ele.
+- **Arrastar e soltar:** apertar num item e andar mais de 6 pontos arrasta a seleção (ou só ele); o nome (ou "N itens") segue o ponteiro numa etiqueta azul e a pasta de destino ganha contorno; soltar move para a pasta (com Ctrl, copia), também entre discos (`files::move_into`: troca de nome, ou copia e apaga). Mensagem "N itens movido(s) para …".
+- **"Abrir com…":** no menu de um arquivo, abre a lista dos apps que abrem o tipo dele (tipo pelo shared-mime-info, `default_apps::mime_for`; o padrão primeiro, marcado "padrão"); clicar abre o arquivo no app (`apps::open_with`). Os apps são carregados numa thread ao abrir o Arquivos.
+- **mide-ui:** `ui.pointer()` e `ui.over(rect)` públicos (achar onde soltar algo arrastado).
