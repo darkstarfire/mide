@@ -808,3 +808,5 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh`: "Aparência: tema escuro grava e a janela muda na hora" (Configurações → Aparência → Escuro; o fundo da janela fica (30, 30, 32) sem reabrir); `cargo test` `banco_do_tema_escuro`.
 - Manual (sessão de verdade): trocar para Escuro e ver barras de título, barra superior, menus, central de controle e notificações escuras; abrir um app GTK (gedit, Nautilus) e um Qt depois da troca: escuros; voltar para Claro.
 - `tests/ui.sh`: "teclas mortas: ´ + a = á e ~ + o = õ (idioma C)" no mide-text (pula se o teclado do sistema não for ABNT2); `cargo test` `dano_so_onde_mudou`.
+- `tests/ui.sh`: "editor: Abrir… pelo seletor de arquivos" (Ctrl+O, duplo clique em nota.txt abre outra janela) e "editor: Salvar como… pelo seletor de arquivos" (sem título, Ctrl+S, nome "novo" em Documentos de uma pasta pessoal de teste); `cargo test` `pastas_primeiro_e_filtro`.
+- Manual: no Editor de Texto, Abrir… → navegar pelos lugares e pela pasta de cima, Esc cancela; Salvar como… por cima de um arquivo existente pergunta antes de substituir; tema escuro com o seletor aberto.

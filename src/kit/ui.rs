@@ -740,6 +740,51 @@ impl<'a> Ui<'a> {
         rect
     }
 
+    /// Diálogo de aviso pronto: título, texto e botões (o último é o principal, em
+    /// azul). Devolve o botão clicado (Esc conta como o primeiro, que costuma ser
+    /// "Cancelar"; Enter, como o principal). O app guarda se o aviso está aberto:
+    ///
+    /// ```ignore
+    /// if self.confirmar {
+    ///     match ui.alert("Apagar o arquivo?", "Não dá para desfazer.", &["Cancelar", "Apagar"]) {
+    ///         Some(1) => { apagar(); self.confirmar = false; }
+    ///         Some(_) => self.confirmar = false,
+    ///         None => {}
+    ///     }
+    /// }
+    /// ```
+    pub fn alert(&mut self, title: &str, message: &str, buttons: &[&str]) -> Option<usize> {
+        let mut chosen = None;
+        let bw = 120.0;
+        let width = (buttons.len() as f32 * (bw + 8.0) + 40.0).max(420.0);
+        self.modal(width, |ui| {
+            ui.strong(title);
+            if !message.is_empty() {
+                ui.note(message);
+            }
+            ui.row(|ui| {
+                ui.push_right(buttons.len() as f32 * (bw + 8.0) - 8.0);
+                for (i, label) in buttons.iter().enumerate() {
+                    let primary = i + 1 == buttons.len();
+                    ui.sized(bw, |ui| {
+                        let r = if primary { ui.primary_button(label) } else { ui.button(label) };
+                        if r.clicked() {
+                            chosen = Some(i);
+                        }
+                    });
+                }
+            });
+        });
+        if chosen.is_none() && !buttons.is_empty() {
+            if self.input().key(super::input::Key::Escape) {
+                chosen = Some(0);
+            } else if self.input().key(super::input::Key::Enter) && !self.typing() {
+                chosen = Some(buttons.len() - 1);
+            }
+        }
+        chosen
+    }
+
     /// Entrega um ícone já carregado (por exemplo, numa thread do app) para os
     /// componentes que usam `nome` nesse tamanho: assim eles não carregam o ícone na
     /// hora de desenhar (carregar e rasterizar um SVG leva milissegundos).
@@ -772,7 +817,8 @@ impl<'a> Ui<'a> {
         // painéis grandes continuam baratos.
         crate::ui::draw::soft_shadow(self.canvas, x, y, width, h, radius, 16.0, 6.0, 60);
         let veil = if glass { 178 } else if self.ctx.layer { 246 } else { 255 };
-        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [248, 248, 250, veil]);
+        let [vr, vg, vb, _] = if self.ctx.theme.dark { self.ctx.theme.card } else { [248, 248, 250, 255] };
+        crate::ui::draw::paint_rounded_solid(self.canvas, x, y, width, h, radius, [vr, vg, vb, veil]);
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, width - 1.0, h - 1.0, radius) {
             let mut paint = Paint::default();
             paint.anti_alias = true;
@@ -876,6 +922,11 @@ impl<'a> Ui<'a> {
         let w = self.measure(&shown, size, FontWeight::Semibold);
         let rect = self.alloc(Some(w), 28.0);
         self.draw_text(&shown, rect.0, rect.1 + (28.0 - size * 1.25) / 2.0, size, FontWeight::Semibold, t.text);
+    }
+
+    /// Tamanho da janela inteira (diálogos se ajustam a ele).
+    pub fn window_size(&self) -> (f32, f32) {
+        (self.ctx.window.0 as f32, self.ctx.window.1 as f32)
     }
 
     /// Parte visível desta região (x, y, largura, altura), por exemplo para o fundo de
@@ -2292,11 +2343,21 @@ impl<'a> Ui<'a> {
     /// Área que rola, ocupando o resto da altura, com margem do tema e barra de
     /// rolagem fina à direita quando o conteúdo não cabe.
     pub fn page(&mut self, add: impl FnOnce(&mut Ui)) {
-        let t = self.ctx.theme.clone();
+        let h = self.visible.1 - self.cursor_y;
+        let pad = self.ctx.theme.padding;
+        self.scroll_impl(h, pad, add);
+    }
+
+    /// Área que rola com altura fixa (`height`), sem margem: listas dentro de
+    /// diálogos (o seletor de arquivos) e painéis.
+    pub fn scroll_area(&mut self, height: f32, add: impl FnOnce(&mut Ui)) {
+        self.scroll_impl(height, 0.0, add);
+    }
+
+    fn scroll_impl(&mut self, h: f32, pad: f32, add: impl FnOnce(&mut Ui)) {
         let id = self.ctx.id();
         let (x, y0) = (self.x, self.cursor_y);
-        let (w, h) = (self.width, self.visible.1 - y0);
-        let pad = t.padding;
+        let w = self.width;
         let scroll = *self.ctx.memory.scroll.get(&id).unwrap_or(&0.0);
         // A imagem cobre só a área visível da página (começando com o que já está lá);
         // o conteúdo começa rolado.
@@ -2336,7 +2397,7 @@ impl<'a> Ui<'a> {
             let active = self.ctx.memory.dragging_scroll.is_some_and(|(s, _)| s == id) || self.over(bar);
             let tw = if active { 8.0 } else { 6.0 };
             copy_back(&inner, self.canvas, (x + pad) as i32, y0 as i32);
-            fill_rounded(self.canvas, bar.0 + 2.0 + (8.0 - tw) / 2.0, thumb_y(scroll), tw, thumb_h, tw / 2.0, color([0, 0, 0, if active { 120 } else { 80 }]));
+            fill_rounded(self.canvas, bar.0 + 2.0 + (8.0 - tw) / 2.0, thumb_y(scroll), tw, thumb_h, tw / 2.0, color(self.ctx.theme.shade(if active { 120 } else { 80 })));
         } else {
             // Sem rolagem: se havia rolagem guardada (a janela cresceu), redesenha.
             if scroll != 0.0 {

@@ -30,6 +30,7 @@
 //! O guia completo, com todos os componentes, fica em `docs/mide-ui.md`.
 
 mod app;
+pub mod chooser;
 mod input;
 pub mod menubar;
 pub mod textarea;
@@ -38,6 +39,7 @@ mod theme;
 mod ui;
 
 pub use app::{run, App, Waker, Window};
+pub use chooser::{Choice, FileChooser};
 pub use input::{Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};
 pub use theme::{system_dark, Rgba, Theme};

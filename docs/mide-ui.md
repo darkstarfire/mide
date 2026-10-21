@@ -78,6 +78,9 @@ novo.
 | `ui.icon_toggle("view-list-symbolic", "☰", marcado)` | Botão de ícone que fica marcado | `.clicked()` |
 | `ui.strong("Texto")` | Texto em negrito numa linha só (corta com "…") | — |
 
+| `ui.scroll_area(240.0, \|ui\| ...)` | Área de altura fixa que rola (listas dentro de diálogos) | — |
+| `ui.dropdown("Texto", &opções, &mut índice)` | Linha com o valor escolhido; o clique abre a lista | `.changed()` |
+
 Todas as respostas também trazem `.hovered()`, `.double_clicked()`,
 `.secondary_clicked()` (botão direito) e o lugar ocupado (`rect`).
 
@@ -176,7 +179,46 @@ ui.glass_panel((w - 600.0) / 2.0, h * 0.2, 600.0, 18.0, |ui| {
 instante e o ícone surge assim que fica pronto. Para já ter os ícones na primeira
 vez, carregue numa thread e entregue com `ui.provide_icon(nome, tamanho, imagem)`.
 
+## Diálogos e seletor de arquivos
+
+`ui.modal(largura, |ui| ...)` escurece a janela e mostra um painel no meio; só o que
+está dentro dele reage. Para o caso comum há o aviso pronto, que devolve o botão
+clicado (o último é o principal; Esc conta como o primeiro e Enter como o último):
+
+```rust
+if self.confirmar {
+    match ui.alert("Apagar o arquivo?", "Não dá para desfazer.", &["Cancelar", "Apagar"]) {
+        Some(1) => { self.apagar(); self.confirmar = false; }
+        Some(_) => self.confirmar = false,
+        None => {}
+    }
+}
+```
+
+O seletor de arquivos (`FileChooser`) abre por cima da janela: lugares (pasta pessoal,
+Área de trabalho, Documentos, Downloads, Imagens), a pasta de cima, a lista com pastas
+primeiro, duplo clique para entrar ou escolher. `FileChooser::open` escolhe um arquivo,
+`FileChooser::save` pede o nome (e pergunta antes de substituir um que já existe) e
+`FileChooser::folder` escolhe uma pasta; `.extensions(&["txt", "md"])` filtra. O app
+guarda o seletor enquanto ele está aberto:
+
+```rust
+if let Some(seletor) = self.abrir.as_mut() {
+    match seletor.show(ui) {
+        Some(Choice::Chosen(caminho)) => { self.abrir_arquivo(caminho); self.abrir = None; }
+        Some(Choice::Cancelled) => self.abrir = None,
+        None => {}
+    }
+}
+```
+
 ## Tema
+
+O tema segue Configurações → Aparência (claro ou escuro) e troca na hora, sem
+reabrir o app. `Theme::system()` é o tema escolhido; `Theme::dark()` e
+`Theme::default()` (claro) existem para quem quer um fixo. `theme.shade(alfa)` dá o
+tom de contraste certo para o tema (preto no claro, branco no escuro): use-o em
+linhas, trilhos e fundos sutis em vez de cores fixas.
 
 Cores, cantos, fontes e espaçamentos ficam em `Theme`. Para mudar só a cor de
 destaque:
@@ -206,9 +248,6 @@ cargo run --example mide-ui-demo
 
 ## Ainda não tem (próximas versões)
 
-- Tema escuro pronto e troca automática com o sistema.
-- Campo de texto com cursor no meio, seleção e colar.
-- Diálogos e seletor de arquivos como componentes.
 - Vidro em janelas comuns (hoje, só em camadas).
 - Seleção múltipla e arrastar e soltar entre componentes.
 - Animações dos componentes (o interruptor deslizando).

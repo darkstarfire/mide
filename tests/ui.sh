@@ -798,6 +798,19 @@ elif ! grep -q 'XKBLAYOUT="br"' /etc/default/keyboard 2>/dev/null; then
 else
     echo "FALHA teclas mortas ($(cat "$TDIR/acentos.txt"))"; FAIL=$((FAIL + 1))
 fi
+# Abrir… (Ctrl+O) pelo seletor de arquivos: pasta com Sub/, b.md e nota.txt; duplo
+# clique em "nota.txt" (190, 443) abre outra janela (a atual já tem documento).
+mkdir -p "$TDIR/abrir/Sub"; printf 'outro\n' > "$TDIR/abrir/b.md"; printf 'nota\n' > "$TDIR/abrir/nota.txt"
+check "editor: Abrir… pelo seletor de arquivos" 'janela "nota.txt — Editor de Texto"' "400 click 400 300; 420 combo ctrl+o; 480 click 190 443; 485 click 190 443; 600 list" "$TEXT_APP '$TDIR/abrir/b.md'"
+# Salvar sem título: o seletor abre em Documentos (pasta pessoal de teste) com o nome
+# sugerido; Ctrl+A, "novo" e Enter salvam lá.
+mkdir -p "$TDIR/home/Documentos"
+timeout 150 "$SCEN" "400 click 400 300; 420 type ola; 440 combo ctrl+s; 480 combo ctrl+a; 490 type novo; 500 key enter; 560 list" -- "HOME='$TDIR/home' $TEXT_APP" >/dev/null 2>&1
+if [ "$(cat "$TDIR/home/Documentos/novo" 2>/dev/null)" = "ola" ]; then
+    echo "ok    editor: Salvar como… pelo seletor de arquivos"; PASS=$((PASS + 1))
+else
+    echo "FALHA editor: Salvar como… pelo seletor de arquivos"; FAIL=$((FAIL + 1))
+fi
 check "editor: alteração não salva marca o título" 'janela "• teste.rs' "400 type x; 460 list" "$TEXT_APP '$TDIR/teste.rs'"
 check "fechar com alteração pergunta antes (janela continua)" 'janela "• teste.rs' "400 type x; 430 click 63 61; 480 list" "$TEXT_APP '$TDIR/teste.rs'"
 rm -rf "$TDIR"

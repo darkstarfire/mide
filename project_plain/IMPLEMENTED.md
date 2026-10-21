@@ -1116,3 +1116,10 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - Teclas mortas e composição (´ + a = á, ~ + o = õ) conferidas nos apps do mide-ui, também com o idioma "C" (sessão iniciada do console).
 - Listas e grades longas: além de ladrilhos e linhas de arquivos, as linhas de lista (`list_item`) e os interruptores (`switch_detail`) fora da área à vista só ocupam o lugar e recebem o clique, sem desenhar.
 - Redesenho parcial: cada quadro manda ao compositor só o retângulo que mudou desde o anterior (`damage_buffer` da área diferente); digitar num campo não reenvia a janela inteira.
+
+## Diálogos e seletor de arquivos do mide-ui (D1) e "Abrir…" no Editor de Texto (E2)
+
+- `ui.alert(título, texto, botões)`: aviso pronto por cima da janela; devolve o botão clicado (o último é o principal; Esc = primeiro, Enter = último). Painéis de diálogo seguem o tema (escuros no tema escuro).
+- `ui.scroll_area(altura, ...)`: área de altura fixa que rola (a `page` agora usa a mesma base), com a barra de rolagem no tom do tema.
+- `FileChooser` (`src/kit/chooser.rs`): Abrir, Salvar e Escolher pasta. Lugares (pasta pessoal, Área de trabalho, Documentos, Downloads, Imagens), pasta de cima, caminho com `~` (cortado pelo começo quando é longo), lista com pastas primeiro e tamanhos, duplo clique entra na pasta ou escolhe, Enter confirma, Esc cancela, filtro por extensões, ocultos escondidos; no modo Salvar, campo do nome com foco, clicar num arquivo usa o nome dele, nome com "/" é recusado e um arquivo que já existe pede "Substituir?".
+- Editor de Texto: botão "Abrir…", Ctrl+O e menus do app na barra (Arquivo: Nova janela, Abrir…, Salvar, Salvar como…; Editar: Buscar e substituir…). Abrir num editor sem título e vazio carrega nele; com um documento aberto, abre outra janela. "Salvar como…" usa o seletor (começa na pasta do arquivo, ou em Documentos).

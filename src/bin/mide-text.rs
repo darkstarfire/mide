@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use mide::kit::{run, textarea::TextDoc, textedit::Edit, App, Key, Ui, Window};
+use mide::kit::{run, textarea::TextDoc, textedit::Edit, window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, Ui, Window};
 
 /// Arquivos maiores que isso não são abertos (o editor mínimo guarda cópias do texto
 /// para desfazer).
@@ -22,8 +22,10 @@ struct Find {
 }
 
 enum Dialog {
-    /// "Salvar como": o caminho sendo digitado.
-    SaveAs { path: String, focus: bool, then_close: bool },
+    /// "Abrir…": o seletor de arquivos.
+    Open(FileChooser),
+    /// "Salvar como…": o seletor no modo salvar (`then_close`: fecha depois de salvar).
+    SaveAs { chooser: FileChooser, then_close: bool },
     /// Fechar com alterações não salvas.
     ConfirmClose,
 }
@@ -88,11 +90,40 @@ impl Editor {
     }
 
     fn ask_save_as(&mut self, then_close: bool) {
-        let suggestion = match &self.path {
-            Some(path) => path.to_string_lossy().into_owned(),
-            None => default_dir().join("Sem título.txt").to_string_lossy().into_owned(),
+        let (dir, name) = match &self.path {
+            Some(path) => (path.parent().map(Path::to_path_buf), path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+            None => (Some(default_dir()), "Sem título.txt".to_string()),
         };
-        self.dialog = Some(Dialog::SaveAs { path: suggestion, focus: true, then_close });
+        self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save("Salvar como", dir.as_deref(), &name), then_close });
+    }
+
+    fn ask_open(&mut self) {
+        let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
+        self.dialog = Some(Dialog::Open(FileChooser::open("Abrir", Some(&dir))));
+    }
+
+    /// Abre o arquivo escolhido: nesta janela, se ela está sem título e sem nada
+    /// digitado; senão, numa janela nova (um documento por janela, como no Mac).
+    fn open_chosen(&mut self, path: PathBuf) {
+        if self.path.is_none() && !self.doc.modified && self.doc.text.is_empty() {
+            let opened = Editor::open(Some(path));
+            self.path = opened.path;
+            self.doc = opened.doc;
+            self.crlf = opened.crlf;
+            self.message = opened.message;
+            self.start = true;
+            return;
+        }
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-text"));
+        match std::process::Command::new(exe).arg(&path).spawn() {
+            Ok(mut child) => {
+                tracing::info!("abrindo em outra janela: {}", path.display());
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => self.message = Some(format!("Não foi possível abrir: {err}")),
+        }
     }
 
     /// Próxima ocorrência da busca depois do cursor (volta ao começo no fim).
@@ -149,8 +180,9 @@ impl Editor {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        let (mut save, mut save_as, mut find) = (false, false, false);
+        let (mut open, mut save, mut save_as, mut find) = (false, false, false, false);
         ui.toolbar(|ui| {
+            ui.sized(90.0, |ui| open = ui.button("Abrir…").clicked());
             ui.sized(90.0, |ui| save = ui.button("Salvar").clicked());
             ui.sized(130.0, |ui| save_as = ui.button("Salvar como…").clicked());
             ui.sized(90.0, |ui| find = ui.button("Buscar").clicked());
@@ -160,6 +192,9 @@ impl Editor {
             let state = if self.doc.modified { " · editado" } else { "" };
             ui.label(&format!("Linha {}, coluna {column}{state}", line + 1));
         });
+        if open {
+            self.ask_open();
+        }
         if save {
             self.save(false);
         }
@@ -227,38 +262,26 @@ impl Editor {
         };
         let mut esc = ui.input().key(Key::Escape);
         match dialog {
-            Dialog::SaveAs { path, focus, then_close } => {
-                let (focus, then_close) = (std::mem::take(focus), *then_close);
-                let mut text = path.clone();
-                let (mut ok, mut cancel) = (false, false);
-                ui.modal(460.0, |ui| {
-                    ui.strong("Salvar como");
-                    if focus {
-                        ui.focus_next_input();
-                    }
-                    ok = ui.text_input(&mut text, "Caminho do arquivo").submitted();
-                    ui.row(|ui| {
-                        ui.push_right(2.0 * 110.0 + 8.0);
-                        ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                        ui.sized(110.0, |ui| ok |= ui.primary_button("Salvar").clicked());
-                    });
-                });
-                if let Some(Dialog::SaveAs { path, .. }) = self.dialog.as_mut() {
-                    *path = text.clone();
+            Dialog::Open(chooser) => match chooser.show(ui) {
+                Some(Choice::Chosen(path)) => {
+                    self.dialog = None;
+                    self.open_chosen(path);
                 }
-                if cancel || esc {
-                    self.dialog = None;
-                } else if ok {
-                    let path = expand_home(text.trim());
-                    if path.file_name().is_none() {
-                        self.message = Some("Escreva o nome do arquivo.".into());
-                        return;
+                Some(Choice::Cancelled) => self.dialog = None,
+                None => {}
+            },
+            Dialog::SaveAs { chooser, then_close } => {
+                let then_close = *then_close;
+                match chooser.show(ui) {
+                    Some(Choice::Chosen(path)) => {
+                        self.path = Some(path);
+                        self.dialog = None;
+                        if self.save(false) && then_close {
+                            ui.close();
+                        }
                     }
-                    self.path = Some(path);
-                    self.dialog = None;
-                    if self.save(false) && then_close {
-                        ui.close();
-                    }
+                    Some(Choice::Cancelled) => self.dialog = None,
+                    None => {}
                 }
             }
             Dialog::ConfirmClose => {
@@ -295,8 +318,31 @@ impl App for Editor {
     fn view(&mut self, ui: &mut Ui) {
         let title = format!("{}{} — Editor de Texto", if self.doc.modified { "• " } else { "" }, self.name());
         ui.set_title(&title);
-        // Atalhos do app: Ctrl+S salva (com Shift, "Salvar como"), Ctrl+F busca.
-        let (save, find) = (ui.input().shortcut_shift("s"), ui.input().shortcut("f"));
+        // Atalhos do app: Ctrl+S salva (com Shift, "Salvar como"), Ctrl+O abre, Ctrl+F
+        // busca. Itens dos menus do app na barra superior também.
+        let (save, find, open) = (ui.input().shortcut_shift("s"), ui.input().shortcut("f"), ui.input().shortcut("o"));
+        for action in ui.input().menu.clone() {
+            match action.as_str() {
+                "abrir" if self.dialog.is_none() => self.ask_open(),
+                "salvar" if self.dialog.is_none() => {
+                    self.save(false);
+                }
+                "salvar-como" if self.dialog.is_none() => self.ask_save_as(false),
+                "buscar" => self.toggle_find(),
+                "nova" => {
+                    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-text"));
+                    if let Ok(mut child) = std::process::Command::new(exe).spawn() {
+                        std::thread::spawn(move || {
+                            let _ = child.wait();
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self.dialog.is_none() && open {
+            self.ask_open();
+        }
         if self.dialog.is_none() {
             match save {
                 Some(true) => self.ask_save_as(false),
@@ -320,6 +366,23 @@ impl App for Editor {
         let height = ui.remaining_height();
         ui.text_area(&mut self.doc, height);
         self.dialog(ui);
+    }
+
+    fn menu_bar(&mut self) -> Vec<MenuGroup> {
+        vec![
+            MenuGroup {
+                title: "Arquivo".into(),
+                items: vec![
+                    MenuItem::action("nova", "Nova janela").shortcut("Ctrl+N"),
+                    MenuItem::action("abrir", "Abrir…").shortcut("Ctrl+O"),
+                    MenuItem::Separator,
+                    MenuItem::action("salvar", "Salvar").shortcut("Ctrl+S"),
+                    MenuItem::action("salvar-como", "Salvar como…").shortcut("Ctrl+Shift+S"),
+                ],
+            },
+            MenuGroup { title: "Editar".into(), items: vec![MenuItem::action("buscar", "Buscar e substituir…").shortcut("Ctrl+F")] },
+            window_menu(Vec::new()),
+        ]
     }
 
     fn close_requested(&mut self) -> bool {
@@ -361,13 +424,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
-        _ => PathBuf::from(path),
-    }
 }
 
 /// Pasta sugerida para um arquivo novo: Documentos, ou a pasta pessoal.
