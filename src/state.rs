@@ -186,6 +186,15 @@ pub struct State {
     pub ghosts: Vec<(u64, smithay::utils::Rectangle<i32, Logical>, Instant)>,
     /// Janelas minimizadas, da mais antiga para a mais recente.
     pub minimized: Vec<MinimizedWindow>,
+    /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
+    /// tecla apertada (o soltar usa a mesma).
+    pub mac_keys: MacKeys,
+    /// Janelas que o app escondeu sem fechar (buffer nulo; o Chromium faz isso ao
+    /// continuar em segundo plano), com a posição onde estavam. Voltam quando o app
+    /// desenhar de novo.
+    pub hidden: Vec<(Window, Point<i32, Logical>)>,
+    /// Janelas que já mostraram um quadro (as outras ainda estão abrindo).
+    pub shown: std::collections::HashSet<u64>,
     /// Ícones da dock informados por ela: ids do app e retângulo relativo à dock.
     pub dock_icons: Vec<(Vec<String>, smithay::utils::Rectangle<i32, Logical>)>,
     /// Prévias das janelas de um app, pedidas pela dock (ponteiro sobre o ícone).
@@ -339,6 +348,9 @@ impl State {
             close_requests: Vec::new(),
             ghosts: Vec::new(),
             minimized: Vec::new(),
+            hidden: Vec::new(),
+            mac_keys: MacKeys::default(),
+            shown: Default::default(),
             dock_icons: Vec::new(),
             preview: None,
             pending_open: Vec::new(),
@@ -531,12 +543,76 @@ impl CompositorHandler for State {
                 }
             }
         }
+        self.follow_toplevel_mapping(surface);
         if let Some(window) = self.window_for(surface) {
             window.on_commit();
             self.open_animation_if_launched(&window);
             self.offer_clipboard_on_first_frame(surface);
         }
     }
+}
+
+impl State {
+    /// Janela escondida e mostrada de novo pelo app. Pelo xdg-shell, um buffer nulo
+    /// esconde a janela sem fechá-la, e para voltar o app refaz o começo (commit sem
+    /// buffer, configure do compositor, quadro). Sem o configure, ele espera para sempre.
+    fn follow_toplevel_mapping(&mut self, surface: &WlSurface) {
+        let has_buffer = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer().is_some()).unwrap_or(false);
+        if let Some(window) = self.window_for(surface) {
+            let id = window_id(&window);
+            if has_buffer {
+                self.shown.insert(id);
+            } else if self.shown.remove(&id) {
+                tracing::info!("janela escondida pelo app (continua aberta)");
+                let loc = self.space.element_location(&window).unwrap_or_default();
+                self.space.unmap_elem(&window);
+                self.hidden.push((window.clone(), loc));
+                // O teclado vai para a janela de cima.
+                let top = self.space.elements().last().cloned();
+                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                match top {
+                    Some(top) => crate::input::focus_window(self, &top, serial),
+                    None => {
+                        if let Some(keyboard) = self.seat.get_keyboard() {
+                            keyboard.set_focus(self, None, serial);
+                        }
+                    }
+                }
+            }
+            if let Some(toplevel) = window.toplevel() {
+                if !toplevel.is_initial_configure_sent() {
+                    toplevel.send_configure();
+                }
+            }
+            return;
+        }
+        let Some(i) = self.hidden.iter().position(|(w, _)| w.toplevel().is_some_and(|t| t.wl_surface() == surface)) else {
+            return;
+        };
+        let window = self.hidden[i].0.clone();
+        if let Some(toplevel) = window.toplevel() {
+            if !toplevel.is_initial_configure_sent() {
+                toplevel.send_configure();
+            }
+        }
+        if has_buffer {
+            let (window, loc) = self.hidden.remove(i);
+            tracing::info!("janela mostrada de novo pelo app");
+            self.shown.insert(window_id(&window));
+            self.space.map_element(window.clone(), loc, true);
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            crate::input::focus_window(self, &window, serial);
+            self.wake();
+        }
+    }
+}
+
+/// Teclas de verdade no estilo Mac (veja `input::mac_map`).
+#[derive(Default)]
+pub struct MacKeys {
+    pub ctrl: bool,
+    pub command: bool,
+    pub pressed: std::collections::HashMap<u32, u32>,
 }
 
 /// Marca da janela que já mostrou o primeiro quadro (a área de transferência já foi

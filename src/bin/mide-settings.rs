@@ -842,7 +842,7 @@ impl Settings {
         ui.title("Teclado");
         let mut mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
         ui.card(|ui| {
-            let detail = "Command (tecla Super/Windows) faz o papel do Ctrl e Option é o Alt, como no Mac";
+            let detail = "Command (tecla Alt) faz o papel do Ctrl nos apps e Option (tecla Super/Windows) é o Alt; o Ctrl continua Ctrl. Bloquear: Ctrl+⌘+Q";
             if ui.switch_detail("Teclas no estilo Mac", detail, &mut mac).changed() {
                 match settings_file::set("keyboard", "mac_style", mac.then_some(Value::Bool(true))) {
                     Ok(()) => {
@@ -1232,10 +1232,12 @@ fn current_wallpaper() -> Option<PathBuf> {
 }
 
 /// Papéis de parede para escolher: o padrão do mide (`None`) e as imagens do sistema e
-/// as adicionadas pelo usuário.
+/// as adicionadas pelo usuário. `MIDE_BACKGROUNDS_DIR` troca a pasta do sistema (os
+/// testes usam uma com imagens conhecidas).
 fn wallpaper_list() -> Vec<Option<PathBuf>> {
     let mut list = vec![None];
-    let dirs = [PathBuf::from("/usr/share/backgrounds"), mide::places::user_backgrounds_dir()];
+    let system = std::env::var_os("MIDE_BACKGROUNDS_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/usr/share/backgrounds"));
+    let dirs = [system, mide::places::user_backgrounds_dir()];
     let mut files: Vec<PathBuf> = dirs
         .iter()
         .filter_map(|d| fs::read_dir(d).ok())

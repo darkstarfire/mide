@@ -229,7 +229,7 @@ fn render(
         let (renderer, mut framebuffer) = backend.bind()?;
         // O `submit` do winit troca os buffers depois do desenho terminar (como antes da
         // cena ter saído daqui): o ponto de sincronização fica sem uso.
-        let _sync = scene.render(renderer, &mut framebuffer, output, damage_tracker, state)?;
+        let _sync = scene.render(renderer, &mut framebuffer, output, damage_tracker, state, 0)?;
     }
     // Apresenta o quadro inteiro. Com dano parcial, o buffer de trás pode ter pixels
     // de quadros antigos, e a diferença aparece como padrão pontilhado nas sombras.
@@ -262,7 +262,7 @@ fn render_sim_drm(
     {
         let renderer = backend.renderer();
         let mut target = renderer.bind(&mut texture)?;
-        let _sync = scene.render(renderer, &mut target, output, damage_tracker, state)?;
+        let _sync = scene.render(renderer, &mut target, output, damage_tracker, state, 0)?;
     }
     let (renderer, mut framebuffer) = backend.bind()?;
     let mut frame = renderer.render(&mut framebuffer, size, Transform::Flipped180)?;

@@ -102,6 +102,12 @@ check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "400 list
 check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 430 list"
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
 check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" "$TERMINAL"
+# App que esconde a janela sem fechar e mostra de novo (como o Chromium/Brave em
+# segundo plano; `MIDE_KIT_TEST_HIDE` faz o kit esconder 2 s e mostrar 2 s depois).
+SCENARIO_WAIT=14 check "janela escondida pelo app volta quando ele mostra" "janela mostrada de novo pelo app" "150 list; 600 list" "MIDE_KIT_TEST_HIDE=1 $CALCULATOR"
+# Clique numa janela por cima da barra de título de outra (Calculadora em (48, 46),
+# Terminal arrastado para cobrir a barra dela): o clique é do Terminal, a de trás não sobe.
+check_last "clique não atravessa para a barra de título de trás" 'janela "Terminal"' "400 press 400 93; 405 move 400 60; 410 move 400 20; 415 release 400 20; 460 click 200 68; 490 list" "$CALCULATOR" "$TERMINAL"
 # Menus padrão do mide (a Calculadora não publica menus): "Editar" em x=234, "Janela" em 287.
 check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 234 14; 440 list" "$CALCULATOR"
 check "Janela > Zoom maximiza" "$CALC popups=0 posição=\(0, 58\) visível=1366x643" "400 click 287 14; 430 click 299 73; 480 list" "$CALCULATOR"
@@ -166,9 +172,11 @@ echo "== launcher: arrastar, pastas e renomear (configuração própria)"
 LCFG="$(mktemp -d)"
 OLD_LCFG="$XDG_CONFIG_HOME"
 export XDG_CONFIG_HOME="$LCFG"
+# As pastas padrão dependem dos apps instalados: conta as do começo.
+LFOLDERS="$(timeout 150 "$SCEN" "$LAUNCH; 460 list" 2>&1 | grep -oE "e [0-9]+ pasta" | head -1 | grep -oE "[0-9]+")"
 DRAG="460 press 179 210; 465 move 200 210; 470 move 260 210; 475 move 323 210; 480 release 323 210"
 check "arrastar app sobre app cria uma pasta" "pasta .*\(2 apps\)" "$LAUNCH; $DRAG; 520 list"
-check "pasta fica salva" "em [0-9]+ lugar\(es\) e 4 pasta" "$LAUNCH; 460 list"
+check "pasta fica salva" "em [0-9]+ lugar\(es\) e $((LFOLDERS + 1)) pasta" "$LAUNCH; 460 list"
 check "clicar no nome da pasta e renomear" "pasta renomeada para gravar" "$LAUNCH; 460 click 179 210; 490 click 683 258; 510 key backspace; 511 key backspace; 512 key backspace; 513 key backspace; 514 key backspace; 520 type gravar; 530 key enter; 560 list"
 check "arrastar para fora tira o app da pasta" "saiu da pasta gravar" "$LAUNCH; 460 click 179 210; 490 press 611 368; 495 move 560 420; 500 move 400 520; 505 move 200 600; 510 release 150 620; 540 list"
 export XDG_CONFIG_HOME="$OLD_LCFG"
@@ -331,7 +339,18 @@ check_count "Esc fecha a lista de Downloads" 'camada "mide-dock-menu"' 0 "400 cl
 # cópia, para o ícone dele não mexer na dock antes dos cliques) cola
 # com Ctrl+V e salva. O texto fica com o compositor.
 CPY="$(mktemp)"
-SCENARIO_WAIT=24 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1000 click 400 300; 1020 combo ctrl+v; 1050 combo ctrl+s; 1100 list" -- "sleep 12; $PWD/target/debug/mide-text '$CPY'" >/dev/null 2>&1
+# Os testes de cima levaram itens para a Lixeira: com menos itens, a lista e o menu
+# ficam em outro lugar. A pasta volta aos 3 itens ("projeto" o mais novo).
+mkdir -p "$PLACES/dl/projeto"
+echo x > "$PLACES/dl/antigo.txt"
+echo x > "$PLACES/dl/foto.jpg"
+touch -d "3 hours ago" "$PLACES/dl/antigo.txt"
+touch -d "1 hour ago" "$PLACES/dl/foto.jpg"
+touch "$PLACES/dl/projeto"
+# O editor aparece por volta do quadro 900; sob carga, mais tarde (folga até o 1200).
+# O roteiro conta quadros e o cenário espera por tempo: sob a carga da bateria saem
+# menos quadros por segundo, então a espera e o limite vão com sobra.
+SCENARIO_WAIT=45 SCENARIO_TIMEOUT=75 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1200 click 400 300; 1220 combo ctrl+v; 1250 combo ctrl+s; 1300 list" -- "sleep 12; $PWD/target/debug/mide-text '$CPY'" >/dev/null 2>&1
 if grep -q "/dl/projeto" "$CPY"; then
     echo "ok    Copiar caminho da dock cola em outro app"; PASS=$((PASS + 1))
 else
@@ -394,14 +413,19 @@ printf '# Meu config\n[keybindings]\n"ctrl+shift+t" = "launch:foot" # terminal\n
 OLD_SCFG="$XDG_CONFIG_HOME"
 export XDG_CONFIG_HOME="$SCFG"
 SETTINGS="$PWD/target/debug/mide-settings"
-# Janela em (48, 76): miniatura "Beach" em (548, 185); interruptor de Sombras em (807, 169).
+# Papéis de parede do sistema de teste (os da máquina mudam de uma distribuição para
+# outra): só "Beach". Janela em (48, 76): miniatura "Beach" em (548, 185); interruptor
+# de Sombras em (807, 169).
+export MIDE_BACKGROUNDS_DIR="$SCFG/backgrounds"
+mkdir -p "$MIDE_BACKGROUNDS_DIR"
+python3 -c 'import sys; from PIL import Image; Image.new("RGB", (640, 400), (40, 120, 200)).save(sys.argv[1])' "$MIDE_BACKGROUNDS_DIR/Beach.jpg"
 timeout 150 "$SCEN" "400 click 548 185; 460 list" -- "$SETTINGS wallpaper" >/dev/null 2>&1
-if grep -q 'wallpaper = "/usr/share/backgrounds/Beach' "$SCFG/mide/config.toml" && grep -q "# terminal" "$SCFG/mide/config.toml"; then
+if grep -q "wallpaper = \"$MIDE_BACKGROUNDS_DIR/Beach" "$SCFG/mide/config.toml" && grep -q "# terminal" "$SCFG/mide/config.toml"; then
     echo "ok    escolher papel de parede grava (e mantém os comentários)"; PASS=$((PASS + 1))
 else
     echo "FALHA escolher papel de parede grava"; FAIL=$((FAIL + 1))
 fi
-check "compositor usa o papel de parede gravado" "papel de parede: /usr/share/backgrounds/Beach" "400 list; 420 list" "$SETTINGS wallpaper"
+check "compositor usa o papel de parede gravado" "papel de parede: $MIDE_BACKGROUNDS_DIR/Beach" "400 list; 420 list" "$SETTINGS wallpaper"
 timeout 150 "$SCEN" "400 click 807 169; 460 list" -- "$SETTINGS effects" >/dev/null 2>&1
 if grep -q "shadows = false" "$SCFG/mide/config.toml"; then
     echo "ok    desligar sombras grava no config.toml"; PASS=$((PASS + 1))
@@ -495,6 +519,7 @@ else
     echo "FALHA restaurar os atalhos padrão"; FAIL=$((FAIL + 1))
 fi
 export XDG_CONFIG_HOME="$OLD_SCFG"
+unset MIDE_BACKGROUNDS_DIR
 rm -rf "$SCFG"
 
 echo "== buscador (ctrl+space)"
@@ -510,11 +535,17 @@ check_count "abrir um app pelo buscador fecha o buscador" 'camada "mide-search"'
 MCFG="$(mktemp -d)"
 mkdir -p "$MCFG/mide"
 printf '[keyboard]\nmac_style = true\n' >"$MCFG/mide/config.toml"
-if XDG_CONFIG_HOME="$MCFG" timeout 150 "$SCEN" "400 combo super+space; 460 list" 2>&1 | grep -q 'camada "mide-search"'; then
+# Estilo Mac: o Alt é o ⌘ e o Super é o ⌥; o Ctrl continua Ctrl.
+if XDG_CONFIG_HOME="$MCFG" timeout 150 "$SCEN" "400 combo alt+space; 460 list" 2>&1 | grep -q 'camada "mide-search"'; then
     echo "ok    teclas no estilo Mac: Command+Espaço abre o buscador"; PASS=$((PASS + 1))
 else
     echo "FALHA teclas no estilo Mac: Command+Espaço abre o buscador"; FAIL=$((FAIL + 1))
 fi
+XDG_CONFIG_HOME="$MCFG" SCENARIO_WAIT=16 check "teclas no estilo Mac: Ctrl+⌘+Q bloqueia" "autoteste: tela bloqueada" "430 combo ctrl+alt+q; 650 list" "$TERMINAL"
+XDG_CONFIG_HOME="$MCFG" check_count "teclas no estilo Mac: Ctrl+L e ⌘L não bloqueiam (no Terminal)" "tela bloqueada" 0 "430 combo ctrl+l; 440 combo alt+l; 460 combo super+l; 600 list" "$TERMINAL"
+XDG_CONFIG_HOME="$MCFG" check_count "teclas no estilo Mac: Ctrl+L e ⌘L não bloqueiam (num app)" "tela bloqueada" 0 "430 combo ctrl+l; 440 combo alt+l; 460 combo super+l; 600 list" "$CALCULATOR"
+XDG_CONFIG_HOME="$MCFG" SCENARIO_WAIT=16 check "teclas no estilo Mac: Ctrl+⌘+Q bloqueia no Terminal" "autoteste: tela bloqueada" "430 combo ctrl+alt+q; 650 list" "$TERMINAL"
+XDG_CONFIG_HOME="$MCFG" check "teclas no estilo Mac: ⌘Tab troca de janela" "alternador: janela" "400 keydown alt; 410 key tab; 440 list; 450 keyup alt" "$TERMINAL" "$CALCULATOR"
 rm -rf "$MCFG"
 
 HCFG="$(mktemp -d)"
@@ -690,6 +721,9 @@ SCENARIO_WAIT=16 check "senha certa desbloqueia" "autoteste: tela livre, desbloq
 unset MIDE_LOCK_TEST_PASSWORD
 # Dois monitores: uma tela de bloqueio em cada.
 MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=16 check "bloqueio cobre os dois monitores" "autoteste: tela bloqueada \(2 tela" "400 combo super+l; 650 list"
+# Com dois monitores, a resposta da senha não pode se perder na cópia da tela de
+# bloqueio do outro monitor (antes, a senha certa às vezes não desbloqueava).
+MIDE_LOCK_TEST_PASSWORD=teste MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=16 check "senha certa desbloqueia com dois monitores" "autoteste: tela livre, desbloqueios: 1" "400 combo super+l; 620 type teste; 622 key enter; 760 list"
 # Tempo sem uso (contado em segundos nos testes): apaga e acende ao mexer.
 IDLECFG="$(mktemp -d)"
 mkdir -p "$IDLECFG/mide"
@@ -720,6 +754,19 @@ else
     echo "FALHA captura de uma área salva em Imagens/Capturas de tela"; FAIL=$((FAIL + 1))
 fi
 SCENARIO_WAIT=16 check "captura: Enter copia a imagem para a área de transferência" "bytes de image/png copiados" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 key enter; 720 list"
+# Estilo Mac: ⌘S (a tecla Alt) também salva (antes, o Ctrl virava Super e nem o
+# Ctrl+S salvava).
+MSHOT="$(mktemp -d)"
+mkdir -p "$MSHOT/cfg/mide"
+printf '[keyboard]\nmac_style = true\n' > "$MSHOT/cfg/mide/config.toml"
+printf 'XDG_PICTURES_DIR="%s"\n' "$MSHOT/pics" > "$MSHOT/cfg/user-dirs.dirs"
+XDG_CONFIG_HOME="$MSHOT/cfg" SCENARIO_WAIT=16 timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo alt+s; 720 list" >/dev/null 2>&1
+if ls "$MSHOT/pics/Capturas de tela/Captura de tela "*.png >/dev/null 2>&1; then
+    echo "ok    captura: ⌘S salva no estilo Mac (Imagens/Capturas de tela, nome com data e hora)"; PASS=$((PASS + 1))
+else
+    echo "FALHA captura: ⌘S salva no estilo Mac"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$MSHOT"
 rm -f "$TESTCFG/user-dirs.dirs"
 rm -rf "$SHOTS"
 

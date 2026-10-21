@@ -385,6 +385,8 @@ pub struct Ctx {
     pub hide_request: Option<bool>,
     /// Tela de bloqueio: a senha foi aceita (`Ui::unlock`).
     pub unlock_request: bool,
+    /// Desenhando a cópia da tela de bloqueio de outro monitor (`Ui::mirror`).
+    pub mirror: bool,
 }
 
 impl Ctx {
@@ -417,6 +419,7 @@ impl Ctx {
             input_region: None,
             hide_request: None,
             unlock_request: false,
+            mirror: false,
         }
     }
 
@@ -1199,6 +1202,12 @@ impl<'a> Ui<'a> {
     /// está atrás (camadas transparentes, como `Window::dropdown`). Vale por quadro.
     pub fn input_area(&mut self, rect: (f32, f32, f32, f32)) {
         self.ctx.input_region = Some(rect);
+    }
+
+    /// Este `view` desenha a cópia da tela de bloqueio de outro monitor: sem teclas
+    /// e sem consumir nada do estado (a resposta da senha é da tela principal).
+    pub fn mirror(&self) -> bool {
+        self.ctx.mirror
     }
 
     /// Tela de bloqueio (`Window::lock`): desbloqueia a sessão e fecha o app.

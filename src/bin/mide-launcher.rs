@@ -1075,6 +1075,7 @@ impl Launcher {
             }
         };
         let d = dir as f32;
+        let mut still: Vec<GlassRect> = Vec::new();
         for r in old_glass.iter().filter(|r| inside(r)) {
             push(r, -d * shift as f32);
         }
@@ -1082,9 +1083,13 @@ impl Launcher {
             if inside(r) {
                 push(r, d * (bw - shift) as f32);
             } else {
-                push(r, 0.0);
+                // Fora da faixa (o painel da pasta, que fica parado): inteiro. Recortado
+                // na faixa, o compositor desenhava a borda e os cantos do vidro nos
+                // limites dela, e o painel aparecia com duas molduras.
+                still.push(*r);
             }
         }
+        rects.extend(still);
         self.send_glass(&rects);
     }
 

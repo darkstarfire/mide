@@ -7,7 +7,6 @@
 
 use smithay::{
     backend::renderer::{
-        element::Kind,
         gles::{
             element::PixelShaderElement, GlesError, GlesPixelProgram, GlesRenderer, GlesTexProgram,
             Uniform, UniformName, UniformType,
@@ -17,6 +16,79 @@ use smithay::{
 };
 
 pub type Rect = Rectangle<i32, Logical>;
+
+/// Elementos de shader com identidade estável entre quadros. O rastreador de dano
+/// compara cada elemento pelo `Id` e pela contagem de mudanças: criar um elemento
+/// novo a cada quadro (um `Id` novo) faz a área inteira dele contar como mudada.
+/// Aqui o n-ésimo elemento de cada programa no quadro de cada tela reaproveita o do
+/// quadro anterior; se a área ou os uniformes mudaram, ele é atualizado (e conta
+/// como mudado só ele).
+mod stable {
+    use std::{cell::RefCell, collections::HashMap};
+
+    use smithay::backend::renderer::{
+        element::Kind,
+        gles::{element::PixelShaderElement, GlesPixelProgram, Uniform},
+    };
+
+    use super::Rect;
+
+    #[derive(Default)]
+    struct Cache {
+        output: String,
+        counts: HashMap<u8, usize>,
+        /// (tela, programa, ordem) → elemento.
+        elements: HashMap<(String, u8, usize), Entry>,
+        frame: u64,
+    }
+
+    /// Elemento guardado, os uniformes dele e o quadro em que foi usado.
+    type Entry = (PixelShaderElement, Vec<Uniform<'static>>, u64);
+
+    thread_local! {
+        static CACHE: RefCell<Cache> = RefCell::default();
+    }
+
+    /// Começa o quadro de uma tela: a contagem por programa volta a zero e o que não
+    /// foi usado nos últimos quadros é esquecido.
+    pub fn begin_frame(output: &str) {
+        CACHE.with_borrow_mut(|c| {
+            c.frame += 1;
+            c.output = output.to_string();
+            c.counts.clear();
+            let frame = c.frame;
+            c.elements.retain(|_, (_, _, used)| frame - *used < 8);
+        });
+    }
+
+    pub fn pixel(program: &GlesPixelProgram, tag: u8, area: Rect, uniforms: Vec<Uniform<'static>>) -> PixelShaderElement {
+        CACHE.with_borrow_mut(|c| {
+            let n = c.counts.entry(tag).or_default();
+            let key = (c.output.clone(), tag, *n);
+            *n += 1;
+            let frame = c.frame;
+            match c.elements.get_mut(&key) {
+                Some((element, old, used)) => {
+                    element.resize(area, None);
+                    if *old != uniforms {
+                        element.update_uniforms(uniforms.clone());
+                        *old = uniforms;
+                    }
+                    *used = frame;
+                    element.clone()
+                }
+                None => {
+                    let element = PixelShaderElement::new(program.clone(), area, None, 1.0, uniforms.clone(), Kind::Unspecified);
+                    c.elements.insert(key, (element.clone(), uniforms, frame));
+                    element
+                }
+            }
+        })
+    }
+}
+
+pub use stable::begin_frame;
+use stable::pixel;
 
 /// Altura da barra de título em pixels.
 pub const BAR_HEIGHT: i32 = 30;
@@ -369,34 +441,20 @@ fn glyph(shaders: &Shaders, rect: Rect, button: Button) -> PixelShaderElement {
         Button::Minimize => 1.0,
         Button::Maximize => 2.0,
     };
-    PixelShaderElement::new(
-        shaders.glyph.clone(),
-        rect,
-        None,
-        1.0,
-        vec![
+    pixel(&shaders.glyph, 0, rect, vec![
             Uniform::new("kind", kind),
             Uniform::new("fill", [0.0, 0.0, 0.0, 0.55]),
-        ],
-        Kind::Unspecified,
-    )
+        ])
 }
 
 /// Anel fino escuro em volta de um botão, para dar contorno ao círculo.
 fn ring(shaders: &Shaders, rect: Rect) -> PixelShaderElement {
-    PixelShaderElement::new(
-        shaders.outline.clone(),
-        rect,
-        None,
-        1.0,
-        vec![
+    pixel(&shaders.outline, 1, rect, vec![
             Uniform::new("half_size", (rect.size.w as f32 / 2.0, rect.size.h as f32 / 2.0)),
             Uniform::new("radius", (rect.size.w / 2) as f32 * crate::clip::scale() as f32),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, 0.18]),
-        ],
-        Kind::Unspecified,
-    )
+        ])
 }
 
 /// Janela que projeta sombra: moldura e intensidade (0 = sem sombra).
@@ -441,7 +499,7 @@ pub fn shadow_uniforms(casters: &[Caster]) -> Vec<Uniform<'static>> {
 pub fn desktop_element(shaders: &Shaders, output: Rect, bg: [f32; 4], casters: &[Caster]) -> PixelShaderElement {
     let mut uniforms = vec![Uniform::new("fill", bg)];
     uniforms.extend(shadow_uniforms(casters));
-    PixelShaderElement::new(shaders.desktop.clone(), output, None, 1.0, uniforms, Kind::Unspecified)
+    pixel(&shaders.desktop, 3, output, uniforms)
 }
 
 /// Intensidade da sombra de uma janela.
@@ -461,7 +519,7 @@ fn rounded(
         Uniform::new("fill", color),
     ];
     uniforms.extend(clip.iter().cloned());
-    PixelShaderElement::new(shaders.rounded.clone(), area, None, 1.0, uniforms, Kind::Unspecified)
+    pixel(&shaders.rounded, 2, area, uniforms)
 }
 
 /// Retângulo arredondado sem recorte (painéis do compositor, como as prévias da
@@ -477,19 +535,12 @@ pub fn rounded_rect_element(shaders: &Shaders, area: Rect, color: [f32; 4], radi
 
 /// Vidro claro arredondado (destaque da prévia sob o ponteiro).
 pub fn glass_element(shaders: &Shaders, area: Rect, radius: i32) -> PixelShaderElement {
-    PixelShaderElement::new(shaders.glass.clone(), area, None, 1.0, vec![Uniform::new("radius", radius as f32 * crate::clip::scale() as f32)], Kind::Unspecified)
+    pixel(&shaders.glass, 4, area, vec![Uniform::new("radius", radius as f32 * crate::clip::scale() as f32)])
 }
 
 /// × na cor pedida (botão de fechar das prévias, branco sobre o círculo escuro).
 pub fn close_glyph_colored(shaders: &Shaders, rect: Rect, color: [f32; 4]) -> PixelShaderElement {
-    PixelShaderElement::new(
-        shaders.glyph.clone(),
-        rect,
-        None,
-        1.0,
-        vec![Uniform::new("kind", 0.0f32), Uniform::new("fill", color)],
-        Kind::Unspecified,
-    )
+    pixel(&shaders.glyph, 0, rect, vec![Uniform::new("kind", 0.0f32), Uniform::new("fill", color)])
 }
 
 /// Contorno fino arredondado.
@@ -509,12 +560,7 @@ pub const SHADOW_OFFSET: i32 = 8;
 /// Traço de 1 px em volta da janela inteira, seguindo os cantos arredondados.
 pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool) -> PixelShaderElement {
     let alpha = if focused { 0.22 } else { 0.12 };
-    PixelShaderElement::new(
-        shaders.outline.clone(),
-        frame,
-        None,
-        1.0,
-        vec![
+    pixel(&shaders.outline, 1, frame, vec![
             Uniform::new(
                 "half_size",
                 (frame.size.w as f32 / 2.0, frame.size.h as f32 / 2.0),
@@ -522,9 +568,7 @@ pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool) -> PixelSh
             Uniform::new("radius", CORNER_RADIUS as f32 * crate::clip::scale() as f32),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, alpha]),
-        ],
-        Kind::Unspecified,
-    )
+        ])
 }
 
 /// Largura, em pixels, da faixa da borda que aciona o redimensionamento.

@@ -760,3 +760,17 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - `tests/ui.sh`: o bloqueio cobre os dois monitores (2 telas de bloqueio); a tela apaga depois do tempo sem uso e acende ao mexer o mouse; bloqueia sozinha depois do tempo sem uso.
 - Manual (sessão de verdade): os monitores desligam (DPMS) e ligam com uma tecla; um vídeo tocando no Firefox ou no mpv impede o bloqueio e o apagar.
 
+## Otimizações do DRM (A17)
+
+- Dano parcial sem defeitos: o mesmo roteiro (arrastar a janela, menu de contexto, fechar o menu, mexer o mouse) com e sem `MIDE_FULL_DAMAGE=1`, quadro 460 salvo pelo `scenario.sh`: as imagens ficam iguais (só o relógio da barra difere).
+- Dano medido: `RUST_LOG=mide=debug` mostra "dano: N% da tela" a cada quadro; com `MIDE_DAMAGE_DEBUG=1`, a identidade e a contagem de mudanças de cada elemento (um `Id` novo a cada quadro é dano de tela inteira). Com uma janela parada: 0%.
+- `tests/perf.sh desktop` com e sem `MIDE_FULL_DAMAGE=1` (o script agora usa `LC_ALL=C`: em pt_BR o `sort` e o `awk` liam "0.85" errado).
+- Manual (sessão de verdade, DRM): cursor no plano de hardware (mexer o mouse com o `MIDE_GPU_TIMING` ligado não gera quadros), forma do cursor trocando (texto, redimensionar, mão), cursor de app (Firefox, jogos), barra de título acendendo os botões, dois monitores (o cursor passa de um para o outro), apagar e acender a tela (o cursor volta), trocar de VT e voltar; sem cortes no notebook (eDP) nem no monitor externo. Se algo der errado: `MIDE_SW_CURSOR=1` e `MIDE_FULL_DAMAGE=1`.
+- A bateria não depende da máquina: sem bateria na barra (`MIDE_POWER_SUPPLY_DIR`, pasta vazia), papéis de parede de teste (`MIDE_BACKGROUNDS_DIR`) e pastas do launcher contadas a partir das padrão. "Copiar caminho da dock cola em outro app" com mais folga (cliques no quadro 1200).
+- `tests/ui.sh`: "clique não atravessa para a barra de título de trás" (Calculadora atrás, Terminal arrastado por cima da barra dela, clique no Terminal: ele continua no topo).
+- Launcher, pasta com 2 páginas, roda do mouse: quadros 512 e 515 do carrossel com uma moldura só no painel (antes, duas).
+- Manual (sessão de verdade): Brave/Chrome fecham pelo × deles, pelo Alt+F4 e pelo menu da dock; com "continuar rodando em segundo plano" ligado, a janela some e volta ao abrir de novo pelo ícone. O log da sessão fica em `~/.local/state/mide/sessao.log` ("janela escondida pelo app", "janela mostrada de novo pelo app").
+- `tests/ui.sh` novos: estilo Mac (Ctrl+⌘+Q bloqueia; Ctrl+L, ⌘L e ⌥L não; ⌘Tab troca de janela; ⌘Espaço abre o buscador pela tecla Alt), senha certa desbloqueia com dois monitores, janela escondida pelo app volta quando ele mostra, captura: ⌘S salva no estilo Mac.
+- Tela de bloqueio: quadro sem barra nem dock atrás (papel de parede desfocado e escurecido), também nos primeiros quadros depois de bloquear; resposta por tecla medida com `RUST_LOG=mide=debug` ("resposta (tecla)").
+- Manual (sessão de verdade): bloquear com dois monitores e digitar a senha certa; deixar bloquear sozinho, esperar a tela apagar e acender com uma tecla; Ctrl+⌘+Q no estilo Mac; Print → Salvar e Copiar pelos botões, por Ctrl+S/Ctrl+C e por ⌘S/⌘C (aviso na tela).
+- `tests/ui.sh` (2026-10-20): 204 verificações. "Copiar caminho da dock cola em outro app" repõe os 3 itens de Downloads antes (os testes da Lixeira levam `projeto` e `foto.jpg`; com menos itens o menu fica em outro lugar) e espera com sobra (o roteiro conta quadros, o cenário encerra por tempo).

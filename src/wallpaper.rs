@@ -63,6 +63,9 @@ pub struct Wallpaper {
     /// Caminho da imagem atual (para trocar quando a configuração mudar).
     path: RefCell<Option<PathBuf>>,
     cache: RefCell<Option<(Size<i32, Logical>, GlesTexture, Id)>>,
+    /// Sombras do último quadro (posição e força de cada janela), a identidade da
+    /// textura e a do elemento: muda quando as sombras ou a textura mudam.
+    shadows: RefCell<Option<(Vec<(i32, i32, i32, i32, u32)>, Id, Id)>>,
     /// Último tamanho pedido e quando mudou: enquanto a saída muda de tamanho
     /// (janela do mide sendo redimensionada), a textura antiga é esticada.
     resizing: RefCell<Option<(Size<i32, Logical>, std::time::Instant)>>,
@@ -96,6 +99,7 @@ impl Wallpaper {
             image: RefCell::new(None),
             path: RefCell::new(None),
             cache: RefCell::new(None),
+            shadows: RefCell::new(None),
             resizing: RefCell::new(None),
             generation: std::cell::Cell::new(0),
             pending: RefCell::new(None),
@@ -172,7 +176,7 @@ impl Wallpaper {
         renderer: &mut GlesRenderer,
         output: Rectangle<i32, Logical>,
         casters: &[Caster],
-    ) -> Vec<TextureShaderElement> {
+    ) -> Vec<crate::clip::Keyed<TextureShaderElement>> {
         let size = output.size;
         if size.w <= 0 || size.h <= 0 {
             return Vec::new();
@@ -246,6 +250,17 @@ impl Wallpaper {
             }
             None => 1.0,
         };
+        // As sombras das janelas são desenhadas aqui (pelos uniformes, que o rastreador
+        // de dano não vê): mudaram, o fundo é redesenhado (identidade nova).
+        let signature: Vec<(i32, i32, i32, i32, u32)> = casters.iter().map(|c| (c.frame.loc.x, c.frame.loc.y, c.frame.size.w, c.frame.size.h, c.strength.to_bits())).collect();
+        let id = {
+            let mut last = self.shadows.borrow_mut();
+            let same = last.as_ref().is_some_and(|(sig, base, _)| *sig == signature && *base == id);
+            if !same {
+                *last = Some((signature, id.clone(), Id::new()));
+            }
+            last.as_ref().map(|(_, _, element)| element.clone()).unwrap_or(id)
+        };
         let mut out = vec![self.shader_element(renderer, output, texture, tex_size, id, k, casters)];
         if k < 1.0 {
             if let Some((old, old_size, _)) = self.fading.borrow().as_ref() {
@@ -265,11 +280,11 @@ impl Wallpaper {
         id: Id,
         alpha: f32,
         casters: &[Caster],
-    ) -> TextureShaderElement {
+    ) -> crate::clip::Keyed<TextureShaderElement> {
         let size = output.size;
         let full = Rectangle::<i32, smithay::utils::Buffer>::from_size((size.w, size.h).into());
         let inner = TextureRenderElement::from_static_texture(
-            id,
+            id.clone(),
             renderer.context_id(),
             (output.loc.x as f64, output.loc.y as f64),
             texture,
@@ -286,6 +301,6 @@ impl Wallpaper {
             (size.w as f32, size.h as f32),
         )];
         uniforms.extend(decorations::shadow_uniforms(casters));
-        TextureShaderElement::new(inner, self.program.clone(), uniforms)
+        crate::clip::Keyed::new(id, TextureShaderElement::new(inner, self.program.clone(), uniforms))
     }
 }

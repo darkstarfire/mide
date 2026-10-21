@@ -147,8 +147,8 @@ pub struct Blur {
     down: GlesTexProgram,
     up: GlesTexProgram,
     composite: GlesTexProgram,
-    /// Papel de parede desfocado: chave (textura de origem, tamanho) e o resultado.
-    wallpaper: RefCell<Option<((usize, Size<i32, Logical>), GlesTexture)>>,
+    /// Papel de parede desfocado de cada tela (textura e tamanho): textura e identidade.
+    wallpaper: RefCell<HashMap<(usize, i32, i32), (GlesTexture, Id)>>,
     /// Texturas reaproveitadas entre quadros (fundo da dock e passadas dela), pelo
     /// tamanho e pelo papel (0: fundo; 16 + i: redução i; 32 + i: ampliação i). Cada
     /// passada tem a sua: em áreas pequenas, níveis vizinhos têm o mesmo tamanho, e uma
@@ -158,7 +158,10 @@ pub struct Blur {
     pool: RefCell<HashMap<(i32, i32, u8, String), GlesTexture>>,
     /// Último desfoque de cada região de vidro (dock, barra, menus...): assinatura do
     /// que estava atrás, textura e tamanho.
-    regions: RefCell<HashMap<String, (u64, GlesTexture, Size<i32, Logical>)>>,
+    /// Desfoque pronto de cada região: a assinatura do que estava atrás, a textura, o
+    /// tamanho e a identidade do elemento (a mesma enquanto a textura não muda: assim
+    /// o rastreador de dano não redesenha o vidro a cada quadro).
+    regions: RefCell<HashMap<String, (u64, GlesTexture, Size<i32, Logical>, Id)>>,
 }
 
 /// Passadas do desfoque (cada uma reduz à metade) e o deslocamento das amostras.
@@ -184,7 +187,7 @@ impl Blur {
             down,
             up,
             composite,
-            wallpaper: RefCell::new(None),
+            wallpaper: RefCell::new(HashMap::new()),
             pool: RefCell::new(HashMap::new()),
             regions: RefCell::new(HashMap::new()),
         })
@@ -223,15 +226,15 @@ impl Blur {
         src: Rectangle<f64, Logical>,
         glass: f32,
         backdrop: impl FnOnce(&mut GlesRenderer, GlesTexture) -> Option<GlesTexture>,
-    ) -> Option<(GlesTexture, Size<i32, Logical>)> {
+    ) -> Option<(GlesTexture, Size<i32, Logical>, Id)> {
         // Área pequena demais (a dock no primeiro quadro, antes de ter tamanho).
         if src.size.w < 16.0 || src.size.h < 16.0 {
             return None;
         }
         let key = key ^ glass.to_bits() as u64;
-        if let Some((k, texture, size)) = self.regions.borrow().get(name) {
+        if let Some((k, texture, size, id)) = self.regions.borrow().get(name) {
             if *k == key {
-                return Some((texture.clone(), *size));
+                return Some((texture.clone(), *size, id.clone()));
             }
         }
         // O fundo desenhado é só a entrada das passadas: pode ser o mesmo para todas.
@@ -244,8 +247,9 @@ impl Blur {
         if regions.len() > 32 {
             regions.clear();
         }
-        regions.insert(name.to_string(), (key, blurred.clone(), size));
-        Some((blurred, size))
+        let id = Id::new();
+        regions.insert(name.to_string(), (key, blurred.clone(), size, id.clone()));
+        Some((blurred, size, id))
     }
 
     /// Desenha a região `src` de `texture` (de tamanho total `tex_size`) inteira em
@@ -347,20 +351,25 @@ impl Blur {
         alpha: f32,
     ) -> Option<TextureRenderElement<GlesTexture>> {
         let (texture, tex_size) = wallpaper?;
-        let key = (texture.tex_id() as usize, output.size);
+        let key = (texture.tex_id() as usize, output.size.w, output.size.h);
         let mut cache = self.wallpaper.borrow_mut();
-        if cache.as_ref().map(|(k, _)| *k) != Some(key) {
+        if !cache.contains_key(&key) {
             let src = Rectangle::from_size((tex_size.w as f64, tex_size.h as f64).into());
             let (blurred, _) = self.blur(renderer, &texture, tex_size, src, LAUNCHER_PASSES, 2.5)?;
-            tracing::info!("fundo do launcher desfocado ({}x{})", output.size.w, output.size.h);
-            *cache = Some((key, blurred));
+            tracing::info!("papel de parede desfocado ({}x{})", output.size.w, output.size.h);
+            // Um papel de parede novo deixa os antigos para trás: poucos bastam.
+            if cache.len() >= 8 {
+                cache.clear();
+            }
+            cache.insert(key, (blurred, Id::new()));
         }
-        let (_, blurred) = cache.as_ref()?;
+        // Identidade guardada com o desfoque: parado, o fundo não conta como mudado.
+        let (blurred, id) = cache.get(&key)?;
         let size = blurred.size();
         // Opaco só quando aparece por inteiro (no esmaecer, o que está atrás aparece).
         let opaque = (alpha >= 1.0).then(|| vec![Rectangle::from_size((output.size.w, output.size.h).into())]);
         Some(TextureRenderElement::from_static_texture(
-            Id::new(),
+            id.clone(),
             renderer.context_id(),
             (output.loc.x as f64, output.loc.y as f64),
             blurred.clone(),
@@ -376,20 +385,22 @@ impl Blur {
 
     /// Elemento com o desfoque `blurred` em `area`, recortado com cantos de `radius`;
     /// `glass` (0 a 1) é a força do vidro líquido (0: só o desfoque).
+    #[allow(clippy::too_many_arguments)]
     pub fn composite_element(
         &self,
         renderer: &mut GlesRenderer,
+        id: Id,
         blurred: GlesTexture,
         blurred_size: Size<i32, Logical>,
         area: Rectangle<i32, Logical>,
         radius: f32,
         glass: f32,
         alpha: f32,
-    ) -> TextureShaderElement {
+    ) -> crate::clip::Keyed<TextureShaderElement> {
         // Com `Transform::Flipped180` aqui, o Smithay não varia `v_coords` (o recorte
         // dos cantos some); a orientação é acertada na amostragem do shader.
         let inner = TextureRenderElement::from_static_texture(
-            Id::new(),
+            id.clone(),
             renderer.context_id(),
             crate::clip::phys(area.loc).to_f64(),
             blurred,
@@ -401,7 +412,7 @@ impl Blur {
             None,
             Kind::Unspecified,
         );
-        TextureShaderElement::new(
+        crate::clip::Keyed::new(id, TextureShaderElement::new(
             inner,
             self.composite.clone(),
             vec![
@@ -411,7 +422,7 @@ impl Blur {
                 Uniform::new("glass", glass),
                 Uniform::new("flip_y", if crate::clip::flipped() { 1.0f32 } else { 0.0 }),
             ],
-        )
+        ))
     }
 }
 

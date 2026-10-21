@@ -190,21 +190,30 @@ mod tests {
 /// numa thread: quem chama não espera o barramento.
 pub fn send(app: &str, summary: &str, body: &str) {
     let (app, summary, body) = (app.to_string(), summary.to_string(), body.to_string());
-    std::thread::spawn(move || {
-        let Ok(conn) = zbus::blocking::Connection::session() else {
-            return;
-        };
-        let hints: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
-        let result = conn.call_method(
-            Some("org.freedesktop.Notifications"),
-            "/org/freedesktop/Notifications",
-            Some("org.freedesktop.Notifications"),
-            "Notify",
-            &(app.as_str(), 0u32, "", summary.as_str(), body.as_str(), Vec::<&str>::new(), hints, -1i32),
-        );
-        if let Err(err) = result {
-            tracing::debug!("notificação não enviada: {err}");
-        }
-    });
+    std::thread::spawn(move || send_and_wait(&app, &summary, &body));
+}
+
+/// Como `send`, esperando a entrega: para quem fecha logo depois (a captura de tela),
+/// e a thread de `send` morreria junto antes de mandar.
+pub fn send_and_wait(app: &str, summary: &str, body: &str) {
+    // Testes (`MIDE_SYSTEM_DRY_RUN`): só no log, sem aparecer na sessão de quem testa.
+    if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
+        tracing::info!("notificação (teste): {app}: {summary}: {body}");
+        return;
+    }
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return;
+    };
+    let hints: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
+    let result = conn.call_method(
+        Some("org.freedesktop.Notifications"),
+        "/org/freedesktop/Notifications",
+        Some("org.freedesktop.Notifications"),
+        "Notify",
+        &(app, 0u32, "", summary, body, Vec::<&str>::new(), hints, -1i32),
+    );
+    if let Err(err) = result {
+        tracing::debug!("notificação não enviada: {err}");
+    }
 }
 

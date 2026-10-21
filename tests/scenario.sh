@@ -80,6 +80,12 @@ if [ -z "${MIDE_DESKTOP_DIR:-}" ]; then
 fi
 # Som, Wi-Fi e Bluetooth simulados: nenhum teste mexe no áudio ou na rede de verdade.
 export MIDE_SYSTEM_DRY_RUN=1
+# Sem bateria (pasta vazia no lugar de /sys/class/power_supply): num notebook, o item
+# da bateria empurra os ícones da barra e os cliques dos testes caem no vizinho.
+if [ -z "${MIDE_POWER_SUPPLY_DIR:-}" ]; then
+    export MIDE_POWER_SUPPLY_DIR="$OUT/power_supply"
+    mkdir -p "$MIDE_POWER_SUPPLY_DIR"
+fi
 
 # Encerra só os processos deste teste: os que têm o socket de teste no ambiente
 # (o compositor, a dock, a barra, o "Sobre" e os apps abertos aqui).

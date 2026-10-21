@@ -479,8 +479,11 @@ fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: b
 }
 
 /// Carga da bateria (0 a 100) e se está carregando, se o computador tiver bateria.
+/// `MIDE_POWER_SUPPLY_DIR` troca a pasta do sistema (os testes usam uma vazia: a barra
+/// fica igual com ou sem bateria na máquina que roda os testes).
 fn battery() -> Option<(u8, bool)> {
-    let dir = fs::read_dir("/sys/class/power_supply").ok()?;
+    let root = std::env::var_os("MIDE_POWER_SUPPLY_DIR").unwrap_or_else(|| "/sys/class/power_supply".into());
+    let dir = fs::read_dir(root).ok()?;
     for entry in dir.flatten() {
         let path = entry.path();
         if !path.file_name()?.to_string_lossy().starts_with("BAT") {

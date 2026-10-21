@@ -7,6 +7,8 @@
 #      tests/perf.sh dock       (só um: desktop, dock, launcher, buscador, previas, arquivos)
 # Não rodar junto com tests/ui.sh nem durante uma compilação.
 set -u
+# Números com ponto (o sort e o awk seguem a língua do sistema: pt_BR usa vírgula).
+export LC_ALL=C
 cd "$(dirname "$0")/.."
 SCEN=tests/scenario.sh
 OUT="$(mktemp -d)"

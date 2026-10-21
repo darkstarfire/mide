@@ -20,7 +20,6 @@ use mide::{
         text::FontWeight,
     },
 };
-use tiny_skia::Pixmap;
 
 /// Conferência da senha pelo PAM (interface C da libpam, sem crate).
 mod pam {
@@ -150,14 +149,12 @@ struct Lock {
     message: Option<String>,
     /// Quando a senha foi recusada (o campo balança).
     shake: Option<Instant>,
-    /// Fundo pronto (papel de parede desfocado e escurecido) e o tamanho dele.
-    backdrop: Option<Pixmap>,
 }
 
 impl Lock {
     fn new() -> Self {
         let (login, name) = user();
-        Self { login, name, password: String::new(), checking: None, message: None, shake: None, backdrop: None }
+        Self { login, name, password: String::new(), checking: None, message: None, shake: None }
     }
 
     fn check(&mut self, waker: Option<Waker>) {
@@ -181,42 +178,12 @@ impl Lock {
     }
 }
 
-/// Papel de parede da configuração (ou o gradiente do mide), cobrindo a tela,
-/// desfocado (reduzido e ampliado) e escurecido.
-fn backdrop(w: u32, h: u32) -> Option<Pixmap> {
-    let path = match mide::settings_file::get("desktop", "wallpaper") {
-        Some(mide::settings_file::Value::Text(p)) if !p.trim().is_empty() => {
-            let p = p.trim().to_string();
-            Some(match p.strip_prefix("~/") {
-                Some(rest) => std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
-                None => std::path::PathBuf::from(p),
-            })
-        }
-        _ => None,
-    };
-    let (sw, sh) = ((w / 16).max(1), (h / 16).max(1));
-    let small = match path.and_then(|p| image::open(p).ok()) {
-        Some(img) => mide::backdrop::cover(&img.to_rgba8(), sw, sh),
-        None => mide::backdrop::default_gradient(sw, sh),
-    };
-    let blurred = image::imageops::blur(&small, 2.0);
-    let big = image::imageops::resize(&blurred, w, h, image::imageops::FilterType::Triangle);
-    let mut pixmap = Pixmap::new(w, h)?;
-    for (dst, src) in pixmap.pixels_mut().iter_mut().zip(big.pixels()) {
-        let k = |c: u8| (c as u32 * 70 / 100) as u8;
-        *dst = tiny_skia::PremultipliedColorU8::from_rgba(k(src[0]), k(src[1]), k(src[2]), 255)?;
-    }
-    Some(pixmap)
-}
-
 impl App for Lock {
     fn view(&mut self, ui: &mut Ui) {
         let (_, _, w, h) = ui.region();
-        if self.backdrop.as_ref().is_none_or(|b| b.width() != w as u32 || b.height() != h as u32) {
-            self.backdrop = backdrop(w as u32, h as u32);
-        }
-        // Resposta do PAM.
-        if let Some(rx) = &self.checking {
+        // Resposta do PAM: só na tela principal (as dos outros monitores são cópias e
+        // não podem consumir a resposta).
+        if let Some(rx) = self.checking.as_ref().filter(|_| !ui.mirror()) {
             if let Ok(ok) = rx.try_recv() {
                 self.checking = None;
                 if ok {
@@ -245,13 +212,10 @@ impl App for Lock {
         let date = format!("{}, {} de {}", WEEKDAYS[now.weekday().num_days_from_monday() as usize], now.day(), MONTHS[now.month0() as usize]);
         let initial = self.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
         let name = self.name.clone();
-        let backdrop = self.backdrop.clone();
         let (cx, top) = (w / 2.0, h * 0.18);
+        // O fundo (papel de parede desfocado e escurecido) é do compositor, na GPU:
+        // aqui só o relógio, o avatar e o campo, e cada tecla custa pouco.
         ui.paint_text(|pixmap, text, (ox, oy)| {
-            match &backdrop {
-                Some(b) => pixmap.draw_pixmap(ox as i32, oy as i32, b.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None),
-                None => fill_rounded(pixmap, ox, oy, w, h, 0.0, rgba(30, 30, 40, 255)),
-            }
             let white = [255, 255, 255, 255];
             let tw = text.measure(&time, 84.0, FontWeight::Semibold);
             text.draw(pixmap, &time, ox + cx - tw / 2.0, oy + top, 84.0, FontWeight::Semibold, white);

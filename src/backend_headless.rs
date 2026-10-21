@@ -48,6 +48,9 @@ struct Head {
     output: Option<Output>,
     target: Option<GlesTexture>,
     damage_tracker: Option<OutputDamageTracker>,
+    /// O alvo já tem um quadro (é sempre o mesmo: o conteúdo é o do quadro anterior,
+    /// idade 1). Assim os testes desenham só o que mudou, como o DRM.
+    drawn: bool,
 }
 
 struct Gpu {
@@ -81,7 +84,7 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
     let heads = sizes
         .iter()
         .enumerate()
-        .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, target: None, damage_tracker: None })
+        .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, target: None, damage_tracker: None, drawn: false })
         .collect();
     let scene = Scene::new(&mut renderer, state)?;
     let gpu = Rc::new(RefCell::new(Gpu { renderer, scene, heads }));
@@ -115,11 +118,14 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
                 else {
                     continue;
                 };
+                // `MIDE_FULL_DAMAGE=1`: tudo de novo a cada quadro (para comparar).
+                let age = if head.drawn && std::env::var_os("MIDE_FULL_DAMAGE").is_none() { 1 } else { 0 };
                 let result = (|| -> Result<(), Box<dyn Error>> {
                     let mut framebuffer = renderer.bind(target)?;
-                    let _sync = scene.render(renderer, &mut framebuffer, output, damage_tracker, state)?;
+                    let _ = scene.render(renderer, &mut framebuffer, output, damage_tracker, state, age)?;
                     Ok(())
                 })();
+                head.drawn = result.is_ok();
                 if let Err(err) = result {
                     tracing::warn!("falha ao desenhar a tela {}: {err}", head.name);
                 }
@@ -176,6 +182,7 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) -> Result<(), Box<dyn Error>>
             output.change_current_state(Some(mode), Some(Transform::Normal), Some(scale), None);
             output.set_preferred(mode);
             head.target = Some(Offscreen::<GlesTexture>::create_buffer(&mut gpu.renderer, Fourcc::Abgr8888, Size::<i32, Buffer>::from(size))?);
+            head.drawn = false;
             head.damage_tracker = Some(OutputDamageTracker::from_output(output));
             tracing::info!("tela {}: {}x{}", head.name, size.0, size.1);
         }

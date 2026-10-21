@@ -272,6 +272,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         maximized: false,
         compositor,
         hidden: false,
+        others_drawn: None,
+        test_hide: std::env::var_os("MIDE_KIT_TEST_HIDE").map(|_| None),
     };
 
     // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
@@ -394,6 +396,10 @@ struct Runner {
     compositor: CompositorState,
     /// A superfície foi escondida (`Ui::set_hidden`): sem imagem até voltar.
     hidden: bool,
+    /// Quando as telas de bloqueio dos outros monitores foram desenhadas, e os tamanhos.
+    others_drawn: Option<(std::time::Instant, Vec<(u32, u32)>)>,
+    /// Teste de esconder e mostrar (`MIDE_KIT_TEST_HIDE`): quando a janela apareceu.
+    test_hide: Option<Option<std::time::Instant>>,
 }
 
 impl Runner {
@@ -457,8 +463,26 @@ impl Runner {
             self.exit = true;
             return;
         }
-        // Esconder e mostrar (camadas): sem imagem a superfície some; para voltar, um
-        // commit vazio pede outra configuração ao compositor.
+        // Teste do compositor (`MIDE_KIT_TEST_HIDE=1`): a janela se esconde 2 s depois
+        // de aparecer e volta 2 s depois, como o Chromium em segundo plano.
+        if self.configured || self.hidden {
+            if let Some(phase) = self.test_hide.as_mut() {
+                let at = *phase.get_or_insert_with(std::time::Instant::now);
+                let t = at.elapsed();
+                if t >= std::time::Duration::from_secs(4) && self.hidden {
+                    self.ctx.hide_request = Some(false);
+                    self.test_hide = None;
+                } else if t >= std::time::Duration::from_secs(2) && !self.hidden {
+                    self.ctx.hide_request = Some(true);
+                }
+                if self.test_hide.is_some() {
+                    let next = std::time::Instant::now() + std::time::Duration::from_millis(250);
+                    self.ctx.wake_at = Some(self.ctx.wake_at.map_or(next, |w| w.min(next)));
+                }
+            }
+        }
+        // Esconder e mostrar: sem imagem a superfície some; para voltar, um commit vazio
+        // pede outra configuração ao compositor.
         match self.ctx.hide_request.take() {
             Some(true) if !self.hidden => {
                 self.hidden = true;
@@ -491,6 +515,9 @@ impl Runner {
             return;
         }
         self.draw_other_lock_screens();
+        if self.exit {
+            return;
+        }
         // Painéis de vidro (`ui.glass_panel`): o compositor desenha o vidro atrás.
         if let (Shell::Layer(_, namespace), true) = (&self.shell, self.ctx.layer) {
             let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
@@ -542,8 +569,16 @@ impl Runner {
         if targets.is_empty() {
             return;
         }
+        // Nos outros monitores só o relógio muda: uma vez por segundo basta (a cada
+        // tecla, o custo era o de desenhar todas as telas). Monitor novo: na hora.
+        let sizes: Vec<(u32, u32)> = targets.iter().map(|(_, size)| *size).collect();
+        if self.others_drawn.as_ref().is_some_and(|(at, last)| at.elapsed() < std::time::Duration::from_secs(1) && *last == sizes) {
+            return;
+        }
+        self.others_drawn = Some((std::time::Instant::now(), sizes));
         let input = std::mem::take(&mut self.ctx.input);
         let (unlock, close) = (self.ctx.unlock_request, self.ctx.close_requested);
+        self.ctx.mirror = true;
         for (surface, (w, h)) in targets {
             let Some(mut canvas) = Pixmap::new(w, h) else {
                 continue;
@@ -564,10 +599,18 @@ impl Runner {
                 surface.commit();
             }
         }
-        // O que importa (teclas, desbloquear) é da tela principal.
+        // O que importa (teclas, desbloquear) é da tela principal. Um desbloqueio pedido
+        // aqui também vale (nunca se perde).
+        self.ctx.mirror = false;
         self.ctx.input = input;
-        self.ctx.unlock_request = unlock;
+        self.ctx.unlock_request |= unlock;
         self.ctx.close_requested = close;
+        if self.ctx.unlock_request {
+            if let Shell::Lock { session, .. } = &self.shell {
+                session.unlock();
+            }
+            self.exit = true;
+        }
     }
 }
 

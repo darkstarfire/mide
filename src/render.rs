@@ -19,8 +19,8 @@ use smithay::{
         gles::{GlesRenderer, GlesTarget},
     },
     desktop::{
-        layer_map_for_output, space::render_output, utils::send_frames_surface_tree, PopupManager,
-        Space, Window,
+        layer_map_for_output, utils::send_frames_surface_tree, PopupManager,
+        Window,
     },
     output::Output,
     utils::{Logical, Physical, Point, Rectangle, Scale, Transform},
@@ -39,7 +39,7 @@ smithay::backend::renderer::element::render_elements! {
     Scaled=RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
     Title=smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<GlesRenderer>,
     /// Texturas com shader próprio: efeito lâmpada e papel de parede.
-    Textured=smithay::backend::renderer::gles::element::TextureShaderElement,
+    Textured=crate::clip::Keyed<smithay::backend::renderer::gles::element::TextureShaderElement>,
     /// Textura pronta, sem shader próprio (fundo desfocado do launcher).
     Blurred=smithay::backend::renderer::element::texture::TextureRenderElement<smithay::backend::renderer::gles::GlesTexture>,
     ClippedSurface=crate::clip::Clipped<WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -48,8 +48,8 @@ smithay::backend::renderer::element::render_elements! {
     ClippedTexture=crate::clip::Clipped<smithay::backend::renderer::element::texture::TextureRenderElement<smithay::backend::renderer::gles::GlesTexture>>,
 }
 
-/// Fundo da tela bloqueada enquanto a tela de bloqueio não aparece.
-const LOCKED_BACKGROUND: [f32; 4] = [0.05, 0.05, 0.07, 1.0];
+/// Quanto do papel de parede aparece atrás da tela de bloqueio (sobre o preto).
+const LOCKED_DIM: f32 = 0.7;
 
 /// Cor de fundo do desktop se o papel de parede não puder ser desenhado.
 const BACKGROUND: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
@@ -64,6 +64,9 @@ pub struct Scene {
     titles: crate::title::TitleRenderer,
     /// Cursor desenhado pelo mide (sem anfitrião que mostre o dele, como no DRM).
     cursors: Option<crate::cursor::Cursors>,
+    /// Desenhar o cursor na cena (o DRM desliga quando o cursor está no plano de
+    /// cursor da placa).
+    pub draw_cursor: bool,
 }
 
 impl Scene {
@@ -78,13 +81,18 @@ impl Scene {
         // Compila o shader do papel de parede já aqui, para o erro aparecer na partida.
         crate::wallpaper::Wallpaper::new(renderer, None).map_err(|e| format!("falha ao compilar o shader do papel de parede: {e}"))?;
         let _ = state;
-        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None })
+        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true })
     }
 
     /// A cena desenha o cursor (backends sem anfitrião).
     pub fn with_cursor(mut self) -> Self {
         self.cursors = Some(crate::cursor::Cursors::new());
         self
+    }
+
+    /// Qual cursor mostrar agora (`None`: a cena não desenha cursor).
+    pub fn cursor_plan(&mut self, state: &State) -> Option<crate::cursor::Plan<'_>> {
+        self.cursors.as_mut().map(|c| c.plan(state))
     }
 
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela
@@ -102,6 +110,10 @@ impl Scene {
     /// Desenha um quadro no alvo `framebuffer`: prévias, popups, camadas, janelas,
     /// vidro e fundo. Quem chama apresenta o quadro (esperando o ponto de sincronização
     /// devolvido, quando a apresentação precisa) e depois chama `send_frames`.
+    ///
+    /// `age` é a idade do buffer (quantos quadros atrás ele foi desenhado; 0 se não se
+    /// sabe): com ela, só o que mudou desde então é redesenhado. Devolve também as
+    /// áreas que mudaram (`None`: nada mudou).
     pub fn render(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -109,8 +121,9 @@ impl Scene {
         output: &Output,
         damage_tracker: &mut OutputDamageTracker,
         state: &mut State,
-    ) -> Result<smithay::backend::renderer::sync::SyncPoint, Box<dyn Error>> {
-        let Self { shaders, genie, blur, wallpapers, titles, cursors } = self;
+        age: usize,
+    ) -> Result<(smithay::backend::renderer::sync::SyncPoint, Option<Vec<Rectangle<i32, Physical>>>), Box<dyn Error>> {
+        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor } = self;
         // Cada tela tem o seu papel de parede (textura no tamanho dela).
         let output_name = output.name();
         if !wallpapers.contains_key(&output_name) {
@@ -127,6 +140,7 @@ impl Scene {
         // Escala da tela: posições lógicas viram pixels multiplicando por ela.
         let scale = output.current_scale().fractional_scale();
         crate::clip::set_scale(scale);
+        crate::decorations::begin_frame(&output_name);
         state.popups.cleanup();
         let now = std::time::Instant::now();
         state.finish_animations(now);
@@ -136,14 +150,14 @@ impl Scene {
         // Captura de tela pedida: este quadro da tela principal sai sem o cursor.
         let capturing = state.screenshot_request.is_some() && state.primary_output().is_some_and(|o| &o == output);
         let mut custom: Vec<MideRenderElement> = match cursors {
-            Some(cursors) if !capturing => cursors.elements(renderer, state, origin),
+            Some(cursors) if !capturing && *draw_cursor => cursors.elements(renderer, state, origin),
             _ => Vec::new(),
         };
         // Tela apagada (no DRM o monitor desliga; aqui, preto).
         if state.blanked {
-            let result = render_output(output, renderer, framebuffer, scale as f32, 0, Vec::<&Space<Window>>::new(), &Vec::<MideRenderElement>::new(), damage_tracker, [0.0, 0.0, 0.0, 1.0])?;
+            let result = damage_tracker.render_output(renderer, framebuffer, age, &Vec::<MideRenderElement>::new(), [0.0, 0.0, 0.0, 1.0])?;
             dump_frame_if_requested(renderer, framebuffer, output)?;
-            return Ok(result.sync);
+            return Ok((result.sync, result.damage.cloned()));
         }
         // Tela bloqueada: só a tela de bloqueio desta saída (sem ela, tudo escuro).
         // Nada do que está por trás aparece, nem num quadro.
@@ -152,10 +166,18 @@ impl Scene {
                 let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                     render_elements_from_surface_tree(renderer, surface.wl_surface(), Point::from((0, 0)), crate::clip::scale(), 1.0, Kind::Unspecified);
                 custom.extend(elements.into_iter().map(MideRenderElement::Surface));
+                // Atrás da tela de bloqueio, o papel de parede desfocado e escurecido (o
+                // mesmo desfoque do launcher, na GPU): o programa de bloqueio desenha só
+                // o relógio e o campo, e cada tecla custa pouco. Só depois que ela
+                // aparece: antes, a tela fica escura.
+                let out = Rectangle::from_size(state.space.output_geometry(output).map(|g| g.size).unwrap_or_default());
+                if let Some(el) = blur.wallpaper_element(renderer, wallpaper.texture(), out, LOCKED_DIM) {
+                    custom.push(MideRenderElement::Blurred(el));
+                }
             }
-            let result = render_output(output, renderer, framebuffer, scale as f32, 0, Vec::<&Space<Window>>::new(), &custom, damage_tracker, LOCKED_BACKGROUND)?;
+            let result = damage_tracker.render_output(renderer, framebuffer, age, &custom, [0.0, 0.0, 0.0, 1.0])?;
             dump_frame_if_requested(renderer, framebuffer, output)?;
-            return Ok(result.sync);
+            return Ok((result.sync, result.damage.cloned()));
         }
         // Prévias das janelas: só na tela da dock (a posição delas vem da dock).
         if layer_map_for_output(output).layers().any(|l| l.namespace() == "mide-dock") {
@@ -214,25 +236,29 @@ impl Scene {
                 crate::blur::render_region(renderer, behind, px, out_size, target)
             });
             match blurred {
-                Some((blurred, size)) => {
-                    let element = blur.composite_element(renderer, blurred, size, rect, region.radius, strength, region.alpha);
+                Some((blurred, size, id)) => {
+                    let element = blur.composite_element(renderer, id, blurred, size, rect, region.radius, strength, region.alpha);
                     custom.insert(at, MideRenderElement::Textured(element));
                 }
                 None => tracing::trace!("vidro {}: área pequena ou falha ao desfocar", region.name),
             }
         }
-        let result = render_output(
-            output,
-            renderer,
-            framebuffer,
-            scale as f32,
-            0,
-            Vec::<&Space<Window>>::new(),
-            &custom,
-            damage_tracker,
-            BACKGROUND,
-        )?;
+        if std::env::var_os("MIDE_DAMAGE_DEBUG").is_some() {
+            use smithay::backend::renderer::element::Element as _;
+            for (i, e) in custom.iter().enumerate() {
+                let g = e.geometry(Scale::from(scale));
+                tracing::debug!("elemento {i}: {:?} commit {:?} em {}x{}+{}+{}", e.id(), e.current_commit(), g.size.w, g.size.h, g.loc.x, g.loc.y);
+            }
+        }
+        // Direto no rastreador de dano: o `space::render_output` do Smithay acrescenta
+        // sozinho as camadas da tela (barra, dock), que o mide já desenha aqui (e que
+        // apareceriam atrás da tela de bloqueio).
+        let result = damage_tracker.render_output(renderer, framebuffer, age, &custom, BACKGROUND)?;
         tracing::debug!("quadro do compositor: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
+        if let Some(mode) = output.current_mode() {
+            let area: i64 = result.damage.map(|d| d.iter().map(|r| r.size.w as i64 * r.size.h as i64).sum()).unwrap_or(0);
+            tracing::debug!("dano: {}% da tela ({} retângulo(s))", area * 100 / (mode.size.w as i64 * mode.size.h as i64).max(1), result.damage.map_or(0, |d| d.len()));
+        }
         // Medição (`MIDE_GPU_TIMING=1`, tests/perf.sh): espera a GPU terminar o quadro
         // para saber o custo real do desenho (o tempo acima é só o da CPU).
         if std::env::var_os("MIDE_GPU_TIMING").is_some() {
@@ -247,7 +273,7 @@ impl Scene {
             }
         }
         dump_frame_if_requested(renderer, framebuffer, output)?;
-        Ok(result.sync)
+        Ok((result.sync, result.damage.cloned()))
     }
 }
 
@@ -529,7 +555,7 @@ fn window_elements(
                 progress,
                 1.0,
             ) {
-                elements.push(MideRenderElement::Textured(element));
+                elements.push(MideRenderElement::Textured(crate::clip::Keyed::new(smithay::backend::renderer::element::Id::new(), element)));
             }
             continue;
         }

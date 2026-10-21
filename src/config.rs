@@ -308,6 +308,8 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("super+d", "show_desktop"),
     ("super+a", "toggle_launcher"),
     ("super+l", "lock_screen"),
+    // Bloquear como no Mac (Ctrl+⌘+Q; no estilo Mac, o ⌘ é o Alt).
+    ("ctrl+super+q", "lock_screen"),
 ];
 
 /// Configuração carregada, com os atalhos já convertidos.

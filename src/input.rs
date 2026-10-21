@@ -178,18 +178,28 @@ pub fn send_combo(state: &mut State, combo: &str) -> bool {
     true
 }
 
-/// Tecla pelo código xkb: confere os atalhos e entrega ao foco do teclado.
-/// Teclas no estilo Mac (`[keyboard] mac_style`): troca Super e Ctrl (códigos evdev),
-/// dos dois lados. Assim Command (onde fica a tecla Super/Windows) faz o papel do Ctrl
-/// nos apps e nos atalhos do mide (⌘C, ⌘V, ⌘Espaço), como no Mac.
-pub fn mac_swap(evdev: u32) -> u32 {
+/// Teclas no estilo Mac (`[keyboard] mac_style`), em códigos evdev: o Alt (esquerdo)
+/// é o ⌘ Command e o Super é o ⌥ Option; o Ctrl continua Ctrl e o Alt da direita
+/// continua AltGr (acentos e símbolos do ABNT2). Nos apps, o ⌘ chega como Ctrl (⌘C,
+/// ⌘V, ⌘L); no terminal, como Super, para o Ctrl continuar interrompendo (Ctrl+C) e o
+/// ⌘ copiar e colar. O ⌥ chega como Alt.
+pub fn mac_map(evdev: u32, terminal: bool) -> u32 {
     match evdev {
-        125 => 29,  // Super esquerda -> Ctrl esquerda
-        29 => 125,  // Ctrl esquerda -> Super esquerda
-        126 => 97,  // Super direita -> Ctrl direita
-        97 => 126,  // Ctrl direita -> Super direita
+        56 if terminal => 125, // ⌘ -> Super (o terminal trata o ⌘)
+        56 => 29,              // ⌘ -> Ctrl
+        125 | 126 => 56,       // ⌥ -> Alt
         other => other,
     }
+}
+
+/// No estilo Mac, combinações do ⌘ que ficam com o app, como no Mac (⌘A seleciona
+/// tudo, ⌘L vai para a barra de endereço, ⌘ com as setas anda no texto), mesmo que um
+/// atalho do mide use a tecla Super com elas.
+fn mac_app_combo(mods: Modifiers, key: xkbcommon::xkb::Keysym) -> bool {
+    use xkbcommon::xkb::Keysym;
+    let plain_cmd = mods.logo && !mods.ctrl && !mods.alt;
+    let lower = xkbcommon::xkb::keysym_to_utf32(key);
+    plain_cmd && (matches!(key, Keysym::Left | Keysym::Right | Keysym::Up | Keysym::Down) || ['a', 'd', 'l'].iter().any(|c| *c as u32 == lower))
 }
 
 /// Solta todas as teclas que o mide acha que estão apertadas (sem passar pelos
@@ -213,10 +223,29 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
     };
-    // No estilo Mac, Super e Ctrl trocam de lugar; num terminal não: o Ctrl continua
-    // Ctrl (Ctrl+C interrompe, como no Terminal do Mac) e ⌘ copia e cola (abaixo).
-    let terminal = state.config.keyboard.mac_style && focused_is_terminal(state);
-    let keycode = if state.config.keyboard.mac_style && !terminal { (mac_swap(keycode.raw() - 8) + 8).into() } else { keycode };
+    // Estilo Mac: o ⌘ e o ⌥ viram outras teclas (`mac_map`). O soltar usa a mesma troca
+    // do apertar (o foco pode ter mudado de um app para o terminal no meio).
+    let mac = state.config.keyboard.mac_style;
+    let terminal = mac && focused_is_terminal(state);
+    let keycode = if mac {
+        let raw = keycode.raw() - 8;
+        let pressed = key_state == KeyState::Pressed;
+        match raw {
+            29 | 97 => state.mac_keys.ctrl = pressed,
+            56 => state.mac_keys.command = pressed,
+            _ => {}
+        }
+        let mapped = if pressed {
+            let mapped = mac_map(raw, terminal);
+            state.mac_keys.pressed.insert(raw, mapped);
+            mapped
+        } else {
+            state.mac_keys.pressed.remove(&raw).unwrap_or_else(|| mac_map(raw, terminal))
+        };
+        (mapped + 8).into()
+    } else {
+        keycode
+    };
     if key_state == KeyState::Pressed {
         state.mark_input("tecla", keyboard.current_focus());
     }
@@ -286,6 +315,25 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             }
             // Usa a tecla sem o efeito do Shift, para que `ctrl+shift+e` case com `e`.
             let key = keysym.raw_latin_sym_or_raw_current_sym().unwrap_or_else(|| keysym.modified_sym());
+            // Estilo Mac (fora do terminal): os atalhos do mide veem o ⌘ como Super e o
+            // Ctrl como Ctrl (⌘Tab troca de janela, Ctrl+⌘+Q bloqueia). Os apps recebem
+            // o ⌘ como Ctrl, então os atalhos com Ctrl também valem com o ⌘ (⌘Espaço
+            // abre o buscador). Bloquear exige o Ctrl (⌘L é do app).
+            let mac_mods = Modifiers { logo: state.mac_keys.command, ctrl: state.mac_keys.ctrl, ..modifiers };
+            let modifiers = if mac && !terminal && state.shortcut_capture.is_none() {
+                match state.config.match_binding(mac_mods, key) {
+                    Some(Action::LockScreen) if !mac_mods.ctrl => {}
+                    Some(_) if mac_app_combo(mac_mods, key) => {}
+                    Some(action) => return FilterResult::Intercept(Some(action)),
+                    None => {}
+                }
+                modifiers
+            } else if mac && !terminal {
+                // Gravando um atalho: grava como no Mac (⌘ = Super).
+                mac_mods
+            } else {
+                modifiers
+            };
             if let Some(capture) = state.shortcut_capture.as_mut().filter(|c| !c.expired() && c.combo.is_none()) {
                 // Só modificador ainda (Ctrl, Shift...): espera a tecla da combinação.
                 if keysym.modified_sym().is_modifier_key() {
@@ -303,9 +351,15 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             }
             // O Terminal do mide trata o ⌘ ele mesmo (⌘T, ⌘D, ⌘F...), e o atalho que
             // abre um terminal vira "nova aba" nele.
+            // No terminal (estilo Mac), o ⌘ chega como Super: as mesmas regras dos apps
+            // valem aqui (⌘L, ⌘D, ⌘A e ⌘ com setas são do app; bloquear exige o Ctrl).
+            let real_ctrl = state.mac_keys.ctrl;
+            let app_combo = mac && terminal && mac_app_combo(modifiers, key);
+            let for_app = |action: &Action| app_combo || (mac && terminal && *action == Action::LockScreen && !real_ctrl);
             if focused_app_id(state).as_deref() == Some("mide-terminal") {
                 return match state.config.match_binding(modifiers, key) {
                     Some(Action::Launch(command)) if command.trim() == "mide-terminal" => FilterResult::Forward,
+                    Some(action) if for_app(&action) => FilterResult::Forward,
                     Some(action) => FilterResult::Intercept(Some(action)),
                     None => FilterResult::Forward,
                 };
@@ -318,6 +372,7 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 }
             }
             match state.config.match_binding(modifiers, key) {
+                Some(action) if for_app(&action) => FilterResult::Forward,
                 Some(action) => FilterResult::Intercept(Some(action)),
                 None => FilterResult::Forward,
             }
@@ -805,6 +860,21 @@ fn surface_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, 
         return Some(found);
     }
 
+    if let Some(found) = popup_under(state, pos) {
+        return Some(found);
+    }
+
+    if let Some((window, loc)) = window_with_origin_under(state, pos) {
+        return window
+            .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
+            .map(|(surface, p)| (surface, (p + loc).to_f64()));
+    }
+    // Sem janela: a área de trabalho (ícones), se houver.
+    back_layer_under(state, pos)
+}
+
+/// Popup (menu de um app) sob `pos`. Eles ficam por cima de todas as janelas.
+fn popup_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
     for window in state.space.elements().rev().filter(|w| interactive(state, w)) {
         let (Some(toplevel), Some(loc)) = (window.toplevel(), state.space.element_location(window))
         else {
@@ -820,14 +890,35 @@ fn surface_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, 
             }
         }
     }
+    None
+}
 
-    if let Some((window, loc)) = window_with_origin_under(state, pos) {
-        return window
-            .surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)
-            .map(|(surface, p)| (surface, (p + loc).to_f64()));
+/// Moldura de uma janela na tela: barra de título do mide (se tiver) e conteúdo.
+fn window_frame(state: &State, window: &Window) -> Option<decorations::Rect> {
+    let visible = state.visible_origin(window)?;
+    let size = window.geometry().size;
+    let bar_h = crate::state::bar_height_for(window);
+    Some(Rectangle::new((visible.x, visible.y - bar_h).into(), (size.w, bar_h + size.h).into()))
+}
+
+/// A janela de cima no ponto `pos`: a primeira, de cima para baixo, cuja moldura ou
+/// área de entrada (com as sombras e bordas do app) contém o ponto. Barra de título e
+/// bordas de redimensionar só valem para ela: as de uma janela de trás, coberta por
+/// outra (um navegador com barra própria, por exemplo), não recebem o clique.
+/// Sobre um popup, nenhuma.
+fn window_on_top_at(state: &State, pos: Point<f64, Logical>) -> Option<Window> {
+    use smithay::desktop::space::SpaceElement;
+    if popup_under(state, pos).is_some() {
+        return None;
     }
-    // Sem janela: a área de trabalho (ícones), se houver.
-    back_layer_under(state, pos)
+    state.space.elements().rev().filter(|w| interactive(state, w)).find(|window| {
+        let in_frame = window_frame(state, window).is_some_and(|f| f.to_f64().contains(pos));
+        let in_input = state.space.element_location(window).is_some_and(|loc| {
+            let origin = loc - window.geometry().loc;
+            window.is_in_input_region(&(pos - origin.to_f64()))
+        });
+        in_frame || in_input
+    }).cloned()
 }
 
 /// Fecha todos os popups abertos. Chamado quando o clique cai fora deles.
@@ -881,15 +972,14 @@ fn set_activated(toplevel: &ToplevelSurface, activated: bool) {
 
 /// Janela e retângulo da barra de título sob `pos`, se houver.
 fn title_bar_under(state: &State, pos: Point<f64, Logical>) -> Option<(Window, decorations::Rect)> {
-    state.space.elements().rev().filter(|w| interactive(state, w)).find_map(|window| {
-        let loc = state.visible_origin(window)?;
-        let width = window.geometry().size.w;
-        if crate::state::bar_height_for(window) == 0 {
-            return None;
-        }
-        let bar = decorations::bar_rect(loc, width);
-        bar.to_f64().contains(pos).then(|| (window.clone(), bar))
-    })
+    let window = window_on_top_at(state, pos)?;
+    let loc = state.visible_origin(&window)?;
+    let width = window.geometry().size.w;
+    if crate::state::bar_height_for(&window) == 0 {
+        return None;
+    }
+    let bar = decorations::bar_rect(loc, width);
+    bar.to_f64().contains(pos).then_some((window, bar))
 }
 
 /// Trata um clique na barra de título. Devolve `true` se o clique foi da barra.
@@ -955,20 +1045,16 @@ fn resize_target(
     if top_layer_under(state, pos).is_some() {
         return None;
     }
-    state.space.elements().rev().filter(|w| interactive(state, w)).find_map(|window| {
-        let toplevel = window.toplevel()?;
-        let loc = state.space.element_location(window)?;
-        let flags = toplevel.current_state().states;
-        if flags.contains(XdgState::Maximized) {
-            return None;
-        }
-        let geo = window.geometry();
-        let visible = state.visible_origin(window)?;
-        let bar_h = crate::state::bar_height_for(window);
-        let frame = Rectangle::new((visible.x, visible.y - bar_h).into(), (geo.size.w, bar_h + geo.size.h).into());
-        let edges = decorations::resize_edges_at(frame, pos)?;
-        (!edges.only_top()).then(|| (window.clone(), edges, loc, geo.size))
-    })
+    let window = window_on_top_at(state, pos)?;
+    let toplevel = window.toplevel()?;
+    let loc = state.space.element_location(&window)?;
+    let flags = toplevel.current_state().states;
+    if flags.contains(XdgState::Maximized) {
+        return None;
+    }
+    let size = window.geometry().size;
+    let edges = decorations::resize_edges_at(window_frame(state, &window)?, pos)?;
+    (!edges.only_top()).then_some((window, edges, loc, size))
 }
 
 /// Forma do ponteiro para uma borda ou canto.

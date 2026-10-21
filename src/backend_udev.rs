@@ -66,6 +66,22 @@ struct Head {
     damage_tracker: OutputDamageTracker,
     /// Um quadro foi entregue e espera o vblank: o próximo só depois dele.
     pending: bool,
+    /// Tela do próprio notebook (eDP/LVDS), onde o PSR2 pede a tela inteira como dano.
+    internal: bool,
+    /// Cursor no plano de cursor da placa: imagem enviada, nome dela e posição.
+    cursor: HwCursor,
+}
+
+/// Cursor de hardware de uma tela (comandos de cursor do DRM): a imagem vai uma vez
+/// e cada movimento só muda a posição, sem redesenhar a cena.
+#[derive(Default)]
+struct HwCursor {
+    buffer: Option<smithay::reexports::gbm::BufferObject<()>>,
+    /// Nome da imagem enviada (`None`: escondido).
+    shown: Option<String>,
+    position: Option<(i32, i32)>,
+    /// O driver recusou: esta tela usa o cursor desenhado na cena.
+    failed: bool,
 }
 
 /// Placa de vídeo, telas e o que é preciso para desenhar.
@@ -79,6 +95,8 @@ struct Gpu {
     scene: Scene,
     /// Telas apagadas (DPMS desligado).
     blanked: bool,
+    /// Tamanho do plano de cursor da placa (64x64 na maioria).
+    cursor_size: (u32, u32),
 }
 
 /// Abre a sessão, a placa de vídeo, as telas e a entrada, e agenda o desenho.
@@ -113,8 +131,17 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     crate::clip::set_flipped(false);
 
     let scene = Scene::new(&mut renderer, state)?.with_cursor();
-    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false }));
+    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64) }));
     state.session = Some(session.clone());
+
+    {
+        use smithay::reexports::drm::{Device as _, DriverCapability};
+        let mut g = gpu.borrow_mut();
+        let w = g.drm.get_driver_capability(DriverCapability::CursorWidth).unwrap_or(64) as u32;
+        let h = g.drm.get_driver_capability(DriverCapability::CursorHeight).unwrap_or(64) as u32;
+        g.cursor_size = (w.clamp(32, 512), h.clamp(32, 512));
+        tracing::info!("plano de cursor: {}x{}", g.cursor_size.0, g.cursor_size.1);
+    }
 
     // Telas: liga as conectadas e arranja. O ponteiro começa no meio da principal.
     refresh_heads(&mut gpu.borrow_mut(), state);
@@ -205,6 +232,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         state.input_waker = Some(ping);
     }
     let input_devices = devices.clone();
+    let input_gpu = gpu.clone();
     loop_handle.insert_source(LibinputInputBackend::new(libinput.clone()), move |event, _, state| {
         if let InputEvent::DeviceAdded { mut device } = event {
             apply_input_config(&mut device, &state.config.input);
@@ -222,7 +250,19 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             .filter_map(|o| state.space.output_geometry(o))
             .reduce(|a, b| a.merge(b))
             .unwrap_or_else(|| Rectangle::from_size((1366, 768).into()));
+        // Só o mouse andou (nada mais pediu quadro, o cursor não mudou de forma, nada
+        // segue o ponteiro): com o cursor de hardware, basta mover o cursor da placa,
+        // sem desenhar quadro nenhum.
+        let motion = matches!(event, InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. });
+        let before = (state.redraw, cursor_key(state));
         crate::input::handle_event_in(state, event, bounds);
+        let follows_pointer = state.preview.is_some() || state.seat.get_pointer().is_some_and(|p| p.is_grabbed()) || over_title_bar(state);
+        if motion && !before.0 && !state.redraw && !follows_pointer && before.1 == cursor_key(state) {
+            let mut gpu = input_gpu.borrow_mut();
+            if !gpu.blanked && move_hw_cursors(&mut gpu, state) {
+                return;
+            }
+        }
         state.wake();
     })?;
 
@@ -248,6 +288,8 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
                 for head in &mut gpu.heads {
                     head.surface.reset_buffers();
                     head.pending = false;
+                    // Outro programa usou a placa: o cursor de hardware vai de novo.
+                    head.cursor = HwCursor::default();
                 }
                 // Um monitor pode ter sido trocado enquanto o mide estava em outro console.
                 refresh_heads(&mut gpu, state);
@@ -485,7 +527,9 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
     output.create_global::<State>(&state.display_handle);
     set_output_mode(&output, mode, scale);
     let damage_tracker = OutputDamageTracker::from_output(&output);
-    Ok(Head { connector: c.handle, crtc, surface, output, damage_tracker, pending: false })
+    // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
+    let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
+    Ok(Head { connector: c.handle, crtc, surface, output, damage_tracker, pending: false, internal, cursor: HwCursor::default() })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).
@@ -494,6 +538,126 @@ fn set_output_mode(output: &Output, mode: DrmMode, scale: f64) {
     let wl_mode = Mode { size: (w as i32, h as i32).into(), refresh: mode.vrefresh() as i32 * 1000 };
     output.change_current_state(Some(wl_mode), Some(Transform::Normal), Some(output_scale(scale)), None);
     output.set_preferred(wl_mode);
+}
+
+/// O ponteiro está sobre a barra de título de uma janela (os botões dela acendem com
+/// o mouse em cima: precisa de quadro). Com folga, para não perder a saída.
+fn over_title_bar(state: &State) -> bool {
+    let p = state.pointer_location;
+    state.space.elements().any(|w| {
+        let bar_h = crate::state::bar_height_for(w);
+        let Some(loc) = state.space.element_location(w) else {
+            return false;
+        };
+        let size = w.geometry().size;
+        bar_h > 0 && p.x >= (loc.x - 8) as f64 && p.x <= (loc.x + size.w + 8) as f64 && p.y >= (loc.y - bar_h - 8) as f64 && p.y <= (loc.y + 8) as f64
+    })
+}
+
+/// Forma do cursor agora (para saber se ela mudou com o movimento).
+fn cursor_key(state: &State) -> String {
+    format!("{:?} {:?}", state.cursor, state.cursor_status)
+}
+
+/// Move o cursor de hardware de todas as telas. Devolve se todas usam o cursor de
+/// hardware (senão, alguma precisa de um quadro novo com o cursor desenhado).
+fn move_hw_cursors(gpu: &mut Gpu, state: &State) -> bool {
+    let Gpu { heads, scene, drm, gbm, cursor_size, .. } = gpu;
+    let mut all = true;
+    for head in heads.iter_mut() {
+        all &= hw_cursor(drm, gbm, *cursor_size, head, scene, state);
+    }
+    all
+}
+
+/// Põe o cursor desta tela no plano de cursor da placa. Devolve se deu (a cena não
+/// desenha o cursor); `false` quando a cena precisa desenhar: cursor de um app
+/// (superfície), imagem maior que o plano, driver que recusa ou `MIDE_SW_CURSOR=1`.
+#[allow(deprecated)]
+fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), head: &mut Head, scene: &mut Scene, state: &State) -> bool {
+    use smithay::reexports::gbm::BufferObjectFlags;
+    let hide = |head: &mut Head| {
+        if head.cursor.shown.take().is_some() {
+            let _ = drm.set_cursor2(head.crtc, None::<&smithay::reexports::gbm::BufferObject<()>>, (0, 0));
+        }
+    };
+    if head.cursor.failed || std::env::var_os("MIDE_SW_CURSOR").is_some() {
+        return false;
+    }
+    let Some(area) = state.space.output_geometry(&head.output) else {
+        return false;
+    };
+    let Some(plan) = scene.cursor_plan(state) else {
+        return false;
+    };
+    let (name, pixels, size, hotspot) = match plan {
+        crate::cursor::Plan::Hidden => {
+            hide(head);
+            return true;
+        }
+        crate::cursor::Plan::Surface => {
+            hide(head);
+            return false;
+        }
+        crate::cursor::Plan::Image { name, pixels, size, hotspot } => (name, pixels, size, hotspot),
+    };
+    if size.0 > plane.0 || size.1 > plane.1 {
+        hide(head);
+        return false;
+    }
+    // O ponteiro está em outra tela: aqui, nada (a outra mostra).
+    let pointer = state.pointer_location;
+    let inside = pointer.x >= area.loc.x as f64
+        && pointer.y >= area.loc.y as f64
+        && pointer.x < (area.loc.x + area.size.w) as f64
+        && pointer.y < (area.loc.y + area.size.h) as f64;
+    if !inside {
+        hide(head);
+        return true;
+    }
+    if head.cursor.shown.as_deref() != Some(name.as_str()) {
+        let result = (|| -> std::io::Result<()> {
+            if head.cursor.buffer.is_none() {
+                head.cursor.buffer = Some(gbm.create_buffer_object::<()>(plane.0, plane.1, Fourcc::Argb8888, BufferObjectFlags::CURSOR | BufferObjectFlags::WRITE)?);
+            }
+            // RGBA pré-multiplicado do tema para ARGB8888 (B, G, R, A na memória), no
+            // canto do plano; o resto transparente.
+            let mut data = vec![0u8; (plane.0 * plane.1 * 4) as usize];
+            for y in 0..size.1 {
+                for x in 0..size.0 {
+                    let s = ((y * size.0 + x) * 4) as usize;
+                    let d = ((y * plane.0 + x) * 4) as usize;
+                    data[d..d + 4].copy_from_slice(&[pixels[s + 2], pixels[s + 1], pixels[s], pixels[s + 3]]);
+                }
+            }
+            let buffer = head.cursor.buffer.as_mut().ok_or_else(|| std::io::Error::other("sem buffer"))?;
+            buffer.write(&data)?;
+            drm.set_cursor2(head.crtc, Some(&*buffer), hotspot)?;
+            Ok(())
+        })();
+        if let Err(err) = result {
+            tracing::warn!("tela {}: cursor de hardware recusado ({err}); usando o desenhado", head.output.name());
+            head.cursor.failed = true;
+            head.cursor.buffer = None;
+            return false;
+        }
+        head.cursor.shown = Some(name);
+        head.cursor.position = None;
+    }
+    // Posição do canto da imagem, em pixels da tela (como o cursor desenhado).
+    let scale = head.output.current_scale().fractional_scale();
+    let x = ((pointer.x - area.loc.x as f64) * scale).round() as i32 - hotspot.0;
+    let y = ((pointer.y - area.loc.y as f64) * scale).round() as i32 - hotspot.1;
+    if head.cursor.position != Some((x, y)) {
+        if let Err(err) = drm.move_cursor(head.crtc, (x, y)) {
+            tracing::warn!("tela {}: cursor de hardware não moveu ({err}); usando o desenhado", head.output.name());
+            hide(head);
+            head.cursor.failed = true;
+            return false;
+        }
+        head.cursor.position = Some((x, y));
+    }
+    true
 }
 
 /// Liga ou desliga os monitores (propriedade DPMS dos conectores: 0 ligado, 3
@@ -530,7 +694,15 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         if !state.blanked {
             for head in gpu.heads.iter_mut() {
                 head.pending = false;
+                // O DPMS muda o CRTC por fora do Smithay: ele reavalia o estado e o
+                // próximo quadro refaz o modo (sem isso, em alguns drivers, o quadro
+                // falha e a tela fica preta depois de acender).
+                if let Err(err) = head.surface.surface().reset_state() {
+                    tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
+                }
                 head.surface.reset_buffers();
+                // O monitor religado pode ter perdido o cursor: manda de novo.
+                head.cursor = HwCursor::default();
             }
             state.redraw = true;
         }
@@ -541,24 +713,36 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     let wanted = state.redraw;
     state.redraw = false;
     let mut again = false;
-    let Gpu { renderer, heads, scene, .. } = gpu;
+    let Gpu { renderer, heads, scene, drm, gbm, cursor_size, .. } = gpu;
     for head in heads.iter_mut() {
         if head.pending {
             // Esta tela desenha no próximo vblank dela.
             again |= wanted;
             continue;
         }
-        let Head { surface, output, damage_tracker, .. } = head;
+        // Cursor no plano de hardware quando dá; senão, desenhado na cena.
+        scene.draw_cursor = !hw_cursor(drm, gbm, *cursor_size, head, scene, state);
+        let Head { surface, output, damage_tracker, internal, .. } = head;
+        let internal = *internal;
         let result = (|| -> Result<(), Box<dyn Error>> {
-            let (mut dmabuf, _age) = surface.next_buffer()?;
-            let sync = {
+            // Com a idade do buffer, a GPU só redesenha o que mudou desde que ele foi
+            // usado (`MIDE_FULL_DAMAGE=1` volta a redesenhar tudo).
+            let (mut dmabuf, age) = surface.next_buffer()?;
+            let full = std::env::var_os("MIDE_FULL_DAMAGE").is_some();
+            let age = if full { 0 } else { age as usize };
+            let (sync, damage) = {
                 let mut target = renderer.bind(&mut dmabuf)?;
-                scene.render(renderer, &mut target, output, damage_tracker, state)?
+                scene.render(renderer, &mut target, output, damage_tracker, state, age)?
             };
-            // A tela inteira como área alterada: sem isso, telas de notebook com PSR2
-            // (Intel) atualizam só uma faixa e o resto fica com o quadro antigo.
+            // Ao kernel, só as áreas que mudaram; na tela do notebook (eDP), a tela
+            // inteira: com PSR2 (Intel), ela atualizaria só uma faixa e o resto ficaria
+            // com o quadro antigo.
             let size = output.current_mode().map(|m| m.size).unwrap_or_default();
-            surface.queue_buffer(Some(sync), Some(vec![Rectangle::from_size(size)]), ())?;
+            let clips = match damage {
+                Some(rects) if !internal && !full && !rects.is_empty() => rects,
+                _ => vec![Rectangle::from_size(size)],
+            };
+            surface.queue_buffer(Some(sync), Some(clips), ())?;
             Ok(())
         })();
         match result {

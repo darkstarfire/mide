@@ -26,10 +26,22 @@ use smithay::{
 
 use crate::{input::CursorShape, render::MideRenderElement, state::State};
 
-/// Imagem de um cursor pronta para desenhar, com o ponto de clique (hotspot).
+/// Imagem de um cursor pronta para desenhar, com o ponto de clique (hotspot) e os
+/// pixels (RGBA pré-multiplicado, para o plano de cursor da placa).
 struct Image {
     buffer: MemoryRenderBuffer,
     hotspot: Point<i32, Logical>,
+    pixels: Vec<u8>,
+    size: (u32, u32),
+}
+
+/// O cursor a mostrar agora (para o plano de cursor da placa, no DRM).
+pub enum Plan<'a> {
+    Hidden,
+    /// Imagem do tema (ou a seta do mide): o nome identifica a imagem.
+    Image { name: String, pixels: &'a [u8], size: (u32, u32), hotspot: (i32, i32) },
+    /// O app desenha o próprio cursor (uma superfície): só a cena sabe desenhar.
+    Surface,
 }
 
 /// Cursores carregados do tema, por nome (`default`, `ew-resize`, `text`...).
@@ -76,6 +88,18 @@ impl Cursors {
                 Vec::new()
             }
         }
+    }
+
+    /// Qual cursor mostrar agora (o mesmo que `elements` desenharia).
+    pub fn plan(&mut self, state: &State) -> Plan<'_> {
+        let name = match (state.cursor, &state.cursor_status) {
+            (CursorShape::Default, CursorImageStatus::Hidden) => return Plan::Hidden,
+            (CursorShape::Default, CursorImageStatus::Surface(_)) => return Plan::Surface,
+            (CursorShape::Default, CursorImageStatus::Named(icon)) => icon.name().to_string(),
+            (shape, _) => shape_name(shape).to_string(),
+        };
+        let image = self.image(&name);
+        Plan::Image { name, pixels: &image.pixels, size: image.size, hotspot: (image.hotspot.x, image.hotspot.y) }
     }
 
     /// Imagem do tema pelo nome, com nomes antigos de reserva; a seta própria se faltar.
@@ -133,7 +157,7 @@ fn load(theme: &xcursor::CursorTheme, name: &str, size: u32) -> Option<Image> {
         Transform::Normal,
         None,
     );
-    Some(Image { buffer, hotspot: (image.xhot as i32, image.yhot as i32).into() })
+    Some(Image { buffer, hotspot: (image.xhot as i32, image.yhot as i32).into(), pixels: image.pixels_rgba.clone(), size: (image.width, image.height) })
 }
 
 /// Seta do próprio mide (preta com contorno branco), para quando não há tema.
@@ -159,7 +183,7 @@ fn arrow() -> Image {
         pixmap.stroke_path(&path, &paint, &stroke, tiny_skia::Transform::identity(), None);
     }
     let buffer = MemoryRenderBuffer::from_slice(pixmap.data(), Fourcc::Abgr8888, (W as i32, H as i32), 1, Transform::Normal, None);
-    Image { buffer, hotspot: (1, 1).into() }
+    Image { buffer, hotspot: (1, 1).into(), pixels: pixmap.data().to_vec(), size: (W, H) }
 }
 
 #[cfg(test)]

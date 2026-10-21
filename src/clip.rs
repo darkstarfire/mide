@@ -225,3 +225,78 @@ impl<E: RenderElement<GlesRenderer>> RenderElement<GlesRenderer> for Clipped<E> 
         None
     }
 }
+
+/// Elemento com identidade escolhida por quem o cria. O `TextureShaderElement` do
+/// Smithay ganha um `Id` novo a cada criação, e o rastreador de dano trata um `Id`
+/// novo como área inteira mudada; com o `Id` guardado entre quadros (vidro, papel de
+/// parede), só o que mudou de verdade é redesenhado.
+#[derive(Debug)]
+pub struct Keyed<E> {
+    id: Id,
+    inner: E,
+}
+
+impl<E> Keyed<E> {
+    pub fn new(id: Id, inner: E) -> Self {
+        Self { id, inner }
+    }
+}
+
+impl<E: Element> Element for Keyed<E> {
+    fn id(&self) -> &Id {
+        &self.id
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn location(&self, scale: Scale<f64>) -> Point<i32, Physical> {
+        self.inner.location(scale)
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        self.inner.opaque_regions(scale)
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl<E: RenderElement<GlesRenderer>> RenderElement<GlesRenderer> for Keyed<E> {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), GlesError> {
+        self.inner.draw(frame, src, dst, damage, opaque_regions)
+    }
+
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
+    }
+}

@@ -74,7 +74,13 @@ impl State {
                 }
             }
             self.close_requests.retain(|(w, _)| *w != id);
+            self.shown.remove(&id);
             self.space.unmap_elem(&window);
+            tracing::info!("janela fechada");
+        } else if let Some(i) = self.hidden.iter().position(|(w, _)| w.toplevel().is_some_and(|t| t == surface)) {
+            // Escondida pelo app e agora fechada de vez.
+            let (window, _) = self.hidden.remove(i);
+            self.shown.remove(&window_id(&window));
             tracing::info!("janela fechada");
         }
     }

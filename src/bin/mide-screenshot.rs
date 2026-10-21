@@ -111,29 +111,36 @@ impl Capture {
         let path = runtime_dir().join(format!("mide-captura-{}.png", std::process::id()));
         if let Err(err) = image.save_png(&path) {
             tracing::warn!("captura: não foi possível preparar a cópia: {err}");
+            mide::notify::send_and_wait("Captura de tela", "A captura não foi copiada", &err.to_string());
             return false;
         }
         let ok = ask_compositor(&format!("copy-file image/png {}", path.display())).is_some_and(|r| r.first().map(String::as_str) == Some("ok"));
         let _ = std::fs::remove_file(&path);
         if ok {
             tracing::info!("captura copiada ({}x{})", image.width(), image.height());
+            mide::notify::send_and_wait("Captura de tela", "Captura copiada", "Cole com Ctrl+V (⌘V no estilo Mac).");
+        } else {
+            mide::notify::send_and_wait("Captura de tela", "A captura não foi copiada", "O mide não respondeu.");
         }
         ok
     }
 
+    /// Grava em Imagens/Capturas de tela, com o nome "Captura de tela" mais a data e a
+    /// hora (`Captura de tela 2026-10-20 21-13-38.png`). Avisa onde ficou (ou o erro).
     fn save(&self) -> Option<PathBuf> {
         let image = self.result()?;
         let dir = mide::places::pictures_dir().join("Capturas de tela");
-        std::fs::create_dir_all(&dir).ok()?;
-        let name = chrono_name();
-        let path = dir.join(format!("Captura de tela {name}.png"));
-        match image.save_png(&path) {
+        let path = dir.join(format!("Captura de tela {}.png", chrono_name()));
+        let result = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| image.save_png(&path).map_err(|e| e.to_string()));
+        match result {
             Ok(()) => {
                 tracing::info!("captura salva: {}", path.display());
+                mide::notify::send_and_wait("Captura de tela", "Captura salva", &path.display().to_string());
                 Some(path)
             }
             Err(err) => {
-                tracing::warn!("captura não salva: {err}");
+                tracing::warn!("captura não salva em {}: {err}", dir.display());
+                mide::notify::send_and_wait("Captura de tela", "A captura não foi salva", &format!("{}: {err}", dir.display()));
                 None
             }
         }
