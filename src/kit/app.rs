@@ -22,6 +22,7 @@ use smithay_client_toolkit::{
         calloop_wayland_source::WaylandSource,
         client::{
             globals::registry_queue_init,
+            Dispatch,
             protocol::{
                 wl_data_device::WlDataDevice, wl_data_device_manager::DndAction, wl_data_source::WlDataSource, wl_keyboard,
                 wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
@@ -45,6 +46,13 @@ use smithay_client_toolkit::{
         WaylandSurface,
     },
     shm::{slot::SlotPool, Shm, ShmHandler},
+};
+use smithay_client_toolkit::reexports::protocols::wp::{
+    fractional_scale::v1::client::{
+        wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+        wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+    },
+    viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
 use tiny_skia::Pixmap;
 
@@ -92,6 +100,9 @@ pub struct Window {
     pub dropdown: bool,
     /// Tela de bloqueio (`Window::lock`).
     pub lock: bool,
+    /// Desenha na resolução real da tela (escala 1,25, 1,5, 2...): nítido. Apps que
+    /// pintam pixels por conta própria (`ui.paint`) desligam com `Window::fixed_scale`.
+    pub native_scale: bool,
 }
 
 impl Window {
@@ -108,7 +119,16 @@ impl Window {
             desktop: false,
             dropdown: false,
             lock: false,
+            native_scale: true,
         }
+    }
+
+    /// Desenha em escala 1 e deixa o compositor ampliar em telas com escala (menos
+    /// nítido). Para apps que pintam pixels por conta própria com `ui.paint` sem
+    /// considerar `mide::ui::draw::scale()`.
+    pub fn fixed_scale(mut self) -> Self {
+        self.native_scale = false;
+        self
     }
 
     /// Tela de bloqueio (protocolo `ext-session-lock-v1`): o compositor esconde tudo e
@@ -116,6 +136,8 @@ impl Window {
     /// tela; as outras ficam escuras.
     pub fn lock(mut self) -> Self {
         self.lock = true;
+        // As outras telas copiam a imagem desta: todas na mesma escala.
+        self.native_scale = false;
         // Sobre o papel de parede, sempre com as cores claras.
         self.theme = Theme::default();
         self.theme_fixed = true;
@@ -246,6 +268,22 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
     }
     };
 
+    // Escala exata da tela (fracionária) e o tamanho em pontos da superfície: o app
+    // desenha em pixels e o compositor mostra sem esticar.
+    let (viewport, fractional) = if window.native_scale {
+        let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
+        let manager = globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
+        match (viewporter, manager) {
+            (Some(viewporter), Some(manager)) => {
+                let surface = shell.wl_surface();
+                (Some(viewporter.get_viewport(surface, &qh, ())), Some(manager.get_fractional_scale(surface, &qh, ())))
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
     let mut event_loop: EventLoop<Runner> = EventLoop::try_new()?;
     let mut runner = Runner {
         data_devices: DataDeviceManagerState::bind(&globals, &qh).ok(),
@@ -274,6 +312,10 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         exit: false,
         ctx: Ctx::new(window.theme.clone()),
         follow_theme: !window.theme_fixed,
+        native_scale: window.native_scale,
+        scale: 1.0,
+        viewport,
+        _fractional: fractional,
         theme_checks: 0,
         title: window.title.clone(),
         app: Box::new(app),
@@ -397,6 +439,12 @@ struct Runner {
     glass_checks: u32,
     /// Segue o tema do sistema (verificado uma vez por segundo).
     follow_theme: bool,
+    /// Desenha na escala da tela (`Window::native_scale`), a escala atual (pixels por
+    /// ponto) e os objetos do viewporter e da escala fracionária.
+    native_scale: bool,
+    scale: f32,
+    viewport: Option<WpViewport>,
+    _fractional: Option<WpFractionalScaleV1>,
     theme_checks: u32,
     app_id: String,
     /// Último quadro enviado (para não reenviar um igual).
@@ -424,6 +472,21 @@ struct Runner {
 }
 
 impl Runner {
+    /// Tamanho da imagem em pixels.
+    fn physical_size(&self) -> (u32, u32) {
+        ((self.size.0 as f32 * self.scale).round().max(1.0) as u32, (self.size.1 as f32 * self.scale).round().max(1.0) as u32)
+    }
+
+    /// A escala da tela mudou: o próximo quadro sai inteiro na escala nova.
+    fn set_scale(&mut self, scale: f32) {
+        if (scale - self.scale).abs() > f32::EPSILON && scale > 0.0 {
+            tracing::debug!("escala da janela: {scale}");
+            self.scale = scale;
+            self.last_frame = None;
+            self.dirty = true;
+        }
+    }
+
     /// Um quadro: chama o `view` do app e apresenta. Se algo mudou (um clique trocou
     /// o estado), desenha de novo para a tela mostrar o estado novo.
     fn frame(&mut self) {
@@ -442,8 +505,11 @@ impl Runner {
             }
         }
         let mut pixmap = None;
+        // Imagem em pixels (tamanho em pontos vezes a escala); o layout continua em pontos.
+        crate::ui::draw::set_scale(self.scale);
+        let (pw, ph) = self.physical_size();
         for _ in 0..2 {
-            let Some(mut canvas) = Pixmap::new(self.size.0, self.size.1) else {
+            let Some(mut canvas) = Pixmap::new(pw, ph) else {
                 return;
             };
             // Camadas são transparentes: o app desenha só os painéis.
@@ -459,7 +525,7 @@ impl Runner {
             if let Some(overlay) = self.ctx.take_overlay() {
                 let (alpha, dy) = self.ctx.overlay_look();
                 let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
-                canvas.draw_pixmap(0, dy, overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
+                canvas.draw_pixmap(0, crate::ui::draw::px(dy as f32), overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
             }
             if let Some(title) = self.ctx.title.take() {
                 if title != self.title {
@@ -549,7 +615,7 @@ impl Runner {
             self.glass.set(&format!("app:{}", self.app_id), &rects);
         }
         self.glass_on = self.ctx.glass_capable.then(crate::control_client::panel_glass);
-        let (w, h) = self.size;
+        let (w, h) = self.physical_size();
         // Quadro igual ao último enviado (por exemplo, um quadro agendado sem mudança):
         // não manda de novo, para o compositor não refazer o que está atrás (vidro).
         if self.last_frame.as_ref().is_some_and(|last| last.width() == w && last.height() == h && last.data() == pixmap.data()) {
@@ -575,6 +641,12 @@ impl Runner {
         // copia e redesenha só ela (digitar num campo não reenvia a janela inteira).
         let (dx, dy, dw, dh) = self.last_frame.as_ref().and_then(|last| changed_area(last, &pixmap)).unwrap_or((0, 0, w, h));
         surface.damage_buffer(dx as i32, dy as i32, dw as i32, dh as i32);
+        // A imagem em pixels ocupa o tamanho da janela em pontos.
+        if let Some(viewport) = &self.viewport {
+            viewport.set_destination(self.size.0 as i32, self.size.1 as i32);
+        } else if self.native_scale && self.scale > 1.0 {
+            surface.set_buffer_scale(self.scale as i32);
+        }
         if buffer.attach_to(surface).is_ok() {
             self.shell.commit();
         }
@@ -639,7 +711,12 @@ impl Runner {
 }
 
 impl CompositorHandler for Runner {
-    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}
+    /// Escala inteira da tela (compositores sem a escala fracionária).
+    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, factor: i32) {
+        if self.native_scale && self.viewport.is_none() {
+            self.set_scale(factor.max(1) as f32);
+        }
+    }
     fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
     fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
@@ -990,6 +1067,27 @@ impl ShmHandler for Runner {
 
 delegate_registry!(Runner);
 smithay_client_toolkit::delegate_dispatch2!(Runner);
+
+impl Dispatch<WpViewporter, ()> for Runner {
+    fn event(_: &mut Self, _: &WpViewporter, _: <WpViewporter as smithay_client_toolkit::reexports::client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<WpViewport, ()> for Runner {
+    fn event(_: &mut Self, _: &WpViewport, _: <WpViewport as smithay_client_toolkit::reexports::client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<WpFractionalScaleManagerV1, ()> for Runner {
+    fn event(_: &mut Self, _: &WpFractionalScaleManagerV1, _: <WpFractionalScaleManagerV1 as smithay_client_toolkit::reexports::client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<WpFractionalScaleV1, ()> for Runner {
+    fn event(state: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        // A escala vem em 120 avos (150 = 1,25).
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            state.set_scale(scale as f32 / 120.0);
+        }
+    }
+}
 
 impl ProvidesRegistryState for Runner {
     fn registry(&mut self) -> &mut RegistryState {

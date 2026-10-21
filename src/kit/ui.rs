@@ -428,6 +428,8 @@ impl Ctx {
     /// desenha sem ícone e o ícone aparece num dos próximos quadros). `app`: nome de
     /// ícone de app (procura também no tema `hicolor` e aceita caminhos de arquivo).
     fn icon(&mut self, names: &[&str], size: u32, app: bool) -> Option<std::rc::Rc<Pixmap>> {
+        // Em telas com escala, o ícone é carregado no tamanho em pixels (nítido).
+        let size = (size as f32 * crate::ui::draw::scale()).round() as u32;
         let key = format!("{}{}@{size}", if app { "app:" } else { "" }, names.first().copied().unwrap_or(""));
         if let Some(icon) = self.icons.get(&key) {
             return icon.clone();
@@ -581,8 +583,10 @@ pub struct Ui<'a> {
 impl<'a> Ui<'a> {
     /// Área da janela inteira.
     pub fn root(canvas: &'a mut Pixmap, ctx: &'a mut Ctx) -> Self {
-        let (w, h) = (canvas.width() as f32, canvas.height() as f32);
-        ctx.window = (canvas.width(), canvas.height());
+        // A imagem está em pixels; o layout, em pontos (`draw::scale`).
+        let k = crate::ui::draw::scale();
+        let (w, h) = (canvas.width() as f32 / k, canvas.height() as f32 / k);
+        ctx.window = (w.round() as u32, h.round() as u32);
         Self {
             canvas,
             ctx,
@@ -728,7 +732,7 @@ impl<'a> Ui<'a> {
         let mut dim = Paint::default();
         dim.set_color(color([0, 0, 0, 56]));
         if let Some(r) = tiny_skia::Rect::from_xywh(0.0, 0.0, ww, wh) {
-            self.canvas.fill_rect(r, &dim, Transform::identity(), None);
+            self.canvas.fill_rect(r, &dim, crate::ui::draw::tf(), None);
         }
         let width = width.min(ww - 32.0);
         let (x, y) = (((ww - width) / 2.0).round(), (wh * 0.24).round());
@@ -823,11 +827,12 @@ impl<'a> Ui<'a> {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(color([255, 255, 255, 90]));
-            self.canvas.stroke_path(&path, &paint, &Stroke::default(), Transform::identity(), None);
+            self.canvas.stroke_path(&path, &paint, &Stroke::default(), crate::ui::draw::tf(), None);
         }
-        let rows = ((h - 2.0 * pad).ceil().max(1.0) as u32).min(inner.height());
+        let k = crate::ui::draw::scale();
+        let rows = (((h - 2.0 * pad) * k).ceil().max(1.0) as u32).min(inner.height());
         if let Some(part) = tiny_skia::IntRect::from_xywh(0, 0, inner.width(), rows).and_then(|r| inner.clone_rect(r)) {
-            crate::ui::draw::blit(self.canvas, &part, (x + pad) as i32, (y + pad) as i32, 1.0);
+            crate::ui::draw::blit_px(self.canvas, &part, crate::ui::draw::px(x + pad), crate::ui::draw::px(y + pad), 1.0);
         }
         self.ctx.glass.push((self.offset.0 + x, self.offset.1 + y, width, h, radius));
         self.cursor_y = self.cursor_y.max(y + h + self.ctx.theme.spacing);
@@ -1003,7 +1008,8 @@ impl<'a> Ui<'a> {
         }
         self.ctx.memory.menu_rect = Some((x, y0, w, h));
         // Desenho na camada de cima.
-        let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new(ww.max(1.0) as u32, wh.max(1.0) as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+        let k = crate::ui::draw::scale();
+        let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
         for (grow, alpha) in [(6.0, 12u8), (3.0, 20), (1.0, 32)] {
             fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, 10.0 + grow, color([0, 0, 0, alpha]));
         }
@@ -1204,7 +1210,7 @@ impl<'a> Ui<'a> {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(color([255, 255, 255, 255]));
-            self.canvas.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+            self.canvas.fill_path(&knob, &paint, FillRule::Winding, crate::ui::draw::tf(), None);
         }
         r
     }
@@ -1309,7 +1315,7 @@ impl<'a> Ui<'a> {
             paint.anti_alias = true;
             paint.set_color(color(t.text_secondary));
             let stroke = Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
-            self.canvas.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
         }
         let mut chosen = None;
         self.menu_impl(&r, r.clicked, |m| {
@@ -1407,7 +1413,7 @@ impl<'a> Ui<'a> {
                     let mut paint = Paint::default();
                     paint.anti_alias = true;
                     paint.set_color(color(t.accent));
-                    self.canvas.stroke_path(&path, &paint, &Stroke { width: 2.0, ..Default::default() }, Transform::identity(), None);
+                    self.canvas.stroke_path(&path, &paint, &Stroke { width: 2.0, ..Default::default() }, crate::ui::draw::tf(), None);
                 }
             }
             let name = self.fit(&screen.name, t.font_small, FontWeight::Semibold, w - 8.0);
@@ -1454,9 +1460,9 @@ impl<'a> Ui<'a> {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(color([255, 255, 255, 255]));
-            self.canvas.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+            self.canvas.fill_path(&knob, &paint, FillRule::Winding, crate::ui::draw::tf(), None);
             paint.set_color(color([0, 0, 0, 60]));
-            self.canvas.stroke_path(&knob, &paint, &Stroke::default(), Transform::identity(), None);
+            self.canvas.stroke_path(&knob, &paint, &Stroke::default(), crate::ui::draw::tf(), None);
         }
         let shown = format!("{}", value.round() as i64);
         self.draw_text(&shown, tx + tw + 16.0, rect.1 + (rect.3 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
@@ -1562,7 +1568,7 @@ impl<'a> Ui<'a> {
             paint.anti_alias = true;
             paint.set_color(color(border));
             let width = if focused { 2.0 } else { 1.0 };
-            self.canvas.stroke_path(&path, &paint, &Stroke { width, ..Default::default() }, Transform::identity(), None);
+            self.canvas.stroke_path(&path, &paint, &Stroke { width, ..Default::default() }, crate::ui::draw::tf(), None);
         }
         let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
         if value.is_empty() && !focused {
@@ -1594,7 +1600,8 @@ impl<'a> Ui<'a> {
         self.ctx.memory.text_scroll = scroll;
         // Desenha numa imagem do tamanho de dentro do campo: o que passa fica de fora.
         let (w, h) = ((inner.1 + 4.0).ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
-        let Some(mut clip) = Pixmap::new(w, h) else {
+        let k = crate::ui::draw::scale();
+        let Some(mut clip) = Pixmap::new((w as f32 * k).ceil() as u32, (h as f32 * k).ceil() as u32) else {
             return;
         };
         let x0 = 2.0 - scroll;
@@ -1607,7 +1614,7 @@ impl<'a> Ui<'a> {
         if edit.selection().is_none() {
             fill_rounded(&mut clip, x0 + cursor_x, 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
         }
-        self.canvas.draw_pixmap((inner.0 - 2.0) as i32, rect.1 as i32, clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        self.canvas.draw_pixmap(crate::ui::draw::px((inner.0 - 2.0).floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
     }
 
     /// Posição no texto (índice de byte) mais perto de `x`, medido do começo do texto.
@@ -1855,7 +1862,8 @@ impl<'a> Ui<'a> {
         let first = (doc.scroll / line_h).floor() as usize;
         let last = (first + rows + 2).min(starts.len());
         let (w, h) = ((view.0 + 8.0).ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
-        let Some(mut clip) = Pixmap::new(w, h) else {
+        let k = crate::ui::draw::scale();
+        let Some(mut clip) = Pixmap::new((w as f32 * k).ceil() as u32, (h as f32 * k).ceil() as u32) else {
             return r;
         };
         let selection = doc.edit.selection();
@@ -1891,7 +1899,7 @@ impl<'a> Ui<'a> {
             let y = pad + cursor_line as f32 * line_h - doc.scroll;
             fill_rounded(&mut clip, cursor_x - doc.scroll_x, y + 3.0, 1.5, line_h - 6.0, 0.5, color(t.text));
         }
-        self.canvas.draw_pixmap(text_x as i32, rect.1 as i32, clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        self.canvas.draw_pixmap(crate::ui::draw::px(text_x.floor()), crate::ui::draw::px(rect.1.floor()), clip.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
         // Indicador de rolagem à direita quando o texto passa da altura.
         if content_h > view.1 {
             let bar_h = (view.1 * view.1 / content_h).max(24.0);
@@ -1962,7 +1970,7 @@ impl<'a> Ui<'a> {
             Tile::Image(pix) => {
                 let (pw, ph) = (pix.width() as f32, pix.height() as f32);
                 let (dx, dy) = (ix + (fw - pw) / 2.0, iy + (fh - ph) / 2.0);
-                crate::ui::draw::blit(self.canvas, pix, dx as i32, dy as i32, 1.0);
+                crate::ui::draw::blit_image(self.canvas, pix, dx.floor(), dy.floor());
             }
             Tile::Icon(name) => {
                 let side = iw.min(ih);
@@ -2091,7 +2099,7 @@ impl<'a> Ui<'a> {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(color(if selected { t.on_accent } else { t.text_secondary }));
-                self.canvas.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                self.canvas.fill_path(&path, &paint, FillRule::Winding, crate::ui::draw::tf(), None);
             }
         }
         let ix = indent + 16.0;
@@ -2170,7 +2178,8 @@ impl<'a> Ui<'a> {
                 crate::ui::draw::blit(self.canvas, &pix, (rect.0 + 8.0) as i32, (rect.1 + 6.0) as i32, if enabled { 1.0 } else { 0.35 });
             }
             // Texto de reserva só se o ícone não existe (não enquanto carrega).
-            None if self.ctx.icons.contains_key(&format!("{icon}@16")) => {
+            // (A chave tem o tamanho em pixels, como em `Ctx::icon`.)
+            None if self.ctx.icons.contains_key(&format!("{icon}@{}", (16.0 * crate::ui::draw::scale()).round() as u32)) => {
                 let c = if enabled { t.text } else { t.text_secondary };
                 let fw = self.measure(fallback, 16.0, FontWeight::Semibold);
                 self.draw_text(fallback, rect.0 + (32.0 - fw) / 2.0, rect.1 + 3.0, 16.0, FontWeight::Semibold, c);
@@ -2272,9 +2281,10 @@ impl<'a> Ui<'a> {
     #[allow(clippy::too_many_arguments)]
     fn sub_area_from(&mut self, x: f32, top: f32, width: f32, height: f32, start: f32, copy: bool, add: impl FnOnce(&mut Ui)) -> (Pixmap, f32) {
         let h = height.clamp(1.0, 16384.0) as u32;
-        let mut canvas = Pixmap::new(width.max(1.0) as u32, h).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        let k = crate::ui::draw::scale();
+        let mut canvas = Pixmap::new((width.max(1.0) * k).ceil() as u32, (h as f32 * k).ceil() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         if copy {
-            copy_pixels(self.canvas, x as i32, top as i32, &mut canvas, 0, 0);
+            copy_pixels(self.canvas, crate::ui::draw::px(x), crate::ui::draw::px(top), &mut canvas, 0, 0);
         }
         let first = start - top;
         let used = {
@@ -2326,14 +2336,15 @@ impl<'a> Ui<'a> {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(color(t.line));
-            self.canvas.stroke_path(&path, &paint, &Stroke::default(), Transform::identity(), None);
+            self.canvas.stroke_path(&path, &paint, &Stroke::default(), crate::ui::draw::tf(), None);
         }
         if bottom > top {
             // Recorta no fim do cartão (a imagem cobre a faixa visível inteira).
-            let clip_h = ((y0 + h - pad_y) - top).min(inner.height() as f32).max(0.0) as u32;
+            let k = crate::ui::draw::scale();
+            let clip_h = (((y0 + h - pad_y) - top) * k).min(inner.height() as f32).max(0.0) as u32;
             if clip_h > 0 {
                 if let Some(part) = inner.clone_rect(tiny_skia::IntRect::from_xywh(0, 0, inner.width(), clip_h).unwrap()) {
-                    self.canvas.draw_pixmap((x + pad_x) as i32, top as i32, part.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                    self.canvas.draw_pixmap(crate::ui::draw::px(x + pad_x), crate::ui::draw::px(top), part.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
                 }
             }
         }
@@ -2396,7 +2407,7 @@ impl<'a> Ui<'a> {
             scroll = scroll.clamp(0.0, max_scroll);
             let active = self.ctx.memory.dragging_scroll.is_some_and(|(s, _)| s == id) || self.over(bar);
             let tw = if active { 8.0 } else { 6.0 };
-            copy_back(&inner, self.canvas, (x + pad) as i32, y0 as i32);
+            copy_back(&inner, self.canvas, crate::ui::draw::px(x + pad), crate::ui::draw::px(y0));
             fill_rounded(self.canvas, bar.0 + 2.0 + (8.0 - tw) / 2.0, thumb_y(scroll), tw, thumb_h, tw / 2.0, color(self.ctx.theme.shade(if active { 120 } else { 80 })));
         } else {
             // Sem rolagem: se havia rolagem guardada (a janela cresceu), redesenha.
@@ -2404,7 +2415,7 @@ impl<'a> Ui<'a> {
                 self.ctx.repaint = true;
             }
             scroll = 0.0;
-            copy_back(&inner, self.canvas, (x + pad) as i32, y0 as i32);
+            copy_back(&inner, self.canvas, crate::ui::draw::px(x + pad), crate::ui::draw::px(y0));
         }
         self.ctx.memory.scroll.insert(id, scroll);
         self.cursor_y = y0 + h;

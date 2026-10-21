@@ -5,6 +5,34 @@ use tiny_skia::{
     SpreadMode, Transform,
 };
 
+thread_local! {
+    /// Escala da superfície sendo desenhada (pixels por ponto): 1 nas telas comuns,
+    /// 1,25/1,5/2 em telas com escala. As funções daqui recebem coordenadas em pontos
+    /// e desenham na imagem em pixels (nítido, sem o compositor esticar). Só os apps
+    /// do mide-ui mudam a escala; o resto desenha em 1.
+    static SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
+/// Muda a escala dos próximos desenhos nesta thread.
+pub fn set_scale(scale: f32) {
+    SCALE.with(|s| s.set(if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }));
+}
+
+pub fn scale() -> f32 {
+    SCALE.with(|s| s.get())
+}
+
+/// Transformação de pontos para pixels (para `fill_path`, `stroke_path`...).
+pub fn tf() -> Transform {
+    let s = scale();
+    Transform::from_scale(s, s)
+}
+
+/// Uma coordenada em pontos como pixel inteiro.
+pub fn px(v: f32) -> i32 {
+    (v * scale()).round() as i32
+}
+
 /// Retângulo arredondado como caminho, com cantos em curvas cúbicas.
 pub fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
     const K: f32 = 0.5523;
@@ -29,7 +57,7 @@ pub fn fill_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32,
         let mut paint = Paint::default();
         paint.set_color(color);
         paint.anti_alias = true;
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
     }
 }
 
@@ -40,7 +68,7 @@ pub fn clear_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32
         let mut paint = Paint::default();
         paint.blend_mode = tiny_skia::BlendMode::Clear;
         paint.anti_alias = true;
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
     }
 }
 
@@ -49,6 +77,8 @@ pub fn clear_rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32
 /// áreas grandes): cada linha é escrita direto, com a extensão calculada pelo canto, e
 /// só os pixels da borda misturam (antisserrilhado). `rgba` não premultiplicado.
 pub fn paint_rounded_solid(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, rgba: [u8; 4]) {
+    let k = scale();
+    let (x, y, w, h, r) = (x * k, y * k, w * k, h * k, r * k);
     let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
     let k = rgba[3] as f32 / 255.0;
@@ -108,6 +138,8 @@ pub fn paint_rounded_solid(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, 
 /// cobre, é pulado), então é barata mesmo em painéis grandes. `spread` é a largura da
 /// sombra, `drop` desce a sombra e `alpha` é a força perto da borda.
 pub fn soft_shadow(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, drop: f32, alpha: u8) {
+    let k = scale();
+    let (x, y, w, h, r, spread, drop) = (x * k, y * k, w * k, h * k, r * k, spread * k, drop * k);
     let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
     let (hw, hh) = (w / 2.0, h / 2.0);
@@ -180,17 +212,17 @@ pub fn glass(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, radius: f32) {
         let mut fill = Paint::default();
         fill.anti_alias = true;
         fill.shader = vertical_gradient(y, y + h, rgba(255, 255, 255, 92), rgba(235, 235, 245, 70));
-        pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&path, &fill, FillRule::Winding, tf(), None);
         let mut border = Paint::default();
         border.anti_alias = true;
         border.shader = vertical_gradient(y, y + h, rgba(0, 0, 0, 70), rgba(255, 255, 255, 110));
-        pixmap.stroke_path(&path, &border, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        pixmap.stroke_path(&path, &border, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, tf(), None);
     }
     if let Some(path) = rounded_rect(x + 1.5, y + 1.5, w - 3.0, h - 3.0, (radius - 1.0).max(0.0)) {
         let mut shine = Paint::default();
         shine.anti_alias = true;
         shine.shader = vertical_gradient(y, y + h, rgba(255, 255, 255, 60), rgba(255, 255, 255, 0));
-        pixmap.stroke_path(&path, &shine, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        pixmap.stroke_path(&path, &shine, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, tf(), None);
     }
 }
 
@@ -201,15 +233,20 @@ pub fn glass_veil(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, radius: f
         let mut fill = Paint::default();
         fill.anti_alias = true;
         fill.shader = vertical_gradient(y, y + h, rgba(255, 255, 255, 34), rgba(255, 255, 255, 18));
-        pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&path, &fill, FillRule::Winding, tf(), None);
     }
 }
 
-/// Cola `src` em `dst` na posição inteira (`x`, `y`), sem escala, com mistura normal
+/// Cola `src` (já em pixels) em `dst` na posição (`x`, `y`) em pontos, com mistura normal
 /// (as duas imagens em RGBA premultiplicado) e `opacity` de 0 a 1. Faz o mesmo que
 /// `draw_pixmap` nesse caso, bem mais rápido: pixel opaco é copiado, transparente é
 /// pulado, e só as bordas misturam. Ícones e miniaturas passam por aqui.
 pub fn blit(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
+    blit_px(dst, src, px(x as f32), px(y as f32), opacity);
+}
+
+/// Como `blit`, com a posição já em pixels (colar uma área desenhada à parte).
+pub fn blit_px(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
     let (dw, dh, sw, sh) = (dst.width() as i32, dst.height() as i32, src.width() as i32, src.height() as i32);
     let (x0, y0) = (x.max(0), y.max(0));
     let (x1, y1) = ((x + sw).min(dw), (y + sh).min(dh));
@@ -248,6 +285,18 @@ pub fn blit(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
             }
         }
     }
+}
+
+/// Imagem feita em pontos (miniaturas do app) colada em (`x`, `y`): em telas com
+/// escala, ampliada para continuar do mesmo tamanho.
+pub fn blit_image(dst: &mut Pixmap, src: &Pixmap, x: f32, y: f32) {
+    let k = scale();
+    if k == 1.0 {
+        blit_px(dst, src, x.round() as i32, y.round() as i32, 1.0);
+        return;
+    }
+    let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    dst.draw_pixmap(0, 0, src.as_ref(), &paint, Transform::from_row(k, 0.0, 0.0, k, (x * k).round(), (y * k).round()), None);
 }
 
 /// Como `blit`, mas pinta a imagem toda numa cor só (mantendo a transparência):
@@ -309,7 +358,7 @@ fn arrow(pixmap: &mut Pixmap, at: impl Fn(f32, f32) -> (f32, f32), rgba_fill: [u
     sides(&mut pb);
     if let Some(edge_path) = pb.finish() {
         paint.set_color(Color::from_rgba8(0, 0, 0, 40));
-        pixmap.stroke_path(&edge_path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        pixmap.stroke_path(&edge_path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, tf(), None);
     }
     // O corpo entra 2 px no painel: apaga a borda ali e pinta com a cor do painel.
     let mut pb = PathBuilder::new();
@@ -321,9 +370,9 @@ fn arrow(pixmap: &mut Pixmap, at: impl Fn(f32, f32) -> (f32, f32), rgba_fill: [u
         let mut clear = Paint::default();
         clear.anti_alias = true;
         clear.blend_mode = tiny_skia::BlendMode::Clear;
-        pixmap.fill_path(&body, &clear, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&body, &clear, FillRule::Winding, tf(), None);
         paint.set_color(Color::from_rgba8(rgba_fill[0], rgba_fill[1], rgba_fill[2], rgba_fill[3]));
-        pixmap.fill_path(&body, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&body, &paint, FillRule::Winding, tf(), None);
     }
 }
 

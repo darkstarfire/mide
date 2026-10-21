@@ -114,6 +114,15 @@ impl Text {
     }
 
     fn measure_with(&mut self, text: &str, size: f32, weight: FontWeight, mono: bool) -> f32 {
+        // Em telas com escala, mede no tamanho em pixels e devolve em pontos: a largura
+        // bate com o texto desenhado (`draw_with`).
+        let k = super::draw::scale();
+        if k != 1.0 {
+            super::draw::set_scale(1.0);
+            let width = self.measure_with(text, size * k, weight, mono) / k;
+            super::draw::set_scale(k);
+            return width;
+        }
         let key = (text.to_string(), size.to_bits(), weight, mono);
         if let Some(width) = self.widths.get(&key) {
             return *width;
@@ -157,6 +166,14 @@ impl Text {
 
     #[allow(clippy::too_many_arguments)]
     fn draw_with(&mut self, pixmap: &mut Pixmap, text: &str, (x, y): (f32, f32), size: f32, weight: FontWeight, rgba: [u8; 4], face: Face) -> f32 {
+        // Pontos para pixels (ver `draw::scale`): o texto é rasterizado no tamanho real.
+        let k = super::draw::scale();
+        if k != 1.0 {
+            super::draw::set_scale(1.0);
+            let width = self.draw_with(pixmap, text, (x * k, y * k), size * k, weight, rgba, face) / k;
+            super::draw::set_scale(k);
+            return width;
+        }
         let key = (text.to_string(), size.to_bits(), weight, rgba, face);
         if !self.images.contains_key(&key) {
             let image = self.render(text, size, weight, rgba, face);

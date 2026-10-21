@@ -522,7 +522,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let windows = window_rects();
     let mut app = Capture::new(shot, windows);
     app.quick = mode == "--area";
-    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot"), app)
+    // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1.
+    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot").fixed_scale(), app)
 }
 
 #[cfg(test)]

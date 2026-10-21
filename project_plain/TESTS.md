@@ -810,3 +810,5 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh`: "teclas mortas: ´ + a = á e ~ + o = õ (idioma C)" no mide-text (pula se o teclado do sistema não for ABNT2); `cargo test` `dano_so_onde_mudou`.
 - `tests/ui.sh`: "editor: Abrir… pelo seletor de arquivos" (Ctrl+O, duplo clique em nota.txt abre outra janela) e "editor: Salvar como… pelo seletor de arquivos" (sem título, Ctrl+S, nome "novo" em Documentos de uma pasta pessoal de teste); `cargo test` `pastas_primeiro_e_filtro`.
 - Manual: no Editor de Texto, Abrir… → navegar pelos lugares e pela pasta de cima, Esc cancela; Salvar como… por cima de um arquivo existente pergunta antes de substituir; tema escuro com o seletor aberto.
+- Manual/cenário: `[monitors.outputs."HEADLESS-1"] scale = 1.25` (e `2.0`) num `XDG_CONFIG_HOME` de teste, abrir Configurações, Arquivos e o seletor do Editor: texto e ícones nítidos, layout igual ao de escala 1, clique no interruptor "Sombras" grava; botões da barra de título redondos a 2x. `cargo test` `dano_so_onde_mudou`.
+- Manual (sessão de verdade com escala 1,25/2): apps do mide-ui nítidos; Terminal ainda ampliado pelo compositor.

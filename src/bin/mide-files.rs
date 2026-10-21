@@ -1087,7 +1087,7 @@ fn veil(ui: &mut Ui, rect: (f32, f32, f32, f32), k: f32) {
         if let Some(r) = tiny_skia::Rect::from_xywh(offset.0 + rect.0, offset.1 + rect.1, rect.2, rect.3) {
             let mut paint = tiny_skia::Paint::default();
             paint.set_color(tiny_skia::Color::from_rgba8(bg[0], bg[1], bg[2], (k.clamp(0.0, 1.0) * 255.0) as u8));
-            canvas.fill_rect(r, &paint, tiny_skia::Transform::identity(), None);
+            canvas.fill_rect(r, &paint, mide::ui::draw::tf(), None);
         }
     });
 }

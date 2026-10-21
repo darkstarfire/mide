@@ -2700,7 +2700,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     if options.hotkey {
         return run_hotkey(options);
     }
-    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120);
+    // A grade do terminal é pintada à mão (`ui.paint`) em pixels: escala 1 por enquanto.
+    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).fixed_scale();
     run(window, TerminalApp::new(options))
 }
 
@@ -2741,7 +2742,7 @@ fn run_hotkey(options: Options) -> Result<(), Box<dyn Error>> {
     });
     let mut app = TerminalApp::new(options);
     app.hotkey = Some(Hotkey { toggles, waker, visible: true });
-    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho");
+    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho").fixed_scale();
     let result = run(window, app);
     let _ = std::fs::remove_file(&path);
     result

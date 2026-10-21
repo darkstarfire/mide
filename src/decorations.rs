@@ -487,7 +487,7 @@ fn glyph(shaders: &Shaders, rect: Rect, button: Button) -> PixelShaderElement {
 fn ring(shaders: &Shaders, rect: Rect) -> PixelShaderElement {
     pixel(&shaders.outline, 1, rect, vec![
             Uniform::new("half_size", (rect.size.w as f32 / 2.0, rect.size.h as f32 / 2.0)),
-            Uniform::new("radius", (rect.size.w / 2) as f32 * crate::clip::scale() as f32),
+            Uniform::new("radius", (rect.size.w / 2) as f32),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, 0.18]),
         ])
@@ -525,7 +525,7 @@ pub fn shadow_uniforms(casters: &[Caster]) -> Vec<Uniform<'static>> {
     }
     out.push(Uniform::new("sa", [strengths[0], strengths[1], strengths[2], strengths[3]]));
     out.push(Uniform::new("sb", [strengths[4], strengths[5], strengths[6], strengths[7]]));
-    out.push(Uniform::new("radius", CORNER_RADIUS as f32 * crate::clip::scale() as f32));
+    out.push(Uniform::new("radius", CORNER_RADIUS as f32));
     out.push(Uniform::new("offset_y", SHADOW_OFFSET as f32));
     out.push(Uniform::new("margin", SHADOW_MARGIN as f32));
     out
@@ -543,6 +543,9 @@ pub fn shadow_strength(focused: bool) -> f32 {
     if focused { 0.45 } else { 0.25 }
 }
 
+/// Os shaders daqui calculam em pontos (o `size` que o Smithay passa é o da área em
+/// pontos): raios e larguras vão em pontos, sem multiplicar pela escala da tela (com
+/// a escala, um raio em pixels passava da metade do botão e o círculo virava losango).
 fn rounded(
     shaders: &Shaders,
     area: Rect,
@@ -551,7 +554,7 @@ fn rounded(
     clip: &[Uniform<'static>],
 ) -> PixelShaderElement {
     let mut uniforms = vec![
-        Uniform::new("radius", radius as f32 * crate::clip::scale() as f32),
+        Uniform::new("radius", radius as f32),
         Uniform::new("fill", color),
     ];
     uniforms.extend(clip.iter().cloned());
@@ -571,7 +574,7 @@ pub fn rounded_rect_element(shaders: &Shaders, area: Rect, color: [f32; 4], radi
 
 /// Vidro claro arredondado (destaque da prévia sob o ponteiro).
 pub fn glass_element(shaders: &Shaders, area: Rect, radius: i32) -> PixelShaderElement {
-    pixel(&shaders.glass, 4, area, vec![Uniform::new("radius", radius as f32 * crate::clip::scale() as f32)])
+    pixel(&shaders.glass, 4, area, vec![Uniform::new("radius", radius as f32)])
 }
 
 /// × na cor pedida (botão de fechar das prévias, branco sobre o círculo escuro).
@@ -601,7 +604,7 @@ pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool) -> PixelSh
                 "half_size",
                 (frame.size.w as f32 / 2.0, frame.size.h as f32 / 2.0),
             ),
-            Uniform::new("radius", CORNER_RADIUS as f32 * crate::clip::scale() as f32),
+            Uniform::new("radius", CORNER_RADIUS as f32),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, alpha]),
         ])
