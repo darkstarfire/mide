@@ -211,9 +211,9 @@ impl Catalog {
             .entry(format!("fallback:{app_id}"))
             .or_insert_with(|| {
                 let names: &[&str] = if app_id == "mide-settings" {
-                    &["preferences-system", "preferences-desktop", "application-x-executable"]
+                    &["mide-settings", "preferences-system", "preferences-desktop", "application-x-executable"]
                 } else if app_id.starts_with("mide-") {
-                    &["computer", "help-about", "application-x-executable"]
+                    &["mide-about", "computer", "help-about", "application-x-executable"]
                 } else {
                     &["application-x-executable", "applications-other"]
                 };

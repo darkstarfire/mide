@@ -14,6 +14,26 @@ export ELECTRON_OZONE_PLATFORM_HINT=auto
 export SDL_VIDEODRIVER="wayland,x11"
 export _JAVA_AWT_WM_NONREPARENTING=1
 
+# Ícones do mide nos apps GTK e Qt, só nesta sessão: um perfil próprio do dconf põe,
+# por cima da configuração do usuário (que continua valendo e é onde tudo é gravado),
+# um banco só de leitura que trava apenas o tema de ícones em "mide". Outras sessões
+# (Cinnamon, GNOME) não usam esse perfil e não mudam.
+for icons in "${XDG_DATA_HOME:-$HOME/.local/share}/icons/mide" /usr/local/share/icons/mide /usr/share/icons/mide; do
+    [ -f "$icons/index.theme" ] || continue
+    command -v dconf >/dev/null || break
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/mide/dconf"
+    mkdir -p "$conf/keyfiles/locks"
+    printf "[org/gnome/desktop/interface]\nicon-theme='mide'\n" > "$conf/keyfiles/00-mide"
+    echo /org/gnome/desktop/interface/icon-theme > "$conf/keyfiles/locks/00-mide"
+    if dconf compile "$conf/mide.db" "$conf/keyfiles"; then
+        printf 'user-db:user\nfile-db:%s\n' "$conf/mide.db" > "$conf/profile"
+        export DCONF_PROFILE="$conf/profile"
+    fi
+    break
+done
+# Apps Qt seguem o GTK (tema de ícones, fontes) quando o plugin existe.
+[ -z "$QT_QPA_PLATFORMTHEME" ] && export QT_QPA_PLATFORMTHEME=gtk3
+
 # O compositor: ao lado deste script (instalado), ou o do projeto (desenvolvimento,
 # com o script em data/), ou o do PATH.
 dir="$(dirname "$(readlink -f "$0")")"

@@ -110,7 +110,7 @@ impl Search {
         }
         if let Some(value) = search::calculate(q) {
             let text = search::number_text(value);
-            rows.push(Row { hit: Hit::Calc(text.clone()), icon: "accessories-calculator".into(), title: format!("= {text}"), detail: "Enter copia o resultado".into() });
+            rows.push(Row { hit: Hit::Calc(text.clone()), icon: "mide-calculator".into(), title: format!("= {text}"), detail: "Enter copia o resultado".into() });
         }
         // Apps com uma palavra do nome começando pela busca vêm antes das
         // Configurações; os que só contêm a busca no meio de uma palavra, depois.

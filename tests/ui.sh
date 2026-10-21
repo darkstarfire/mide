@@ -299,6 +299,21 @@ check "× da prévia fecha a janela" "prévia: fechar janela" "400 move 623 728;
 check "clique direito abre o menu do app" "menu de Terminal aberto" "400 rclick 611 728; 470 list" "$TERMINAL"
 check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 combo super+h; 420 click 654 728" "$CALCULATOR"
 
+# Tema de ícones do mide (fork do WhiteSur): instalado numa pasta de dados de teste a
+# partir do clone (o do mide-atualizar ou o do lado deste projeto); sem clone, pulado.
+ICONSRC=""
+for d in "${XDG_CACHE_HOME:-$HOME/.cache}/mide/mide-icons" "$PWD/../mide-icons"; do
+    if [ -x "$d/install.sh" ]; then ICONSRC="$d"; break; fi
+done
+if [ -n "$ICONSRC" ]; then
+    IDATA="$(mktemp -d)"
+    (cd "$ICONSRC" && ./install.sh -n mide -d "$IDATA/icons" >/dev/null 2>&1)
+    XDG_DATA_HOME="$IDATA" RUST_LOG="mide=debug,mide_dock=info" check "dock: ícones dos apps do mide vêm do tema do mide" "ícone mide-terminal: tema do mide" "400 list"
+    rm -rf "$IDATA"
+else
+    echo "pulado: dock com o tema do mide (sem o clone do mide-icons)"
+fi
+
 echo "== dock: Downloads e Lixeira (pastas temporárias)"
 # Downloads de teste com 3 itens (o mais novo é "projeto") e uma Lixeira de teste.
 # Nada aqui toca as pastas reais: o abrir só vai para o log (MIDE_OPEN_DRY_RUN).

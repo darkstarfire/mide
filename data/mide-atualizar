@@ -9,6 +9,34 @@ set -e
 cd "$(dirname "$(readlink -f "$0")")/.."
 PATH="$HOME/.cargo/bin:$PATH"
 cargo build --release
+
+# Tema de ícones do mide (fork do WhiteSur: github.com/fabioaacarneiro/mide-icons), na
+# versão fixada em data/icons.version. Só instala de novo quando a versão muda.
+instalar_icones() {
+    versao="$(cat data/icons.version)"
+    destino="${XDG_DATA_HOME:-$HOME/.local/share}/icons"
+    marca="$destino/mide/.versao-mide-icons"
+    [ "$(cat "$marca" 2>/dev/null)" = "$versao" ] && return 0
+    fonte="${XDG_CACHE_HOME:-$HOME/.cache}/mide/mide-icons"
+    if [ ! -d "$fonte/.git" ]; then
+        mkdir -p "$(dirname "$fonte")"
+        git clone -q https://github.com/fabioaacarneiro/mide-icons.git "$fonte"
+    fi
+    git -C "$fonte" fetch -q origin
+    git -C "$fonte" checkout -q "$versao"
+    # Sem -a (redesenhos de apps do macOS) e sem -p: o tema já vem com a marca do mide.
+    (cd "$fonte" && ./install.sh -n mide -d "$destino" >/dev/null 2>&1)
+    # Os apps do mide também no hicolor: aparecem em qualquer tema (menus de outros
+    # ambientes, sem o tema do mide).
+    mkdir -p "$destino/hicolor/scalable/apps"
+    for nome in mide-terminal mide-text mide-files mide-settings mide-screenshot mide-calculator mide-about; do
+        cp -L "$destino/mide/apps/scalable/$nome.svg" "$destino/hicolor/scalable/apps/$nome.svg"
+    done
+    gtk-update-icon-cache -q -t "$destino/hicolor" 2>/dev/null || true
+    echo "$versao" > "$marca"
+    echo "ícones do mide instalados ($(echo "$versao" | cut -c1-8))"
+}
+instalar_icones || echo "aviso: os ícones do mide não foram instalados (sem rede?); tente de novo depois"
 if [ "${1:-}" = "--tudo" ]; then
     echo "reiniciando o compositor (as janelas abertas vão fechar)..."
     target/release/mide-ctl restart all

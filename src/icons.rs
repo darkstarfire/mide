@@ -4,14 +4,59 @@ use std::{fs, path::Path};
 
 use tiny_skia::Pixmap;
 
-/// Ícone de app pelo nome: no tema padrão (`hicolor`, onde os apps instalam os
-/// ícones) e, se não houver, no tema do usuário (ícones de sistema, como o das
-/// Configurações). Nomes de arquivo (caminho absoluto) também valem.
+/// Nome do tema de ícones do mide (o fork do WhiteSur, `mide-icons`, instalado pelo
+/// `mide-atualizar`).
+pub const MIDE_THEME: &str = "mide";
+
+/// Ícone de app pelo nome: primeiro no tema do mide (quando instalado: os apps de
+/// terceiros ganham a versão no estilo dele, como no GTK), depois no tema padrão
+/// (`hicolor`, onde os apps instalam os ícones) e nos temas do usuário. Os apps do
+/// mide (`mide-terminal`...) caem num ícone genérico sem o tema do mide. Nomes de
+/// arquivo (caminho absoluto) também valem.
 pub fn load_icon(name: &str, size: u32) -> Option<Pixmap> {
     if name.starts_with('/') {
         return load_icon_file(name, size);
     }
-    load_icon_hicolor(name, size).or_else(|| themed(&[name], size))
+    let in_mide = || {
+        let icon = mide_theme_installed().then(|| in_theme(MIDE_THEME, &[name], size)).flatten();
+        if icon.is_some() {
+            tracing::debug!("ícone {name}: tema do mide");
+        }
+        icon
+    };
+    in_mide()
+        .or_else(|| load_icon_hicolor(name, size))
+        .or_else(|| themed(&[name], size))
+        .or_else(|| generic_name(name).and_then(|g| load_icon_hicolor(g, size).or_else(|| themed(&[g], size))))
+}
+
+/// Ícone genérico de um app do mide, para quando o tema do mide não está instalado.
+pub fn generic_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "mide-terminal" => "utilities-terminal",
+        "mide-text" => "accessories-text-editor",
+        "mide-files" => "system-file-manager",
+        "mide-settings" => "preferences-system",
+        "mide-screenshot" => "applets-screenshooter",
+        "mide-calculator" => "accessories-calculator",
+        "mide-about" => "computer",
+        _ => return None,
+    })
+}
+
+/// O tema do mide está instalado (em `~/.local/share/icons` ou nas pastas de dados
+/// do sistema)?
+pub fn mide_theme_installed() -> bool {
+    static INSTALLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *INSTALLED.get_or_init(|| {
+        let home = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")));
+        let system = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+        home.into_iter()
+            .chain(system.split(':').filter(|d| !d.is_empty()).map(std::path::PathBuf::from))
+            .any(|dir| dir.join("icons").join(MIDE_THEME).join("index.theme").is_file())
+    })
 }
 
 /// Ícone do tema padrão: PNG direto, SVG renderizado.
@@ -37,14 +82,17 @@ pub fn load_icon_file(path: &str, size: u32) -> Option<Pixmap> {
     }
 }
 
-/// Temas de ícones do usuário, em ordem: `MIDE_ICON_THEME`, o tema do GNOME
-/// (gsettings) e o Adwaita.
+/// Temas de ícones do usuário, em ordem: `MIDE_ICON_THEME`, o tema do mide (se
+/// instalado), o tema do GNOME (gsettings) e o Adwaita.
 fn user_themes() -> &'static [String] {
     static THEMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     THEMES.get_or_init(|| {
         let mut themes = Vec::new();
         if let Ok(theme) = std::env::var("MIDE_ICON_THEME") {
             themes.push(theme);
+        }
+        if mide_theme_installed() {
+            themes.push(MIDE_THEME.into());
         }
         let gnome = std::process::Command::new("gsettings")
             .args(["get", "org.gnome.desktop.interface", "icon-theme"])
@@ -69,22 +117,30 @@ pub fn load_themed_icon(names: &[&str], size: u32) -> Option<Pixmap> {
 
 /// Primeiro dos nomes encontrado nos temas do usuário.
 fn themed(names: &[&str], size: u32) -> Option<Pixmap> {
-    for theme in user_themes() {
-        for name in names {
-            let path = freedesktop_icons::lookup(name)
-                .with_size(size.min(u16::MAX as u32) as u16)
-                .with_theme(theme)
-                .with_cache()
-                .find();
-            if let Some(path) = path {
-                let icon = match path.extension().and_then(|e| e.to_str()) {
-                    Some("png") => icon_from_png(&path, size),
-                    Some("svg") | Some("svgz") => icon_from_svg(&path, size),
-                    _ => None,
-                };
-                if icon.is_some() {
-                    return icon;
-                }
+    user_themes().iter().find_map(|theme| in_theme(theme, names, size))
+}
+
+/// Primeiro dos nomes encontrado em `theme` (sem cair no `hicolor`).
+fn in_theme(theme: &str, names: &[&str], size: u32) -> Option<Pixmap> {
+    for name in names {
+        let path = freedesktop_icons::lookup(name)
+            .with_size(size.min(u16::MAX as u32) as u16)
+            .with_theme(theme)
+            .with_cache()
+            .find();
+        if let Some(path) = path {
+            // O `hicolor` entra na busca de qualquer tema como herança: aqui só vale o
+            // do próprio tema.
+            if path.components().any(|c| c.as_os_str() == "hicolor") && theme != "hicolor" {
+                continue;
+            }
+            let icon = match path.extension().and_then(|e| e.to_str()) {
+                Some("png") => icon_from_png(&path, size),
+                Some("svg") | Some("svgz") => icon_from_svg(&path, size),
+                _ => None,
+            };
+            if icon.is_some() {
+                return icon;
             }
         }
     }

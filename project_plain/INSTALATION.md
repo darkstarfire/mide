@@ -12,7 +12,7 @@
 - Tema de cursores (ex.: `adwaita-icon-theme`), para o cursor do mide no console (A13); sem tema, o mide desenha uma seta própria.
 
 - **Bibliotecas do sistema usadas pelos binários** (medido com `ldd` em 2026-10-20): `libinput`, `libseat`, `libudev`/`libgudev`, `libgbm` + `libdrm` (Mesa), `libEGL`/GLES (Mesa, carregado na hora), `libxkbcommon`, `libsystemd`, `glib` e as que elas puxam (`libevdev`, `libmtdev`, `libwacom`). As **dependências do Rust (crates) ficam dentro dos binários**: quem só instala não precisa de Rust nem de `cargo`.
-- **Programas usados em tempo de execução:** D-Bus (sessão), `systemd --user`, `xdg-desktop-portal` + `xdg-desktop-portal-gtk` (configurações do sistema para os apps GTK), `dbus-update-activation-environment`, fontes do sistema (fontconfig), tema de ícones; opcionais: `foot` (terminal), `nmcli`, `bluetoothctl`, `wpctl`, `loginctl`.
+- **Programas usados em tempo de execução:** D-Bus (sessão), `systemd --user`, `xdg-desktop-portal` + `xdg-desktop-portal-gtk` (configurações do sistema para os apps GTK), `dbus-update-activation-environment`, fontes do sistema (fontconfig), tema de ícones do mide (`mide-icons`, fork do WhiteSur: o `mide-atualizar` baixa e instala em `~/.local/share/icons`; precisa de `git` e rede na primeira vez); opcionais: `foot` (terminal), `nmcli`, `bluetoothctl`, `wpctl`, `loginctl`.
 - Para compilar o `xwayland-satellite` no Debian/Ubuntu: `libxcb-cursor-dev` e `clang` (além de `libxcb1-dev` e `pkg-config`).
 
 ## Estratégia de instalação (sem compilar na máquina do usuário)

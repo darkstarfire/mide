@@ -2454,7 +2454,7 @@ impl Preferences {
 impl App for Preferences {
     fn view(&mut self, ui: &mut Ui) {
         let names: Vec<String> = self.profiles.profiles.iter().map(|p| p.name.clone()).collect();
-        let items: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "utilities-terminal")).collect();
+        let items: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "mide-terminal")).collect();
         let default = self.profiles.default.clone();
         let mut changed = false;
         let mut add = None;

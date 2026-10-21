@@ -104,6 +104,13 @@ fn publish_environment(socket: &str) {
     if let Some(dirs) = crate::data_dirs() {
         vars.push(format!("XDG_DATA_DIRS={dirs}"));
     }
+    // Perfil do dconf da sessão (tema de ícones do mide, definido pelo `mide-session`) e
+    // o tema do Qt: os serviços ativados (portais) também precisam deles.
+    for name in ["DCONF_PROFILE", "QT_QPA_PLATFORMTHEME"] {
+        if let Ok(value) = std::env::var(name) {
+            vars.push(format!("{name}={value}"));
+        }
+    }
     match Command::new("dbus-update-activation-environment").arg("--systemd").args(&vars).status() {
         Ok(status) if status.success() => tracing::info!("sessão: ambiente publicado ({})", vars.join(" ")),
         Ok(status) => tracing::warn!("sessão: dbus-update-activation-environment saiu com {status}"),
@@ -114,7 +121,7 @@ fn publish_environment(socket: &str) {
     // sistema aos apps (layout dos botões, tema escuro, fontes).
     // Sem esperar (`--no-block`): o portal, ao subir, conversa com o próprio mide; se o
     // mide esperasse aqui, os dois ficariam presos (aconteceu no `restart all`).
-    match Command::new("systemctl").args(["--user", "--no-block", "try-restart", "xdg-desktop-portal.service"]).status() {
+    match Command::new("systemctl").args(["--user", "--no-block", "try-restart", "xdg-desktop-portal.service", "xdg-desktop-portal-gtk.service"]).status() {
         Ok(status) if status.success() => tracing::info!("sessão: portal do desktop reiniciado com a configuração do mide"),
         Ok(status) => tracing::warn!("sessão: reiniciar o portal saiu com {status}"),
         Err(err) => tracing::warn!("sessão: systemctl indisponível: {err}"),
