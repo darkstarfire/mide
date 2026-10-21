@@ -190,8 +190,11 @@ pub fn watch_logind(sender: smithay::reexports::calloop::channel::Sender<&'stati
                 let Ok(signals) = sleep_proxy.receive_signal("PrepareForSleep") else {
                     return;
                 };
+                // `true`: vai suspender (bloqueia antes); `false`: acordou (as telas
+                // refazem o estado: uma troca de quadro em andamento pode ter se perdido).
                 for signal in signals {
-                    if signal.body().deserialize::<bool>().unwrap_or(false) && sleep.send("suspender").is_err() {
+                    let going = signal.body().deserialize::<bool>().unwrap_or(false);
+                    if sleep.send(if going { "suspender" } else { "acordou" }).is_err() {
                         break;
                     }
                 }

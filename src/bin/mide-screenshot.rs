@@ -79,6 +79,9 @@ struct Capture {
     windows: Vec<(f32, f32, f32, f32)>,
     /// Retângulo das cores no painel (para o clique nelas).
     swatches: Vec<(f32, f32, f32, f32)>,
+    /// Modo rápido (⌘⇧4, `--area`): sem painel; ao soltar o mouse, a área é salva e
+    /// copiada, como no Mac.
+    quick: bool,
 }
 
 impl Capture {
@@ -89,7 +92,7 @@ impl Capture {
                 *c = (*c as u16 * 145 / 255) as u8;
             }
         }
-        Self { shot, dimmed, mode: Mode::Selection, tool: Tool::Arrow, color: 0, selection: None, drag: None, shapes: Vec::new(), windows, swatches: Vec::new() }
+        Self { shot, dimmed, mode: Mode::Selection, tool: Tool::Arrow, color: 0, selection: None, drag: None, shapes: Vec::new(), windows, swatches: Vec::new(), quick: false }
     }
 
     /// A área escolhida com as marcações, recortada da captura.
@@ -250,6 +253,25 @@ impl App for Capture {
             let text = format!("{} × {}", w.round() as i32, h.round() as i32);
             let ly = if y >= 44.0 { y - 40.0 } else { y + 6.0 };
             ui.glass_panel(x, ly, 120.0, 8.0, |ui| ui.label(&text));
+        }
+
+        // Modo rápido: só a seleção; ao soltar, salva e copia (como o ⌘⇧4 do Mac).
+        if self.quick {
+            if let Some(pos) = ui.input().pointer {
+                let releasing = ui.input().released && self.drag.is_some();
+                self.pointer(ui, pos, false);
+                if releasing && self.selection.is_some() {
+                    tracing::info!("captura rápida de uma área");
+                    let copied = self.copy();
+                    if self.save().is_some() || copied {
+                        ui.close();
+                    }
+                }
+            }
+            if self.drag.is_some() {
+                ui.request_repaint();
+            }
+            return;
         }
 
         // Painel: modo, ferramenta, cor e ações, embaixo e no meio.
@@ -438,12 +460,12 @@ fn chrono_name() -> String {
     })
 }
 
-/// Pede a captura ao compositor e espera o arquivo (até 3 s).
-fn capture() -> Result<Pixmap, Box<dyn Error>> {
-    // Aberta pelo launcher: espera ele fechar (com o esmaecer), senão a captura sai
-    // com o launcher por cima.
+/// Pede a captura ao compositor e espera o arquivo (até 3 s). `wait_launcher`: aberta
+/// pelo launcher (o app Captura de Tela), espera ele fechar, senão a captura sai com
+/// o launcher por cima; pelos atalhos (⌘⇧3, ⌘⇧4), a tela sai como está.
+fn capture(wait_launcher: bool) -> Result<Pixmap, Box<dyn Error>> {
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    while ask_compositor("launcher state").is_some_and(|r| r.first().map(String::as_str) == Some("open")) {
+    while wait_launcher && ask_compositor("launcher state").is_some_and(|r| r.first().map(String::as_str) == Some("open")) {
         if std::time::Instant::now() > deadline {
             break;
         }
@@ -484,10 +506,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_screenshot=info".into()))
         .init();
-    let shot = capture()?;
+    // `--full` (⌘⇧3): a tela inteira, salva e copiada, sem janela. `--area` (⌘⇧4):
+    // escolher uma área, salva e copiada ao soltar o mouse.
+    let mode = std::env::args().nth(1).unwrap_or_default();
+    let shot = capture(mode.is_empty())?;
+    if mode == "--full" {
+        let (w, h) = (shot.width() as f32, shot.height() as f32);
+        let mut full = Capture::new(shot, Vec::new());
+        full.selection = Some((0.0, 0.0, w, h));
+        tracing::info!("captura rápida da tela inteira ({w}x{h})");
+        let copied = full.copy();
+        return if full.save().is_some() || copied { Ok(()) } else { Err("a captura não foi salva nem copiada".into()) };
+    }
     tracing::info!("captura de tela aberta ({}x{})", shot.width(), shot.height());
     let windows = window_rects();
-    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot"), Capture::new(shot, windows))
+    let mut app = Capture::new(shot, windows);
+    app.quick = mode == "--area";
+    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot"), app)
 }
 
 #[cfg(test)]

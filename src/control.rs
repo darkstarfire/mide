@@ -87,6 +87,8 @@ pub fn handle(state: &mut State, command: &str) -> String {
     let mut words = command.split_whitespace();
     match words.next() {
         Some("list") => list(state),
+        // A barra pergunta se há algo para ela (a confirmação do botão de ligar).
+        Some("bar_request") => format!("{}\n", state.bar_request.take().unwrap_or("")),
         Some("icons") => {
             state.dock_icons = parse_icons(command.trim_start_matches("icons").trim());
             "ok\n".into()
@@ -433,7 +435,7 @@ fn windows(state: &State) -> String {
     out
 }
 
-fn focus_window_id(state: &mut State, id: u64) -> bool {
+pub(crate) fn focus_window_id(state: &mut State, id: u64) -> bool {
     if let Some(index) = state.minimized.iter().position(|m| crate::state::window_id(&m.window) == id) {
         let entry = state.minimized.remove(index);
         state.minimized.push(entry);

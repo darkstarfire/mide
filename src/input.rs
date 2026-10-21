@@ -150,6 +150,8 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "f10" => 68,
         "f11" => 87,
         "f12" => 88,
+        // Botão de ligar do computador (KEY_POWER).
+        "power" => 116,
         _ => {
             let mut chars = name.chars();
             let c = chars.next()?;
@@ -281,6 +283,12 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             }
             // Tela bloqueada: nenhum atalho do mide, só trocar de console (Ctrl+Alt+Fn);
             // o resto vai para a tela de bloqueio (sem ela, a nenhum lugar).
+            // Botão de ligar: o mide pergunta antes de desligar (o logind não desliga
+            // sozinho, porque o mide segura o botão; veja `session`). Com a tela
+            // bloqueada, só acende a tela.
+            if keysym.modified_sym() == xkbcommon::xkb::Keysym::XF86_PowerOff {
+                return FilterResult::Intercept((!locked).then_some(Action::PowerButton));
+            }
             if locked {
                 let vt = keysym.modified_sym().raw();
                 if (xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1..=xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12).contains(&vt) {
@@ -402,6 +410,10 @@ fn run_action(state: &mut State, action: Action) {
         Action::RestoreMinimized => state.restore_minimized(),
         Action::ToggleLauncher => state.toggle_launcher(),
         Action::ToggleSearch => state.toggle_search(),
+        Action::PowerButton => {
+            tracing::info!("botão de ligar: pedindo confirmação para desligar");
+            state.bar_request = Some("confirm-shutdown");
+        }
         Action::SwitchVt(n) => match state.session.as_mut() {
             Some(session) => {
                 use smithay::backend::session::Session;

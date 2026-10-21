@@ -3,6 +3,7 @@
 //! Ponto de entrada do compositor. Esta etapa abre o socket Wayland `mide-0`
 //! e aceita clientes. A renderização ainda não existe.
 
+mod activation;
 mod backend_headless;
 mod backend_udev;
 mod backend_winit;
@@ -16,6 +17,7 @@ mod genie;
 mod input;
 mod lock;
 mod outputs;
+mod screencopy;
 mod selftest;
 mod session;
 mod preview;
@@ -133,6 +135,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         let (sender, requests) = smithay::reexports::calloop::channel::channel::<&'static str>();
         loop_handle.insert_source(requests, |event, _, state: &mut State| {
             if let smithay::reexports::calloop::channel::Event::Msg(reason) = event {
+                if reason == "acordou" {
+                    tracing::info!("o computador voltou da suspensão");
+                    state.resumed = true;
+                    state.activity();
+                    state.redraw = true;
+                    if let Some(waker) = &state.waker {
+                        waker.ping();
+                    }
+                    return;
+                }
                 if reason == "suspender" && !state.config.lock.on_suspend {
                     return;
                 }

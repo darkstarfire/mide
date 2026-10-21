@@ -47,6 +47,9 @@ pub enum Action {
     /// Troca para o console de texto `n` (Ctrl+Alt+F`n` no backend DRM). Fixo, não
     /// vem do arquivo: é o jeito de sair do mide para outro console.
     SwitchVt(i32),
+    /// Botão de ligar do computador: pergunta antes de desligar (a confirmação da
+    /// barra), em vez do logind desligar direto. Fixo, não vem do arquivo.
+    PowerButton,
 }
 
 /// Combinação de teclas já convertida, pronta para comparar com o input.
@@ -291,6 +294,10 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+space", "toggle_search"),
     // Captura de tela do mide (seleção, janela ou tela inteira, com marcações).
     ("print", "launch:mide-screenshot"),
+    // Como no Mac: ⌘⇧3 salva a tela inteira e ⌘⇧4 uma área (a imagem também vai para
+    // a área de transferência). No estilo Mac o ⌘ é o Alt; fora dele, a tecla Super.
+    ("super+shift+3", "launch:mide-screenshot --full"),
+    ("super+shift+4", "launch:mide-screenshot --area"),
     // Terminal de atalho: desce do topo e some com a mesma tecla (como o Guake).
     ("f12", "launch:mide-terminal --hotkey"),
     // Janelas, como no GNOME.
@@ -550,6 +557,7 @@ impl fmt::Display for Action {
             Action::ShowDesktop => write!(f, "show_desktop"),
             Action::LockScreen => write!(f, "lock_screen"),
             Action::SwitchVt(n) => write!(f, "switch_vt:{n}"),
+            Action::PowerButton => write!(f, "power_button"),
             Action::TerminalKey(c) => write!(f, "terminal_key:{c}"),
         }
     }

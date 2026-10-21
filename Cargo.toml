@@ -11,7 +11,7 @@ freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 resvg = { version = "0.45", default-features = false }
-rustix = { version = "1", features = ["pty", "process", "termios", "fs"] }
+rustix = { version = "1", features = ["pty", "process", "termios", "fs", "time"] }
 serde = { version = "1.0.229", features = ["derive"] }
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop", "renderer_gl", "backend_egl", "backend_winit", "backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev"] }
 smithay-client-toolkit = "0.21"

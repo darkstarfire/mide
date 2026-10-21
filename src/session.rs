@@ -49,6 +49,7 @@ pub fn start(socket: &str) {
         return;
     }
     publish_environment(socket);
+    hold_power_button();
     // Reiniciado pelo `restart all`: os apps automáticos que continuam vivos (os que
     // não dependem do Wayland) não são abertos de novo.
     let still_running: Vec<(u32, String)> = std::env::var("MIDE_AUTOSTART")
@@ -85,6 +86,34 @@ pub fn start(socket: &str) {
             }
             Err(err) => tracing::warn!("sessão: {} não iniciou: {err}", entry.name),
         }
+    }
+}
+
+/// Trava do logind para o botão de ligar, guardada enquanto o mide roda.
+static POWER_BUTTON: std::sync::OnceLock<zbus::zvariant::OwnedFd> = std::sync::OnceLock::new();
+
+/// Avisa o logind que a sessão cuida do botão de ligar (`handle-power-key`): sem isso,
+/// fora de um desktop que faça isso (GNOME, Cinnamon), o logind desliga o computador
+/// direto ao apertar o botão, e o trabalho aberto se perde. O mide pergunta antes
+/// (`Action::PowerButton`). A trava vale enquanto o arquivo dela estiver aberto.
+fn hold_power_button() {
+    let result = (|| -> zbus::Result<zbus::zvariant::OwnedFd> {
+        let conn = zbus::blocking::Connection::system()?;
+        let reply = conn.call_method(
+            Some("org.freedesktop.login1"),
+            "/org/freedesktop/login1",
+            Some("org.freedesktop.login1.Manager"),
+            "Inhibit",
+            &("handle-power-key", "mide", "O mide pergunta antes de desligar", "block"),
+        )?;
+        reply.body().deserialize::<zbus::zvariant::OwnedFd>()
+    })();
+    match result {
+        Ok(fd) => {
+            let _ = POWER_BUTTON.set(fd);
+            tracing::info!("sessão: o botão de ligar pergunta antes de desligar");
+        }
+        Err(err) => tracing::warn!("sessão: o logind não deixou segurar o botão de ligar: {err}"),
     }
 }
 

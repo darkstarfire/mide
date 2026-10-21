@@ -717,6 +717,11 @@ impl Bar {
 
     /// Atualiza relógio, bateria e app em foco; redesenha só se algo mudou.
     fn refresh(&mut self) {
+        // Pedido do compositor: o botão de ligar abre a confirmação de desligar.
+        if ask_compositor("bar_request").and_then(|r| r.into_iter().next()).as_deref() == Some("confirm-shutdown") {
+            tracing::info!("botão de ligar: confirmação de desligar");
+            self.open_menu(MenuId::ConfirmShutdown);
+        }
         let clock = clock_text();
         let battery = battery();
         let (focused_id, focused) = ask_compositor("list")

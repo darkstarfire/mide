@@ -41,6 +41,23 @@ for nome in mide-terminal mide-files mide-settings; do
     [ -e "$dados/hicolor/scalable/apps/$nome.svg" ] || aviso "$nome não está no hicolor (menus de outros ambientes sem o ícone)"
 done
 
+echo "== gravar a tela (OBS e vídeo do mide)"
+if command -v xdg-desktop-portal-wlr >/dev/null || [ -x /usr/libexec/xdg-desktop-portal-wlr ]; then
+    ok "xdg-desktop-portal-wlr instalado"
+else
+    falta "xdg-desktop-portal-wlr: sudo apt install xdg-desktop-portal-wlr"
+fi
+if command -v ffmpeg >/dev/null; then
+    ok "ffmpeg instalado (gravar a tela em vídeo)"
+else
+    falta "ffmpeg: sudo apt install ffmpeg (obrigatório: gravar a tela em vídeo)"
+fi
+if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal-wlr/mide" ]; then
+    ok "portal wlr com a janela de escolha do mide"
+else
+    falta "configuração do portal wlr: rode data/mide-atualizar"
+fi
+
 echo "== sessão"
 sessao="$(command -v mide-session)"
 if [ -z "$sessao" ]; then

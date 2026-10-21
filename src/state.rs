@@ -258,6 +258,15 @@ pub struct State {
     pub inhibitors: Vec<WlSurface>,
     /// A tela está apagada (DPMS desligado no DRM; preto nos outros backends).
     pub blanked: bool,
+    /// O computador voltou da suspensão: as telas refazem o estado no próximo quadro.
+    pub resumed: bool,
+    /// Pedido para a barra (lido por ela com `bar_request`), como a confirmação de
+    /// desligar do botão de ligar.
+    pub bar_request: Option<&'static str>,
+    /// Capturas de tela pedidas pelos apps (`wlr-screencopy`).
+    pub screencopy: crate::screencopy::Screencopy,
+    /// Pedidos dos apps para trazer uma janela para a frente (`xdg-activation`).
+    pub xdg_activation_state: smithay::wayland::xdg_activation::XdgActivationState,
     /// Estado da decoração de servidor (barra de título). Guardado para manter o global vivo.
     #[allow(dead_code)]
     pub decoration_state: XdgDecorationState,
@@ -305,6 +314,11 @@ impl State {
         // saídas (xdg-output): o XWayland (xwayland-satellite) precisa dos dois.
         smithay::wayland::viewporter::ViewporterState::new::<Self>(&display_handle);
         smithay::wayland::output::OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
+        // Captura de tela pelos apps (OBS e outros, pelo portal wlr).
+        crate::screencopy::init(&display_handle);
+        // Escala exata da tela para cada janela (nítidas em 1,25, 1,5...).
+        smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(&display_handle);
+        let xdg_activation_state = smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(&display_handle);
         let compositor_state = CompositorState::new::<Self>(&display_handle);
         let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
         let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
@@ -380,6 +394,10 @@ impl State {
             idle_inhibit_state,
             inhibitors: Vec::new(),
             blanked: false,
+            resumed: false,
+            bar_request: None,
+            screencopy: Default::default(),
+            xdg_activation_state,
             decoration_state,
             title_press: false,
             last_title_click: None,
@@ -478,7 +496,13 @@ impl State {
         if self.blanked {
             tracing::info!("tela acesa");
             self.blanked = false;
-            self.wake();
+            // Acorda o desenho sempre: o `wake` só avisa quando não havia quadro pedido, e
+            // com a tela apagada um pedido antigo pode ter ficado (sem vblank, ninguém o
+            // atenderia e a tela não acenderia mais).
+            self.redraw = true;
+            if let Some(waker) = &self.waker {
+                waker.ping();
+            }
         }
     }
 

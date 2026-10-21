@@ -177,7 +177,9 @@ impl Scene {
             }
             let result = damage_tracker.render_output(renderer, framebuffer, age, &custom, [0.0, 0.0, 0.0, 1.0])?;
             dump_frame_if_requested(renderer, framebuffer, output)?;
-            return Ok((result.sync, result.damage.cloned()));
+            let damage = result.damage.cloned();
+            crate::screencopy::serve(renderer, framebuffer, output, damage.as_deref(), state);
+            return Ok((result.sync, damage));
         }
         // Prévias das janelas: só na tela da dock (a posição delas vem da dock).
         if layer_map_for_output(output).layers().any(|l| l.namespace() == "mide-dock") {
@@ -273,7 +275,10 @@ impl Scene {
             }
         }
         dump_frame_if_requested(renderer, framebuffer, output)?;
-        Ok((result.sync, result.damage.cloned()))
+        // Capturas pedidas pelos apps (OBS e outros): saem deste quadro.
+        let damage = result.damage.cloned();
+        crate::screencopy::serve(renderer, framebuffer, output, damage.as_deref(), state);
+        Ok((result.sync, damage))
     }
 }
 
@@ -898,6 +903,7 @@ fn dump_frame_if_requested(
 /// Avisa os clientes (janelas, camadas e popups) que podem desenhar o próximo quadro.
 pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Error>> {
     let elapsed = state.start_time.elapsed();
+    crate::activation::update_scales(state, output);
     for window in state.space.elements() {
         window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
     }

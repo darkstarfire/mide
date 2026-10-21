@@ -37,6 +37,16 @@ instalar_icones() {
     echo "ícones do mide instalados ($(echo "$versao" | cut -c1-8))"
 }
 instalar_icones || echo "aviso: os ícones do mide não foram instalados (sem rede?); tente de novo depois"
+
+# Gravar a tela (OBS e outros): o portal wlr usa a janela do mide para escolher o
+# monitor. O arquivo leva o nome do desktop ("mide"): só vale na sessão do mide.
+portal_wlr="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal-wlr/mide"
+mkdir -p "$(dirname "$portal_wlr")"
+printf '[screencast]\nchooser_type=simple\nchooser_cmd=%s\n' "$PWD/target/release/mide-screencast-picker" > "$portal_wlr"
+command -v xdg-desktop-portal-wlr >/dev/null || [ -x /usr/libexec/xdg-desktop-portal-wlr ] ||
+    echo "aviso: para gravar a tela (OBS), instale o xdg-desktop-portal-wlr (sudo apt install xdg-desktop-portal-wlr)"
+command -v ffmpeg >/dev/null ||
+    echo "aviso: para gravar a tela em vídeo pelo mide, instale o ffmpeg (sudo apt install ffmpeg)"
 if [ "${1:-}" = "--tudo" ]; then
     echo "reiniciando o compositor (as janelas abertas vão fechar)..."
     target/release/mide-ctl restart all

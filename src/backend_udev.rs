@@ -256,7 +256,10 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let motion = matches!(event, InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. });
         let before = (state.redraw, cursor_key(state));
         crate::input::handle_event_in(state, event, bounds);
-        let follows_pointer = state.preview.is_some() || state.seat.get_pointer().is_some_and(|p| p.is_grabbed()) || over_title_bar(state);
+        let follows_pointer = state.preview.is_some()
+            || state.seat.get_pointer().is_some_and(|p| p.is_grabbed())
+            || over_title_bar(state)
+            || state.screencopy.wants_cursor();
         if motion && !before.0 && !state.redraw && !follows_pointer && before.1 == cursor_key(state) {
             let mut gpu = input_gpu.borrow_mut();
             if !gpu.blanked && move_hw_cursors(&mut gpu, state) {
@@ -680,6 +683,23 @@ fn set_dpms(gpu: &Gpu, on: bool) {
     }
 }
 
+/// Recomeça as telas depois de o estado delas mudar por fora (DPMS, suspensão): sem
+/// quadro pendente, estado do CRTC reavaliado (o próximo quadro refaz o modo), buffers
+/// e cursor de novo.
+fn reset_heads(gpu: &mut Gpu) {
+    for head in gpu.heads.iter_mut() {
+        head.pending = false;
+        // O estado do CRTC mudou por fora do Smithay: sem reavaliar, em alguns drivers
+        // o quadro falha e a tela fica preta.
+        if let Err(err) = head.surface.surface().reset_state() {
+            tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
+        }
+        head.surface.reset_buffers();
+        // O monitor religado pode ter perdido o cursor: manda de novo.
+        head.cursor = HwCursor::default();
+    }
+}
+
 /// Desenha um quadro em cada tela que não espera vblank e o entrega (aparece no
 /// próximo vblank dela).
 fn render(gpu: &mut Gpu, state: &mut State) {
@@ -692,22 +712,21 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         gpu.blanked = state.blanked;
         set_dpms(gpu, !state.blanked);
         if !state.blanked {
-            for head in gpu.heads.iter_mut() {
-                head.pending = false;
-                // O DPMS muda o CRTC por fora do Smithay: ele reavalia o estado e o
-                // próximo quadro refaz o modo (sem isso, em alguns drivers, o quadro
-                // falha e a tela fica preta depois de acender).
-                if let Err(err) = head.surface.surface().reset_state() {
-                    tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
-                }
-                head.surface.reset_buffers();
-                // O monitor religado pode ter perdido o cursor: manda de novo.
-                head.cursor = HwCursor::default();
-            }
+            reset_heads(gpu);
             state.redraw = true;
         }
     }
+    // Voltou da suspensão: uma troca de quadro em andamento pode ter se perdido (o mide
+    // esperaria o vblank dela para sempre, com a tela parada).
+    if std::mem::take(&mut state.resumed) && !gpu.blanked {
+        tracing::info!("telas refeitas depois da suspensão");
+        reset_heads(gpu);
+        state.redraw = true;
+    }
     if gpu.blanked {
+        // Apagada: nada a desenhar. O pedido é atendido aqui (senão o próximo `wake`,
+        // vendo um quadro já pedido, não avisaria, e a tela não acenderia mais).
+        state.redraw = false;
         return;
     }
     let wanted = state.redraw;
@@ -720,8 +739,17 @@ fn render(gpu: &mut Gpu, state: &mut State) {
             again |= wanted;
             continue;
         }
-        // Cursor no plano de hardware quando dá; senão, desenhado na cena.
-        scene.draw_cursor = !hw_cursor(drm, gbm, *cursor_size, head, scene, state);
+        // Cursor no plano de hardware quando dá; numa gravação de tela que pede o
+        // cursor, a cena o desenha (o plano de hardware não entra na imagem).
+        scene.draw_cursor = if state.screencopy.wants_cursor() {
+            if head.cursor.shown.take().is_some() {
+                #[allow(deprecated)]
+                let _ = drm.set_cursor2(head.crtc, None::<&smithay::reexports::gbm::BufferObject<()>>, (0, 0));
+            }
+            true
+        } else {
+            !hw_cursor(drm, gbm, *cursor_size, head, scene, state)
+        };
         let Head { surface, output, damage_tracker, internal, .. } = head;
         let internal = *internal;
         let result = (|| -> Result<(), Box<dyn Error>> {

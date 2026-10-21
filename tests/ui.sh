@@ -739,6 +739,10 @@ MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=16 check "bloqueio cobre 
 # Com dois monitores, a resposta da senha não pode se perder na cópia da tela de
 # bloqueio do outro monitor (antes, a senha certa às vezes não desbloqueava).
 MIDE_LOCK_TEST_PASSWORD=teste MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=16 check "senha certa desbloqueia com dois monitores" "autoteste: tela livre, desbloqueios: 1" "400 combo super+l; 620 type teste; 622 key enter; 760 list"
+# Botão de ligar: o mide pergunta antes de desligar (o logind não desliga direto); com a
+# tela bloqueada, não abre nada por cima dela.
+check "botão de ligar pergunta antes de desligar" 'camada "mide-bar-menu"' "400 key power; 460 list"
+MIDE_LOCK_TEST_PASSWORD=teste SCENARIO_WAIT=16 check_count "botão de ligar com a tela bloqueada não abre a confirmação" 'camada "mide-bar-menu"' 0 "400 combo super+l; 600 key power; 680 list"
 # Tempo sem uso (contado em segundos nos testes): apaga e acende ao mexer.
 IDLECFG="$(mktemp -d)"
 mkdir -p "$IDLECFG/mide"
@@ -782,8 +786,85 @@ else
     echo "FALHA captura: ⌘S salva no estilo Mac"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$MSHOT"
+# Atalhos do Mac: ⌘⇧4 (uma área, salva ao soltar o mouse) e ⌘⇧3 (a tela inteira, sem
+# janela), também com o launcher aberto (a imagem sai com ele). Fora do estilo Mac o ⌘
+# é a tecla Super; no estilo Mac, a Alt.
+shot_test() {
+    local name="$1" script="$2" want="$3" cfg pics got
+    cfg="$(mktemp -d)"
+    pics="$(mktemp -d)"
+    mkdir -p "$cfg/mide"
+    [ -n "${4:-}" ] && printf '[keyboard]\nmac_style = true\n' > "$cfg/mide/config.toml"
+    printf 'XDG_PICTURES_DIR="%s"\n' "$pics" > "$cfg/user-dirs.dirs"
+    XDG_CONFIG_HOME="$cfg" SCENARIO_WAIT=14 timeout 150 "$SCEN" "$script" >/dev/null 2>&1
+    got="$(python3 -c "
+import glob, sys
+from PIL import Image
+files = glob.glob(sys.argv[1] + '/Capturas de tela/Captura de tela *.png')
+print('%dx%d' % Image.open(files[0]).size if files else 'nada')" "$pics" 2>/dev/null)"
+    if [ "$got" = "$want" ]; then
+        echo "ok    $name"; PASS=$((PASS + 1))
+    else
+        echo "FALHA $name (esperado $want, obtido $got)"; FAIL=$((FAIL + 1))
+    fi
+    rm -rf "$cfg" "$pics"
+}
+AREA="600 press 300 200; 610 move 450 300; 620 move 600 400; 625 release 600 400; 700 list"
+shot_test "captura: ⌘⇧4 salva a área ao soltar o mouse" "400 combo super+shift+4; $AREA" 300x200
+shot_test "captura: ⌘⇧3 salva a tela inteira" "400 combo super+shift+3; 600 list" 1366x768
+shot_test "captura: ⌘⇧3 com o launcher aberto" "400 combo ctrl+shift+space; 470 combo super+shift+3; 650 list" 1366x768
+shot_test "captura: ⌘⇧4 no estilo Mac (Alt+Shift+4)" "400 combo alt+shift+4; $AREA" 300x200 mac
+
+# Captura pelos apps (wlr-screencopy, o que o portal do OBS usa): o grim tira a tela
+# inteira e uma região; as imagens têm de ser iguais ao quadro do mide.
+if command -v grim >/dev/null; then
+    GR="$(mktemp -d)"
+    SCENARIO_OUT="$GR/scen" SCENARIO_WAIT=10 timeout 150 "$SCEN" "400 list" 500 -- "$CALCULATOR" "sleep 5; grim $GR/tela.png; grim -g '40,40 300x420' $GR/regiao.png" >/dev/null 2>&1
+    if python3 -c "
+import sys
+from PIL import Image, ImageChops
+d = sys.argv[1]
+frame = Image.open(d + '/scen/frame.png').convert('RGB')
+full = Image.open(d + '/tela.png').convert('RGB')
+part = Image.open(d + '/regiao.png').convert('RGB')
+same = lambda a, b: a.size == b.size and sum(1 for p in ImageChops.difference(a, b).getdata() if max(p) > 40) < a.size[0] * a.size[1] // 100
+sys.exit(0 if same(full, frame) and same(part, frame.crop((40, 40, 340, 460))) else 1)" "$GR"; then
+        echo "ok    captura pelos apps (wlr-screencopy): tela inteira e região iguais ao quadro"; PASS=$((PASS + 1))
+    else
+        echo "FALHA captura pelos apps (wlr-screencopy)"; FAIL=$((FAIL + 1))
+    fi
+    rm -rf "$GR"
+else
+    echo "pulado: captura pelos apps (sem o grim)"
+fi
+# Janela de escolha do monitor (o portal lê o nome dele na saída).
+PK="$(mktemp -d)"
+MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=8 timeout 150 "$SCEN" "400 click 300 224; 420 click 231 270; 460 list" -- "$PWD/target/debug/mide-screencast-picker > $PK/saida.txt" >/dev/null 2>&1
+if [ "$(cat "$PK/saida.txt" 2>/dev/null)" = "HEADLESS-2" ]; then
+    echo "ok    compartilhar a tela: escolher o segundo monitor"; PASS=$((PASS + 1))
+else
+    echo "FALHA compartilhar a tela: escolher o segundo monitor (saída: '$(cat "$PK/saida.txt" 2>/dev/null)')"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$PK"
 rm -f "$TESTCFG/user-dirs.dirs"
 rm -rf "$SHOTS"
+
+# Escala fracionária (wp_fractional_scale): um app GTK 4 numa tela em 1,25 recebe a
+# escala exata (150 = 1,25 × 120) e desenha nítido. Precisa do loupe; sem ele, pulado.
+if command -v loupe >/dev/null; then
+    FS="$(mktemp -d)"
+    mkdir -p "$FS/cfg/mide"
+    printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$FS/cfg/mide/config.toml"
+    XDG_CONFIG_HOME="$FS/cfg" timeout 150 "$SCEN" "400 list" -- "WAYLAND_DEBUG=1 loupe 2> $FS/wl.log" >/dev/null 2>&1
+    if grep -q "preferred_scale(150)" "$FS/wl.log" && grep -q '"xdg_activation_v1"' "$FS/wl.log"; then
+        echo "ok    escala fracionária: app GTK 4 recebe 1,25 (e o xdg-activation existe)"; PASS=$((PASS + 1))
+    else
+        echo "FALHA escala fracionária: app GTK 4 recebe 1,25"; FAIL=$((FAIL + 1))
+    fi
+    rm -rf "$FS"
+else
+    echo "pulado: escala fracionária (sem o loupe)"
+fi
 
 echo "== monitores (telas virtuais)"
 MONCFG="$(mktemp -d)"
