@@ -800,3 +800,4 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Manual (sessão de verdade, com `xdg-desktop-portal-wlr` instalado e depois do `mide-atualizar`): OBS → Fontes → Captura de tela (PipeWire): aparece a janela "Compartilhar a tela", o monitor escolhido aparece no OBS e a gravação acompanha a tela (com o cursor); navegador (Meet/Jitsi) → compartilhar a tela; `grim` e `wf-recorder` funcionam.
 - `tests/ui.sh`: "escala fracionária: app GTK 4 recebe 1,25" (loupe com `WAYLAND_DEBUG`: `preferred_scale(150)` e o global `xdg_activation_v1`; sem o loupe, pulado).
 - `tests/ui.sh`: "janela sem foco translúcida ([opacity] inactive)" (Terminal sem foco com o papel de parede aparecendo; Calculadora com foco opaca); `cargo test` `opacidade_das_janelas`.
+- `tests/ui.sh`: "layer-shell: popup de um painel de terceiros aparece embaixo dele" (`cargo build --example mide-layer-popup-teste` antes; o `tests/ui.sh` usa `target/debug/examples/`).

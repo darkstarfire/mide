@@ -723,6 +723,13 @@ fn layer_elements(
         let location: Point<i32, Physical> = crate::clip::phys(geo.loc + Point::from((0, dy)));
         // O launcher abre e fecha com esmaecer e zoom feitos aqui (GPU).
         let (alpha, zoom) = if layer.namespace() == "mide-launcher" { state.launcher_look() } else { (appear, 1.0) };
+        // Popups da camada (menus de painéis de terceiros), na frente dela.
+        for (popup, offset) in PopupManager::popups_for_surface(layer.wl_surface()) {
+            let at = crate::clip::phys(geo.loc + offset - popup.geometry().loc);
+            let popup_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                render_elements_from_surface_tree(renderer, popup.wl_surface(), at, crate::clip::scale(), alpha, Kind::Unspecified);
+            elements.extend(popup_elements.into_iter().map(MideRenderElement::from));
+        }
         let surface: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(
             renderer,
             layer.wl_surface(),

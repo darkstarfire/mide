@@ -1084,3 +1084,8 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - `[opacity]` no config: `inactive` (janelas sem foco, de 1 = opacas até 0,2) e a opacidade por `app_id` (`"mide-terminal" = 0.95`; multiplica a de sem foco). A janela inteira fica translúcida: conteúdo, barra de título, título, botões e contorno; a sombra fica mais leve na mesma proporção.
 - O foco considerado é o do teclado (o estado "ativo" do xdg só muda quando o app confirma, e os apps do kit só confirmam quando redesenham).
 - Configurações → Efeitos → Transparência: "Janelas sem foco" (0 a 60%).
+
+## Layer-shell completo (A10)
+
+- **Popups de camadas** (o menu de um ícone da Waybar e de outros painéis): pelo protocolo, o popup nasce sem pai e a camada o adota depois (`get_popup`). O mide espera a adoção, ajusta a posição à tela da camada, registra o popup e manda a configuração; os popups são desenhados na frente da camada, recebem o ponteiro e fecham ao clicar fora (junto com os das janelas).
+- Exemplo de teste `examples/mide-layer-popup-teste.rs`: uma camada no topo (azul) com um popup laranja adotado por ela.

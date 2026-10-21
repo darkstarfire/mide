@@ -935,11 +935,15 @@ fn window_on_top_at(state: &State, pos: Point<f64, Logical>) -> Option<Window> {
 
 /// Fecha todos os popups abertos. Chamado quando o clique cai fora deles.
 fn dismiss_popups(state: &mut State) {
-    let roots: Vec<WlSurface> = state
+    let mut roots: Vec<WlSurface> = state
         .space
         .elements()
         .filter_map(|w| w.toplevel().map(|t| t.wl_surface().clone()))
         .collect();
+    // E os das camadas (menus de painéis de terceiros).
+    for output in state.space.outputs() {
+        roots.extend(layer_map_for_output(output).layers().map(|l| l.wl_surface().clone()));
+    }
     for root in roots {
         for (popup, _) in PopupManager::popups_for_surface(&root) {
             let _ = PopupManager::dismiss_popup(&root, &popup);

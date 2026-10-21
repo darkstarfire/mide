@@ -697,6 +697,11 @@ impl XdgShellHandler for State {
         // ajustada para caber na tela (submenus que virariam para fora viram para o
         // outro lado ou deslizam, como o protocolo pede).
         surface.with_pending_state(|s| s.geometry = positioner.get_geometry());
+        // Popup de camada (o menu de um ícone da Waybar, por exemplo): nasce sem pai e
+        // só depois a camada o adota (`WlrLayerShellHandler::new_popup`), que o termina.
+        if surface.get_parent_surface().is_none() {
+            return;
+        }
         self.unconstrain_popup(&surface, &positioner);
         if self.config.effects.menu_animation {
             self.appearing.push((surface.wl_surface().clone(), Instant::now()));
@@ -943,6 +948,33 @@ impl WlrLayerShellHandler for State {
         drop(map);
 
         tracing::info!("camada '{namespace}' criada ({layer:?})");
+    }
+
+    /// Uma camada adotou um popup (menu de um painel de terceiros): posição dentro da
+    /// tela da camada, registro e a primeira configuração.
+    fn new_popup(&mut self, parent: LayerSurface, popup: PopupSurface) {
+        let parent_surface = parent.wl_surface().clone();
+        let place = self.space.outputs().find_map(|output| {
+            let map = layer_map_for_output(output);
+            let layer = map.layers().find(|l| l.wl_surface() == &parent_surface)?.clone();
+            let geo = map.layer_geometry(&layer)?;
+            Some((self.space.output_geometry(output)?, geo))
+        });
+        if let Some((screen, layer_geo)) = place {
+            // Limite: a tela, relativo à camada (o popup é relativo a ela).
+            let mut target = smithay::utils::Rectangle::from_size(screen.size);
+            target.loc -= layer_geo.loc;
+            let geometry = popup.with_pending_state(|s| s.positioner.get_unconstrained_geometry(target));
+            popup.with_pending_state(|s| s.geometry = geometry);
+        }
+        if self.config.effects.menu_animation {
+            self.appearing.push((popup.wl_surface().clone(), Instant::now()));
+        }
+        if let Err(err) = self.popups.track_popup(PopupKind::Xdg(popup.clone())) {
+            tracing::warn!("popup de camada não registrado: {err}");
+        }
+        let _ = popup.send_configure();
+        tracing::info!("popup de camada aberto");
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {

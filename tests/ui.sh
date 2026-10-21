@@ -596,6 +596,20 @@ else
 fi
 rm -rf "$HCFG"
 
+# Painel de terceiros (como a Waybar): camada com um popup adotado por ela (o menu de
+# um ícone). O popup é configurado, fica embaixo do painel e aparece na tela (laranja).
+LPP="$(mktemp -d)"
+SCENARIO_OUT="$LPP/scen" SCENARIO_WAIT=8 timeout 150 "$SCEN" "400 list" 420 -- "$PWD/target/debug/examples/mide-layer-popup-teste > $LPP/saida.txt" >/dev/null 2>&1
+if grep -q "popup configurado" "$LPP/saida.txt" 2>/dev/null && python3 -c "
+import sys
+from PIL import Image
+sys.exit(0 if Image.open(sys.argv[1]).convert('RGB').getpixel((300, 300)) == (255, 138, 31) else 1)" "$LPP/scen/frame.png"; then
+    echo "ok    layer-shell: popup de um painel de terceiros aparece embaixo dele"; PASS=$((PASS + 1))
+else
+    echo "FALHA layer-shell: popup de um painel de terceiros"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$LPP"
+
 echo "== área de trabalho (ícones)"
 # Pasta de teste com um arquivo: o ícone fica na coluna da direita, em (1298, 76)
 # (área útil abaixo da barra e acima da dock). Fundo vazio em (400, 300): menu com
