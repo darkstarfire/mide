@@ -640,6 +640,78 @@ impl Menu {
     }
 }
 
+/// Cores dos menus e painéis da barra, no tema claro ou escuro (`[appearance]`),
+/// lidas no começo de cada desenho (`refresh_palette`).
+#[derive(Clone, Copy)]
+struct Palette {
+    dark: bool,
+    text: [u8; 4],
+    secondary: [u8; 4],
+    faint: [u8; 4],
+    body: [u8; 4],
+}
+
+impl Palette {
+    const LIGHT: Palette = Palette { dark: false, text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255] };
+    const DARK: Palette = Palette { dark: true, text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255] };
+
+    /// Linhas, bordas e fundos de botão: preto no claro, branco no escuro.
+    fn ink(&self, alpha: u8) -> tiny_skia::Color {
+        if self.dark {
+            rgba(255, 255, 255, alpha)
+        } else {
+            rgba(0, 0, 0, alpha)
+        }
+    }
+
+    /// Fundo dos menus e painéis.
+    fn panel(&self, alpha: u8) -> [u8; 4] {
+        if self.dark {
+            [40, 40, 44, alpha]
+        } else {
+            [246, 246, 248, alpha]
+        }
+    }
+
+    /// Ladrilhos da central de controle.
+    fn tile(&self) -> tiny_skia::Color {
+        if self.dark {
+            rgba(255, 255, 255, 22)
+        } else {
+            rgba(255, 255, 255, 150)
+        }
+    }
+
+    fn bar_top(&self, alpha: u8) -> tiny_skia::Color {
+        if self.dark {
+            rgba(46, 46, 50, alpha)
+        } else {
+            rgba(250, 250, 252, alpha)
+        }
+    }
+
+    fn bar_bottom(&self, alpha: u8) -> tiny_skia::Color {
+        if self.dark {
+            rgba(36, 36, 40, alpha)
+        } else {
+            rgba(238, 238, 242, alpha)
+        }
+    }
+}
+
+thread_local! {
+    static PALETTE: std::cell::Cell<Palette> = const { std::cell::Cell::new(Palette::LIGHT) };
+}
+
+fn pal() -> Palette {
+    PALETTE.with(|p| p.get())
+}
+
+/// Lê o tema (claro/escuro) para os próximos desenhos.
+fn refresh_palette() {
+    PALETTE.with(|p| p.set(if mide::kit::system_dark() { Palette::DARK } else { Palette::LIGHT }));
+}
+
 struct Bar {
     /// Vidro atrás da barra e atrás do painel do menu aberto (desenhado pelo compositor).
     glass_bar: mide::control_client::Glass,
@@ -896,10 +968,12 @@ impl Bar {
 
     /// Pede um quadro novo do menu aberto (mesmo agrupamento da barra).
     fn draw_menu(&mut self) {
+        refresh_palette();
         self.menu_dirty = true;
     }
 
     fn paint_bar(&mut self) {
+        refresh_palette();
         self.bar_dirty = false;
         if !self.configured || self.width == 0 {
             return;
@@ -919,7 +993,8 @@ impl Bar {
         // Cor do texto em 8 níveis: o cache de texto (por cor) guarda poucas versões.
         let level = (ease * 8.0).round() / 8.0;
         let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
-        let fg = [mix(20, 255), mix(20, 255), mix(24, 255), mix(255, 250)];
+        let base = if pal().dark { 245 } else { 20 };
+        let fg = [mix(base, 255), mix(base, 255), mix(base + 4, 255), mix(255, 250)];
         // Com o vidro ligado, o compositor desfoca o que está atrás da barra e o véu
         // claro fica mais leve (o texto escuro continua legível).
         let glass = mide::control_client::panel_glass() && ease < 0.5;
@@ -930,7 +1005,7 @@ impl Bar {
             let fade = 1.0 - ease;
             let (top_a, bottom_a) = ((top_a * fade) as u8, (bottom_a * fade) as u8);
             let mut paint = Paint::default();
-            paint.shader = vertical_gradient(0.0, fh, rgba(250, 250, 252, top_a), rgba(238, 238, 242, bottom_a));
+            paint.shader = vertical_gradient(0.0, fh, pal().bar_top(top_a), pal().bar_bottom(bottom_a));
             if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, fw, fh) {
                 pixmap.fill_rect(rect, &paint, Transform::identity(), None);
             }
@@ -945,7 +1020,7 @@ impl Bar {
         let cy = fh / 2.0;
         let lx = LOGO_X + LOGO_W / 2.0;
         if self.menu.as_ref().is_some_and(|m| m.id == MenuId::System) {
-            fill_rounded(&mut pixmap, LOGO_X - 4.0, 3.0, LOGO_W + 8.0, fh - 6.0, 5.0, rgba(0, 0, 0, 30));
+            fill_rounded(&mut pixmap, LOGO_X - 4.0, 3.0, LOGO_W + 8.0, fh - 6.0, 5.0, pal().ink(30));
         }
         if let Some(ring) = PathBuilder::from_circle(lx, cy, 6.5) {
             let mut stroke_paint = Paint::default();
@@ -981,7 +1056,7 @@ impl Bar {
         for (id, title, weight) in titles {
             let tw = self.text.measure(&title, FONT, weight);
             if open == Some(id) {
-                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, rgba(0, 0, 0, 30));
+                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, pal().ink(30));
             }
             self.text.draw(&mut pixmap, &title, tx, text_y, FONT, weight, fg);
             self.titles.push((id, tx - TITLE_GAP / 2.0, tx + tw + TITLE_GAP / 2.0));
@@ -996,7 +1071,7 @@ impl Bar {
         // Bluetooth, Wi-Fi e som. Cada um abre o seu painel.
         let highlight = |pixmap: &mut Pixmap, id: MenuId, x0: f32, x1: f32| {
             if open == Some(id) {
-                fill_rounded(pixmap, x0, 3.0, x1 - x0, fh - 6.0, 5.0, rgba(0, 0, 0, 30));
+                fill_rounded(pixmap, x0, 3.0, x1 - x0, fh - 6.0, 5.0, pal().ink(30));
             }
         };
         let clock = self.clock.clone();
@@ -1115,11 +1190,11 @@ impl Bar {
         if glass {
             mide::ui::draw::clear_rounded(&mut pixmap, mx, top, mw, ph, 10.0);
         }
-        let fill = [246, 246, 248, if glass { 180 } else { 240 }];
+        let fill = pal().panel(if glass { 180 } else { 240 });
         fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(fill[0], fill[1], fill[2], fill[3]));
         if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, 10.0) {
             let mut border = Paint::default();
-            border.set_color(rgba(0, 0, 0, 40));
+            border.set_color(pal().ink(40));
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
         }
@@ -1134,7 +1209,7 @@ impl Bar {
                 MenuItem::Separator => {
                     if let Some(line) = tiny_skia::Rect::from_xywh(mx + 10.0, y + SEPARATOR_H / 2.0, mw - 20.0, 1.0) {
                         let mut paint = Paint::default();
-                        paint.set_color(rgba(0, 0, 0, 30));
+                        paint.set_color(pal().ink(30));
                         pixmap.fill_rect(line, &paint, Transform::identity(), None);
                     }
                     y += SEPARATOR_H;
@@ -1146,14 +1221,14 @@ impl Bar {
                     }
                     let color = match (action.is_some(), active) {
                         (_, true) => [255, 255, 255, 255],
-                        (true, false) => [24, 24, 28, 255],
-                        (false, false) => [150, 150, 156, 255],
+                        (true, false) => pal().text,
+                        (false, false) => pal().faint,
                     };
                     let ty = y + (ITEM_H - FONT * 1.25) / 2.0;
                     self.text.draw(&mut pixmap, label, mx + 16.0, ty, FONT, FontWeight::Regular, color);
                     if !shortcut.is_empty() {
                         let sw = self.text.measure(shortcut, FONT - 1.0, FontWeight::Regular);
-                        let sc = if active { [230, 236, 255, 255] } else { [140, 140, 148, 255] };
+                        let sc = if active { [230, 236, 255, 255] } else { pal().secondary };
                         self.text.draw(&mut pixmap, shortcut, mx + mw - 16.0 - sw, ty + 0.5, FONT - 1.0, FontWeight::Regular, sc);
                     }
                     y += ITEM_H;
@@ -1410,11 +1485,11 @@ impl Bar {
         if glass {
             mide::ui::draw::clear_rounded(&mut pixmap, px, top, pw, ph, 12.0);
         }
-        let fill = [246, 246, 248, if glass { 186 } else { 242 }];
+        let fill = pal().panel(if glass { 186 } else { 242 });
         fill_rounded(&mut pixmap, px, top, pw, ph, 12.0, rgba(fill[0], fill[1], fill[2], fill[3]));
         if let Some(path) = rounded_rect(px + 0.5, top + 0.5, pw - 1.0, ph - 1.0, 12.0) {
             let mut border = Paint::default();
-            border.set_color(rgba(0, 0, 0, 40));
+            border.set_color(pal().ink(40));
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
         }
@@ -1442,19 +1517,19 @@ impl Bar {
         if hovered {
             fill_rounded(p, 6.0, y, pw - 12.0, h, 6.0, rgba(10, 100, 225, 255));
         }
-        let color = if hovered { [255, 255, 255, 255] } else { [24, 24, 28, 255] };
+        let color = if hovered { [255, 255, 255, 255] } else { pal().text };
         self.text.draw(p, label, 16.0, y + (h - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
         regions.push(((6.0, y, pw - 12.0, h), action));
         hovered
     }
 
     fn panel_separator(p: &mut Pixmap, pw: f32, y: f32) {
-        fill_rounded(p, 12.0, y + 4.0, pw - 24.0, 1.0, 0.0, rgba(0, 0, 0, 30));
+        fill_rounded(p, 12.0, y + 4.0, pw - 24.0, 1.0, 0.0, pal().ink(30));
     }
 
     /// Título do painel com um interruptor à direita.
     fn panel_header(&mut self, p: &mut Pixmap, pw: f32, title: &str, on: Option<bool>, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, action: PanelAction) {
-        self.text.draw(p, title, 16.0, 14.0, 14.0, FontWeight::Bold, [24, 24, 28, 255]);
+        self.text.draw(p, title, 16.0, 14.0, 14.0, FontWeight::Bold, pal().text);
         if let Some(on) = on {
             draw_switch(p, pw - 54.0, 13.0, on);
             regions.push(((pw - 60.0, 8.0, 50.0, 30.0), action));
@@ -1467,9 +1542,9 @@ impl Bar {
         }
         let today = Local::now().date_naive();
         let (year, month) = self.cal_month;
-        self.text.draw(p, &calendar::long_date(today), 16.0, 12.0, 13.0, FontWeight::Regular, [110, 110, 118, 255]);
+        self.text.draw(p, &calendar::long_date(today), 16.0, 12.0, 13.0, FontWeight::Regular, pal().secondary);
         let title = calendar::month_title(year, month);
-        self.text.draw(p, &title, 16.0, 36.0, 15.0, FontWeight::Bold, [24, 24, 28, 255]);
+        self.text.draw(p, &title, 16.0, 36.0, 15.0, FontWeight::Bold, pal().text);
         // Botões: ‹  Hoje  ›.
         let buttons = [("‹", pw - 98.0, 26.0, PanelAction::PrevMonth), ("Hoje", pw - 70.0, 40.0, PanelAction::Today), ("›", pw - 28.0, 22.0, PanelAction::NextMonth)];
         for (label, bx, bw, action) in buttons {
@@ -1484,7 +1559,7 @@ impl Bar {
         let cell = (pw - 24.0) / 7.0;
         for (i, wd) in calendar::WEEKDAYS.iter().enumerate() {
             let ww = self.text.measure(wd, 11.5, FontWeight::Semibold);
-            self.text.draw(p, wd, 12.0 + i as f32 * cell + (cell - ww) / 2.0, 68.0, 11.5, FontWeight::Semibold, [130, 130, 138, 255]);
+            self.text.draw(p, wd, 12.0 + i as f32 * cell + (cell - ww) / 2.0, 68.0, 11.5, FontWeight::Semibold, pal().secondary);
         }
         for (i, day) in calendar::month_grid(year, month).iter().enumerate() {
             let (col, row) = ((i % 7) as f32, (i / 7) as f32);
@@ -1492,7 +1567,7 @@ impl Bar {
             let cy = 98.0 + row * 30.0;
             let label = day.date.day().to_string();
             let lw = self.text.measure(&label, 13.0, FontWeight::Regular);
-            let mut color = if day.in_month { [24, 24, 28, 255] } else { [180, 180, 186, 255] };
+            let mut color = if day.in_month { pal().text } else { pal().faint };
             if day.date == today {
                 if let Some(c) = PathBuilder::from_circle(cx, cy, 13.0) {
                     let mut paint = Paint::default();
@@ -1516,7 +1591,7 @@ impl Bar {
     fn panel_notifications(&mut self, p: &mut Pixmap, pw: f32, y: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
         Self::panel_separator(p, pw, y);
         let mut y = y + 12.0;
-        self.text.draw(p, "Notificações", 16.0, y, 13.5, FontWeight::Bold, [24, 24, 28, 255]);
+        self.text.draw(p, "Notificações", 16.0, y, 13.5, FontWeight::Bold, pal().text);
         if !self.history.is_empty() {
             let lw = self.text.measure("Limpar", 12.5, FontWeight::Semibold);
             let bx = pw - 16.0 - lw;
@@ -1528,7 +1603,7 @@ impl Bar {
         }
         y += 26.0;
         if self.history.is_empty() {
-            self.text.draw(p, "Nenhuma notificação", 16.0, y, 12.5, FontWeight::Regular, [130, 130, 138, 255]);
+            self.text.draw(p, "Nenhuma notificação", 16.0, y, 12.5, FontWeight::Regular, pal().secondary);
             return y + 26.0;
         }
         let now = std::time::SystemTime::now();
@@ -1540,18 +1615,18 @@ impl Bar {
             let when = mide::files::date_text(std::time::UNIX_EPOCH + Duration::from_secs(entry.time), now);
             let ww = self.text.measure(&when, 11.0, FontWeight::Regular);
             let app = fit_label(&mut self.text, &entry.app, 11.0, pw - 52.0 - ww);
-            self.text.draw(p, &app, 20.0, y + 6.0, 11.0, FontWeight::Regular, [110, 110, 118, 255]);
-            self.text.draw(p, &when, pw - 20.0 - ww, y + 6.0, 11.0, FontWeight::Regular, [130, 130, 138, 255]);
+            self.text.draw(p, &app, 20.0, y + 6.0, 11.0, FontWeight::Regular, pal().secondary);
+            self.text.draw(p, &when, pw - 20.0 - ww, y + 6.0, 11.0, FontWeight::Regular, pal().secondary);
             let summary = fit_label(&mut self.text, &entry.summary, 13.0, pw - 40.0);
-            self.text.draw(p, &summary, 20.0, y + 21.0, 13.0, FontWeight::Semibold, [24, 24, 28, 255]);
+            self.text.draw(p, &summary, 20.0, y + 21.0, 13.0, FontWeight::Semibold, pal().text);
             let first = entry.body.lines().next().unwrap_or("");
             let body = fit_label(&mut self.text, first, 12.0, pw - 40.0);
-            self.text.draw(p, &body, 20.0, y + 37.0, 12.0, FontWeight::Regular, [80, 80, 88, 255]);
+            self.text.draw(p, &body, 20.0, y + 37.0, 12.0, FontWeight::Regular, pal().body);
             y += 62.0;
         }
         if self.history.len() > fits {
             let more = format!("e mais {}", self.history.len() - fits);
-            self.text.draw(p, &more, 16.0, y, 11.5, FontWeight::Regular, [130, 130, 138, 255]);
+            self.text.draw(p, &more, 16.0, y, 11.5, FontWeight::Regular, pal().secondary);
             y += 20.0;
         }
         y + 6.0
@@ -1559,13 +1634,13 @@ impl Bar {
 
     /// Opções do relógio da barra: o que aparece além da hora.
     fn panel_clock_options(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
-        self.text.draw(p, "Formato da hora", 16.0, 14.0, 14.0, FontWeight::Bold, [24, 24, 28, 255]);
+        self.text.draw(p, "Formato da hora", 16.0, 14.0, 14.0, FontWeight::Bold, pal().text);
         let preview = clock_text();
-        self.text.draw(p, &preview, 16.0, 38.0, 12.5, FontWeight::Regular, [110, 110, 118, 255]);
+        self.text.draw(p, &preview, 16.0, 38.0, 12.5, FontWeight::Regular, pal().secondary);
         let mut y = 64.0;
         Self::panel_separator(p, pw, y - 8.0);
         for (i, (key, label)) in CLOCK_PARTS.iter().enumerate() {
-            self.text.draw(p, label, 16.0, y + 6.0, FONT, FontWeight::Regular, [24, 24, 28, 255]);
+            self.text.draw(p, label, 16.0, y + 6.0, FONT, FontWeight::Regular, pal().text);
             draw_switch(p, pw - 54.0, y + 4.0, clock_part(key));
             regions.push(((pw - 60.0, y, 50.0, 30.0), PanelAction::ClockPart(i)));
             y += 32.0;
@@ -1579,9 +1654,9 @@ impl Bar {
         let (volume, muted) = self.status.volume.unwrap_or((0.0, false));
         self.panel_header(p, pw, "Som", None, regions, PanelAction::ToggleMute);
         // Trilho do volume com o alto-falante à esquerda.
-        draw_speaker_icon(p, 24.0, 58.0, Some((volume, muted)), [60, 60, 66, 255]);
+        draw_speaker_icon(p, 24.0, 58.0, Some((volume, muted)), pal().body);
         let (tx, tw) = (44.0, pw - 64.0);
-        fill_rounded(p, tx, 54.0, tw, 8.0, 4.0, rgba(0, 0, 0, 30));
+        fill_rounded(p, tx, 54.0, tw, 8.0, 4.0, pal().ink(30));
         let level = if muted { 0.0 } else { volume.clamp(0.0, 1.0) };
         fill_rounded(p, tx, 54.0, tw * level, 8.0, 4.0, rgba(10, 100, 225, 255));
         let kx = tx + tw * level;
@@ -1595,7 +1670,7 @@ impl Bar {
         }
         regions.push(((tx - 8.0, 44.0, tw + 16.0, 28.0), PanelAction::VolumeTrack));
         // "Sem som" com interruptor.
-        self.text.draw(p, "Sem som", 16.0, 86.0, FONT, FontWeight::Regular, [24, 24, 28, 255]);
+        self.text.draw(p, "Sem som", 16.0, 86.0, FONT, FontWeight::Regular, pal().text);
         draw_switch(p, pw - 54.0, 84.0, muted);
         regions.push(((pw - 60.0, 80.0, 50.0, 28.0), PanelAction::ToggleMute));
         Self::panel_separator(p, pw, 114.0);
@@ -1610,12 +1685,12 @@ impl Bar {
         Self::panel_separator(p, pw, y - 6.0);
         if on {
             if networks.is_empty() {
-                self.text.draw(p, "Procurando redes…", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+                self.text.draw(p, "Procurando redes…", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
                 y += 28.0;
             }
             for net in networks.iter().take(7) {
                 let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Connect(net.ssid.clone()));
-                let color = if hovered { [255, 255, 255, 255] } else { [24, 24, 28, 255] };
+                let color = if hovered { [255, 255, 255, 255] } else { pal().text };
                 let level = 1 + (net.signal as u32 * 3 / 100).min(2) as u8;
                 draw_wifi_icon(p, 26.0, y + 15.0, Some(level), color);
                 let weight = if net.active { FontWeight::Semibold } else { FontWeight::Regular };
@@ -1629,7 +1704,7 @@ impl Bar {
                 y += 30.0;
             }
         } else {
-            self.text.draw(p, "Wi-Fi desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+            self.text.draw(p, "Wi-Fi desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         }
         Self::panel_separator(p, pw, y);
@@ -1644,23 +1719,23 @@ impl Bar {
         let mut y = 46.0;
         Self::panel_separator(p, pw, y - 6.0);
         if !on {
-            self.text.draw(p, "Bluetooth desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+            self.text.draw(p, "Bluetooth desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         } else if devices.is_empty() {
-            self.text.draw(p, "Nenhum aparelho pareado", 16.0, y + 4.0, FONT, FontWeight::Regular, [130, 130, 138, 255]);
+            self.text.draw(p, "Nenhum aparelho pareado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         }
         if on {
             for (i, device) in devices.iter().enumerate().take(7) {
                 let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Device(i));
-                let color = if hovered { [255, 255, 255, 255] } else { [24, 24, 28, 255] };
+                let color = if hovered { [255, 255, 255, 255] } else { pal().text };
                 // Círculo azul para aparelho conectado, cinza para os outros.
                 let dot = if device.connected { rgba(10, 100, 225, 255) } else { rgba(170, 170, 176, 255) };
                 fill_rounded(p, 16.0, y + 7.0, 16.0, 16.0, 8.0, if hovered { rgba(255, 255, 255, 255) } else { dot });
                 self.text.draw(p, &device.name, 42.0, y + (30.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
                 if device.connected {
                     let lw = self.text.measure("Conectado", 11.5, FontWeight::Regular);
-                    let dc = if hovered { [230, 236, 255, 255] } else { [130, 130, 138, 255] };
+                    let dc = if hovered { [230, 236, 255, 255] } else { pal().secondary };
                     self.text.draw(p, "Conectado", pw - 16.0 - lw, y + 8.0, 11.5, FontWeight::Regular, dc);
                 }
                 y += 30.0;
@@ -1675,15 +1750,15 @@ impl Bar {
     /// Central de controle, como a do macOS: ladrilhos de Wi-Fi e Bluetooth, Não
     /// perturbe, brilho da tela (se houver controle), som e as Configurações.
     fn panel_control(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
-        let tile = |p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| fill_rounded(p, x, y, w, h, 12.0, rgba(255, 255, 255, 150));
-        let dark = [24, 24, 28, 255];
-        let gray = [110, 110, 118, 255];
+        let tile = |p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| fill_rounded(p, x, y, w, h, 12.0, pal().tile());
+        let dark = pal().text;
+        let gray = pal().secondary;
         // Botão redondo de ligar/desligar: azul quando ligado.
         let round = |p: &mut Pixmap, cx: f32, cy: f32, on: bool| {
             if let Some(c) = PathBuilder::from_circle(cx, cy, 15.0) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
-                paint.set_color(if on { rgba(10, 120, 240, 255) } else { rgba(0, 0, 0, 28) });
+                paint.set_color(if on { rgba(10, 120, 240, 255) } else { pal().ink(28) });
                 p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
             }
         };
@@ -1720,7 +1795,7 @@ impl Bar {
             tile(p, gap, y, pw - 2.0 * gap, 60.0);
             this.text.draw(p, title, gap + 14.0, y + 9.0, FONT, FontWeight::Semibold, dark);
             let (tx, tw, ty) = (gap + 16.0, pw - 2.0 * gap - 32.0, y + 40.0);
-            fill_rounded(p, tx, ty - 5.0, tw, 10.0, 5.0, rgba(0, 0, 0, 30));
+            fill_rounded(p, tx, ty - 5.0, tw, 10.0, 5.0, pal().ink(30));
             // Parte preenchida no azul de destaque (como os trilhos das Configurações):
             // branco sumia sobre o ladrilho claro.
             fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, rgba(10, 120, 240, 255));
@@ -1754,13 +1829,13 @@ impl Bar {
             MenuId::ConfirmShutdown => ("Desligar o computador agora?", "Desligar"),
             _ => ("Encerrar a sessão agora?", "Encerrar sessão"),
         };
-        self.text.draw(p, title, 18.0, 18.0, 14.5, FontWeight::Bold, [24, 24, 28, 255]);
-        self.text.draw(p, "Os apps abertos serão fechados.", 18.0, 42.0, 12.5, FontWeight::Regular, [110, 110, 118, 255]);
+        self.text.draw(p, title, 18.0, 18.0, 14.5, FontWeight::Bold, pal().text);
+        self.text.draw(p, "Os apps abertos serão fechados.", 18.0, 42.0, 12.5, FontWeight::Regular, pal().secondary);
         let (bw, by) = ((pw - 48.0) / 2.0, 74.0);
         let cancel_hover = hover == Some(regions.len());
-        fill_rounded(p, 18.0, by, bw, 30.0, 8.0, rgba(0, 0, 0, if cancel_hover { 36 } else { 20 }));
+        fill_rounded(p, 18.0, by, bw, 30.0, 8.0, pal().ink(if cancel_hover { 36 } else { 20 }));
         let cw = self.text.measure("Cancelar", FONT, FontWeight::Regular);
-        self.text.draw(p, "Cancelar", 18.0 + (bw - cw) / 2.0, by + 6.0, FONT, FontWeight::Regular, [24, 24, 28, 255]);
+        self.text.draw(p, "Cancelar", 18.0 + (bw - cw) / 2.0, by + 6.0, FONT, FontWeight::Regular, pal().text);
         regions.push(((18.0, by, bw, 30.0), PanelAction::ConfirmNo));
         let ok_hover = hover == Some(regions.len());
         let ox = 30.0 + bw;
@@ -2064,7 +2139,7 @@ fn draw_moon_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
 
 /// Interruptor no estilo do macOS: pílula azul (ligado) ou cinza, com a bolinha.
 fn draw_switch(p: &mut Pixmap, x: f32, y: f32, on: bool) {
-    let fill = if on { rgba(10, 120, 240, 255) } else { rgba(0, 0, 0, 40) };
+    let fill = if on { rgba(10, 120, 240, 255) } else { pal().ink(40) };
     fill_rounded(p, x, y, 38.0, 22.0, 11.0, fill);
     let kx = if on { x + 27.0 } else { x + 11.0 };
     if let Some(knob) = PathBuilder::from_circle(kx, y + 11.0, 9.0) {

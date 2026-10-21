@@ -1102,3 +1102,11 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Qt (`org_kde_kwin_appmenu`)**: o app diz o serviço e o objeto do `dbusmenu`; a barra usa o mesmo leitor do menu global do X11 (depende do tema de plataforma do Qt publicar o menu).
 - O registrar (`com.canonical.AppMenu.Registrar`) continua tendo preferência; o caminho pelo compositor entra quando o app não registrou nada nele.
 - App de teste `tests/apps/gtk-menu-teste.py` (GTK 3: Arquivo/Exibir/Ajuda, uma seção e uma opção marcável).
+
+## Tema escuro (D1, B7, B17)
+
+- **Configurações → Aparência:** Claro ou Escuro (`[appearance] theme = "dark"` no `config.toml`).
+- **mide-ui:** `Theme::dark()` e `Theme::system()`; as janelas seguem o tema do sistema e trocam na hora (verificado uma vez por segundo, o arquivo só é relido quando muda). Os componentes não têm mais cores fixas: trilhos, bordas de campos, listras, barras de rolagem, menus e ações destrutivas vêm do tema (`ink`/`shade`, `menu`, `danger`, `sidebar_glass`). A tela de bloqueio fica sempre clara (sobre o papel de parede); apps com tema próprio (`Window::theme`) não mudam.
+- **Compositor:** barras de título grafite com título claro no tema escuro.
+- **Barra superior:** barra escura com texto branco; menus, painéis (calendário, som, Wi-Fi, Bluetooth, central de controle, confirmações) com a paleta escura. Notificações e "Sobre este computador" também.
+- **Apps GTK e Qt (só na sessão do mide):** o mide escreve `color-scheme` e `gtk-theme` (`Adwaita-dark`) no banco do dconf da sessão (`src/appearance.rs`; o mesmo perfil do tema de ícones, agora criado sempre que o dconf existe) e reinicia o portal do GTK; valem para os apps abertos depois da troca. Outras sessões não mudam.

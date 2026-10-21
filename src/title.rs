@@ -34,7 +34,7 @@ pub struct TitleImage {
 pub struct TitleRenderer {
     fonts: FontSystem,
     swash: SwashCache,
-    images: HashMap<(String, bool, i32), Option<TitleImage>>,
+    images: HashMap<(String, bool, i32, bool), Option<TitleImage>>,
 }
 
 impl TitleRenderer {
@@ -49,7 +49,7 @@ impl TitleRenderer {
     /// Imagem do título, cortada com reticências para caber em `max_width` pixels.
     /// Devolve `None` se o título estiver vazio.
     pub fn image(&mut self, title: &str, focused: bool, max_width: i32) -> Option<&TitleImage> {
-        let key = (title.to_string(), focused, max_width);
+        let key = (title.to_string(), focused, max_width, crate::decorations::dark());
         if !self.images.contains_key(&key) {
             let image = self.render(title, focused, max_width);
             self.images.insert(key.clone(), image);
@@ -115,11 +115,12 @@ impl TitleRenderer {
         buffer.set_text(&fitted, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
 
-        // Mac: cinza-escuro com foco, cinza-claro sem foco.
-        let color = if focused {
-            Color::rgba(0x4d, 0x4d, 0x4d, 0xff)
-        } else {
-            Color::rgba(0x9a, 0x9a, 0x9a, 0xff)
+        // Mac: cinza-escuro com foco, cinza-claro sem foco (no escuro, o contrário).
+        let color = match (crate::decorations::dark(), focused) {
+            (false, true) => Color::rgba(0x4d, 0x4d, 0x4d, 0xff),
+            (false, false) => Color::rgba(0x9a, 0x9a, 0x9a, 0xff),
+            (true, true) => Color::rgba(0xdc, 0xdc, 0xe0, 0xff),
+            (true, false) => Color::rgba(0x80, 0x80, 0x86, 0xff),
         };
         let mut pixels = vec![0u8; (width * height * 4) as usize];
         buffer.draw(&mut self.fonts, &mut self.swash, color, |x, y, w, h, c| {

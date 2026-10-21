@@ -472,6 +472,15 @@ else
 fi
 # O teste anterior desligou o desfoque da dock; o vidro líquido depende dele.
 sed -i '/dock_blur = false/d' "$SCFG/mide/config.toml"
+# Aparência: a lista em (789, 162) abre com apertar e soltar; "Escuro" em (680, 227).
+# Grava no config.toml e a janela fica escura na hora (fundo em (600, 400)).
+timeout 150 "$SCEN" "300 move 789 162; 310 press 789 162; 320 release 789 162; 360 click 680 227; 440 list" 430 -- "$SETTINGS appearance" >/dev/null 2>&1
+if grep -q 'theme = "dark"' "$SCFG/mide/config.toml" && [ "$(python3 -c "import sys; from PIL import Image; print('%d,%d,%d' % Image.open(sys.argv[1]).convert('RGB').getpixel((600, 400)))" "${SCENARIO_OUT:-/tmp/mide-scenario}/frame.png" 2>/dev/null)" = "30,30,32" ]; then
+    echo "ok    Aparência: tema escuro grava e a janela muda na hora"; PASS=$((PASS + 1))
+else
+    echo "FALHA Aparência: tema escuro"; FAIL=$((FAIL + 1))
+fi
+sed -i '/^\[appearance\]/d; /^theme = "dark"/d' "$SCFG/mide/config.toml"
 # "Vidro líquido" em (807, 505): grava no config.toml e a dock troca para o vidro clássico.
 check "Efeitos → Vidro líquido desligado: a dock volta ao vidro clássico" "vidro líquido na dock: desligado" "400 click 807 505; 480 list" "$SETTINGS effects"
 if grep -q "liquid_glass = false" "$SCFG/mide/config.toml"; then

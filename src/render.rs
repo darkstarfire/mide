@@ -141,6 +141,7 @@ impl Scene {
         let scale = output.current_scale().fractional_scale();
         crate::clip::set_scale(scale);
         crate::decorations::begin_frame(&output_name);
+        crate::decorations::set_dark(state.config.dark);
         state.popups.cleanup();
         let now = std::time::Instant::now();
         state.finish_animations(now);

@@ -82,6 +82,8 @@ pub struct Window {
     pub size: (u32, u32),
     pub min_size: (u32, u32),
     pub theme: Theme,
+    /// O tema foi escolhido pelo app (`Window::theme`): não segue o claro/escuro do sistema.
+    pub theme_fixed: bool,
     /// Camada por cima de tudo (`Window::overlay`), em vez de janela comum.
     pub overlay: Option<String>,
     /// Camada de fundo, atrás das janelas (`Window::desktop`).
@@ -100,7 +102,8 @@ impl Window {
             app_id: title.to_lowercase().replace(' ', "-"),
             size: (640, 480),
             min_size: (360, 240),
-            theme: Theme::default(),
+            theme: Theme::system(),
+            theme_fixed: false,
             overlay: None,
             desktop: false,
             dropdown: false,
@@ -113,6 +116,9 @@ impl Window {
     /// tela; as outras ficam escuras.
     pub fn lock(mut self) -> Self {
         self.lock = true;
+        // Sobre o papel de parede, sempre com as cores claras.
+        self.theme = Theme::default();
+        self.theme_fixed = true;
         self
     }
 
@@ -160,6 +166,7 @@ impl Window {
 
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
+        self.theme_fixed = true;
         self
     }
 }
@@ -266,6 +273,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         dirty: false,
         exit: false,
         ctx: Ctx::new(window.theme.clone()),
+        follow_theme: !window.theme_fixed,
+        theme_checks: 0,
         title: window.title.clone(),
         app: Box::new(app),
         menus: None,
@@ -301,6 +310,15 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             if let Some(on) = runner.glass_on {
                 runner.glass_checks = (runner.glass_checks + 1) % 25;
                 if runner.glass_checks == 0 && crate::control_client::panel_glass() != on {
+                    runner.dirty = true;
+                }
+            }
+            // Claro/escuro trocado nas Configurações: o app muda na hora.
+            if runner.follow_theme {
+                runner.theme_checks = (runner.theme_checks + 1) % 25;
+                if runner.theme_checks == 0 && super::theme::system_dark() != runner.ctx.theme.dark {
+                    runner.ctx.theme = Theme::system();
+                    runner.last_frame = None;
                     runner.dirty = true;
                 }
             }
@@ -377,6 +395,9 @@ struct Runner {
     /// Estado do vidro no último quadro, se a janela usa vidro (`None` se não usa).
     glass_on: Option<bool>,
     glass_checks: u32,
+    /// Segue o tema do sistema (verificado uma vez por segundo).
+    follow_theme: bool,
+    theme_checks: u32,
     app_id: String,
     /// Último quadro enviado (para não reenviar um igual).
     last_frame: Option<Pixmap>,

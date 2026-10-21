@@ -2,6 +2,7 @@
 //! próprias como "Sobre este computador").
 
 pub mod apps;
+pub mod appearance;
 pub mod appmenu;
 pub mod backdrop;
 pub mod calendar;

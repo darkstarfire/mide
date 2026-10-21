@@ -956,22 +956,22 @@ impl<'a> Ui<'a> {
         for (grow, alpha) in [(6.0, 12u8), (3.0, 20), (1.0, 32)] {
             fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, 10.0 + grow, color([0, 0, 0, alpha]));
         }
-        fill_rounded(overlay, x, y0, w, h, 10.0, color([246, 246, 248, 245]));
+        fill_rounded(overlay, x, y0, w, h, 10.0, color(t.menu));
         match side {
             Some(right) => {
                 let tip_y = state.click.1.clamp(y0 + 18.0, (y0 + h - 18.0).max(y0 + 18.0));
-                crate::ui::draw::menu_arrow_side(overlay, tip_y, if right { x } else { x + w }, right, [246, 246, 248, 245]);
+                crate::ui::draw::menu_arrow_side(overlay, tip_y, if right { x } else { x + w }, right, t.menu);
             }
             None => {
                 let tip_x = state.pos.0.clamp(x + 18.0, x + w - 18.0);
-                crate::ui::draw::menu_arrow(overlay, tip_x, if up { y0 + h } else { y0 }, up, [246, 246, 248, 245]);
+                crate::ui::draw::menu_arrow(overlay, tip_x, if up { y0 + h } else { y0 }, up, t.menu);
             }
         }
         let mut y = y0 + 5.0;
         let text = &mut self.ctx.text;
         for (label, kind, hovered) in rows {
             if kind == 2 {
-                fill_rounded(overlay, x + 12.0, y + 4.0, w - 24.0, 1.0, 0.0, color([0, 0, 0, 30]));
+                fill_rounded(overlay, x + 12.0, y + 4.0, w - 24.0, 1.0, 0.0, color(t.shade(30)));
                 y += 9.0;
                 continue;
             }
@@ -980,7 +980,7 @@ impl<'a> Ui<'a> {
             }
             let c = match (kind, hovered) {
                 (_, true) => t.on_accent,
-                (1, false) => [210, 40, 40, 255],
+                (1, false) => t.danger,
                 _ => t.text,
             };
             text.draw(overlay, &label, x + 16.0, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, c);
@@ -1096,7 +1096,7 @@ impl<'a> Ui<'a> {
         let fill = match (accent, r.hovered, pressed) {
             (true, _, true) => [t.accent[0].saturating_sub(30), t.accent[1].saturating_sub(30), t.accent[2].saturating_sub(30), 255],
             (true, _, false) => t.accent,
-            (false, _, true) => [0, 0, 0, 46],
+            (false, _, true) => t.shade(46),
             (false, true, false) => t.hover,
             (false, false, false) => t.control,
         };
@@ -1143,7 +1143,7 @@ impl<'a> Ui<'a> {
             self.draw_text(&detail, rect.0, top + t.font * 1.3, t.font_small, FontWeight::Regular, t.text_secondary);
         }
         let (sx, sy) = (rect.0 + rect.2 - 40.0, rect.1 + (rect.3 - 22.0) / 2.0);
-        let fill = if *value { t.accent } else { [0, 0, 0, 40] };
+        let fill = if *value { t.accent } else { t.shade(40) };
         fill_rounded(self.canvas, sx, sy, 40.0, 22.0, 11.0, color(fill));
         let kx = if *value { sx + 29.0 } else { sx + 11.0 };
         if let Some(knob) = PathBuilder::from_circle(kx, sy + 11.0, 9.0) {
@@ -1283,7 +1283,7 @@ impl<'a> Ui<'a> {
         let id = self.ctx.id();
         let rect = self.alloc(None, 230.0);
         let mut r = Response { rect, id, ..Default::default() };
-        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 10.0, color([0, 0, 0, 14]));
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 10.0, color(t.shade(14)));
         if screens.is_empty() {
             return r;
         }
@@ -1394,7 +1394,7 @@ impl<'a> Ui<'a> {
         self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
         let k = ((*value - min) / (max - min).max(f32::EPSILON)).clamp(0.0, 1.0);
         let cy = rect.1 + rect.3 / 2.0;
-        fill_rounded(self.canvas, tx, cy - 3.0, tw, 6.0, 3.0, color([0, 0, 0, 30]));
+        fill_rounded(self.canvas, tx, cy - 3.0, tw, 6.0, 3.0, color(t.shade(30)));
         fill_rounded(self.canvas, tx, cy - 3.0, tw * k, 6.0, 3.0, color(t.accent));
         if let Some(knob) = PathBuilder::from_circle(tx + tw * k, cy, 9.0) {
             let mut paint = Paint::default();
@@ -1502,7 +1502,7 @@ impl<'a> Ui<'a> {
             self.ctx.memory.edit = edit;
         }
         fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
-        let border = if focused { t.accent } else { [0, 0, 0, 40] };
+        let border = if focused { t.accent } else { t.shade(40) };
         if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, t.control_radius) {
             let mut paint = Paint::default();
             paint.anti_alias = true;
@@ -1797,7 +1797,7 @@ impl<'a> Ui<'a> {
 
         // Desenho: fundo, margem com os números e só as linhas à vista.
         fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
-        fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color([0, 0, 0, 10]));
+        fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color(t.shade(10)));
         let first = (doc.scroll / line_h).floor() as usize;
         let last = (first + rows + 2).min(starts.len());
         let (w, h) = ((view.0 + 8.0).ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
@@ -1842,7 +1842,7 @@ impl<'a> Ui<'a> {
         if content_h > view.1 {
             let bar_h = (view.1 * view.1 / content_h).max(24.0);
             let bar_y = rect.1 + pad + (view.1 - bar_h) * doc.scroll / (content_h - view.1);
-            fill_rounded(self.canvas, rect.0 + rect.2 - 8.0, bar_y, 4.0, bar_h, 2.0, color([0, 0, 0, 60]));
+            fill_rounded(self.canvas, rect.0 + rect.2 - 8.0, bar_y, 4.0, bar_h, 2.0, color(t.shade(60)));
         }
         r
     }
@@ -2012,7 +2012,7 @@ impl<'a> Ui<'a> {
         if selected {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 5.0, color(t.accent));
         } else if striped {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 0.0, color([0, 0, 0, 10]));
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 0.0, color(t.shade(10)));
         }
         let (main, side) = if selected { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         if expandable {
@@ -2032,7 +2032,7 @@ impl<'a> Ui<'a> {
             if let Some(path) = pb.finish() {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
-                paint.set_color(color(if selected { t.on_accent } else { [110, 110, 118, 255] }));
+                paint.set_color(color(if selected { t.on_accent } else { t.text_secondary }));
                 self.canvas.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
             }
         }
@@ -2387,7 +2387,7 @@ impl<'a> Ui<'a> {
         if std::mem::take(&mut self.sidebar_glass) {
             self.ctx.glass_capable = true;
             if crate::control_client::panel_glass() {
-                crate::ui::draw::paint_rounded_solid(self.canvas, x, y0, side_w, h, 0.0, [248, 248, 250, 178]);
+                crate::ui::draw::paint_rounded_solid(self.canvas, x, y0, side_w, h, 0.0, t.sidebar_glass);
                 self.ctx.glass.push((self.offset.0 + x, self.offset.1 + y0, side_w, h, 0.0));
             } else {
                 fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));

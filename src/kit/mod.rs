@@ -40,5 +40,5 @@ mod ui;
 pub use app::{run, App, Waker, Window};
 pub use input::{Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};
-pub use theme::{Rgba, Theme};
+pub use theme::{system_dark, Rgba, Theme};
 pub use ui::{ArrangedScreen, Menu, Response, Tile, Ui};

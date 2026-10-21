@@ -48,6 +48,8 @@ pub fn start(socket: &str) {
     if !active() {
         return;
     }
+    // Claro/escuro dos apps GTK e Qt (no banco do dconf da sessão) antes dos portais.
+    mide::appearance::apply(false);
     publish_environment(socket);
     hold_power_button();
     // Reiniciado pelo `restart all`: os apps automáticos que continuam vivos (os que

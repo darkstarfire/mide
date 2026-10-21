@@ -467,6 +467,9 @@ impl Banners {
     }
 
     fn draw_banner(&mut self, pixmap: &mut Pixmap, index: usize, x: f32, y: f32, icon: Option<Pixmap>) {
+        // Claro ou escuro, como as Configurações → Aparência.
+        let theme = mide::kit::Theme::system();
+        let ink = |a: u8| if theme.dark { rgba(255, 255, 255, a) } else { rgba(0, 0, 0, a) };
         let note = &self.notes[index];
         let bh = Self::banner_height(note);
         let hovered = self.hover == Some(index);
@@ -481,10 +484,13 @@ impl Banners {
         if glass {
             mide::ui::draw::clear_rounded(pixmap, x, y, BANNER_W, bh, RADIUS);
         }
-        fill_rounded(pixmap, x, y, BANNER_W, bh, RADIUS, rgba(246, 246, 248, if glass { 186 } else { 238 }));
+        fill_rounded(pixmap, x, y, BANNER_W, bh, RADIUS, {
+            let [r, g, b, _] = theme.menu;
+            rgba(r, g, b, if glass { 186 } else { 238 })
+        });
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, BANNER_W - 1.0, bh - 1.0, RADIUS - 0.5) {
             let mut paint = Paint::default();
-            paint.set_color(rgba(0, 0, 0, 34));
+            paint.set_color(ink(34));
             paint.anti_alias = true;
             pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
         }
@@ -501,13 +507,13 @@ impl Banners {
         let tx = ix + ICON as f32 + 12.0;
         let max_w = x + BANNER_W - 14.0 - tx;
         let now_w = self.text.measure("agora", 11.5, FontWeight::Regular);
-        self.text.draw(pixmap, "agora", x + BANNER_W - 14.0 - now_w, y + 12.0, 11.5, FontWeight::Regular, [128, 128, 136, 255]);
+        self.text.draw(pixmap, "agora", x + BANNER_W - 14.0 - now_w, y + 12.0, 11.5, FontWeight::Regular, theme.text_secondary);
         let title = if summary.is_empty() { app.clone() } else { summary };
         let title = fit(&mut self.text, &title, 13.5, FontWeight::Semibold, max_w - now_w - 8.0);
-        self.text.draw(pixmap, &title, tx, y + 11.0, 13.5, FontWeight::Semibold, [24, 24, 28, 255]);
+        self.text.draw(pixmap, &title, tx, y + 11.0, 13.5, FontWeight::Semibold, theme.text);
         let lines = wrap(&mut self.text, &body, 12.5, max_w, 2);
         for (k, line) in lines.iter().enumerate() {
-            self.text.draw(pixmap, line, tx, y + 31.0 + k as f32 * 16.0, 12.5, FontWeight::Regular, [60, 60, 68, 255]);
+            self.text.draw(pixmap, line, tx, y + 31.0 + k as f32 * 16.0, 12.5, FontWeight::Regular, theme.text_secondary);
         }
 
         // Botões das ações, alinhados à direita embaixo.
@@ -518,8 +524,8 @@ impl Banners {
                 let lw = self.text.measure(label, 12.5, FontWeight::Semibold) + 24.0;
                 bx -= lw;
                 let pressed = self.press == Some(Spot::Button(index, k));
-                fill_rounded(pixmap, bx, by, lw, 26.0, 8.0, rgba(0, 0, 0, if pressed { 40 } else { 18 }));
-                self.text.draw(pixmap, label, bx + 12.0, by + 5.0, 12.5, FontWeight::Semibold, [24, 24, 28, 255]);
+                fill_rounded(pixmap, bx, by, lw, 26.0, 8.0, ink(if pressed { 40 } else { 18 }));
+                self.text.draw(pixmap, label, bx + 12.0, by + 5.0, 12.5, FontWeight::Semibold, theme.text);
                 bx -= 8.0;
             }
         }

@@ -114,15 +114,30 @@ const BUTTON_SIZE: i32 = 12;
 const BUTTON_GAP: i32 = 8;
 const BUTTON_MARGIN: i32 = 9;
 
-// Paleta do macOS: barra clara, semáforo colorido quando a janela tem foco
-// e botões cinza quando não tem.
+// Paleta do macOS: barra clara (ou grafite no tema escuro), semáforo colorido quando
+// a janela tem foco e botões cinza quando não tem.
 const BAR_FOCUSED: [f32; 4] = [0.90, 0.90, 0.90, 1.0];
 const BAR_UNFOCUSED: [f32; 4] = [0.96, 0.96, 0.96, 1.0];
 const SEPARATOR: [f32; 4] = [0.74, 0.74, 0.74, 1.0];
+const DARK_BAR_FOCUSED: [f32; 4] = [0.20, 0.20, 0.21, 1.0];
+const DARK_BAR_UNFOCUSED: [f32; 4] = [0.16, 0.16, 0.17, 1.0];
+const DARK_SEPARATOR: [f32; 4] = [0.05, 0.05, 0.06, 1.0];
+const DARK_INACTIVE_BUTTON: [f32; 4] = [0.36, 0.36, 0.38, 1.0];
 const CLOSE_COLOR: [f32; 4] = [1.00, 0.37, 0.34, 1.0];
 const MINIMIZE_COLOR: [f32; 4] = [1.00, 0.74, 0.18, 1.0];
 const MAXIMIZE_COLOR: [f32; 4] = [0.16, 0.78, 0.25, 1.0];
 const INACTIVE_BUTTON: [f32; 4] = [0.84, 0.84, 0.84, 1.0];
+
+/// Tema escuro (`[appearance] theme = "dark"`), definido a cada quadro pela configuração.
+static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_dark(dark: bool) {
+    DARK.store(dark, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn dark() -> bool {
+    DARK.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Retângulo arredondado preenchido. Os uniformes são `fill` (RGBA) e `radius`.
 const ROUNDED_RECT_SRC: &str = r#"
@@ -423,6 +438,7 @@ pub fn bar_elements(
     let mut elements = Vec::with_capacity(12);
     for (button, rect) in button_rects(bar) {
         let color = match (focused, button) {
+            (false, _) if dark() => DARK_INACTIVE_BUTTON,
             (false, _) => INACTIVE_BUTTON,
             (true, Button::Close) => CLOSE_COLOR,
             (true, Button::Minimize) => MINIMIZE_COLOR,
@@ -437,14 +453,20 @@ pub fn bar_elements(
     }
     // Brilho na metade superior e linha clara no topo: dá volume à barra.
     let top_half = Rectangle::new(bar.loc, (bar.size.w, bar.size.h / 2).into());
-    elements.push(rounded(shaders, top_half, [1.0, 1.0, 1.0, 0.16], 0, clip));
+    let dark = dark();
+    elements.push(rounded(shaders, top_half, [1.0, 1.0, 1.0, if dark { 0.03 } else { 0.16 }], 0, clip));
     let top_line = Rectangle::new(bar.loc, (bar.size.w, 1).into());
-    elements.push(rounded(shaders, top_line, [1.0, 1.0, 1.0, 0.7], 0, clip));
-    let background = if focused { BAR_FOCUSED } else { BAR_UNFOCUSED };
+    elements.push(rounded(shaders, top_line, [1.0, 1.0, 1.0, if dark { 0.12 } else { 0.7 }], 0, clip));
+    let background = match (dark, focused) {
+        (true, true) => DARK_BAR_FOCUSED,
+        (true, false) => DARK_BAR_UNFOCUSED,
+        (false, true) => BAR_FOCUSED,
+        (false, false) => BAR_UNFOCUSED,
+    };
     elements.push(rounded(shaders, bar, background, 0, clip));
     // Linha fina separando a barra do conteúdo.
     let separator = Rectangle::new((bar.loc.x, bar.loc.y + bar.size.h - 1).into(), (bar.size.w, 1).into());
-    elements.push(rounded(shaders, separator, SEPARATOR, 0, clip));
+    elements.push(rounded(shaders, separator, if dark { DARK_SEPARATOR } else { SEPARATOR }, 0, clip));
     elements
 }
 

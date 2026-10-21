@@ -29,6 +29,7 @@ use tiny_skia::Pixmap;
 enum Section {
     Wifi,
     Bluetooth,
+    Appearance,
     Sound,
     Displays,
     Wallpaper,
@@ -47,6 +48,7 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Wifi), "Wi-Fi", "network-wireless", [10, 132, 255]),
     (Some(Section::Bluetooth), "Bluetooth", "bluetooth", [10, 132, 255]),
     (None, "", "", [0, 0, 0]),
+    (Some(Section::Appearance), "Aparência", "preferences-desktop-theme", [72, 72, 80]),
     (Some(Section::Sound), "Som", "audio-volume-high", [255, 55, 95]),
     (Some(Section::Displays), "Monitores", "video-display", [52, 120, 246]),
     (Some(Section::Wallpaper), "Papel de parede", "preferences-desktop-wallpaper", [100, 210, 255]),
@@ -79,6 +81,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Bloquear a tela após", "bloqueio bloquear senha inatividade tempo sem uso protetor de tela", Section::Lock),
     ("Bloquear ao suspender", "bloqueio suspender dormir senha", Section::Lock),
     ("Apagar a tela após", "apagar tela monitor desligar energia dpms protetor", Section::Lock),
+    ("Aparência", "tema claro escuro modo noturno dark cores", Section::Appearance),
     ("Wi-Fi", "rede internet wireless conectar senha", Section::Wifi),
     ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
     ("Volume de saída", "som audio alto-falante volume", Section::Sound),
@@ -762,6 +765,28 @@ impl Settings {
         ui.note("O relógio fica sempre na barra. Itens escondidos continuam nas Configurações e na central de controle.");
     }
 
+    /// Claro ou escuro (`[appearance] theme`): os apps do mide mudam na hora; os apps
+    /// GTK e Qt abertos depois também (`mide::appearance`).
+    fn appearance(&mut self, ui: &mut Ui) {
+        ui.title("Aparência");
+        let options = ["Claro".to_string(), "Escuro".to_string()];
+        let mut chosen = usize::from(mide::kit::system_dark());
+        ui.card(|ui| {
+            if ui.dropdown("Aparência", &options, &mut chosen).changed() {
+                let value = (chosen == 1).then(|| Value::Text("dark".into()));
+                match settings_file::set("appearance", "theme", value) {
+                    Ok(()) => {
+                        tracing::info!("aparência: {}", options[chosen]);
+                        ask_compositor("reload");
+                        mide::appearance::apply(true);
+                    }
+                    Err(err) => tracing::warn!("aparência não gravada: {err}"),
+                }
+            }
+        });
+        ui.note("Os apps do mide mudam na hora. Apps GTK e Qt seguem a escolha quando são abertos.");
+    }
+
     fn effects(&mut self, ui: &mut Ui) {
         ui.title("Efeitos");
         ui.card(|ui| {
@@ -1186,6 +1211,7 @@ impl App for Settings {
             match self.section {
                 Section::Wifi => self.wifi(ui),
                 Section::Bluetooth => self.bluetooth(ui),
+                Section::Appearance => self.appearance(ui),
                 Section::Sound => self.sound(ui),
                 Section::Displays => self.displays(ui),
                 Section::Wallpaper => self.wallpaper(ui),
@@ -1438,6 +1464,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     let section = match std::env::args().nth(1).as_deref() {
         Some("bluetooth") => Section::Bluetooth,
+        Some("appearance") => Section::Appearance,
         Some("sound") => Section::Sound,
         Some("displays") => Section::Displays,
         Some("wallpaper") => Section::Wallpaper,

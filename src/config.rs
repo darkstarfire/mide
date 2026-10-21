@@ -85,6 +85,7 @@ struct FileConfig {
     input: Input,
     lock: Lock,
     opacity: Opacity,
+    appearance: Appearance,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -188,6 +189,14 @@ impl Default for Lock {
     fn default() -> Self {
         Self { idle_minutes: 5, on_suspend: true, blank_minutes: 10 }
     }
+}
+
+/// Aparência, na seção `[appearance]`: `theme = "dark"` deixa o mide escuro (barras de
+/// título, apps do mide-ui, apps GTK e Qt da sessão).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct Appearance {
+    theme: String,
 }
 
 /// Teclado, na seção `[keyboard]` do arquivo.
@@ -363,11 +372,14 @@ pub struct Config {
     pub monitors: Monitors,
     pub input: Input,
     pub lock: Lock,
+    /// Tema escuro (`[appearance] theme = "dark"`).
+    pub dark: bool,
 }
 
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
+        let mut dark = false;
         let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
@@ -380,6 +392,7 @@ impl Config {
                 let input = std::mem::take(&mut file.input);
                 let lock = std::mem::take(&mut file.lock);
                 let opacity = std::mem::take(&mut file.opacity);
+                dark = file.appearance.theme == "dark";
                 (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock, opacity)
             }
             _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default(), Opacity::default()),
@@ -392,6 +405,7 @@ impl Config {
         config.input = input;
         config.lock = lock;
         config.opacity = opacity;
+        config.dark = dark;
         Ok(config)
     }
 
@@ -424,6 +438,7 @@ impl Config {
             input: Input::default(),
             lock: Lock::default(),
             opacity: Opacity::default(),
+            dark: false,
         })
     }
 

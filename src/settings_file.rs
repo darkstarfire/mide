@@ -121,26 +121,28 @@ pub fn bar_item(key: &str) -> bool {
     flag("bar", key, true)
 }
 
-/// Opção ligada/desligada de `[section]`, com o valor padrão quando falta. Guarda o
-/// arquivo lido e só relê quando ele muda: pode ser chamado a cada quadro.
+/// Opção ligada/desligada de `[section]`, com o valor padrão quando falta. Pode ser
+/// chamado a cada quadro (ver `cached`).
 pub fn flag(section: &str, key: &str, default: bool) -> bool {
+    match cached(section, key) {
+        Some(Value::Bool(on)) => on,
+        _ => default,
+    }
+}
+
+/// Lê um valor guardando o arquivo lido: só relê quando ele muda.
+pub fn cached(section: &str, key: &str) -> Option<Value> {
     use std::sync::Mutex;
     type Cache = Option<(Option<std::time::SystemTime>, String)>;
     static CACHE: Mutex<Cache> = Mutex::new(None);
     let path = config_path();
     let mtime = path.as_ref().and_then(|p| fs::metadata(p).ok()?.modified().ok());
-    let Ok(mut cache) = CACHE.lock() else {
-        return default;
-    };
+    let mut cache = CACHE.lock().ok()?;
     if cache.as_ref().is_none_or(|(m, _)| *m != mtime) {
         let text = path.and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
         *cache = Some((mtime, text));
     }
-    let text = cache.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
-    match get_in_text(text, section, key) {
-        Some(Value::Bool(on)) => on,
-        _ => default,
-    }
+    get_in_text(cache.as_ref().map(|(_, t)| t.as_str()).unwrap_or(""), section, key)
 }
 
 #[cfg(test)]

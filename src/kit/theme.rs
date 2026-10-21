@@ -30,6 +30,18 @@ pub struct Theme {
     /// Fundo de botões comuns e de itens sob o ponteiro.
     pub control: Rgba,
     pub hover: Rgba,
+    /// Base dos tons de contraste (trilhos, bordas de campos, listras, barras de
+    /// rolagem): preto no tema claro, branco no escuro; a transparência vem de quem usa
+    /// (`Theme::shade`).
+    pub ink: Rgba,
+    /// Fundo dos menus de contexto e listas suspensas.
+    pub menu: Rgba,
+    /// Ações destrutivas (Apagar, Mover para a Lixeira).
+    pub danger: Rgba,
+    /// Barra lateral sobre o vidro (o desfoque aparece através dela).
+    pub sidebar_glass: Rgba,
+    /// Tema escuro (apps que desenham por conta própria escolhem as cores por aqui).
+    pub dark: bool,
     /// Cantos dos cartões e dos controles.
     pub radius: f32,
     pub control_radius: f32,
@@ -59,6 +71,11 @@ impl Default for Theme {
             on_accent: [255, 255, 255, 255],
             control: [0, 0, 0, 16],
             hover: [0, 0, 0, 28],
+            ink: [0, 0, 0, 255],
+            menu: [246, 246, 248, 245],
+            danger: [210, 40, 40, 255],
+            sidebar_glass: [248, 248, 250, 178],
+            dark: false,
             radius: 10.0,
             control_radius: 7.0,
             font: 13.5,
@@ -69,6 +86,52 @@ impl Default for Theme {
             padding: 24.0,
         }
     }
+}
+
+impl Theme {
+    /// Tema escuro do mide: fundos grafite, texto claro e o mesmo azul de destaque
+    /// (um pouco mais claro, para ler bem sobre o escuro).
+    pub fn dark() -> Self {
+        Self {
+            background: [30, 30, 32, 255],
+            sidebar: [40, 40, 44, 255],
+            card: [44, 44, 48, 255],
+            line: [255, 255, 255, 26],
+            text: [236, 236, 240, 255],
+            text_secondary: [152, 152, 160, 255],
+            tile_text: [236, 236, 240, 255],
+            accent: [30, 125, 245, 255],
+            on_accent: [255, 255, 255, 255],
+            control: [255, 255, 255, 22],
+            hover: [255, 255, 255, 34],
+            ink: [255, 255, 255, 255],
+            menu: [44, 44, 48, 245],
+            danger: [255, 95, 85, 255],
+            sidebar_glass: [36, 36, 40, 178],
+            dark: true,
+            ..Self::default()
+        }
+    }
+
+    /// Tema escolhido em Configurações → Aparência (`[appearance] theme` no
+    /// `config.toml`: "light" ou "dark").
+    pub fn system() -> Self {
+        if system_dark() {
+            Self::dark()
+        } else {
+            Self::default()
+        }
+    }
+
+    /// Tom de contraste com a transparência `alpha` (preto no claro, branco no escuro).
+    pub fn shade(&self, alpha: u8) -> Rgba {
+        [self.ink[0], self.ink[1], self.ink[2], alpha]
+    }
+}
+
+/// O tema da sessão é o escuro.
+pub fn system_dark() -> bool {
+    matches!(crate::settings_file::cached("appearance", "theme"), Some(crate::settings_file::Value::Text(s)) if s == "dark")
 }
 
 /// Converte para a cor do tiny-skia.

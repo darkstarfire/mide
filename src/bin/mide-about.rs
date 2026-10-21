@@ -130,7 +130,11 @@ impl About {
         let Some(mut pixmap) = Pixmap::new(width, height) else {
             return;
         };
-        pixmap.fill(tiny_skia::Color::from_rgba8(246, 246, 248, 255));
+        // Cores do tema do mide-ui (claro ou escuro, como nas Configurações).
+        let theme = mide::kit::Theme::system();
+        let [br, bg, bb, _] = theme.background;
+        pixmap.fill(tiny_skia::Color::from_rgba8(br, bg, bb, 255));
+        let [ir, ig, ib, _] = theme.text;
         let cx = width as f32 / 2.0;
         // Conteúdo centralizado na vertical quando a janela fica mais alta.
         let top = ((height as f32 - HEIGHT as f32) / 2.0).max(0.0);
@@ -141,7 +145,7 @@ impl About {
         // Marca grande do mide no topo.
         if let Some(ring) = PathBuilder::from_circle(cx, 52.0, 22.0) {
             let mut paint = Paint::default();
-            paint.set_color(rgba(30, 30, 34, 255));
+            paint.set_color(rgba(ir, ig, ib, 255));
             paint.anti_alias = true;
             let stroke = Stroke {
                 width: 6.0,
@@ -151,17 +155,17 @@ impl About {
         }
         if let Some(dot) = PathBuilder::from_circle(cx + 7.0, 45.0, 7.0) {
             let mut paint = Paint::default();
-            paint.set_color(rgba(30, 30, 34, 255));
+            paint.set_color(rgba(ir, ig, ib, 255));
             paint.anti_alias = true;
             pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
         }
 
         let title = "mide";
         let tw = self.text.measure(title, 24.0, FontWeight::Bold);
-        self.text.draw(pixmap, title, cx - tw / 2.0, 86.0, 24.0, FontWeight::Bold, [20, 20, 24, 255]);
+        self.text.draw(pixmap, title, cx - tw / 2.0, 86.0, 24.0, FontWeight::Bold, theme.text);
         let version = format!("Versão {}", env!("CARGO_PKG_VERSION"));
         let vw = self.text.measure(&version, 12.5, FontWeight::Regular);
-        self.text.draw(pixmap, &version, cx - vw / 2.0, 118.0, 12.5, FontWeight::Regular, [120, 120, 126, 255]);
+        self.text.draw(pixmap, &version, cx - vw / 2.0, 118.0, 12.5, FontWeight::Regular, theme.text_secondary);
 
         // Especificações em duas colunas, centralizadas: rótulos alinhados à direita
         // e valores à esquerda, cortados com reticências se a janela for estreita.
@@ -181,9 +185,9 @@ impl About {
         let mut y = 152.0;
         for (label, value) in &info {
             let lw = self.text.measure(label, 12.5, FontWeight::Semibold);
-            self.text.draw(pixmap, label, label_right - lw, y, 12.5, FontWeight::Semibold, [40, 40, 46, 255]);
+            self.text.draw(pixmap, label, label_right - lw, y, 12.5, FontWeight::Semibold, theme.text);
             let value = fit(&mut self.text, value, value_max);
-            self.text.draw(pixmap, &value, value_x, y, 12.5, FontWeight::Regular, [70, 70, 78, 255]);
+            self.text.draw(pixmap, &value, value_x, y, 12.5, FontWeight::Regular, theme.text_secondary);
             y += 24.0;
         }
         pixmap_final.draw_pixmap(0, top as i32, pixmap.as_ref(), &Default::default(), Transform::identity(), None);

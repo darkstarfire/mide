@@ -805,3 +805,5 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Manual (sessão de verdade): Discord, Steam, Nextcloud, Telegram ou o `nm-applet --indicator` mostram o ícone; clique e menu funcionam.
 - `tests/ui.sh`: "menu global: app GTK no Wayland" (no barramento da sessão, com `python3-gi`: a barra mostra Arquivo, Exibir, Ajuda do `tests/apps/gtk-menu-teste.py` e "Abrir" chega ao app); `cargo test` `atalhos_do_gtk`.
 - Manual (sessão de verdade): gedit/Gnome Text Editor, Inkscape e outros apps GTK com barra de menus mostram os menus na barra do mide; apps Qt com o tema do KDE (`QT_QPA_PLATFORMTHEME=kde`) também.
+- `tests/ui.sh`: "Aparência: tema escuro grava e a janela muda na hora" (Configurações → Aparência → Escuro; o fundo da janela fica (30, 30, 32) sem reabrir); `cargo test` `banco_do_tema_escuro`.
+- Manual (sessão de verdade): trocar para Escuro e ver barras de título, barra superior, menus, central de controle e notificações escuras; abrir um app GTK (gedit, Nautilus) e um Qt depois da troca: escuros; voltar para Claro.
