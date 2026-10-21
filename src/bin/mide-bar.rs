@@ -204,6 +204,8 @@ enum MenuId {
     Bluetooth,
     /// Menu da bateria (lista).
     Battery,
+    /// Seletor do layout de teclado (lista), com mais de um layout nas Configurações.
+    Layout,
     /// Central de controle (Wi-Fi, Bluetooth, Não perturbe, brilho, som).
     Control,
     /// Engrenagem: abre as Configurações (não é menu).
@@ -310,7 +312,9 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
             entry("Minimizar", "", window("minimize")),
             entry("Zoom", "", window("zoom")),
         ],
-        MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("power")))],
+        MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("energy")))],
+        // Itens vêm dos layouts escolhidos (`Bar::layout_items`).
+        MenuId::Layout => Vec::new(),
         // Itens vêm do app (`Bar::native_items`).
         MenuId::Native(_) | MenuId::Tray(_) => Vec::new(),
         // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
@@ -372,6 +376,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tray_icons: HashMap::new(),
         native: None,
         native_gtk: None,
+        layout_active: None,
         native_failed: None,
         battery: None,
         names: AppNames::load(),
@@ -765,6 +770,9 @@ struct Bar {
     tray_version: u64,
     tray_icons: HashMap<String, Option<Pixmap>>,
     native: Option<(String, String, Vec<mide::appmenu::Item>)>,
+    /// Layout de teclado ativo (número na lista das Configurações), quando o seletor
+    /// aparece na barra.
+    layout_active: Option<u32>,
     /// O menu em foco é de um app GTK (`org.gtk.Menus`, avisado ao compositor pelo
     /// `gtk_shell1`): onde ele está e as ações dos itens (o `id` de cada item é o
     /// número da ação). Sem isso, o `native` é um `dbusmenu`.
@@ -895,6 +903,21 @@ impl Bar {
         dbus_entries(&children, &MenuAction::Native)
     }
 
+    /// Seletor de layout: os layouts escolhidos (o ativo marcado) e as Configurações.
+    fn layout_items(&self) -> Vec<MenuItem> {
+        let mut items: Vec<MenuItem> = mide::keyboard_layouts::configured()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let mark = if self.layout_active == Some(i as u32) { "✓ " } else { "    " };
+                entry(format!("{mark}{}", c.name()), "", Some(MenuAction::Compositor(format!("layout {i}"))))
+            })
+            .collect();
+        items.push(MenuItem::Separator);
+        items.push(entry("Configurações de teclado…", "", Some(MenuAction::Settings("keyboard"))));
+        items
+    }
+
     /// Itens do menu de um ícone do tray.
     fn tray_menu_items(&self, index: usize) -> Vec<MenuItem> {
         let (Some(tray), Some(item)) = (&self.tray, self.tray_items.get(index)) else {
@@ -958,6 +981,16 @@ impl Bar {
                 self.close_menu();
             }
             self.items = items;
+            self.draw_bar();
+        }
+        // Layout de teclado ativo (só com o seletor ligado: mais de um layout).
+        let layout_active = if mide::keyboard_layouts::show_in_bar() {
+            ask_compositor("layout").and_then(|l| l.into_iter().next()).and_then(|l| l.trim().parse().ok())
+        } else {
+            None
+        };
+        if layout_active != self.layout_active {
+            self.layout_active = layout_active;
             self.draw_bar();
         }
         let focus_changed = focused_id != self.focused_id;
@@ -1115,6 +1148,27 @@ impl Bar {
             x -= 30.0;
             draw_battery(&mut pixmap, x, cy, level, charging, fg);
             self.titles.push((MenuId::Battery, left, right));
+        }
+        // Layout de teclado (com mais de um nas Configurações): a sigla num contorno,
+        // como no macOS.
+        if let Some(active) = self.layout_active {
+            let layouts = mide::keyboard_layouts::configured();
+            if let Some(choice) = layouts.get(active as usize) {
+                let label = choice.short();
+                let lw = self.text.measure(&label, FONT - 1.5, FontWeight::Semibold);
+                let right = x - 7.0;
+                let left = right - lw - 22.0;
+                highlight(&mut pixmap, MenuId::Layout, left, right);
+                if let Some(path) = rounded_rect(left + 4.5, 6.5, right - left - 9.0, fh - 13.0, 4.0) {
+                    let mut stroke = Paint::default();
+                    stroke.anti_alias = true;
+                    stroke.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+                    pixmap.stroke_path(&path, &stroke, &Stroke { width: 1.2, ..Default::default() }, Transform::identity(), None);
+                }
+                self.text.draw(&mut pixmap, &label, left + 11.0, text_y + 0.5, FONT - 1.5, FontWeight::Semibold, fg);
+                self.titles.push((MenuId::Layout, left, right));
+                x = left + 7.0;
+            }
         }
         let icons: Vec<MenuId> = [
             (self.status.bluetooth.is_some() && shown("bluetooth"), MenuId::Bluetooth),
@@ -1288,6 +1342,7 @@ impl Bar {
         let mut items = match id {
             MenuId::Native(i) => self.native_items(i as usize),
             MenuId::Tray(i) => self.tray_menu_items(i as usize),
+            MenuId::Layout => self.layout_items(),
             _ => menu_items(id, &app),
         };
         if id == MenuId::Battery {
@@ -1309,7 +1364,7 @@ impl Bar {
             // Confirmações: no meio da tela.
             (_, _) if id.confirm() => (self.width as f32 - id.custom_width()) / 2.0,
             // Painéis da direita: centrados no ícone, sem sair da tela.
-            (_, Some((x0, x1))) if id.custom() || id == MenuId::Battery => {
+            (_, Some((x0, x1))) if id.custom() || id == MenuId::Battery || id == MenuId::Layout => {
                 let w = if id.custom() { id.custom_width() } else { MENU_MIN_W };
                 ((x0 + x1) / 2.0 - w / 2.0).min(self.width as f32 - w - 8.0).max(8.0)
             }

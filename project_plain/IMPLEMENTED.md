@@ -1167,3 +1167,11 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - `[monitors] mirror = true` (Configurações → Monitores → "Espelhar telas", no fim da página, vale na hora): todas as telas ficam em (0, 0); as que não são a principal ganham a escala que deixa a largura lógica igual à da principal (uma tela de 1920 espelhando uma de 1366 fica em 1,41, nítida), e ao desligar voltam à escala das Configurações.
 - As telas espelhadas desenham a barra, a dock, a área de trabalho e as prévias da principal (`State::layer_output`); o ponteiro e os cliques nas camadas usam a principal (`output_at`).
+
+## Vários layouts de teclado e o seletor na barra (B18), grupos de atalhos que recolhem (B19)
+
+- Configurações → Teclado: a lista dos layouts escolhidos (sem nenhum, aparece o do sistema), "Remover" em cada um (com mais de um) e "Adicionar layout" (o primeiro acréscimo mantém o do sistema na frente). Grava `[keyboard] layouts = "br,us:intl"` (`mide::keyboard_layouts`; o formato antigo de um layout só continua valendo).
+- Compositor: o mapa de teclas tem um grupo por layout; a ação `next_layout` (Ctrl+Super+Espaço; no estilo Mac, Ctrl+⌥+Espaço, como no macOS) passa ao próximo; o canal de controle tem `layout` (o ativo) e `layout N` (trocar).
+- Barra superior: com mais de um layout, a sigla do atual ("BR", "US", "US-I") num contorno, à esquerda do relógio; o clique abre a lista com o ativo marcado e "Configurações de teclado…". Interruptor "Mostrar o layout na barra superior" em Teclado (`[keyboard] show_layout`).
+- Os grupos da lista de atalhos (Janelas, Launcher e busca, Apps, Sistema) recolhem e expandem pelo título, com a setinha e o número de atalhos (`ui.disclosure`, componente novo do mide-ui); o estado fica em `[settings] shortcuts_closed`; buscando, os grupos com resultado ficam abertos.
+- Corrigido: "Configurações de bateria…" abria o Wi-Fi (agora abre Energia).

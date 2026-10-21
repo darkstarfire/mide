@@ -97,6 +97,24 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 None => "\n".into(),
             }
         }
+        // Layout de teclado ativo (`layout`: o número, a partir de 0) e trocar
+        // (`layout 1`), para o seletor da barra.
+        Some("layout") => match state.seat.get_keyboard() {
+            Some(keyboard) => {
+                if let Some(n) = words.next().and_then(|w| w.parse::<u32>().ok()) {
+                    keyboard.with_xkb_state(state, |mut ctx| {
+                        let count = ctx.xkb().lock().unwrap().layouts().count() as u32;
+                        if n < count {
+                            ctx.set_layout(smithay::input::keyboard::Layout(n));
+                        }
+                    });
+                    tracing::info!("teclado: layout {n} pela barra");
+                }
+                let active = keyboard.with_xkb_state(state, |ctx| ctx.xkb().lock().unwrap().active_layout().0);
+                format!("{active}\n")
+            }
+            None => "\n".into(),
+        },
         // A barra pergunta se há algo para ela (a confirmação do botão de ligar).
         Some("bar_request") => format!("{}\n", state.bar_request.take().unwrap_or("")),
         Some("icons") => {

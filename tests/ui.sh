@@ -481,23 +481,46 @@ else
     echo "FALHA Aparência: tema escuro"; FAIL=$((FAIL + 1))
 fi
 sed -i '/^\[appearance\]/d; /^theme = "dark"/d' "$SCFG/mide/config.toml"
-# Teclado → Layout em (768, 162) (apertar e soltar); "Inglês (EUA)" em (680, 253).
-# Grava no config.toml e o compositor troca o layout na hora.
-check "Teclado: escolher o layout troca na hora" 'teclado: layout us' "300 move 768 162; 310 press 768 162; 320 release 768 162; 370 click 680 253; 420 list" "$SETTINGS keyboard"
-if grep -q 'layout = "us"' "$SCFG/mide/config.toml"; then
-    echo "ok    Teclado: layout gravado no config.toml"; PASS=$((PASS + 1))
+# Teclado → "Adicionar layout" em (778, 204) (apertar e soltar); "Inglês (EUA)" em
+# (605, 268). A lista fica com o do sistema e o novo, e o compositor monta os dois.
+# (A linha do layout não sai no resumo do cenário: confere no mide.log.)
+timeout 150 "$SCEN" "300 move 778 204; 310 press 778 204; 320 release 778 204; 370 click 605 268; 420 list; 480 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+if grep -aq "teclado: layout br,us" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log"; then
+    echo "ok    Teclado: adicionar layout vale na hora"; PASS=$((PASS + 1))
 else
-    echo "FALHA Teclado: layout gravado no config.toml"; FAIL=$((FAIL + 1))
+    echo "FALHA Teclado: adicionar layout vale na hora"; FAIL=$((FAIL + 1))
 fi
-# Com o layout dos EUA, a tecla do acento do ABNT2 escreve "[".
+if grep -q 'layouts = "br,us"' "$SCFG/mide/config.toml"; then
+    echo "ok    Teclado: layouts gravados no config.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA Teclado: layouts gravados no config.toml"; FAIL=$((FAIL + 1))
+fi
+# Com dois layouts, Ctrl+Super+Espaço passa ao dos EUA: a tecla do acento do ABNT2
+# escreve "[".
 : > "$SCFG/layout.txt"
-timeout 150 "$SCEN" "400 click 400 300; 420 key leftbrace; 430 key a; 460 combo ctrl+s; 510 list" -- "$PWD/target/debug/mide-text '$SCFG/layout.txt'" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 400 300; 420 combo ctrl+super+space; 440 key leftbrace; 450 key a; 480 combo ctrl+s; 540 list" -- "$PWD/target/debug/mide-text '$SCFG/layout.txt'" >/dev/null 2>&1
 if [ "$(cat "$SCFG/layout.txt")" = "[a" ]; then
-    echo "ok    Teclado: o layout escolhido vale ao digitar"; PASS=$((PASS + 1))
+    echo "ok    Teclado: Ctrl+Super+Espaço troca o layout"; PASS=$((PASS + 1))
 else
-    echo "FALHA Teclado: o layout escolhido vale ao digitar ($(cat "$SCFG/layout.txt"))"; FAIL=$((FAIL + 1))
+    echo "FALHA Teclado: Ctrl+Super+Espaço troca o layout ($(cat "$SCFG/layout.txt"))"; FAIL=$((FAIL + 1))
 fi
-sed -i '/^layout = "us"/d' "$SCFG/mide/config.toml"
+# Seletor na barra (B18): "BR" em (1256, 14); no menu, "Inglês (EUA)" em (1190, 78).
+: > "$SCFG/layout.txt"
+timeout 150 "$SCEN" "400 click 1256 14; 440 click 1190 78; 480 click 400 300; 500 key leftbrace; 510 key a; 540 combo ctrl+s; 600 list" -- "$PWD/target/debug/mide-text '$SCFG/layout.txt'" >/dev/null 2>&1
+if [ "$(cat "$SCFG/layout.txt")" = "[a" ]; then
+    echo "ok    barra: seletor de layout troca o layout"; PASS=$((PASS + 1))
+else
+    echo "FALHA barra: seletor de layout troca o layout ($(cat "$SCFG/layout.txt"))"; FAIL=$((FAIL + 1))
+fi
+sed -i '/^layouts = "br,us"/d' "$SCFG/mide/config.toml"
+# Grupos de atalhos recolhem (B19): o título "Janelas" em (330, 347); fica gravado.
+timeout 150 "$SCEN" "300 click 330 347; 360 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+if grep -q 'shortcuts_closed = "Janelas"' "$SCFG/mide/config.toml"; then
+    echo "ok    Teclado: grupo de atalhos recolhe (e fica lembrado)"; PASS=$((PASS + 1))
+else
+    echo "FALHA Teclado: grupo de atalhos recolhe"; FAIL=$((FAIL + 1))
+fi
+sed -i '/^shortcuts_closed = /d' "$SCFG/mide/config.toml"
 # Energia: "Suspender o computador após" em (783, 162) (apertar e soltar); "30 minutos"
 # é o terceiro item (y=253).
 timeout 150 "$SCEN" "300 move 783 162; 310 press 783 162; 320 release 783 162; 370 click 700 253; 420 list" -- "$SETTINGS energy" >/dev/null 2>&1
@@ -576,7 +599,7 @@ open(p, "w").write(s)
 PY
 # Busca na barra lateral (campo em (158, 104)): "teclas" acha "Teclas no estilo Mac"; o
 # resultado (primeira linha, y=158) abre a seção Teclado, com o interruptor em (807, 169).
-timeout 150 "$SCEN" "400 click 158 104; 420 type teclas; 460 click 500 158; 500 click 807 169; 560 list" -- "$SETTINGS" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 158 104; 420 type teclas; 460 click 500 158; 500 click 807 253; 560 list" -- "$SETTINGS" >/dev/null 2>&1
 if grep -q "mac_style = true" "$SCFG/mide/config.toml"; then
     echo "ok    busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; PASS=$((PASS + 1))
 else
@@ -586,7 +609,7 @@ sed -i '/mac_style = true/d' "$SCFG/mide/config.toml"
 # Teclado → Atalhos (A9): busca em (600, 224); buscando "fechar", "Fechar a janela"
 # (Ctrl ⇧ Q) fica em (500, 340) e "Fechar a janela" (Alt F4) em (500, 298); no
 # diálogo, "Gravar…" em (525, 315). O compositor grava a combinação apertada.
-timeout 150 "$SCEN" "400 click 600 224; 410 type fechar; 440 click 500 340; 470 click 525 315; 500 combo ctrl+alt+k; 560 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 600 307; 410 type fechar; 440 click 500 434; 470 click 525 315; 500 combo ctrl+alt+k; 560 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if grep -q '"ctrl+alt+k" = "close_window"' "$SCFG/mide/config.toml" && grep -q '"ctrl+shift+q" = "none"' "$SCFG/mide/config.toml"; then
     echo "ok    gravar atalho nas Configurações troca a combinação"; PASS=$((PASS + 1))
 else
@@ -595,7 +618,7 @@ fi
 check "atalho gravado vale no compositor" "fechar janela pedido pelo atalho" "400 combo ctrl+alt+k; 460 list" "$SETTINGS keyboard"
 check_count "combinação antiga desligada (a janela continua aberta)" 'janela "Configurações do Sistema"' 1 "400 combo ctrl+shift+q; 460 list" "$SETTINGS keyboard"
 # Combinação já usada (Ctrl+Espaço é do buscador): pede confirmação, não grava nem abre o buscador.
-check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 600 224; 410 type fechar; 440 click 500 298; 470 click 525 315; 500 combo ctrl+space; 560 list" "$SETTINGS keyboard"
+check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 600 307; 410 type fechar; 440 click 500 392; 470 click 525 315; 500 combo ctrl+space; 560 list" "$SETTINGS keyboard"
 if ! grep -q '"ctrl+space" = "close_window"' "$SCFG/mide/config.toml"; then
     echo "ok    combinação de outra ação pede confirmação"; PASS=$((PASS + 1))
 else
@@ -603,7 +626,7 @@ else
 fi
 # "Restaurar os padrões" (buscando algo sem resultado, a lista some) em (510, 292): a
 # seção de atalhos sai do arquivo.
-timeout 150 "$SCEN" "400 click 600 224; 410 type zzz; 440 click 510 292; 500 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 600 307; 410 type zzz; 440 click 510 375; 500 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if ! grep -q "keybindings" "$SCFG/mide/config.toml"; then
     echo "ok    restaurar os atalhos padrão"; PASS=$((PASS + 1))
 else
@@ -933,7 +956,7 @@ SCENARIO_WAIT=16 check "bloqueia sozinho depois do tempo sem uso" "autoteste: te
 # e o botão de ligar configurado para suspender.
 printf '[lock]\nidle_minutes = 0\nblank_minutes = 0\n[power]\nsuspend_minutes = 3\n' > "$IDLECFG/mide/config.toml"
 check "Energia: suspende depois do tempo sem uso" "sistema \(teste\): logind Suspend" "200 move 500 400; 600 list"
-printf '[power]\nbutton = "suspend"\n' > "$IDLECFG/mide/config.toml"
+printf '[lock]\nidle_minutes = 0\nblank_minutes = 0\n[power]\nbutton = "suspend"\n' > "$IDLECFG/mide/config.toml"
 check "Energia: botão de ligar configurado para suspender" "sistema \(teste\): logind Suspend" "400 key power; 460 list"
 export XDG_CONFIG_HOME="$OLD_IDLE_CFG"
 unset MIDE_LOCK_IDLE MIDE_IDLE_UNIT

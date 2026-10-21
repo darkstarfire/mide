@@ -1107,6 +1107,53 @@ impl<'a> Ui<'a> {
         self.draw_text(s, rect.0 + 4.0, rect.1, t.font_small, FontWeight::Semibold, t.text_secondary);
     }
 
+    /// Título de grupo que recolhe e expande (setinha à esquerda, como as pastas na
+    /// lista do Arquivos), com um detalhe à direita (por exemplo "12 atalhos"). O
+    /// clique troca `open`; a resposta traz `changed`.
+    pub fn disclosure(&mut self, s: &str, detail: &str, open: &mut bool) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(None, t.font_small * 1.4 + 10.0);
+        let mut r = self.interact(id, rect);
+        if r.clicked {
+            *open = !*open;
+            r.changed = true;
+            self.ctx.repaint = true;
+        }
+        if !self.visible(rect) {
+            return r;
+        }
+        if r.hovered {
+            fill_rounded(self.canvas, rect.0 - 4.0, rect.1, rect.2 + 8.0, rect.3, t.control_radius, color(t.control));
+        }
+        // Setinha: para a direita fechado, para baixo aberto.
+        let (cx, cy) = (rect.0 + 10.0, rect.1 + rect.3 / 2.0);
+        let mut pb = PathBuilder::new();
+        if *open {
+            pb.move_to(cx - 4.0, cy - 2.0);
+            pb.line_to(cx, cy + 2.0);
+            pb.line_to(cx + 4.0, cy - 2.0);
+        } else {
+            pb.move_to(cx - 2.0, cy - 4.0);
+            pb.line_to(cx + 2.0, cy);
+            pb.line_to(cx - 2.0, cy + 4.0);
+        }
+        if let Some(path) = pb.finish() {
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(color(t.text_secondary));
+            let stroke = Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+            self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+        }
+        let ty = rect.1 + (rect.3 - t.font_small * 1.25) / 2.0;
+        self.draw_text(s, rect.0 + 22.0, ty, t.font_small, FontWeight::Semibold, t.text_secondary);
+        if !detail.is_empty() {
+            let dw = self.measure(detail, t.font_small, FontWeight::Regular);
+            self.draw_text(detail, rect.0 + rect.2 - dw - 4.0, ty, t.font_small, FontWeight::Regular, t.text_secondary);
+        }
+        r
+    }
+
     /// Texto comum (quebrado em linhas se não couber).
     pub fn label(&mut self, s: &str) {
         let t = self.ctx.theme.clone();

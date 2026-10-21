@@ -413,6 +413,16 @@ fn run_action(state: &mut State, action: Action) {
         Action::RestoreMinimized => state.restore_minimized(),
         Action::ToggleLauncher => state.toggle_launcher(),
         Action::ToggleSearch => state.toggle_search(),
+        Action::NextLayout => {
+            if let Some(keyboard) = state.seat.get_keyboard() {
+                let name = keyboard.with_xkb_state(state, |mut ctx| {
+                    ctx.cycle_next_layout();
+                    let xkb = ctx.xkb().lock().unwrap();
+                    xkb.layout_name(xkb.active_layout()).to_string()
+                });
+                tracing::info!("teclado: layout {name}");
+            }
+        }
         // O que fazer vem de Configurações → Energia (`[power] button`).
         Action::PowerButton => match state.config.power.button.as_str() {
             "suspend" => {

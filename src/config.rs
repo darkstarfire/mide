@@ -26,6 +26,8 @@ pub enum Action {
     ToggleLauncher,
     /// Abre o buscador (estilo Spotlight), ou fecha se já estiver aberto.
     ToggleSearch,
+    /// Passa para o próximo layout de teclado (com mais de um nas Configurações).
+    NextLayout,
     /// Janela em foco: maximizar, restaurar (sair de maximizada ou da metade da tela),
     /// alternar entre os dois, minimizar e ocupar a metade esquerda ou direita.
     Maximize,
@@ -229,13 +231,20 @@ pub struct Keyboard {
     /// (`/etc/default/keyboard`). `variant` é a variante dele (`"intl"`).
     pub layout: String,
     pub variant: String,
+    /// Vários layouts, em ordem (`"br,us:intl"`): o mapa tem um grupo por layout e o
+    /// atalho `next_layout` troca entre eles. Vale no lugar de `layout`/`variant`.
+    pub layouts: String,
 }
 
 impl Keyboard {
-    /// Teclado em uso: o do sistema, com o layout das Configurações por cima.
+    /// Teclado em uso: o do sistema, com o(s) layout(s) das Configurações por cima.
     pub fn effective(&self) -> SystemKeyboard {
         let mut kb = system_keyboard();
-        if !self.layout.trim().is_empty() {
+        let list = mide::keyboard_layouts::parse(&self.layouts);
+        if !list.is_empty() {
+            kb.layout = list.iter().map(|c| c.layout.as_str()).collect::<Vec<_>>().join(",");
+            kb.variant = list.iter().map(|c| c.variant.as_str()).collect::<Vec<_>>().join(",");
+        } else if !self.layout.trim().is_empty() {
             kb.layout = self.layout.trim().to_string();
             kb.variant = self.variant.trim().to_string();
         }
@@ -372,6 +381,9 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+shift+space", "toggle_launcher"),
     // Buscador do mide (estilo Spotlight).
     ("ctrl+space", "toggle_search"),
+    // Próximo layout de teclado (como o Ctrl+⌥+Espaço do Mac; no estilo Mac o ⌥ é a
+    // tecla Super). Não colide com o buscador nem com o launcher.
+    ("ctrl+super+space", "next_layout"),
     // Captura de tela do mide (seleção, janela ou tela inteira, com marcações).
     ("print", "launch:mide-screenshot"),
     // Como no Mac: ⌘⇧3 salva a tela inteira e ⌘⇧4 uma área (a imagem também vai para
@@ -608,6 +620,9 @@ fn parse_action(action: &str) -> Result<Action, Box<dyn Error>> {
     if action == "toggle_search" {
         return Ok(Action::ToggleSearch);
     }
+    if action == "next_layout" {
+        return Ok(Action::NextLayout);
+    }
     let simple = [
         ("maximize", Action::Maximize),
         ("unmaximize", Action::Unmaximize),
@@ -641,6 +656,7 @@ impl fmt::Display for Action {
             Action::RestoreMinimized => write!(f, "restore_minimized"),
             Action::ToggleLauncher => write!(f, "toggle_launcher"),
             Action::ToggleSearch => write!(f, "toggle_search"),
+            Action::NextLayout => write!(f, "next_layout"),
             Action::Maximize => write!(f, "maximize"),
             Action::Unmaximize => write!(f, "unmaximize"),
             Action::ToggleMaximize => write!(f, "toggle_maximize"),

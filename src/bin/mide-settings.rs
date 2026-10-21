@@ -127,22 +127,6 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Sobre este computador", "sistema versao memoria processador", Section::About),
 ];
 
-/// Layouts de teclado oferecidos: nome, layout e variante do xkb. O primeiro usa o
-/// layout do sistema (`/etc/default/keyboard`).
-const KEYBOARD_LAYOUTS: &[(&str, &str, &str)] = &[
-    ("O do sistema", "", ""),
-    ("Português (Brasil, ABNT2)", "br", ""),
-    ("Inglês (EUA)", "us", ""),
-    ("Inglês (EUA, internacional, com acentos)", "us", "intl"),
-    ("Inglês (EUA, internacional AltGr)", "us", "altgr-intl"),
-    ("Inglês (Reino Unido)", "gb", ""),
-    ("Português (Portugal)", "pt", ""),
-    ("Espanhol (Espanha)", "es", ""),
-    ("Espanhol (América Latina)", "latam", ""),
-    ("Francês", "fr", ""),
-    ("Alemão", "de", ""),
-    ("Italiano", "it", ""),
-];
 
 const DOCK_MIN: f32 = 32.0;
 const DOCK_MAX: f32 = 64.0;
@@ -191,6 +175,8 @@ struct Settings {
     shortcut_query: String,
     /// Idiomas instalados (`locale -a`), lidos ao abrir Idioma e região.
     locales: Vec<String>,
+    /// Grupos de atalhos recolhidos (Configurações → Teclado).
+    closed_groups: Vec<String>,
 }
 
 impl Settings {
@@ -227,6 +213,10 @@ impl Settings {
             screens_revert: None,
             shortcut_query: String::new(),
             locales: Vec::new(),
+            closed_groups: match settings_file::get("settings", "shortcuts_closed") {
+                Some(Value::Text(t)) => t.split(',').filter(|g| !g.is_empty()).map(str::to_string).collect(),
+                _ => Vec::new(),
+            },
             volume: 0.0,
             dock_size: match settings_file::get("dock", "icon_size") {
                 Some(Value::Int(n)) => (n as f32).clamp(DOCK_MIN, DOCK_MAX),
@@ -934,25 +924,36 @@ impl Settings {
     fn keyboard(&mut self, ui: &mut Ui) {
         ui.title("Teclado");
         let mut mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
-        // Layout: o escolhido aqui ou o do sistema.
-        let text = |key: &str| match settings_file::get("keyboard", key) {
-            Some(Value::Text(t)) => t,
-            _ => String::new(),
-        };
-        let (layout, variant) = (text("layout"), text("variant"));
-        let names: Vec<String> = KEYBOARD_LAYOUTS.iter().map(|(n, ..)| n.to_string()).collect();
-        let mut layout_i = KEYBOARD_LAYOUTS.iter().position(|(_, l, v)| *l == layout && *v == variant).unwrap_or(0);
+        // Layouts: a lista escolhida (vazia: o do sistema). Com mais de um, o atalho
+        // Ctrl+Super+Espaço e o seletor da barra trocam entre eles.
+        let mut list = mide::keyboard_layouts::configured();
+        let shown = if list.is_empty() { vec![mide::keyboard_layouts::system()] } else { list.clone() };
+        let mut add_options = vec!["Escolher…".to_string()];
+        let addable: Vec<&(&str, &str, &str)> = mide::keyboard_layouts::LAYOUTS.iter().filter(|(_, l, v)| !shown.iter().any(|c| c.layout == *l && c.variant == *v)).collect();
+        add_options.extend(addable.iter().map(|(n, ..)| n.to_string()));
+        let mut add_i = 0;
+        let mut show_bar = settings_file::flag("keyboard", "show_layout", true);
+        let mut changed = false;
         ui.card(|ui| {
-            if ui.dropdown("Layout", &names, &mut layout_i).changed() {
-                let (_, l, v) = KEYBOARD_LAYOUTS[layout_i];
-                let saved = settings_file::set("keyboard", "layout", (!l.is_empty()).then(|| Value::Text(l.into())))
-                    .and_then(|_| settings_file::set("keyboard", "variant", (!v.is_empty()).then(|| Value::Text(v.into()))));
-                match saved {
-                    Ok(()) => {
-                        tracing::info!("teclado: layout {}", names[layout_i]);
-                        ask_compositor("reload");
-                    }
-                    Err(err) => tracing::warn!("layout não gravado: {err}"),
+            for (i, choice) in shown.iter().enumerate() {
+                let detail = if shown.len() > 1 { "Remover" } else { "" };
+                let label = if list.is_empty() { format!("{} (do sistema)", choice.name()) } else { choice.name() };
+                if ui.list_item(&label, detail).clicked() && shown.len() > 1 {
+                    list.remove(i);
+                    changed = true;
+                }
+            }
+            if ui.dropdown("Adicionar layout", &add_options, &mut add_i).changed() && add_i > 0 {
+                if list.is_empty() {
+                    list.push(mide::keyboard_layouts::system());
+                }
+                let (_, l, v) = addable[add_i - 1];
+                list.push(mide::keyboard_layouts::Choice { layout: l.to_string(), variant: v.to_string() });
+                changed = true;
+            }
+            if shown.len() > 1 && ui.switch_detail("Mostrar o layout na barra superior", "Sigla do layout atual na barra, com a lista para trocar (Ctrl+Super+Espaço troca também)", &mut show_bar).changed() {
+                if let Err(err) = settings_file::set("keyboard", "show_layout", (!show_bar).then_some(Value::Bool(false))) {
+                    tracing::warn!("opção do teclado não gravada: {err}");
                 }
             }
             let detail = "Command (tecla Alt) faz o papel do Ctrl nos apps e Option (tecla Super/Windows) é o Alt; o Ctrl continua Ctrl. Bloquear: Ctrl+⌘+Q";
@@ -966,6 +967,21 @@ impl Settings {
                 }
             }
         });
+        if changed {
+            // Um layout só volta a ser o do sistema quando é o do sistema.
+            let value = (list.len() > 1 || list.first().is_some_and(|c| *c != mide::keyboard_layouts::system())).then(|| Value::Text(mide::keyboard_layouts::join(&list)));
+            let saved = settings_file::set("keyboard", "layouts", value)
+                .and_then(|_| settings_file::set("keyboard", "layout", None))
+                .and_then(|_| settings_file::set("keyboard", "variant", None));
+            match saved {
+                Ok(()) => {
+                    tracing::info!("teclado: layouts {}", mide::keyboard_layouts::join(&list));
+                    ask_compositor("reload");
+                }
+                Err(err) => tracing::warn!("layouts não gravados: {err}"),
+            }
+            ui.request_repaint();
+        }
         // Busca pelo nome do atalho (ou pela combinação), sem diferenciar acentos.
         let mut query = std::mem::take(&mut self.shortcut_query);
         ui.text_input(&mut query, "Buscar atalho");
@@ -988,7 +1004,24 @@ impl Settings {
                 continue;
             }
             shown += items.len();
-            ui.heading(group);
+            // Grupos recolhem (lembrado em `[settings] shortcuts_closed`); buscando,
+            // os grupos com resultado ficam abertos.
+            let mut open = !wanted.is_empty() || !self.closed_groups.iter().any(|g| g == group);
+            let count = if items.len() == 1 { "1 atalho".to_string() } else { format!("{} atalhos", items.len()) };
+            if ui.disclosure(group, &count, &mut open).changed() && wanted.is_empty() {
+                if open {
+                    self.closed_groups.retain(|g| g != group);
+                } else {
+                    self.closed_groups.push(group.to_string());
+                }
+                let value = (!self.closed_groups.is_empty()).then(|| Value::Text(self.closed_groups.join(",")));
+                if let Err(err) = settings_file::set("settings", "shortcuts_closed", value) {
+                    tracing::warn!("grupos de atalhos não gravados: {err}");
+                }
+            }
+            if !open {
+                continue;
+            }
             ui.card(|ui| {
                 for (title, combo, action) in &items {
                     if ui.list_item(title, &pretty_combo(combo, mac)).clicked() {
@@ -1641,6 +1674,7 @@ const FIXED_ACTIONS: &[&str] = &[
     "show_desktop",
     "toggle_launcher",
     "toggle_search",
+    "next_layout",
     "lock_screen",
     "quit",
 ];
@@ -1652,7 +1686,7 @@ const SHORTCUT_GROUPS: [&str; 4] = ["Janelas", "Launcher e busca", "Apps", "Sist
 fn shortcut_group(action: &str) -> &'static str {
     match action {
         "toggle_launcher" | "toggle_search" => "Launcher e busca",
-        "lock_screen" | "quit" | "launch:mide-screenshot" => "Sistema",
+        "lock_screen" | "quit" | "launch:mide-screenshot" | "next_layout" => "Sistema",
         a if a.starts_with("launch:") => "Apps",
         _ => "Janelas",
     }
@@ -1685,6 +1719,7 @@ fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
         "restore_minimized" => "Restaurar a última janela minimizada".into(),
         "toggle_launcher" => "Abrir ou fechar o launcher".into(),
         "toggle_search" => "Abrir ou fechar o buscador".into(),
+        "next_layout" => "Próximo layout de teclado".into(),
         "switch_windows" => "Alternar janelas".into(),
         "switch_windows_back" => "Alternar janelas (para trás)".into(),
         "maximize" => "Maximizar a janela".into(),
