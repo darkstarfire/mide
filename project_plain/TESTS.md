@@ -777,3 +777,20 @@ Preparação: `cargo build` e `sudo tests/sessao-dev.sh`. Encerrar a sessão atu
 - Ícones (B15): `cargo test --test icons` (tema do mide antes do hicolor; nomes genéricos de reserva); `tests/ui.sh` "dock: ícones dos apps do mide vêm do tema do mide" (instala o tema do clone numa pasta de teste; sem clone, pulado). No fork, conferir os ícones renderizados depois de `apply.py` (nenhum atalho quebrado: `find <tema> -xtype l`).
 - Sessão (B15, etapa 3): o trecho do `mide-session` testado isolado (com `XDG_DATA_HOME` e `XDG_CONFIG_HOME` temporários): com o tema instalado, `DCONF_PROFILE` aponta para o perfil do mide, `gsettings get org.gnome.desktop.interface icon-theme` dá `'mide'`, as outras chaves vêm do usuário, e sem o perfil o valor do usuário não muda.
 - Manual (sessão de verdade): depois do `mide-atualizar`, os apps GTK (Arquivos do GNOME, gedit, Configurações do GNOME) e Qt 5 mostram os ícones do mide; no Cinnamon, o tema de ícones continua o de antes.
+
+## Atualizar e testar num PC com a sessão do mide
+
+Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de login, no DRM).
+
+1. `git pull` no projeto e `data/mide-conferir` (mostra o que falta: binários, tema de ícones, `mide-session`, erros no log).
+2. Dentro da sessão do mide, num terminal: `data/mide-atualizar --tudo`. Recompila em release, baixa o tema de ícones do fork (`fabioaacarneiro/mide-icons`, versão de `data/icons.version`; precisa de `git` e internet na primeira vez) e reinicia o compositor (as janelas abertas fecham; a sessão continua). No fim aparece `ícones do mide instalados (xxxxxxxx)`.
+3. Se o `data/mide-conferir` disser que o `mide-session` instalado é uma cópia antiga: `sudo cp data/mide-session <caminho que ele mostrar>`.
+4. Sair e entrar de novo na sessão do mide (o `mide-session` prepara o tema de ícones dos apps GTK e Qt). Rodar `data/mide-conferir` de novo, dentro da sessão: tudo `ok`.
+5. Conferir:
+   - Ícones: dock sem quadrados cinzas (Terminal, Calculadora, Configurações com os desenhos do mide); launcher com os apps no estilo do tema; nenhum logo da Apple (menu, "Sobre", computador); apps GTK (Arquivos do GNOME, gedit) com o mesmo tema; `gsettings get org.gnome.desktop.interface icon-theme` dá `'mide'` dentro do mide e o tema de antes no Cinnamon.
+   - Janelas: clique num app (Chrome) por cima da barra de título de outra janela não sobe a de trás; o Brave fecha.
+   - Launcher: rolar as páginas dentro de uma pasta, painel com uma moldura só.
+   - Bloqueio: Super+L (no estilo Mac, Ctrl+⌘+Q; Ctrl+L e ⌘L não bloqueiam), digitar rápido, senha certa desbloqueia com um e com dois monitores, a tela apaga sozinha e acende com uma tecla.
+   - Captura de tela (Print): Salvar e Copiar pelos botões, por Ctrl+S/Ctrl+C e por ⌘S/⌘C no estilo Mac; aparece o aviso; o arquivo fica em Imagens/Capturas de tela.
+   - Desempenho (A17): mexer o mouse e usar o VS Code; uso de CPU do mide no `htop` (antes ~3,7% de um núcleo). Cursor de hardware: troca de forma (texto, redimensionar), passa de um monitor para o outro, volta depois de apagar a tela e de trocar de VT.
+6. Se algo der errado: log em `~/.local/state/mide/sessao.log` (o anterior em `sessao.log.anterior`). Para voltar ao comportamento antigo do A17: `MIDE_SW_CURSOR=1` (cursor desenhado) e `MIDE_FULL_DAMAGE=1` (tela inteira a cada quadro), exportados no `mide-session` antes do `exec`.

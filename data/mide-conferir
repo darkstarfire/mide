@@ -1,0 +1,74 @@
+#!/bin/sh
+# Confere a instalação do mide neste PC e mostra o que falta: binários de release,
+# tema de ícones (mide-icons) na versão do projeto, o mide-session em uso, o tema de
+# ícones da sessão e os erros recentes no log. Só lê; não muda nada.
+#
+# Uso: data/mide-conferir
+cd "$(dirname "$(readlink -f "$0")")/.."
+
+ok() { printf '  ok      %s\n' "$1"; }
+falta() { printf '  FALTA   %s\n' "$1"; }
+aviso() { printf '  aviso   %s\n' "$1"; }
+
+echo "== código"
+printf '  commit  %s\n' "$(git log --oneline -1 2>/dev/null)"
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then aviso "há mudanças locais sem commit"; fi
+git fetch -q origin 2>/dev/null && [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master 2>/dev/null)" ] && aviso "o GitHub tem commits novos: git pull"
+
+echo "== binários (data/mide-atualizar compila)"
+if [ -x target/release/mide ]; then
+    if [ -n "$(find src Cargo.toml -newer target/release/mide -print -quit 2>/dev/null)" ]; then
+        aviso "o código é mais novo que target/release/mide: rode data/mide-atualizar"
+    else
+        ok "target/release/mide em dia"
+    fi
+else
+    falta "target/release/mide: rode data/mide-atualizar"
+fi
+
+echo "== tema de ícones (mide-icons)"
+versao="$(cat data/icons.version)"
+dados="${XDG_DATA_HOME:-$HOME/.local/share}/icons"
+instalada="$(cat "$dados/mide/.versao-mide-icons" 2>/dev/null)"
+if [ "$instalada" = "$versao" ]; then
+    ok "tema mide instalado em $dados/mide ($(echo "$versao" | cut -c1-8))"
+elif [ -n "$instalada" ]; then
+    aviso "tema mide na versão $(echo "$instalada" | cut -c1-8); o projeto pede $(echo "$versao" | cut -c1-8): rode data/mide-atualizar"
+else
+    falta "tema mide não instalado: rode data/mide-atualizar (precisa de git e internet)"
+fi
+for nome in mide-terminal mide-files mide-settings; do
+    [ -e "$dados/hicolor/scalable/apps/$nome.svg" ] || aviso "$nome não está no hicolor (menus de outros ambientes sem o ícone)"
+done
+
+echo "== sessão"
+sessao="$(command -v mide-session)"
+if [ -z "$sessao" ]; then
+    falta "mide-session não está no PATH (a tela de login não acha a sessão)"
+elif [ "$(readlink -f "$sessao")" = "$(readlink -f data/mide-session)" ]; then
+    ok "mide-session é o deste projeto ($sessao)"
+elif cmp -s "$sessao" data/mide-session; then
+    ok "mide-session é uma cópia igual à do projeto ($sessao)"
+else
+    aviso "$sessao é uma cópia antiga: sudo cp data/mide-session $sessao"
+fi
+if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
+    tema="$(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null)"
+    if [ "$tema" = "'mide'" ]; then
+        ok "apps GTK com o tema mide (DCONF_PROFILE=${DCONF_PROFILE:-})"
+    else
+        aviso "apps GTK com o tema $tema: saia e entre de novo na sessão do mide"
+    fi
+else
+    printf '  (fora da sessão do mide: o tema dos apps GTK só é conferido dentro dela)\n'
+fi
+
+echo "== log da sessão"
+log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/sessao.log"
+if [ -f "$log" ]; then
+    erros="$(sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -cE ' (ERROR|WARN) ')"
+    printf '  %s: %s aviso(s)/erro(s)\n' "$log" "$erros"
+    sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E ' (ERROR|WARN) ' | tail -8 | sed 's/^/    /'
+else
+    printf '  sem log ainda (%s)\n' "$log"
+fi
