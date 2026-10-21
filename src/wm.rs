@@ -58,22 +58,25 @@ impl State {
         crate::input::focus_window(self, &window, serial);
     }
 
-    /// A janela do app foi destruída: sai do espaço e, se o mide pediu o fechamento,
-    /// deixa a foto esmaecendo.
+    /// A janela do app foi destruída: sai do espaço e deixa a foto dela esmaecendo
+    /// (a tirada no fechamento pedido pelo mide, ou a última foto, se o app fechou
+    /// sozinho).
     pub fn window_closed(&mut self, surface: &ToplevelSurface) {
         if let Some(window) = self.window_for(surface.wl_surface()) {
             // Fechamento pedido pelo mide: a foto da janela esmaece (transição de fechar).
             // Guarda só a posição: o tamanho vem da foto (a geometria aqui já zerou).
             let id = window_id(&window);
-            if self.config.effects.animations && self.close_requests.iter().any(|(w, _)| *w == id) {
+            if self.config.effects.animations {
                 if let Some(loc) = self.space.element_location(&window) {
                     let bar_h = bar_height_for(&window);
                     let size = window.geometry().size;
                     let frame = smithay::utils::Rectangle::new((loc.x, loc.y - bar_h).into(), (size.w, size.h + bar_h).into());
                     self.ghosts.push((id, frame, Instant::now()));
+                    tracing::info!("janela fechando com transição");
                 }
             }
             self.close_requests.retain(|(w, _)| *w != id);
+            self.commits.remove(&id);
             self.shown.remove(&id);
             self.space.unmap_elem(&window);
             tracing::info!("janela fechada");

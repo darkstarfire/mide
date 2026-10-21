@@ -315,6 +315,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         trash_full_icon: load_themed_icon(&["user-trash-full", "user-trash"], icon_size()),
         trash_items,
         menu: None,
+        bounce: None,
         text: None,
         text_ready: Some(warm_text()),
         file_icons: HashMap::new(),
@@ -552,6 +553,9 @@ struct Dock {
     trash_items: usize,
     /// Painel aberto acima da dock (Downloads, menu da Lixeira, confirmação).
     menu: Option<Menu>,
+    /// Ícone pulando enquanto o app abre (como no Mac), numa camada própria acima da
+    /// dock, até a janela dele aparecer.
+    bounce: Option<Bounce>,
     /// Texto dos painéis; as fontes só são carregadas no primeiro painel.
     text: Option<Text>,
     /// Fontes carregando em segundo plano (carregar leva ~60 ms: no primeiro menu,
@@ -648,9 +652,14 @@ impl Dock {
         }
 
         // Ícones, centralizados em cada posição.
+        let bouncing = self.bounce.as_ref().map(|b| b.app.clone());
         for (i, app) in self.items.iter().enumerate() {
             let x = icon_x(&self.items, i) as f32;
             let y = PADDING as f32;
+            // O ícone que pula é desenhado na camada do pulo, acima da dock.
+            if bouncing.as_deref() == Some(app.id.as_str()) {
+                continue;
+            }
             if let Some(icon) = &app.icon {
                 pixmap.draw_pixmap(
                     x as i32,
@@ -957,7 +966,8 @@ impl Dock {
         self.launch(index);
     }
 
-    fn launch(&self, index: usize) {
+    fn launch(&mut self, index: usize) {
+        self.start_bounce(index);
         let app = &self.items[index];
         // Avisa o compositor: a janela nova sai do ícone com o efeito lâmpada.
         ask_compositor(&format!("launching {}", app.match_ids.join(" ")));
@@ -984,6 +994,125 @@ impl Dock {
     }
 }
 
+
+/// Altura extra da camada do pulo acima da dock (o ícone sobe até aqui).
+const BOUNCE_ROOM: u32 = 40;
+/// Duração de um pulo (sobe e desce) e o tempo máximo pulando.
+const BOUNCE_PERIOD: f32 = 0.62;
+const BOUNCE_MAX: Duration = Duration::from_secs(10);
+
+/// Ícone pulando: a camada, o app (pelo id do `.desktop`) e o começo.
+struct Bounce {
+    layer: LayerSurface,
+    pool: SlotPool,
+    app: String,
+    start: std::time::Instant,
+    last_check: std::time::Instant,
+}
+
+/// Altura do pulo em `t` segundos: parábolas que sobem e descem, cada uma um pouco
+/// mais baixa (o app demorando, o ícone continua pulando).
+fn bounce_height(t: f32) -> f32 {
+    let p = (t / BOUNCE_PERIOD).fract();
+    let k = (t / BOUNCE_PERIOD).floor();
+    let amplitude = BOUNCE_ROOM as f32 * if k < 1.0 { 1.0 } else { 0.8 };
+    amplitude * 4.0 * p * (1.0 - p)
+}
+
+impl Dock {
+    /// Começa o pulo do ícone (com as animações ligadas e o app ainda sem janela).
+    fn start_bounce(&mut self, index: usize) {
+        if !mide::settings_file::effect("animations") || self.bounce.is_some() {
+            return;
+        }
+        let app = &self.items[index];
+        if app.match_ids.iter().any(|id| self.running.contains(id)) {
+            return;
+        }
+        let surface = self.compositor.create_surface(&self.qh);
+        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-pulo"), None);
+        // Mesma âncora, largura e margem de baixo da dock: as posições dos ícones são
+        // as mesmas; não recebe cliques (passam para a dock embaixo).
+        layer.set_anchor(Anchor::BOTTOM);
+        layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_size(self.width, dock_height() + BOUNCE_ROOM);
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            layer.wl_surface().set_input_region(Some(region.wl_region()));
+        }
+        layer.commit();
+        let Ok(pool) = SlotPool::new((self.width * (dock_height() + BOUNCE_ROOM) * 4) as usize, &self.shm) else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        tracing::info!("dock: {} pulando até abrir", app.name);
+        self.bounce = Some(Bounce { layer, pool, app: app.id.clone(), start: now, last_check: now });
+        if let Some(handle) = self.loop_handle.clone() {
+            let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
+                if dock.step_bounce() { TimeoutAction::ToDuration(Duration::from_millis(16)) } else { TimeoutAction::Drop }
+            });
+        }
+        self.draw(&self.qh.clone());
+    }
+
+    /// Um quadro do pulo; devolve se continua (o app ainda sem janela).
+    fn step_bounce(&mut self) -> bool {
+        let Some(bounce) = self.bounce.as_mut() else {
+            return false;
+        };
+        let elapsed = bounce.start.elapsed();
+        // A janela apareceu? (o compositor é consultado a cada 150 ms)
+        if bounce.last_check.elapsed() >= Duration::from_millis(150) {
+            bounce.last_check = std::time::Instant::now();
+            self.refresh_running();
+        }
+        let Some(bounce) = self.bounce.as_ref() else {
+            return false;
+        };
+        let item = self.items.iter().find(|a| a.id == bounce.app);
+        let opened = item.is_none_or(|a| a.match_ids.iter().any(|id| self.running.contains(id)));
+        // Termina num pouso (no fim de um pulo), para o ícone não sumir no ar.
+        let landed = (elapsed.as_secs_f32() / BOUNCE_PERIOD).fract() < 0.08;
+        if (opened && landed) || elapsed >= BOUNCE_MAX {
+            tracing::info!("dock: {} abriu, fim do pulo", bounce.app);
+            self.bounce = None;
+            self.draw(&self.qh.clone());
+            return false;
+        }
+        self.paint_bounce();
+        true
+    }
+
+    /// Desenha o ícone na altura do pulo, na camada acima da dock.
+    fn paint_bounce(&mut self) {
+        let Some(bounce) = self.bounce.as_mut() else {
+            return;
+        };
+        let Some(index) = self.items.iter().position(|a| a.id == bounce.app) else {
+            return;
+        };
+        let (w, h) = (self.width, dock_height() + BOUNCE_ROOM);
+        let Some(mut pixmap) = Pixmap::new(w, h) else {
+            return;
+        };
+        let lift = bounce_height(bounce.start.elapsed().as_secs_f32());
+        let x = icon_x(&self.items, index) as i32;
+        let y = (BOUNCE_ROOM as f32 + PADDING as f32 - lift).round() as i32;
+        if let Some(icon) = &self.items[index].icon {
+            pixmap.draw_pixmap(x, y, icon.as_ref(), &Default::default(), Transform::identity(), None);
+        }
+        let Ok((buffer, canvas)) = bounce.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        mide::ui::draw::to_argb8888(&pixmap, canvas);
+        let surface = bounce.layer.wl_surface();
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        if buffer.attach_to(surface).is_ok() {
+            bounce.layer.commit();
+        }
+    }
+}
 
 /// O que um painel acima da dock mostra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1939,6 +2068,10 @@ impl OutputHandler for Dock {
 
 impl LayerShellHandler for Dock {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if self.bounce.as_ref().is_some_and(|b| &b.layer == layer) {
+            self.bounce = None;
+            return;
+        }
         if self.menu.as_ref().is_some_and(|m| &m.layer == layer) {
             self.menu = None;
             return;
@@ -1954,6 +2087,10 @@ impl LayerShellHandler for Dock {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
+        if self.bounce.as_ref().is_some_and(|b| &b.layer == layer) {
+            self.paint_bounce();
+            return;
+        }
         if self.menu.as_ref().is_some_and(|m| &m.layer == layer) {
             self.screen = configure.new_size;
             self.draw_menu();

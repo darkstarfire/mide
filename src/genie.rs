@@ -124,6 +124,8 @@ pub struct Genie {
     /// Fotos das janelas com fechamento pedido (número da janela, textura e tamanho),
     /// usadas na transição de fechar.
     pub snapshots: std::cell::RefCell<std::collections::HashMap<u64, (smithay::backend::renderer::gles::GlesTexture, smithay::utils::Size<i32, Logical>)>>,
+    /// Quando foi tirada a última foto de cada janela (para fechar com transição).
+    pub photo_taken: std::cell::RefCell<std::collections::HashMap<u64, std::time::Instant>>,
     /// Desde quando cada janela tem o vidro dela (depois da lâmpada ou de outra
     /// animação): o vidro entra esmaecendo, sem aparecer de uma vez.
     pub glass_since: std::cell::RefCell<std::collections::HashMap<u64, std::time::Instant>>,
@@ -146,7 +148,7 @@ impl Genie {
                 UniformName::new("corner", UniformType::_1f),
             ],
         )?;
-        Ok(Self { program, snapshots: Default::default(), glass_since: Default::default() })
+        Ok(Self { program, snapshots: Default::default(), photo_taken: Default::default(), glass_since: Default::default() })
     }
 
     /// Elemento da janela deformada. `window_rect` é a área visível da janela e

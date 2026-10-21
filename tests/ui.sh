@@ -256,6 +256,8 @@ check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 40
 check "redimensionar pelo canto" "$FOOT posição=\(48, 76\) visível=650x450" "400 press 745 573; 405 move 720 548; 410 move 695 523; 415 release 695 523; 450 list" "$TERMINAL"
 check "redimensionar pela esquerda" "$FOOT posição=\(88, 76\) visível=660x500" "400 press 50 330; 405 move 70 330; 410 move 90 330; 415 release 90 330; 450 list" "$TERMINAL"
 check "fechar pelo vermelho" "janela fechada" "400 click 63 61" "$TERMINAL"
+# O app fecha sozinho (aqui, o processo termina): a foto dele esmaece mesmo assim (A20).
+SCENARIO_WAIT=12 check "app que fecha sozinho também sai com transição" "janela fechando com transição" "900 list" "sh -c '$CALCULATOR & sleep 4; kill \$!'"
 check "minimizar pelo amarelo" "janela minimizada" "400 click 83 61" "$TERMINAL"
 check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" "$TERMINAL"
 
@@ -433,6 +435,18 @@ dock_pins "$FOOT_ID, $CALC_ID"
 check "menu do app: Remover da Dock" "dock salva: mide-calculator$" "300 rclick 632 728; 340 click 632 674"
 dock_pins "$FOOT_ID, $CALC_ID"
 check "arrastar reordena" "dock salva: mide-calculator, mide-terminal" "300 press 632 728; 305 move 643 728; 310 move 658 728; 315 move 675 728; 320 release 675 728"
+# Ícone pulando enquanto o app abre (A20): um app de teste que demora 2 s (num
+# XDG_DATA_DIRS próprio), fixado sozinho; o ícone dele fica em (654, 728).
+PULO="$DOCKCFG/apps"
+mkdir -p "$PULO/applications"
+printf '[Desktop Entry]\nType=Application\nName=Lento\nExec=sh -c "sleep 2; exec %s/target/debug/mide-calculator"\nIcon=folder\nStartupWMClass=mide-calculator\n' "$PWD" > "$PULO/applications/lento.desktop"
+dock_pins '"lento"'
+XDG_DATA_DIRS="$PULO:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" SCENARIO_WAIT=12 timeout 150 "$SCEN" "300 click 654 728; 900 list" >/dev/null 2>&1
+if grep -aq "Lento pulando até abrir" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log" && grep -aq "lento abriu, fim do pulo" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log"; then
+    echo "ok    dock: o ícone pula até o app abrir"; PASS=$((PASS + 1))
+else
+    echo "FALHA dock: o ícone pula até o app abrir"; FAIL=$((FAIL + 1))
+fi
 if [ -n "$OLD_XDG_CONFIG_HOME" ]; then export XDG_CONFIG_HOME="$OLD_XDG_CONFIG_HOME"; else unset XDG_CONFIG_HOME; fi
 rm -rf "$DOCKCFG"
 
@@ -824,6 +838,9 @@ file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/
 file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 281; 500 list"
 # Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
 # dentro aparece na linha seguinte (y=241).
+# Fechar a pasta na lista (sanfona, A20): depois de fechar, a linha y=241 volta a ser
+# Projetos (a de dentro de Fotos sumiu), e Delete leva Projetos.
+file_check "lista: setinha fecha a pasta (as linhas de dentro saem)" '[ -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/Projetos" ]' "400 click 694 106; 430 click 303 215; 480 click 303 215; 540 click 500 241; 560 key delete; 600 list"
 file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 694 106; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
 # Fundo em (600, 450): o menu abre para cima (não cabe embaixo), com "Nova pasta" em
 # y=311 e "Novo arquivo" em y=337. O nome vem todo selecionado e

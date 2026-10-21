@@ -184,6 +184,9 @@ pub struct State {
     pub close_requests: Vec<(u64, Instant)>,
     /// Janelas que acabaram de fechar: a foto delas esmaece (número, moldura, início).
     pub ghosts: Vec<(u64, smithay::utils::Rectangle<i32, Logical>, Instant)>,
+    /// Último commit de cada janela: o desenho tira uma foto nova dela (para a
+    /// transição de fechar também quando o app fecha sozinho).
+    pub commits: std::collections::HashMap<u64, Instant>,
     /// Janelas minimizadas, da mais antiga para a mais recente.
     pub minimized: Vec<MinimizedWindow>,
     /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
@@ -366,6 +369,7 @@ impl State {
             animations: Vec::new(),
             close_requests: Vec::new(),
             ghosts: Vec::new(),
+            commits: std::collections::HashMap::new(),
             minimized: Vec::new(),
             hidden: Vec::new(),
             mac_keys: MacKeys::default(),
@@ -546,6 +550,11 @@ impl CompositorHandler for State {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
+        if self.config.effects.animations {
+            if let Some(window) = self.window_for(surface) {
+                self.commits.insert(window_id(&window), Instant::now());
+            }
+        }
         if let Some((at, kind, client)) = &self.input_mark {
             use smithay::reexports::wayland_server::Resource;
             if surface.client().is_some_and(|c| &c.id() == client) {

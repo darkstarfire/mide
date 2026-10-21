@@ -66,7 +66,7 @@ struct Files {
     children: HashMap<PathBuf, Vec<Entry>>,
     /// Transições (`[effects] transitions`, "Transições suaves"): pasta que acabou de abrir na lista e
     /// troca entre ícones e lista, com o momento em que começaram.
-    expanding: Option<(PathBuf, std::time::Instant)>,
+    expanding: Option<(PathBuf, std::time::Instant, bool)>,
     view_switched: Option<std::time::Instant>,
     /// Coluna ordenada (0 nome, 1 modificado, 2 tamanho, 3 tipo) e se é crescente.
     sort: (usize, bool),
@@ -231,9 +231,14 @@ impl Files {
             self.children.insert(path.to_path_buf(), list);
             self.expanded.insert(path.to_path_buf());
             if mide::settings_file::effect("transitions") {
-                self.expanding = Some((path.to_path_buf(), std::time::Instant::now()));
+                self.expanding = Some((path.to_path_buf(), std::time::Instant::now(), true));
             }
             tracing::info!("pasta aberta na lista: {}", path.display());
+        } else if mide::settings_file::effect("transitions") {
+            // Fecha com a animação: as linhas de dentro saem de baixo para cima e a
+            // pasta fecha de verdade no fim (`content`).
+            self.expanding = Some((path.to_path_buf(), std::time::Instant::now(), false));
+            tracing::info!("pasta fechada na lista: {}", path.display());
         } else {
             self.expanded.retain(|p| !p.starts_with(path));
         }
@@ -857,6 +862,7 @@ impl Files {
             }
         }
         let mut toggles: Vec<(PathBuf, bool)> = Vec::new();
+        let mut expand_done = false;
         let mut sort_by = None;
         let clipboard = !self.clipboard.is_empty();
         let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
@@ -994,18 +1000,46 @@ impl Files {
                 if !shown.is_empty() {
                     sort_by = ui.list_header("Nome", &widths, self.sort);
                 }
+                // Pasta abrindo ou fechando na lista (sanfona): quantas linhas de dentro
+                // aparecem agora; a linha que está entrando é um espaço que cresce, e
+                // as de baixo descem (ou sobem) junto.
+                let accordion = self.expanding.as_ref().map(|(folder, at, opening)| {
+                    let n = rows.iter().filter(|(_, e)| e.path.starts_with(folder) && e.path != *folder).count();
+                    let duration = (0.12 + 0.015 * n as f32).clamp(mide::motion::LIST_EXPAND.as_secs_f32(), 0.4);
+                    let p = (at.elapsed().as_secs_f32() / duration).clamp(0.0, 1.0);
+                    let k = mide::motion::ease_out(p);
+                    let shown_rows = if *opening { k } else { 1.0 - k } * n as f32;
+                    (folder.clone(), *opening, shown_rows, p >= 1.0)
+                });
+                if let Some((_, _, _, done)) = &accordion {
+                    expand_done = *done;
+                }
+                let mut order = 0usize;
                 for (i, (depth, entry)) in rows.iter().enumerate() {
+                    if let Some((folder, _, shown_rows, _)) = &accordion {
+                        if entry.path != *folder && entry.path.starts_with(folder) {
+                            let j = order as f32;
+                            order += 1;
+                            if j + 1.0 > *shown_rows {
+                                if j < *shown_rows {
+                                    ui.space((shown_rows - j) * 26.0);
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     let selected = selection.contains(&entry.path);
                     let date = files::date_text(entry.modified, now);
                     let size = sizes.get(&entry.path).cloned().unwrap_or_default();
                     let kind = files::kind_text(entry);
-                    let open = self.expanded.contains(&entry.path);
+                    let closing = self.expanding.as_ref().is_some_and(|(f, _, opening)| !opening && *f == entry.path);
+                    let open = self.expanded.contains(&entry.path) && !closing;
                     let expandable = entry.is_dir && !in_trash;
                     let cols = [(date.as_str(), widths[0].1), (size.as_str(), widths[1].1), (kind.as_str(), widths[2].1)];
                     let (r, toggled) = ui.tree_row(*depth, expandable, open, entry.icon_name(), &entry.name, &cols, selected, i % 2 == 1);
                     // Itens da pasta que acabou de abrir: aparecem esmaecendo, de cima
                     // para baixo (cada linha começa um pouco depois da anterior).
-                    if let Some((folder, at)) = &self.expanding {
+                    if let Some((folder, at, true)) = &self.expanding {
                         if entry.path != *folder && entry.path.starts_with(folder) {
                             let order = rows.iter().take(i).filter(|(_, e)| e.path.starts_with(folder) && e.path != *folder).count();
                             let delay = order as f32 * mide::motion::LIST_STAGGER.as_secs_f32();
@@ -1134,8 +1168,11 @@ impl Files {
             self.press = None;
         }
         // Transições em andamento: pedem quadros até acabar.
-        if self.expanding.as_ref().is_some_and(|(_, at)| at.elapsed().as_secs_f32() > 0.6) {
-            self.expanding = None;
+        if expand_done || self.expanding.as_ref().is_some_and(|(_, at, _)| at.elapsed().as_secs_f32() > 0.6) {
+            // Fechando: a pasta sai da lista agora que as linhas sumiram.
+            if let Some((folder, _, false)) = self.expanding.take() {
+                self.expanded.retain(|p| !p.starts_with(&folder));
+            }
         }
         if self.view_switched.is_some_and(|at| at.elapsed().as_secs_f32() > 0.22) {
             self.view_switched = None;

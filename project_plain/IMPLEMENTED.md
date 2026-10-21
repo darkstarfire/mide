@@ -1175,3 +1175,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - Barra superior: com mais de um layout, a sigla do atual ("BR", "US", "US-I") num contorno, à esquerda do relógio; o clique abre a lista com o ativo marcado e "Configurações de teclado…". Interruptor "Mostrar o layout na barra superior" em Teclado (`[keyboard] show_layout`).
 - Os grupos da lista de atalhos (Janelas, Launcher e busca, Apps, Sistema) recolhem e expandem pelo título, com a setinha e o número de atalhos (`ui.disclosure`, componente novo do mide-ui); o estado fica em `[settings] shortcuts_closed`; buscando, os grupos com resultado ficam abertos.
 - Corrigido: "Configurações de bateria…" abria o Wi-Fi (agora abre Energia).
+
+## Animações que faltavam (A20)
+
+- **Fechar janela suave em todos os casos:** o compositor guarda uma foto recente de cada janela (tirada no quadro depois de um commit do app, no máximo a cada 300 ms quando ele muda sem parar). Quando o app fecha sozinho (atalho do próprio app, botão desenhado por ele, processo que termina), essa foto encolhe e esmaece, como já acontecia quando o mide pedia o fechamento.
+- **Ícone pulando na dock:** ao abrir um app pela dock (com as animações ligadas e o app ainda sem janela), o ícone pula acima da dock, como no Mac, numa camada própria e transparente (`mide-dock-pulo`, mesma largura e margem da dock, sem receber cliques), até a janela aparecer (termina num pouso; no máximo 10 s). O lugar dele na dock fica vazio enquanto pula.
+- **Arquivos, lista:** abrir e fechar pastas virou uma sanfona: as linhas de dentro entram (ou saem) uma a uma, com um espaço que cresce, e as de baixo deslizam junto; ao fechar, a pasta só fecha de verdade no fim. A duração acompanha o número de itens (180 a 400 ms, com a curva de entrada do `mide::motion`).

@@ -445,6 +445,9 @@ fn window_elements(
             let Some((texture, size)) = snapshots.get(id) else {
                 continue;
             };
+            if start.elapsed() < std::time::Duration::from_millis(20) {
+                tracing::debug!("foto da janela fechada esmaecendo");
+            }
             let t = (start.elapsed().as_secs_f32() / crate::state::CLOSE_FADE.as_secs_f32()).clamp(0.0, 1.0);
             let ease = t * t * (3.0 - 2.0 * t);
             let scale = 1.0 - 0.06 * ease;
@@ -472,10 +475,13 @@ fn window_elements(
             elements.push(MideRenderElement::ClippedTexture(crate::clip::Clipped::new(photo, shaders.clip_program(), clip)));
         }
     }
-    // Fotos que não servem mais (janela fechou e esmaeceu, ou não fechou).
+    // Fotos que não servem mais: a janela fechou e a foto já esmaeceu.
     genie.snapshots.borrow_mut().retain(|id, _| {
-        state.close_requests.iter().any(|(w, _)| w == id) || state.ghosts.iter().any(|(w, _, _)| w == id)
+        state.close_requests.iter().any(|(w, _)| w == id)
+            || state.ghosts.iter().any(|(w, _, _)| w == id)
+            || state.commits.contains_key(id)
     });
+    genie.photo_taken.borrow_mut().retain(|id, _| state.commits.contains_key(id));
     for p in placed.iter() {
         // A barra fica no topo da moldura, que já está na área visível.
         let bar_h = crate::state::bar_height_for(&p.window);
@@ -578,7 +584,12 @@ fn window_elements(
         // Fechamento pedido: fotografa a janela (barra, título e conteúdo) para a
         // transição, até ela fechar.
         let id = crate::state::window_id(&p.window);
-        if state.config.effects.animations && state.close_requests.iter().any(|(w, _)| *w == id) {
+        // Foto para fechar: a cada quadro com o fechamento pedido; e depois de um commit
+        // do app (no máximo a cada 300 ms, se ele muda sem parar), para quando o app
+        // fecha sozinho.
+        let changed = state.commits.get(&id).is_some_and(|at| genie.photo_taken.borrow().get(&id).is_none_or(|taken| at > taken && taken.elapsed() >= std::time::Duration::from_millis(300)));
+        if state.config.effects.animations && (changed || state.close_requests.iter().any(|(w, _)| *w == id)) {
+            genie.photo_taken.borrow_mut().insert(id, std::time::Instant::now());
             let local_bar = Rectangle::new((0, 0).into(), (p.frame.size.w, bar_h).into());
             let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
             let bar_parts = if bar_h > 0 { decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip) } else { Vec::new() };
