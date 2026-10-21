@@ -109,10 +109,28 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Rolagem natural", "mouse trackpad touchpad rolagem natural scroll invertida", Section::Mouse),
     ("Toque para clicar", "trackpad touchpad toque clicar tap", Section::Mouse),
     ("Aceleração do mouse", "mouse aceleracao ponteiro precisao", Section::Mouse),
+    ("Layout do teclado", "teclado layout abnt2 abnt idioma us internacional acentos", Section::Keyboard),
     ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
     ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
     ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
     ("Sobre este computador", "sistema versao memoria processador", Section::About),
+];
+
+/// Layouts de teclado oferecidos: nome, layout e variante do xkb. O primeiro usa o
+/// layout do sistema (`/etc/default/keyboard`).
+const KEYBOARD_LAYOUTS: &[(&str, &str, &str)] = &[
+    ("O do sistema", "", ""),
+    ("Português (Brasil, ABNT2)", "br", ""),
+    ("Inglês (EUA)", "us", ""),
+    ("Inglês (EUA, internacional, com acentos)", "us", "intl"),
+    ("Inglês (EUA, internacional AltGr)", "us", "altgr-intl"),
+    ("Inglês (Reino Unido)", "gb", ""),
+    ("Português (Portugal)", "pt", ""),
+    ("Espanhol (Espanha)", "es", ""),
+    ("Espanhol (América Latina)", "latam", ""),
+    ("Francês", "fr", ""),
+    ("Alemão", "de", ""),
+    ("Italiano", "it", ""),
 ];
 
 const DOCK_MIN: f32 = 32.0;
@@ -885,7 +903,27 @@ impl Settings {
     fn keyboard(&mut self, ui: &mut Ui) {
         ui.title("Teclado");
         let mut mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
+        // Layout: o escolhido aqui ou o do sistema.
+        let text = |key: &str| match settings_file::get("keyboard", key) {
+            Some(Value::Text(t)) => t,
+            _ => String::new(),
+        };
+        let (layout, variant) = (text("layout"), text("variant"));
+        let names: Vec<String> = KEYBOARD_LAYOUTS.iter().map(|(n, ..)| n.to_string()).collect();
+        let mut layout_i = KEYBOARD_LAYOUTS.iter().position(|(_, l, v)| *l == layout && *v == variant).unwrap_or(0);
         ui.card(|ui| {
+            if ui.dropdown("Layout", &names, &mut layout_i).changed() {
+                let (_, l, v) = KEYBOARD_LAYOUTS[layout_i];
+                let saved = settings_file::set("keyboard", "layout", (!l.is_empty()).then(|| Value::Text(l.into())))
+                    .and_then(|_| settings_file::set("keyboard", "variant", (!v.is_empty()).then(|| Value::Text(v.into()))));
+                match saved {
+                    Ok(()) => {
+                        tracing::info!("teclado: layout {}", names[layout_i]);
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("layout não gravado: {err}"),
+                }
+            }
             let detail = "Command (tecla Alt) faz o papel do Ctrl nos apps e Option (tecla Super/Windows) é o Alt; o Ctrl continua Ctrl. Bloquear: Ctrl+⌘+Q";
             if ui.switch_detail("Teclas no estilo Mac", detail, &mut mac).changed() {
                 match settings_file::set("keyboard", "mac_style", mac.then_some(Value::Bool(true))) {

@@ -309,6 +309,8 @@ struct ArrangeDrag {
 pub struct Memory {
     /// Componente onde o botão foi apertado (o clique vale se soltar nele).
     pub active: Option<u64>,
+    /// Largura pedida para o próximo menu (listas suspensas com nomes longos).
+    pub menu_width: Option<f32>,
     /// Componente com o foco do teclado (campo de texto).
     pub focus: Option<u64>,
     /// Rolagem de cada área.
@@ -989,7 +991,8 @@ impl<'a> Ui<'a> {
         self.ctx.memory.menu_drawn = true;
         let t = self.ctx.theme.clone();
         let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
-        let w = 220.0;
+        // Largura padrão, ou a pedida pela lista suspensa (cabe o nome mais longo).
+        let w = self.ctx.memory.menu_width.take().unwrap_or(220.0).clamp(220.0, (ww - 16.0).max(220.0));
         // A ponta do menu fica no ponto do clique (como os menus da dock e da barra):
         // o menu abre para baixo, ou para cima se não couber, e um pouco à esquerda.
         // Sem espaço em cima nem embaixo do item, abre ao lado do clique (à direita, ou
@@ -1318,6 +1321,8 @@ impl<'a> Ui<'a> {
             self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
         }
         let mut chosen = None;
+        let widest = options.iter().map(|o| self.measure(o, t.font, FontWeight::Regular)).fold(0.0, f32::max);
+        self.ctx.memory.menu_width = Some(widest + 48.0);
         self.menu_impl(&r, r.clicked, |m| {
             for (i, option) in options.iter().enumerate() {
                 if m.item(option) {
@@ -1325,6 +1330,8 @@ impl<'a> Ui<'a> {
                 }
             }
         });
+        // Menu fechado: a largura pedida não vale para o menu de outro componente.
+        self.ctx.memory.menu_width = None;
         if let Some(i) = chosen {
             if i != *selected {
                 *selected = i;

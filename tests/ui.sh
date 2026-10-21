@@ -481,6 +481,23 @@ else
     echo "FALHA Aparência: tema escuro"; FAIL=$((FAIL + 1))
 fi
 sed -i '/^\[appearance\]/d; /^theme = "dark"/d' "$SCFG/mide/config.toml"
+# Teclado → Layout em (768, 162) (apertar e soltar); "Inglês (EUA)" em (680, 253).
+# Grava no config.toml e o compositor troca o layout na hora.
+check "Teclado: escolher o layout troca na hora" 'teclado: layout us' "300 move 768 162; 310 press 768 162; 320 release 768 162; 370 click 680 253; 420 list" "$SETTINGS keyboard"
+if grep -q 'layout = "us"' "$SCFG/mide/config.toml"; then
+    echo "ok    Teclado: layout gravado no config.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA Teclado: layout gravado no config.toml"; FAIL=$((FAIL + 1))
+fi
+# Com o layout dos EUA, a tecla do acento do ABNT2 escreve "[".
+: > "$SCFG/layout.txt"
+timeout 150 "$SCEN" "400 click 400 300; 420 key leftbrace; 430 key a; 460 combo ctrl+s; 510 list" -- "$PWD/target/debug/mide-text '$SCFG/layout.txt'" >/dev/null 2>&1
+if [ "$(cat "$SCFG/layout.txt")" = "[a" ]; then
+    echo "ok    Teclado: o layout escolhido vale ao digitar"; PASS=$((PASS + 1))
+else
+    echo "FALHA Teclado: o layout escolhido vale ao digitar ($(cat "$SCFG/layout.txt"))"; FAIL=$((FAIL + 1))
+fi
+sed -i '/^layout = "us"/d' "$SCFG/mide/config.toml"
 # "Vidro líquido" em (807, 505): grava no config.toml e a dock troca para o vidro clássico.
 check "Efeitos → Vidro líquido desligado: a dock volta ao vidro clássico" "vidro líquido na dock: desligado" "400 click 807 505; 480 list" "$SETTINGS effects"
 if grep -q "liquid_glass = false" "$SCFG/mide/config.toml"; then

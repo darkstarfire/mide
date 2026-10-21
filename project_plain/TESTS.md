@@ -812,3 +812,4 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Manual: no Editor de Texto, Abrir… → navegar pelos lugares e pela pasta de cima, Esc cancela; Salvar como… por cima de um arquivo existente pergunta antes de substituir; tema escuro com o seletor aberto.
 - Manual/cenário: `[monitors.outputs."HEADLESS-1"] scale = 1.25` (e `2.0`) num `XDG_CONFIG_HOME` de teste, abrir Configurações, Arquivos e o seletor do Editor: texto e ícones nítidos, layout igual ao de escala 1, clique no interruptor "Sombras" grava; botões da barra de título redondos a 2x. `cargo test` `dano_so_onde_mudou`.
 - Manual (sessão de verdade com escala 1,25/2): apps do mide-ui nítidos; Terminal ainda ampliado pelo compositor.
+- `tests/ui.sh`: "Teclado: escolher o layout troca na hora", "Teclado: layout gravado no config.toml" e "Teclado: o layout escolhido vale ao digitar" (com o layout dos EUA, a tecla do acento do ABNT2 escreve "[").

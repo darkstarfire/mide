@@ -294,6 +294,17 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // Lê de novo o `config.toml` (atalhos, efeitos, papel de parede), sem reiniciar.
         Some("reload") => match crate::config::Config::load() {
             Ok(config) => {
+                // Layout do teclado trocado nas Configurações: vale na hora.
+                let kb = config.keyboard.effective();
+                if kb != state.config.keyboard.effective() {
+                    let xkb = smithay::input::keyboard::XkbConfig { rules: "", model: &kb.model, layout: &kb.layout, variant: &kb.variant, options: kb.options.clone() };
+                    if let Some(keyboard) = state.seat.get_keyboard() {
+                        match keyboard.set_xkb_config(state, xkb) {
+                            Ok(()) => tracing::info!("teclado: layout {} {}", kb.layout, kb.variant),
+                            Err(err) => tracing::warn!("teclado: layout {} não carregou: {err:?}", kb.layout),
+                        }
+                    }
+                }
                 state.config = config;
                 // Mouse e trackpad (Configurações → Mouse e trackpad) valem na hora.
                 if let Some(waker) = &state.input_waker {

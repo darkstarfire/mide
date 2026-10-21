@@ -1130,3 +1130,8 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - O layout continua em pontos: `mide::ui::draw` tem a escala da thread (`scale`, `tf`, `px`) e as funções de desenho (formas, sombras, vidro, colar ícones e áreas) e o texto convertem pontos em pixels; os ícones são carregados no tamanho em pixels; miniaturas do app são ampliadas (`blit_image`). Cliques e o vidro continuam em pontos.
 - O Terminal e a Captura de Tela pintam pixels por conta própria e ficam em escala 1 por enquanto (`Window::fixed_scale`); a tela de bloqueio também (as outras telas copiam a imagem dela).
 - Compositor: os shaders das decorações (botões da barra de título, contornos, cantos, vidro das prévias, sombras) recebiam o raio em pixels com o tamanho em pontos; com escala 2 os botões viravam losangos. Agora tudo em pontos.
+
+## Configurações → Teclado: layout (B7)
+
+- Lista "Layout" (o do sistema, ABNT2, EUA, EUA internacional com acentos, EUA AltGr, Reino Unido, Portugal, Espanha, América Latina, França, Alemanha, Itália), gravada em `[keyboard] layout`/`variant`; o compositor troca o mapa de teclas na hora (`reload`), sem reiniciar, e usa o mesmo ao iniciar. Vazio = `/etc/default/keyboard`.
+- Listas suspensas do mide-ui ficam da largura do nome mais longo (antes cortavam em 220 px).

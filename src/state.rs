@@ -334,7 +334,7 @@ impl State {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "seat0");
         // Layout do sistema (ABNT2 etc.), também sem desktop anfitrião (DRM).
-        let kb = crate::config::system_keyboard();
+        let kb = config.keyboard.effective();
         if !kb.layout.is_empty() {
             tracing::info!("teclado: layout {} {}", kb.layout, kb.variant);
         }

@@ -206,6 +206,22 @@ pub struct Keyboard {
     /// Teclas no estilo Mac: Command (a tecla Super/Windows) faz o papel do Ctrl e o
     /// Ctrl o do Super, então os atalhos ficam no mesmo lugar do Mac (⌘C, ⌘V, ⌘Espaço).
     pub mac_style: bool,
+    /// Layout escolhido nas Configurações (`"us"`, `"br"`...); vazio usa o do sistema
+    /// (`/etc/default/keyboard`). `variant` é a variante dele (`"intl"`).
+    pub layout: String,
+    pub variant: String,
+}
+
+impl Keyboard {
+    /// Teclado em uso: o do sistema, com o layout das Configurações por cima.
+    pub fn effective(&self) -> SystemKeyboard {
+        let mut kb = system_keyboard();
+        if !self.layout.trim().is_empty() {
+            kb.layout = self.layout.trim().to_string();
+            kb.variant = self.variant.trim().to_string();
+        }
+        kb
+    }
 }
 
 /// Telas, na seção `[monitors]`: a principal e as opções de cada uma pelo nome do
