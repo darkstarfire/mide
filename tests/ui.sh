@@ -208,6 +208,24 @@ SCEN_PLAIN="$SCEN"
 SCEN=tests/scenario-dbus.sh
 check "notificação aparece abaixo da barra, à direita" 'camada "mide-notifications" em \(1002, 28\) 364x94' "250 list" "$NOTE1"
 check "notificação some sozinha depois de 5 s" "notificação 1 expirou" "700 list" "$NOTE1"
+# Sons (A22; nos testes, só registrados no log): notificação toca; com os efeitos
+# sonoros desligados, não.
+SONS="$(mktemp -d)"
+mkdir -p "$SONS/mide"
+timeout 150 "$SCEN" "250 list" -- "$NOTE1" >/dev/null 2>&1
+if grep -aq "som (teste): message-new-instant" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log"; then
+    echo "ok    som de notificação"; PASS=$((PASS + 1))
+else
+    echo "FALHA som de notificação"; FAIL=$((FAIL + 1))
+fi
+printf '[sounds]\nenabled = false\n' > "$SONS/mide/config.toml"
+XDG_CONFIG_HOME="$SONS" timeout 150 "$SCEN" "250 list" -- "$NOTE1" >/dev/null 2>&1
+if grep -aq "notificação 1: Download" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log" && ! grep -aq "som (teste)" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log"; then
+    echo "ok    efeitos sonoros desligados: notificação sem som"; PASS=$((PASS + 1))
+else
+    echo "FALHA efeitos sonoros desligados: notificação sem som"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$SONS"
 check "× fecha a notificação" "notificação 1 fechada" "250 move 1166 80; 260 click 1016 42; 300 list" "$NOTE1"
 check "botão de ação aciona o app" "ação ok da notificação 1" "250 click 1238 121; 300 list" "$NOTE2"
 ACAO="$(mktemp)"
@@ -544,6 +562,14 @@ else
     echo "FALHA Energia: suspender após 30 minutos grava"; FAIL=$((FAIL + 1))
 fi
 sed -i '/^suspend_minutes = 30/d' "$SCFG/mide/config.toml"
+# Som → "Som de alerta" em (794, 410) (apertar e soltar); "Gota" em (675, 474).
+timeout 150 "$SCEN" "300 move 794 410; 310 press 794 410; 320 release 794 410; 360 click 675 474; 420 list" -- "$SETTINGS sound" >/dev/null 2>&1
+if grep -q 'alert = "gota"' "$SCFG/mide/config.toml"; then
+    echo "ok    Som: escolher o som de alerta grava"; PASS=$((PASS + 1))
+else
+    echo "FALHA Som: escolher o som de alerta grava"; FAIL=$((FAIL + 1))
+fi
+sed -i '/^alert = "gota"/d' "$SCFG/mide/config.toml"
 # Idioma e região: a lista em (768, 162); "Português (Brasil)" é o 12º item (y=460)
 # quando os idiomas da lista estão instalados (Debian com locales-all).
 if locale -a 2>/dev/null | grep -q '^pt_BR.utf8' && [ "$(locale -a | grep -cE '^(de_DE|en_GB|en_US|es_AR|es_ES|es_MX|fr_FR|it_IT|nl_NL|pt_BR|pt_PT|ru_RU|zh_CN|ja_JP)\.utf8')" = 14 ]; then
@@ -1034,6 +1060,11 @@ print('%dx%d' % Image.open(files[0]).size if files else 'nada')" "$pics" 2>/dev/
 AREA="600 press 300 200; 610 move 450 300; 620 move 600 400; 625 release 600 400; 700 list"
 shot_test "captura: ⌘⇧4 salva a área ao soltar o mouse" "400 combo super+shift+4; $AREA" 300x200
 shot_test "captura: ⌘⇧3 salva a tela inteira" "400 combo super+shift+3; 600 list" 1366x768
+if grep -aq "som (teste): screen-capture" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log"; then
+    echo "ok    captura toca o som do obturador"; PASS=$((PASS + 1))
+else
+    echo "FALHA captura toca o som do obturador"; FAIL=$((FAIL + 1))
+fi
 shot_test "captura: ⌘⇧3 com o launcher aberto" "400 combo ctrl+shift+space; 470 combo super+shift+3; 650 list" 1366x768
 shot_test "captura: ⌘⇧4 no estilo Mac (Alt+Shift+4)" "400 combo alt+shift+4; $AREA" 300x200 mac
 

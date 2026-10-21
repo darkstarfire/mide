@@ -1189,3 +1189,11 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **ffmpeg** (dependência obrigatória): H.264 (`libx264`, `veryfast`, CRF 23, 30 quadros por segundo) e AAC; som do sistema pelo monitor da saída padrão (`@DEFAULT_MONITOR@`) e microfone pela entrada padrão (`@DEFAULT_SOURCE@`), misturados quando os dois; arquivo `Vídeos/Gravações de tela/Gravação de tela AAAA-MM-DD HH-MM-SS.mp4`. Sem o ffmpeg, o aviso diz como instalar.
 - **Barra superior:** enquanto grava, o botão de parar (quadrado num círculo) com o tempo (00:12); o clique para. No fim, notificação "Gravação salva" com o caminho.
 - `places::videos_dir` (pasta de vídeos do usuário, `XDG_VIDEOS_DIR`).
+
+## Sons do sistema (A22)
+
+- **Sons do mide, feitos do zero** (`src/sounds.rs`): sintetizados por código (senos com harmônico leve e queda exponencial, ruído filtrado com envelope), sem arquivo de som de terceiros: notificação (duas notas subindo), obturador (dois estalos), Lixeira (papel amassado), volume (toque curto), bateria fraca (notas descendo), pronto (três notas subindo), entrada na sessão (acorde aberto), aparelho conectado/desconectado e o alerta escolhido (Vidro, Gota, Sino ou Pop).
+- **Tema de sons do freedesktop `mide`:** na primeira vez, vira `~/.local/share/sounds/mide` (WAV estéreo de 48 kHz, nomes da especificação: `message-new-instant`, `screen-capture`, `trash-empty`, `bell`, `dialog-warning`...), refeito quando os sons ou o alerta mudam. Na sessão do mide, o banco do dconf põe `org.gnome.desktop.sound theme-name='mide'` e `event-sounds` (apps GTK com libcanberra tocam os sons do mide).
+- **Onde tocam:** notificação chegando (não no Não perturbe, nem se o app pede silêncio ou manda o próprio som); captura de tela (uma vez por captura); esvaziar a Lixeira (Arquivos e dock); ao soltar o volume na barra; sino do terminal com o sino visual desligado; bateria passando de 10%, descarregando (com um aviso); gravação de tela salva; entrada na sessão.
+- **Tocar:** `pw-play` (PipeWire), ou `paplay`, no volume dos efeitos; nos testes (`MIDE_SYSTEM_DRY_RUN`), só "som (teste): nome" no log.
+- **Configurações → Som → Efeitos sonoros:** "Tocar efeitos sonoros" (`[sounds] enabled`), "Volume dos efeitos" (`volume`, 70 por padrão; toca ao soltar) e "Som de alerta" (`alert`; toca a prévia ao escolher).

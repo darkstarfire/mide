@@ -92,6 +92,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
     ("Volume de saída", "som audio alto-falante volume", Section::Sound),
     ("Sem som", "mudo silenciar som", Section::Sound),
+    ("Efeitos sonoros", "som efeitos alerta bip notificacao sons do sistema", Section::Sound),
     ("Monitores", "tela telas monitor resolucao frequencia hz escala organizar principal segundo monitor", Section::Displays),
     ("Resolução e frequência da tela", "monitor resolucao frequencia hz taxa atualizacao", Section::Displays),
     ("Escala da tela", "monitor escala tamanho zoom hidpi", Section::Displays),
@@ -570,6 +571,40 @@ impl Settings {
                 v.1 = mute;
             }
         }
+        // Efeitos sonoros do mide (`[sounds]`): ligados, volume e o som de alerta.
+        ui.heading("Efeitos sonoros");
+        let mut on = mide::sounds::enabled();
+        let mut effects = mide::sounds::volume() * 100.0;
+        let names: Vec<String> = mide::sounds::ALERTS.iter().map(|(_, n)| n.to_string()).collect();
+        let current = mide::sounds::alert_key();
+        let mut alert_i = mide::sounds::ALERTS.iter().position(|(k, _)| *k == current).unwrap_or(0);
+        ui.card(|ui| {
+            if ui.switch_detail("Tocar efeitos sonoros", "Notificações, captura de tela, Lixeira, volume e avisos", &mut on).changed() {
+                match settings_file::set("sounds", "enabled", (!on).then_some(Value::Bool(false))) {
+                    Ok(()) => {
+                        tracing::info!("efeitos sonoros: {}", if on { "ligados" } else { "desligados" });
+                        // Os apps GTK seguem (sons de evento no dconf da sessão).
+                        mide::appearance::apply(false);
+                    }
+                    Err(err) => tracing::warn!("efeitos sonoros não gravados: {err}"),
+                }
+            }
+            if ui.slider("Volume dos efeitos", &mut effects, 0.0, 100.0).submitted() {
+                let value = effects.round() as i64;
+                tracing::info!("efeitos sonoros: volume {value}");
+                if settings_file::set("sounds", "volume", (value != 70).then_some(Value::Int(value))).is_ok() {
+                    mide::sounds::play("audio-volume-change");
+                }
+            }
+            if ui.dropdown("Som de alerta", &names, &mut alert_i).changed() {
+                let (key, name) = mide::sounds::ALERTS[alert_i];
+                tracing::info!("efeitos sonoros: alerta {name}");
+                if settings_file::set("sounds", "alert", (key != "vidro").then(|| Value::Text(key.into()))).is_ok() {
+                    mide::sounds::preview_alert(key);
+                }
+            }
+        });
+        ui.note("O Não perturbe silencia o som das notificações. Os apps GTK abertos depois também usam estes sons.");
     }
 
     fn wallpaper(&mut self, ui: &mut Ui) {

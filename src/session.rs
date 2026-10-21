@@ -50,6 +50,11 @@ pub fn start(socket: &str) {
     }
     // Claro/escuro dos apps GTK e Qt (no banco do dconf da sessão) antes dos portais.
     mide::appearance::apply(false);
+    // Sons do mide: o tema (para os apps também) e o som de entrada na sessão.
+    std::thread::spawn(|| {
+        mide::sounds::ensure_theme();
+        mide::sounds::play("desktop-login");
+    });
     publish_environment(socket);
     hold_power_button();
     // Reiniciado pelo `restart all`: os apps automáticos que continuam vivos (os que

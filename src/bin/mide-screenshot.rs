@@ -142,6 +142,7 @@ impl Capture {
         let _ = std::fs::remove_file(&path);
         if ok {
             tracing::info!("captura copiada ({}x{})", image.width(), image.height());
+            shutter();
             mide::notify::send_and_wait("Captura de tela", "Captura copiada", "Cole com Ctrl+V (⌘V no estilo Mac).");
         } else {
             mide::notify::send_and_wait("Captura de tela", "A captura não foi copiada", "O mide não respondeu.");
@@ -159,6 +160,7 @@ impl Capture {
         match result {
             Ok(()) => {
                 tracing::info!("captura salva: {}", path.display());
+                shutter();
                 mide::notify::send_and_wait("Captura de tela", "Captura salva", &path.display().to_string());
                 Some(path)
             }
@@ -539,6 +541,16 @@ fn draw_shape(canvas: &mut Pixmap, shape: &Shape, offset: (f32, f32)) {
             }
         }
     }
+}
+
+/// Som do obturador, uma vez por captura (salvar e copiar juntos tocam um só). Espera
+/// o som começar: a captura fecha logo depois.
+fn shutter() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        mide::sounds::play("screen-capture");
+        std::thread::sleep(Duration::from_millis(60));
+    });
 }
 
 fn runtime_dir() -> PathBuf {

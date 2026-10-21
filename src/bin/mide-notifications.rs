@@ -146,6 +146,12 @@ impl Server {
             .filter(|s| !s.is_empty())
             .or_else(|| hint_str(&hints, "image-path"))
             .or_else(|| hint_str(&hints, "desktop-entry"));
+        // Som de notificação (fora do Não perturbe), a não ser que o app peça silêncio
+        // ou traga o próprio som.
+        let quiet = hints.get("suppress-sound").and_then(|v| bool::try_from(v).ok()).unwrap_or(false) || hints.contains_key("sound-file") || hints.contains_key("sound-name");
+        if !quiet {
+            mide::sounds::play("message-new-instant");
+        }
         let (has_default, buttons) = notify::actions(&actions);
         let note = Note {
             id,

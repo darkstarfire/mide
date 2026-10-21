@@ -247,8 +247,13 @@ impl Pane {
         if let Some(text) = self.term.take_clipboard() {
             *copy = Some(text);
         }
-        if std::mem::take(&mut self.term.bell) && self.visual_bell {
-            self.bell_at = Some(Instant::now());
+        if std::mem::take(&mut self.term.bell) {
+            // Sino: piscar (sino visual) ou o som de alerta do mide.
+            if self.visual_bell {
+                self.bell_at = Some(Instant::now());
+            } else {
+                mide::sounds::play_alert();
+            }
         }
         if self.scroll > 0 {
             self.scroll = (self.scroll + self.term.history_len().saturating_sub(history_before)).min(self.term.history_len());

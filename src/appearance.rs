@@ -26,8 +26,9 @@ fn session_dconf() -> Option<PathBuf> {
 fn keyfile(dark: bool) -> (String, String) {
     let (scheme, gtk) = if dark { ("prefer-dark", "Adwaita-dark") } else { ("default", "Adwaita") };
     (
-        format!("[org/gnome/desktop/interface]\ncolor-scheme='{scheme}'\ngtk-theme='{gtk}'\n"),
-        "/org/gnome/desktop/interface/color-scheme\n/org/gnome/desktop/interface/gtk-theme\n".to_string(),
+        // Sons de evento dos apps GTK (libcanberra) com o tema de sons do mide.
+        format!("[org/gnome/desktop/interface]\ncolor-scheme='{scheme}'\ngtk-theme='{gtk}'\n\n[org/gnome/desktop/sound]\ntheme-name='mide'\nevent-sounds={}\n", crate::sounds::enabled()),
+        "/org/gnome/desktop/interface/color-scheme\n/org/gnome/desktop/interface/gtk-theme\n/org/gnome/desktop/sound/theme-name\n/org/gnome/desktop/sound/event-sounds\n".to_string(),
     )
 }
 

@@ -20,6 +20,7 @@ pub mod notify;
 pub mod places;
 pub mod search;
 pub mod settings_file;
+pub mod sounds;
 pub mod sysinfo;
 pub mod system;
 pub mod terminal;

@@ -242,6 +242,9 @@ pub fn empty_trash(trash: &Path) -> std::io::Result<usize> {
             }
         }
     }
+    if removed > 0 {
+        crate::sounds::play("trash-empty");
+    }
     Ok(removed)
 }
 

@@ -190,6 +190,7 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
             match output {
                 Ok(out) if out.status.success() => {
                     tracing::info!("gravação salva: {}", video.display());
+                    mide::sounds::play("complete");
                     mide::notify::send("Gravação de tela", "Gravação salva", &video.display().to_string());
                 }
                 Ok(out) => {

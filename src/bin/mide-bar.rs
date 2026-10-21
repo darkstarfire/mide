@@ -1007,6 +1007,13 @@ impl Bar {
             self.draw_bar();
         }
         let focus_changed = focused_id != self.focused_id;
+        // Bateria fraca: ao passar de 10% descarregando, som e aviso (uma vez).
+        if let (Some((was, _)), Some((now, false))) = (self.battery, battery) {
+            if was > 10 && now <= 10 {
+                mide::sounds::play("battery-low");
+                mide::notify::send("Bateria", "Bateria fraca", &format!("{now}% restantes. Ligue o carregador."));
+            }
+        }
         if clock != self.clock || battery != self.battery || focused != self.focused_name || focused_id != self.focused_id {
             self.clock = clock;
             self.battery = battery;
@@ -2514,6 +2521,8 @@ impl PointerHandler for Bar {
                         if let Some((value, _)) = self.status.volume {
                             system::set_volume(value);
                         }
+                        // Toque de confirmação do volume novo, como no macOS.
+                        mide::sounds::play("audio-volume-change");
                         self.request_status();
                     }
                 }
