@@ -82,6 +82,11 @@ struct Capture {
     /// Modo rápido (⌘⇧4, `--area`): sem painel; ao soltar o mouse, a área é salva e
     /// copiada, como no Mac.
     quick: bool,
+    /// Gravar a tela (⌘⇧5, `--record`): tela inteira ou área, com som do sistema e
+    /// microfone; "Gravar" pede ao compositor e fecha.
+    record: bool,
+    system_audio: bool,
+    microphone: bool,
 }
 
 impl Capture {
@@ -92,7 +97,23 @@ impl Capture {
                 *c = (*c as u16 * 145 / 255) as u8;
             }
         }
-        Self { shot, dimmed, mode: Mode::Selection, tool: Tool::Arrow, color: 0, selection: None, drag: None, shapes: Vec::new(), windows, swatches: Vec::new(), quick: false }
+        let flag = |key: &str, default: bool| mide::settings_file::flag("record", key, default);
+        Self {
+            shot,
+            dimmed,
+            mode: Mode::Selection,
+            tool: Tool::Arrow,
+            color: 0,
+            selection: None,
+            drag: None,
+            shapes: Vec::new(),
+            windows,
+            swatches: Vec::new(),
+            quick: false,
+            record: false,
+            system_audio: flag("system_audio", true),
+            microphone: flag("microphone", false),
+        }
     }
 
     /// A área escolhida com as marcações, recortada da captura.
@@ -274,6 +295,11 @@ impl App for Capture {
             return;
         }
 
+        if self.record {
+            self.record_view(ui);
+            return;
+        }
+
         // Painel: modo, ferramenta, cor e ações, embaixo e no meio.
         let panel_w = 720.0;
         let (px, py) = ((sw - panel_w) / 2.0, sh - 128.0);
@@ -356,6 +382,74 @@ impl App for Capture {
         }
         if self.drag.is_some() {
             ui.request_repaint();
+        }
+    }
+}
+
+impl Capture {
+    /// Painel do ⌘⇧5: o que gravar (tela inteira ou área), os sons e Gravar.
+    fn record_view(&mut self, ui: &mut Ui) {
+        let (sw, sh) = (self.shot.width() as f32, self.shot.height() as f32);
+        let panel_w = 740.0;
+        let (px, py) = ((sw - panel_w) / 2.0, sh - 84.0);
+        let mut start = ui.input().keys.contains(&Key::Enter);
+        let mut cancel = false;
+        let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
+            ui.row(|ui| {
+                for (mode, label) in [(Mode::Full, "Tela inteira"), (Mode::Selection, "Área")] {
+                    let r = if self.mode == mode { ui.primary_button(label) } else { ui.button(label) };
+                    if r.clicked() {
+                        self.mode = mode;
+                        if mode == Mode::Selection {
+                            self.selection = None;
+                        }
+                    }
+                }
+                for (on, label) in [(self.system_audio, "Som do sistema"), (self.microphone, "Microfone")] {
+                    let text = format!("{} {label}", if on { "☑" } else { "☐" });
+                    if ui.button(&text).clicked() {
+                        if label == "Microfone" {
+                            self.microphone = !self.microphone;
+                            let _ = mide::settings_file::set("record", "microphone", self.microphone.then_some(mide::settings_file::Value::Bool(true)));
+                        } else {
+                            self.system_audio = !self.system_audio;
+                            let _ = mide::settings_file::set("record", "system_audio", (!self.system_audio).then_some(mide::settings_file::Value::Bool(false)));
+                        }
+                    }
+                }
+                ui.push_right(200.0);
+                cancel = ui.button("Cancelar").clicked();
+                start |= ui.primary_button("Gravar").clicked();
+            });
+        });
+        if let Some(pos) = ui.input().pointer {
+            let over_panel = inside(rect, pos);
+            if self.mode == Mode::Selection {
+                self.pointer(ui, pos, over_panel);
+            }
+        }
+        if self.drag.is_some() {
+            ui.request_repaint();
+        }
+        if cancel {
+            tracing::info!("gravação cancelada");
+            ui.close();
+            return;
+        }
+        if start {
+            let area = match (self.mode, self.selection) {
+                (Mode::Selection, Some((x, y, w, h))) => format!("{} {} {} {}", x.round() as i32, y.round() as i32, w.round() as i32, h.round() as i32),
+                (Mode::Selection, None) => return,
+                _ => "full".into(),
+            };
+            let sounds = format!("{}{}", if self.system_audio { " sistema" } else { "" }, if self.microphone { " microfone" } else { "" });
+            let reply = ask_compositor(&format!("record start {area}{sounds}")).and_then(|r| r.into_iter().next()).unwrap_or_default();
+            if let Some(err) = reply.strip_prefix("erro: ") {
+                mide::notify::send_and_wait("Gravação de tela", "A gravação não começou", err);
+            } else {
+                tracing::info!("gravação começou: {reply}");
+            }
+            ui.close();
         }
     }
 }
@@ -509,6 +603,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // `--full` (⌘⇧3): a tela inteira, salva e copiada, sem janela. `--area` (⌘⇧4):
     // escolher uma área, salva e copiada ao soltar o mouse.
     let mode = std::env::args().nth(1).unwrap_or_default();
+    // ⌘⇧5 com uma gravação em andamento: para (como o botão na barra).
+    if mode == "--record" && ask_compositor("record status").is_some_and(|r| r.first().is_some_and(|l| l.starts_with("on"))) {
+        ask_compositor("record stop");
+        return Ok(());
+    }
     let shot = capture(mode.is_empty())?;
     if mode == "--full" {
         let (w, h) = (shot.width() as f32, shot.height() as f32);
@@ -522,6 +621,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let windows = window_rects();
     let mut app = Capture::new(shot, windows);
     app.quick = mode == "--area";
+    if mode == "--record" {
+        app.record = true;
+        app.mode = Mode::Full;
+    }
     // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1.
     run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot").fixed_scale(), app)
 }

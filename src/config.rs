@@ -390,6 +390,8 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     // a área de transferência). No estilo Mac o ⌘ é o Alt; fora dele, a tecla Super.
     ("super+shift+3", "launch:mide-screenshot --full"),
     ("super+shift+4", "launch:mide-screenshot --area"),
+    // ⌘⇧5: gravar a tela (inteira ou uma área, com som); de novo, para a gravação.
+    ("super+shift+5", "launch:mide-screenshot --record"),
     // Terminal de atalho: desce do topo e some com a mesma tecla (como o Guake).
     ("f12", "launch:mide-terminal --hotkey"),
     // Janelas, como no GNOME.

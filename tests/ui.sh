@@ -1037,6 +1037,47 @@ shot_test "captura: ⌘⇧3 salva a tela inteira" "400 combo super+shift+3; 600 
 shot_test "captura: ⌘⇧3 com o launcher aberto" "400 combo ctrl+shift+space; 470 combo super+shift+3; 650 list" 1366x768
 shot_test "captura: ⌘⇧4 no estilo Mac (Alt+Shift+4)" "400 combo alt+shift+4; $AREA" 300x200 mac
 
+# Gravar a tela (A21, ⌘⇧5), com um ffmpeg de teste (`MIDE_FFMPEG`) que grava os
+# argumentos e conta os bytes recebidos; Vídeos numa pasta de teste. Painel: "Gravar"
+# em (980, 710); botão de parar na barra em (1220, 14).
+REC="$(mktemp -d)"
+mkdir -p "$REC/cfg/mide" "$REC/videos"
+printf 'XDG_VIDEOS_DIR="%s/videos"\n' "$REC" > "$REC/cfg/user-dirs.dirs"
+printf '#!/bin/sh\nfor a; do last=$a; done\nprintf "%%s\\n" "$@" > "$last.args"\nwc -c > "$last"\n' > "$REC/ffmpeg"
+chmod +x "$REC/ffmpeg"
+rec_file() { ls "$REC/videos/Gravações de tela/"*.mp4 2>/dev/null | head -n 1; }
+XDG_CONFIG_HOME="$REC/cfg" MIDE_FFMPEG="$REC/ffmpeg" SCENARIO_WAIT=20 SCENARIO_TIMEOUT=40 timeout 150 "$SCEN" "300 combo super+shift+5; 420 click 980 710; 600 click 1220 14; 700 list" >/dev/null 2>&1
+VIDEO="$(rec_file)"
+if [ -n "$VIDEO" ] && [ "$(cat "$VIDEO")" -gt $((1366 * 768 * 4 * 10)) ] && grep -qx "1366x768" "$VIDEO.args" && grep -qx "@DEFAULT_MONITOR@" "$VIDEO.args"; then
+    echo "ok    gravar a tela: ⌘⇧5, Gravar e parar pela barra (tela inteira, som do sistema)"; PASS=$((PASS + 1))
+else
+    echo "FALHA gravar a tela: ⌘⇧5, Gravar e parar pela barra"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$REC/videos"/*
+XDG_CONFIG_HOME="$REC/cfg" MIDE_FFMPEG="$REC/ffmpeg" SCENARIO_WAIT=14 timeout 150 "$SCEN" "700 list" -- "sh -c 'sleep 2; mide-ctl record start 100 100 401 301 microfone; sleep 2; mide-ctl record stop'" >/dev/null 2>&1
+VIDEO="$(rec_file)"
+if [ -n "$VIDEO" ] && grep -qx "400x300" "$VIDEO.args" && grep -qx "@DEFAULT_SOURCE@" "$VIDEO.args" && ! grep -qx "@DEFAULT_MONITOR@" "$VIDEO.args"; then
+    echo "ok    gravar a tela: área (lados pares) com o microfone"; PASS=$((PASS + 1))
+else
+    echo "FALHA gravar a tela: área com o microfone"; FAIL=$((FAIL + 1))
+fi
+# Com o ffmpeg de verdade: o arquivo é um vídeo H.264 da tela com som (AAC) e dura o
+# tempo gravado (4 s, menos o começo descartado).
+if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
+    rm -rf "$REC/videos"/*
+    XDG_CONFIG_HOME="$REC/cfg" SCENARIO_WAIT=20 SCENARIO_TIMEOUT=40 timeout 150 "$SCEN" "1500 list" -- "$CALCULATOR" "sh -c 'sleep 3; mide-ctl record start full sistema; sleep 4; mide-ctl record stop'" >/dev/null 2>&1
+    VIDEO="$(rec_file)"
+    INFO="$([ -n "$VIDEO" ] && ffprobe -v error -show_entries stream=codec_name,width,height:format=duration -of compact "$VIDEO" 2>/dev/null | tr '\n' ' ')"
+    if echo "$INFO" | grep -q "codec_name=h264|width=1366|height=768" && echo "$INFO" | grep -q "codec_name=aac" && python3 -c "import re,sys; d=float(re.search(r'duration=([0-9.]+)', sys.argv[1]).group(1)); sys.exit(0 if 3.0 <= d <= 5.0 else 1)" "$INFO" 2>/dev/null; then
+        echo "ok    gravar a tela com o ffmpeg: vídeo H.264 com som, duração certa"; PASS=$((PASS + 1))
+    else
+        echo "FALHA gravar a tela com o ffmpeg ($INFO)"; FAIL=$((FAIL + 1))
+    fi
+else
+    echo "pulo  gravar a tela com o ffmpeg de verdade (sem o ffmpeg)"
+fi
+rm -rf "$REC"
+
 # Captura pelos apps (wlr-screencopy, o que o portal do OBS usa): o grim tira a tela
 # inteira e uma região; as imagens têm de ser iguais ao quadro do mide.
 if command -v grim >/dev/null; then

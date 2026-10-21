@@ -115,6 +115,28 @@ pub fn handle(state: &mut State, command: &str) -> String {
             }
             None => "\n".into(),
         },
+        // Gravar a tela: `record start [full|x y w h] [sistema] [microfone]`,
+        // `record stop` e `record status` (`off`, ou `on <segundos> <arquivo>`).
+        Some("record") => match words.next() {
+            Some("start") => {
+                let rest: Vec<&str> = words.collect();
+                match crate::record::start(state, crate::record::parse_request(&rest)) {
+                    Ok(path) => format!("ok {}\n", path.display()),
+                    Err(err) => {
+                        tracing::warn!("gravação não começou: {err}");
+                        format!("erro: {err}\n")
+                    }
+                }
+            }
+            Some("stop") => match crate::record::stop(state) {
+                Some(path) => format!("ok {}\n", path.display()),
+                None => "off\n".into(),
+            },
+            _ => match &state.recording {
+                Some(r) => format!("on {} {}\n", r.started.elapsed().as_secs(), r.path.display()),
+                None => "off\n".into(),
+            },
+        },
         // A barra pergunta se há algo para ela (a confirmação do botão de ligar).
         Some("bar_request") => format!("{}\n", state.bar_request.take().unwrap_or("")),
         Some("icons") => {

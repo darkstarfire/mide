@@ -187,6 +187,8 @@ pub struct State {
     /// Último commit de cada janela: o desenho tira uma foto nova dela (para a
     /// transição de fechar também quando o app fecha sozinho).
     pub commits: std::collections::HashMap<u64, Instant>,
+    /// Gravação de tela em andamento (⌘⇧5).
+    pub recording: Option<crate::record::Recording>,
     /// Janelas minimizadas, da mais antiga para a mais recente.
     pub minimized: Vec<MinimizedWindow>,
     /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
@@ -370,6 +372,7 @@ impl State {
             close_requests: Vec::new(),
             ghosts: Vec::new(),
             commits: std::collections::HashMap::new(),
+            recording: None,
             minimized: Vec::new(),
             hidden: Vec::new(),
             mac_keys: MacKeys::default(),

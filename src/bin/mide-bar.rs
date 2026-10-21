@@ -206,6 +206,8 @@ enum MenuId {
     Battery,
     /// Seletor do layout de teclado (lista), com mais de um layout nas Configurações.
     Layout,
+    /// Gravação de tela em andamento: o clique para (não é menu).
+    Record,
     /// Central de controle (Wi-Fi, Bluetooth, Não perturbe, brilho, som).
     Control,
     /// Engrenagem: abre as Configurações (não é menu).
@@ -314,7 +316,7 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
         ],
         MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("energy")))],
         // Itens vêm dos layouts escolhidos (`Bar::layout_items`).
-        MenuId::Layout => Vec::new(),
+        MenuId::Layout | MenuId::Record => Vec::new(),
         // Itens vêm do app (`Bar::native_items`).
         MenuId::Native(_) | MenuId::Tray(_) => Vec::new(),
         // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
@@ -377,6 +379,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         native: None,
         native_gtk: None,
         layout_active: None,
+        recording: None,
         native_failed: None,
         battery: None,
         names: AppNames::load(),
@@ -773,6 +776,8 @@ struct Bar {
     /// Layout de teclado ativo (número na lista das Configurações), quando o seletor
     /// aparece na barra.
     layout_active: Option<u32>,
+    /// Gravação de tela em andamento: segundos desde o começo.
+    recording: Option<u64>,
     /// O menu em foco é de um app GTK (`org.gtk.Menus`, avisado ao compositor pelo
     /// `gtk_shell1`): onde ele está e as ações dos itens (o `id` de cada item é o
     /// número da ação). Sem isso, o `native` é um `dbusmenu`.
@@ -993,6 +998,14 @@ impl Bar {
             self.layout_active = layout_active;
             self.draw_bar();
         }
+        // Gravação de tela (⌘⇧5): o tempo na barra, com o botão de parar.
+        let recording = ask_compositor("record status")
+            .and_then(|l| l.into_iter().next())
+            .and_then(|l| l.strip_prefix("on ").and_then(|r| r.split_whitespace().next()?.parse().ok()));
+        if recording != self.recording {
+            self.recording = recording;
+            self.draw_bar();
+        }
         let focus_changed = focused_id != self.focused_id;
         if clock != self.clock || battery != self.battery || focused != self.focused_name || focused_id != self.focused_id {
             self.clock = clock;
@@ -1148,6 +1161,25 @@ impl Bar {
             x -= 30.0;
             draw_battery(&mut pixmap, x, cy, level, charging, fg);
             self.titles.push((MenuId::Battery, left, right));
+        }
+        // Gravando a tela: botão de parar (quadrado num círculo) e o tempo, como no Mac.
+        if let Some(secs) = self.recording {
+            let label = format!("{:02}:{:02}", secs / 60, secs % 60);
+            let lw = self.text.measure(&label, FONT, FontWeight::Regular);
+            let right = x - 7.0;
+            let left = right - lw - 34.0;
+            highlight(&mut pixmap, MenuId::Record, left, right);
+            let (cx, cyy) = (left + 14.0, cy);
+            if let Some(ring) = PathBuilder::from_circle(cx, cyy, 7.5) {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
+                pixmap.stroke_path(&ring, &paint, &Stroke { width: 1.4, ..Default::default() }, Transform::identity(), None);
+            }
+            fill_rounded(&mut pixmap, cx - 3.0, cyy - 3.0, 6.0, 6.0, 1.0, rgba(fg[0], fg[1], fg[2], fg[3]));
+            self.text.draw(&mut pixmap, &label, left + 27.0, text_y, FONT, FontWeight::Regular, fg);
+            self.titles.push((MenuId::Record, left, right));
+            x = left + 7.0;
         }
         // Layout de teclado (com mais de um nas Configurações): a sigla num contorno,
         // como no macOS.
@@ -1336,6 +1368,15 @@ impl Bar {
             self.close_menu();
             tracing::info!("engrenagem: Configurações");
             system::open_settings("");
+            return;
+        }
+        // O botão da gravação também não: para a gravação.
+        if id == MenuId::Record {
+            self.close_menu();
+            tracing::info!("barra: parar a gravação");
+            ask_compositor("record stop");
+            self.recording = None;
+            self.draw_bar();
             return;
         }
         let app = self.focused_name.clone();

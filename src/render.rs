@@ -180,6 +180,7 @@ impl Scene {
             dump_frame_if_requested(renderer, framebuffer, output)?;
             let damage = result.damage.cloned();
             crate::screencopy::serve(renderer, framebuffer, output, damage.as_deref(), state);
+            crate::record::feed(renderer, framebuffer, output, state);
             return Ok((result.sync, damage));
         }
         // Prévias das janelas: só na tela da dock (a posição delas vem da dock).
@@ -279,6 +280,7 @@ impl Scene {
         // Capturas pedidas pelos apps (OBS e outros): saem deste quadro.
         let damage = result.damage.cloned();
         crate::screencopy::serve(renderer, framebuffer, output, damage.as_deref(), state);
+        crate::record::feed(renderer, framebuffer, output, state);
         Ok((result.sync, damage))
     }
 }

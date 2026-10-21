@@ -18,6 +18,7 @@ mod genie;
 mod input;
 mod lock;
 mod outputs;
+mod record;
 mod screencopy;
 mod selftest;
 mod session;

@@ -59,6 +59,16 @@ pub fn pictures_dir() -> PathBuf {
         .unwrap_or_else(|| home.clone())
 }
 
+/// Pasta de vídeos do usuário (`XDG_VIDEOS_DIR`, ou Vídeos/Videos na pasta pessoal).
+pub fn videos_dir() -> PathBuf {
+    let home = home();
+    fs::read_to_string(config_home().join("user-dirs.dirs"))
+        .ok()
+        .and_then(|text| parse_user_dir(&text, "VIDEOS", &home))
+        .or_else(|| [home.join("Vídeos"), home.join("Videos")].into_iter().find(|p| p.is_dir()))
+        .unwrap_or_else(|| home.join("Vídeos"))
+}
+
 /// Pasta da área de trabalho (os ícones na tela). `MIDE_DESKTOP_DIR` troca a pasta
 /// (os testes usam uma pasta temporária). Sem pasta, `None` (não há o que mostrar).
 pub fn desktop_dir() -> Option<PathBuf> {

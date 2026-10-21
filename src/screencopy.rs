@@ -276,7 +276,7 @@ pub fn serve(
 
 /// Pixels RGBA da tela inteira, como estão no alvo (linhas de cima para baixo, ou de
 /// baixo para cima se o alvo é invertido).
-fn read_pixels(renderer: &mut GlesRenderer, framebuffer: &GlesTarget<'_>, full: Rectangle<i32, Physical>) -> Option<Vec<u8>> {
+pub(crate) fn read_pixels(renderer: &mut GlesRenderer, framebuffer: &GlesTarget<'_>, full: Rectangle<i32, Physical>) -> Option<Vec<u8>> {
     let region = Rectangle::from_size((full.size.w, full.size.h).into());
     let mapping = renderer.copy_framebuffer(framebuffer, region, Fourcc::Abgr8888).ok()?;
     renderer.map_texture(&mapping).ok().map(|b| b.to_vec())
