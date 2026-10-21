@@ -571,7 +571,10 @@ impl Runner {
             }
             None => surface.set_input_region(None),
         }
-        surface.damage_buffer(0, 0, w as i32, h as i32);
+        // Só a parte que mudou desde o último quadro conta como dano: o compositor
+        // copia e redesenha só ela (digitar num campo não reenvia a janela inteira).
+        let (dx, dy, dw, dh) = self.last_frame.as_ref().and_then(|last| changed_area(last, &pixmap)).unwrap_or((0, 0, w, h));
+        surface.damage_buffer(dx as i32, dy as i32, dw as i32, dh as i32);
         if buffer.attach_to(surface).is_ok() {
             self.shell.commit();
         }
@@ -994,4 +997,49 @@ impl ProvidesRegistryState for Runner {
     }
 
     registry_handlers![OutputState, SeatState];
+}
+
+/// Retângulo (x, y, largura, altura) que cobre os pixels diferentes entre dois quadros
+/// do mesmo tamanho; `None` se o tamanho mudou.
+fn changed_area(old: &Pixmap, new: &Pixmap) -> Option<(u32, u32, u32, u32)> {
+    if old.width() != new.width() || old.height() != new.height() {
+        return None;
+    }
+    let (w, h) = (new.width() as usize, new.height() as usize);
+    let stride = w * 4;
+    let (a, b) = (old.data(), new.data());
+    let row = |y: usize| &a[y * stride..(y + 1) * stride] != &b[y * stride..(y + 1) * stride];
+    let top = (0..h).find(|&y| row(y))?;
+    let bottom = (top..h).rev().find(|&y| row(y)).unwrap_or(top);
+    let (mut left, mut right) = (w, 0);
+    for y in top..=bottom {
+        let (ra, rb) = (&a[y * stride..(y + 1) * stride], &b[y * stride..(y + 1) * stride]);
+        if ra == rb {
+            continue;
+        }
+        if let Some(x) = (0..left.min(w)).find(|&x| ra[x * 4..x * 4 + 4] != rb[x * 4..x * 4 + 4]) {
+            left = x;
+        }
+        if let Some(x) = (right..w).rev().find(|&x| ra[x * 4..x * 4 + 4] != rb[x * 4..x * 4 + 4]) {
+            right = right.max(x);
+        }
+    }
+    let left = left.min(right);
+    Some((left as u32, top as u32, (right - left + 1) as u32, (bottom - top + 1) as u32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::changed_area;
+    use tiny_skia::Pixmap;
+
+    #[test]
+    fn dano_so_onde_mudou() {
+        let old = Pixmap::new(100, 80).unwrap();
+        let mut new = old.clone();
+        new.fill_rect(tiny_skia::Rect::from_xywh(10.0, 20.0, 5.0, 3.0).unwrap(), &tiny_skia::Paint::default(), tiny_skia::Transform::identity(), None);
+        assert_eq!(changed_area(&old, &new), Some((10, 20, 5, 3)));
+        assert_eq!(changed_area(&old, &old), None);
+        assert_eq!(changed_area(&old, &Pixmap::new(50, 80).unwrap()), None);
+    }
 }

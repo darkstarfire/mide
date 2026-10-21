@@ -1110,3 +1110,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Compositor:** barras de título grafite com título claro no tema escuro.
 - **Barra superior:** barra escura com texto branco; menus, painéis (calendário, som, Wi-Fi, Bluetooth, central de controle, confirmações) com a paleta escura. Notificações e "Sobre este computador" também.
 - **Apps GTK e Qt (só na sessão do mide):** o mide escreve `color-scheme` e `gtk-theme` (`Adwaita-dark`) no banco do dconf da sessão (`src/appearance.rs`; o mesmo perfil do tema de ícones, agora criado sempre que o dconf existe) e reinicia o portal do GTK; valem para os apps abertos depois da troca. Outras sessões não mudam.
+
+## mide-ui: teclas mortas, listas longas e redesenho parcial (D1)
+
+- Teclas mortas e composição (´ + a = á, ~ + o = õ) conferidas nos apps do mide-ui, também com o idioma "C" (sessão iniciada do console).
+- Listas e grades longas: além de ladrilhos e linhas de arquivos, as linhas de lista (`list_item`) e os interruptores (`switch_detail`) fora da área à vista só ocupam o lugar e recebem o clique, sem desenhar.
+- Redesenho parcial: cada quadro manda ao compositor só o retângulo que mudou desde o anterior (`damage_buffer` da área diferente); digitar num campo não reenvia a janela inteira.

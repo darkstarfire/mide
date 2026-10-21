@@ -787,6 +787,17 @@ if [ "$(cat "$TDIR/b.txt")" = "copiar isto" ]; then
 else
     echo "FALHA copiar num app e colar em outro"; FAIL=$((FAIL + 1))
 fi
+# Teclas mortas (layout ABNT2 do sistema de teste): ´ + a = á e ~ + o = õ, também com
+# o idioma "C" (sessão iniciada do console, sem LANG).
+: > "$TDIR/acentos.txt"
+LANG=C LC_ALL= timeout 150 "$SCEN" "400 click 400 300; 420 key leftbrace; 430 key a; 440 key apostrophe; 450 key o; 480 combo ctrl+s; 530 list" -- "$TEXT_APP '$TDIR/acentos.txt'" >/dev/null 2>&1
+if [ "$(cat "$TDIR/acentos.txt")" = "áõ" ]; then
+    echo "ok    teclas mortas: ´ + a = á e ~ + o = õ (idioma C)"; PASS=$((PASS + 1))
+elif ! grep -q 'XKBLAYOUT="br"' /etc/default/keyboard 2>/dev/null; then
+    echo "pulo  teclas mortas (o teclado do sistema não é ABNT2)"
+else
+    echo "FALHA teclas mortas ($(cat "$TDIR/acentos.txt"))"; FAIL=$((FAIL + 1))
+fi
 check "editor: alteração não salva marca o título" 'janela "• teste.rs' "400 type x; 460 list" "$TEXT_APP '$TDIR/teste.rs'"
 check "fechar com alteração pergunta antes (janela continua)" 'janela "• teste.rs' "400 type x; 430 click 63 61; 480 list" "$TEXT_APP '$TDIR/teste.rs'"
 rm -rf "$TDIR"

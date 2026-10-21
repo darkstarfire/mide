@@ -123,6 +123,9 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "0" => 11,
         d @ ("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") => d.parse::<u32>().ok()? + 1,
         "tab" => 15,
+        // Teclas mortas do ABNT2: acento agudo (´) e til (~).
+        "leftbrace" => 26,
+        "apostrophe" => 40,
         "space" | "_" => 57,
         "left" => 105,
         "right" => 106,

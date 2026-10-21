@@ -1133,6 +1133,9 @@ impl<'a> Ui<'a> {
             *value = !*value;
             r.changed = true;
         }
+        if !self.visible(rect) {
+            return r;
+        }
         let label = self.fit(label, t.font, FontWeight::Regular, rect.2 - 60.0);
         if detail.is_empty() {
             self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
@@ -1854,6 +1857,10 @@ impl<'a> Ui<'a> {
         let rect = self.alloc(None, t.row);
         self.card_line(rect.1);
         let r = self.interact(id, (rect.0 - 8.0, rect.1, rect.2 + 16.0, rect.3));
+        // Fora da área à vista: só o lugar e o clique (listas longas desenham só o visível).
+        if !self.visible(rect) {
+            return r;
+        }
         // Destaque como o da barra lateral: pílula arredondada com folga, cinza claro.
         if r.hovered {
             fill_rounded(self.canvas, rect.0 - 8.0, rect.1 + 3.0, rect.2 + 16.0, rect.3 - 6.0, t.control_radius, color(t.control));
