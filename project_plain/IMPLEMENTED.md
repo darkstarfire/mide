@@ -1089,3 +1089,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - **Popups de camadas** (o menu de um ícone da Waybar e de outros painéis): pelo protocolo, o popup nasce sem pai e a camada o adota depois (`get_popup`). O mide espera a adoção, ajusta a posição à tela da camada, registra o popup e manda a configuração; os popups são desenhados na frente da camada, recebem o ponteiro e fecham ao clicar fora (junto com os das janelas).
 - Exemplo de teste `examples/mide-layer-popup-teste.rs`: uma camada no topo (azul) com um popup laranja adotado por ela.
+
+## Tray: ícones de apps na barra (B3)
+
+- `src/tray.rs`: a barra é o registro `org.kde.StatusNotifierWatcher` (no barramento da sessão; com outro painel já atendendo, fica sem tray). Cada app que registra um ícone (`StatusNotifierItem`, pelo nome no barramento ou só pelo objeto, como o Ayatana) tem as propriedades lidas numa thread: título, estado (os "passivos" não aparecem), ícone pelo nome (pasta do app, depois o tema) ou a imagem mandada (ARGB32), e o menu. Sinais `NewIcon`/`NewStatus`/... releem o ícone; o app que sai do barramento perde os ícones.
+- Na barra: os ícones ficam à esquerda dos do sistema (como no macOS); clique esquerdo chama `Activate` (os apps que só têm menu abrem o menu); clique direito abre o menu do app (`dbusmenu`, o mesmo leitor do menu global), com o título dele no topo; o item clicado chega ao app.
+- Exemplo de teste `examples/mide-tray-teste.rs` (ícone laranja, menu "Abrir"/"Sair", tempo de vida `TRAY_TESTE_SEGUNDOS`).

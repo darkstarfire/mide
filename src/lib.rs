@@ -18,4 +18,5 @@ pub mod settings_file;
 pub mod sysinfo;
 pub mod system;
 pub mod terminal;
+pub mod tray;
 pub mod ui;

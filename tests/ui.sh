@@ -610,6 +610,28 @@ else
 fi
 rm -rf "$LPP"
 
+# Tray (StatusNotifierItem), num barramento D-Bus de teste: o ícone do app aparece na
+# barra (quadrado laranja em (1117, 14)), o clique ativa o app, o clique direito abre o
+# menu dele e o item clicado chega ao app; quando o app sai, o ícone some.
+if [ -x target/debug/examples/mide-tray-teste ]; then
+    TRAY="$(mktemp -d)"
+    tray_run() {
+        SCENARIO_OUT="$TRAY/scen" SCENARIO_WAIT="${2:-10}" timeout 150 tests/scenario-dbus.sh "$1" "${3:-}" -- "TRAY_TESTE_ARQUIVO=$TRAY/acao.txt TRAY_TESTE_SEGUNDOS=${4:-60} $PWD/target/debug/examples/mide-tray-teste" >/dev/null 2>&1
+    }
+    pixel() { python3 -c "import sys; from PIL import Image; print('%d,%d,%d' % Image.open(sys.argv[1]).convert('RGB').getpixel((1117, 14)))" "$TRAY/scen/frame.png" 2>/dev/null; }
+    tray_run "400 list" 10 420
+    [ "$(pixel)" = "255,138,31" ] && { echo "ok    tray: o ícone do app aparece na barra"; PASS=$((PASS + 1)); } || { echo "FALHA tray: o ícone do app aparece na barra ($(pixel))"; FAIL=$((FAIL + 1)); }
+    rm -f "$TRAY/acao.txt"; tray_run "400 click 1117 14; 450 list"
+    [ "$(cat "$TRAY/acao.txt" 2>/dev/null)" = "ativado" ] && { echo "ok    tray: clique ativa o app"; PASS=$((PASS + 1)); } || { echo "FALHA tray: clique ativa o app"; FAIL=$((FAIL + 1)); }
+    rm -f "$TRAY/acao.txt"; tray_run "400 rclick 1117 14; 440 click 1134 88; 480 list"
+    [ "$(cat "$TRAY/acao.txt" 2>/dev/null)" = "clique 1" ] && { echo "ok    tray: menu do ícone (clique direito) e o item chega ao app"; PASS=$((PASS + 1)); } || { echo "FALHA tray: menu do ícone"; FAIL=$((FAIL + 1)); }
+    tray_run "700 list" 12 690 3
+    [ "$(pixel)" != "255,138,31" ] && { echo "ok    tray: o ícone some quando o app sai"; PASS=$((PASS + 1)); } || { echo "FALHA tray: o ícone some quando o app sai"; FAIL=$((FAIL + 1)); }
+    rm -rf "$TRAY"
+else
+    echo "pulo  tray (rode cargo build --examples)"
+fi
+
 echo "== área de trabalho (ícones)"
 # Pasta de teste com um arquivo: o ícone fica na coluna da direita, em (1298, 76)
 # (área útil abaixo da barra e acima da dock). Fundo vazio em (400, 300): menu com

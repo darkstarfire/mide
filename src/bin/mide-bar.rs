@@ -66,6 +66,7 @@ use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 const BAR_HEIGHT: u32 = 28;
 const FONT: f32 = 13.5;
 const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 /// Área clicável da marca do mide, à esquerda.
 const LOGO_X: f32 = 14.0;
@@ -99,6 +100,74 @@ enum MenuAction {
     ForceQuit,
     /// Item do menu do próprio app (menu global): o número dele no menu do app.
     Native(i32),
+    /// Item do menu de um ícone do tray: o ícone e o número do item.
+    Tray(u8, i32),
+}
+
+/// Itens de um menu `dbusmenu` (menu global ou de um ícone do tray). Submenus aparecem
+/// logo abaixo do título deles, com recuo.
+fn dbus_entries(items: &[mide::appmenu::Item], action: &dyn Fn(i32) -> MenuAction) -> Vec<MenuItem> {
+    fn push(out: &mut Vec<MenuItem>, items: &[mide::appmenu::Item], depth: usize, action: &dyn Fn(i32) -> MenuAction) {
+        for item in items {
+            if item.separator {
+                if !matches!(out.last(), Some(MenuItem::Separator) | None) {
+                    out.push(MenuItem::Separator);
+                }
+                continue;
+            }
+            let mark = match item.checked {
+                Some(true) => "✓ ",
+                _ => "",
+            };
+            let label = format!("{}{mark}{}", "    ".repeat(depth), item.label);
+            if item.children.is_empty() {
+                out.push(entry(label, &item.shortcut, item.enabled.then(|| action(item.id))));
+            } else {
+                out.push(entry(label, "", None));
+                push(out, &item.children, depth + 1, action);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    push(&mut out, items, 0, action);
+    out
+}
+
+/// Chave da imagem de um ícone do tray (muda quando o ícone muda).
+fn tray_key(item: &mide::tray::TrayItem) -> String {
+    let pixels = item.pixmap.as_ref().map(|(w, h, d)| format!("{w}x{h}:{}", d.iter().map(|b| *b as u64).sum::<u64>())).unwrap_or_default();
+    format!("{}{}|{}|{}|{pixels}", item.bus, item.path, item.icon_name, item.theme_path)
+}
+
+/// Imagem de um ícone do tray em `size` px: a que o app mandou (ARGB32, big-endian) ou
+/// o ícone pelo nome (pasta do app, depois o tema).
+fn tray_icon(item: &mide::tray::TrayItem, size: u32) -> Option<Pixmap> {
+    if let Some((w, h, data)) = &item.pixmap {
+        let mut image = Pixmap::new(*w as u32, *h as u32)?;
+        for (dst, src) in image.pixels_mut().iter_mut().zip(data.chunks_exact(4)) {
+            let (a, r, g, b) = (src[0], src[1], src[2], src[3]);
+            let k = |c: u8| (c as u32 * a as u32 / 255) as u8;
+            *dst = tiny_skia::PremultipliedColorU8::from_rgba(k(r), k(g), k(b), a)?;
+        }
+        let mut out = Pixmap::new(size, size)?;
+        let s = size as f32 / (*w).max(*h) as f32;
+        out.draw_pixmap(0, 0, image.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() }, Transform::from_scale(s, s), None);
+        return Some(out);
+    }
+    if item.icon_name.is_empty() {
+        return None;
+    }
+    if !item.theme_path.is_empty() {
+        for ext in ["png", "svg"] {
+            let file = std::path::Path::new(&item.theme_path).join(format!("{}.{ext}", item.icon_name));
+            if file.exists() {
+                if let Some(icon) = mide::icons::load_icon_file(&file.to_string_lossy(), size) {
+                    return Some(icon);
+                }
+            }
+        }
+    }
+    mide::icons::load_icon(&item.icon_name, size)
 }
 
 /// Item de menu: texto, atalho mostrado à direita e ação (sem ação, desativado).
@@ -126,6 +195,8 @@ enum MenuId {
     Window,
     /// Menu do próprio app (menu global), pela posição na barra de menus dele.
     Native(u8),
+    /// Ícone de um app no tray (pela posição na lista de ícones).
+    Tray(u8),
     /// Painéis da direita (desenhados à parte, não são listas).
     Calendar,
     Sound,
@@ -241,7 +312,7 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
         ],
         MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("power")))],
         // Itens vêm do app (`Bar::native_items`).
-        MenuId::Native(_) => Vec::new(),
+        MenuId::Native(_) | MenuId::Tray(_) => Vec::new(),
         // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
         MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Control | MenuId::Gear => Vec::new(),
         MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout => Vec::new(),
@@ -295,6 +366,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         clock: String::new(),
         items: Vec::new(),
         appmenu: mide::appmenu::start_registrar(),
+        tray: mide::tray::start(),
+        tray_items: Vec::new(),
+        tray_version: u64::MAX,
+        tray_icons: HashMap::new(),
         native: None,
         native_failed: None,
         battery: None,
@@ -363,6 +438,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(50)), move |_, _, bar| {
             bar.refresh_launcher();
+            bar.refresh_tray();
             if last_refresh.elapsed() >= Duration::from_millis(450) {
                 bar.refresh();
                 last_refresh = std::time::Instant::now();
@@ -595,6 +671,12 @@ struct Bar {
     /// Menus dos apps (menu global): o registrar e a conexão, e o menu do app em foco
     /// (nome no barramento, objeto e os menus de cima).
     appmenu: Option<(mide::appmenu::Registry, zbus::blocking::Connection)>,
+    /// Ícones dos apps (tray): o registro, os ícones à mostra, a versão vista e as
+    /// imagens já preparadas (pela chave do ícone e a imagem dele).
+    tray: Option<mide::tray::Tray>,
+    tray_items: Vec<mide::tray::TrayItem>,
+    tray_version: u64,
+    tray_icons: HashMap<String, Option<Pixmap>>,
     native: Option<(String, String, Vec<mide::appmenu::Item>)>,
     /// Menu que não pôde ser lido (não tenta de novo a cada meio segundo).
     native_failed: Option<(String, String)>,
@@ -688,31 +770,37 @@ impl Bar {
             return Vec::new();
         };
         let children = mide::appmenu::layout(conn, sender, path, menu.id).unwrap_or_else(|| menu.children.clone());
-        let mut out = Vec::new();
-        fn push(out: &mut Vec<MenuItem>, items: &[mide::appmenu::Item], depth: usize) {
-            for item in items {
-                if item.separator {
-                    if !matches!(out.last(), Some(MenuItem::Separator) | None) {
-                        out.push(MenuItem::Separator);
-                    }
-                    continue;
-                }
-                let mark = match item.checked {
-                    Some(true) => "✓ ",
-                    _ => "",
-                };
-                let label = format!("{}{mark}{}", "    ".repeat(depth), item.label);
-                if item.children.is_empty() {
-                    let action = item.enabled.then_some(MenuAction::Native(item.id));
-                    out.push(entry(label, &item.shortcut, action));
-                } else {
-                    out.push(entry(label, "", None));
-                    push(out, &item.children, depth + 1);
-                }
-            }
+        dbus_entries(&children, &MenuAction::Native)
+    }
+
+    /// Itens do menu de um ícone do tray.
+    fn tray_menu_items(&self, index: usize) -> Vec<MenuItem> {
+        let (Some(tray), Some(item)) = (&self.tray, self.tray_items.get(index)) else {
+            return Vec::new();
+        };
+        let children = tray.menu(item).unwrap_or_default();
+        let mut out = vec![entry(if item.title.is_empty() { item.id.clone() } else { item.title.clone() }, "", None), MenuItem::Separator];
+        out.extend(dbus_entries(&children, &|id| MenuAction::Tray(index as u8, id)));
+        if children.is_empty() {
+            out.truncate(1);
         }
-        push(&mut out, &children, 0);
         out
+    }
+
+    /// Ícones do tray mudaram (um app entrou, saiu ou trocou o ícone): redesenha.
+    fn refresh_tray(&mut self) {
+        let Some(tray) = &self.tray else {
+            return;
+        };
+        let version = tray.version();
+        if version == self.tray_version {
+            return;
+        }
+        self.tray_version = version;
+        self.tray_items = tray.items();
+        let keys: Vec<String> = self.tray_items.iter().map(tray_key).collect();
+        self.tray_icons.retain(|k, _| keys.contains(k));
+        self.draw_bar();
     }
 
     /// Atualiza relógio, bateria e app em foco; redesenha só se algo mudou.
@@ -936,6 +1024,25 @@ impl Bar {
             highlight(&mut pixmap, MenuId::Gear, x0, x1);
             draw_gear_icon(&mut pixmap, (x0 + x1) / 2.0, cy, fg);
             self.titles.push((MenuId::Gear, x0, x1));
+            x = x0;
+        }
+        // Ícones dos apps (tray), à esquerda dos do sistema, como no macOS.
+        let tray_items = self.tray_items.clone();
+        for (i, item) in tray_items.iter().enumerate().take(12) {
+            let (x0, x1) = (x - 32.0, x - 8.0);
+            highlight(&mut pixmap, MenuId::Tray(i as u8), x0, x1);
+            let key = tray_key(item);
+            let icon = self.tray_icons.entry(key).or_insert_with(|| tray_icon(item, 18)).clone();
+            match icon {
+                Some(icon) => pixmap.draw_pixmap(((x0 + x1) / 2.0 - 9.0) as i32, (cy - 9.0) as i32, icon.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None),
+                // Sem imagem: a inicial do app.
+                None => {
+                    let letter: String = item.id.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());
+                    self.text.draw(&mut pixmap, &letter, (x0 + x1) / 2.0 - 4.0, text_y, FONT, FontWeight::Semibold, fg);
+                }
+            }
+            self.titles.push((MenuId::Tray(i as u8), x0, x1));
+            x = x0;
         }
 
         self.present_layer(&pixmap, true);
@@ -1055,6 +1162,7 @@ impl Bar {
         let app = self.focused_name.clone();
         let mut items = match id {
             MenuId::Native(i) => self.native_items(i as usize),
+            MenuId::Tray(i) => self.tray_menu_items(i as usize),
             _ => menu_items(id, &app),
         };
         if id == MenuId::Battery {
@@ -1175,6 +1283,11 @@ impl Bar {
             MenuAction::Native(item) => {
                 if let (Some((_, conn)), Some((sender, path, _))) = (&self.appmenu, &self.native) {
                     mide::appmenu::click(conn, sender, path, item);
+                }
+            }
+            MenuAction::Tray(index, id) => {
+                if let (Some(tray), Some(item)) = (&self.tray, self.tray_items.get(index as usize)) {
+                    tray.click(item, id);
                 }
             }
             MenuAction::NewWindow => match self.names.exec_for(&self.focused_id) {
@@ -2192,6 +2305,30 @@ impl PointerHandler for Bar {
                             menu.hovered = hovered;
                         }
                         self.draw_menu();
+                    }
+                }
+                // Ícone do tray: clique esquerdo ativa o app (os que só têm menu abrem o
+                // menu); o direito abre o menu.
+                PointerEventKind::Press { button, .. }
+                    if (button == BTN_LEFT || button == BTN_RIGHT) && on_bar && matches!(self.title_at(x), Some(MenuId::Tray(_))) =>
+                {
+                    let Some(MenuId::Tray(i)) = self.title_at(x) else {
+                        continue;
+                    };
+                    let item = self.tray_items.get(i as usize).cloned();
+                    match (self.tray.clone(), item) {
+                        (Some(tray), Some(item)) if button == BTN_LEFT && !item.item_is_menu => {
+                            self.close_menu();
+                            tracing::info!("tray: ativar {}", item.id);
+                            tray.activate(&item, x as i32, BAR_HEIGHT as i32);
+                        }
+                        _ => {
+                            if self.menu.as_ref().is_some_and(|m| m.id == MenuId::Tray(i)) {
+                                self.close_menu();
+                            } else {
+                                self.open_menu(MenuId::Tray(i));
+                            }
+                        }
                     }
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_bar => {
