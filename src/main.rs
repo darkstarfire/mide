@@ -4,6 +4,7 @@
 //! e aceita clientes. A renderização ainda não existe.
 
 mod activation;
+mod app_menus;
 mod backend_headless;
 mod backend_udev;
 mod backend_winit;

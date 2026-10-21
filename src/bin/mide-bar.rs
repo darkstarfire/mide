@@ -371,6 +371,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tray_version: u64::MAX,
         tray_icons: HashMap::new(),
         native: None,
+        native_gtk: None,
         native_failed: None,
         battery: None,
         names: AppNames::load(),
@@ -678,6 +679,10 @@ struct Bar {
     tray_version: u64,
     tray_icons: HashMap<String, Option<Pixmap>>,
     native: Option<(String, String, Vec<mide::appmenu::Item>)>,
+    /// O menu em foco é de um app GTK (`org.gtk.Menus`, avisado ao compositor pelo
+    /// `gtk_shell1`): onde ele está e as ações dos itens (o `id` de cada item é o
+    /// número da ação). Sem isso, o `native` é um `dbusmenu`.
+    native_gtk: Option<(mide::gmenu::GtkMenu, Vec<mide::gmenu::Action>)>,
     /// Menu que não pôde ser lido (não tenta de novo a cada meio segundo).
     native_failed: Option<(String, String)>,
     battery: Option<(u8, bool)>,
@@ -736,7 +741,21 @@ impl Bar {
         let Some((registry, conn)) = &self.appmenu else {
             return;
         };
-        let wanted = registry.menu_for_app(&self.focused_id);
+        // Pelo registrar (Qt no X11, apps com dbusmenu); senão, o que o app disse ao
+        // compositor pelo Wayland (GTK pelo `gtk_shell1`, Qt pelo menu do KDE).
+        let mut gtk = None;
+        let wanted = registry.menu_for_app(&self.focused_id).or_else(|| {
+            let line = ask_compositor("appmenu")?.into_iter().next()?;
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields.as_slice() {
+                ["gtk", bus, menubar, app, window] => {
+                    gtk = Some(mide::gmenu::GtkMenu { bus: bus.to_string(), menubar: menubar.to_string(), app: app.to_string(), window: window.to_string() });
+                    Some((bus.to_string(), menubar.to_string()))
+                }
+                ["dbusmenu", service, path] => Some((service.to_string(), path.to_string())),
+                _ => None,
+            }
+        });
         let same = match (&wanted, &self.native) {
             (Some((s, p)), Some((ns, np, _))) => s == ns && p == np,
             (None, None) => true,
@@ -746,9 +765,18 @@ impl Bar {
             return;
         }
         self.native_failed = None;
+        self.native_gtk = None;
         let failed = &mut self.native_failed;
+        let native_gtk = &mut self.native_gtk;
         self.native = wanted.and_then(|(sender, path)| {
-            let Some(layout) = mide::appmenu::layout(conn, &sender, &path, 0) else {
+            let layout = match &gtk {
+                Some(menu) => mide::gmenu::read(conn, menu).map(|(items, actions)| {
+                    *native_gtk = Some((menu.clone(), actions));
+                    items
+                }),
+                None => mide::appmenu::layout(conn, &sender, &path, 0),
+            };
+            let Some(layout) = layout else {
                 tracing::info!("menu do app {}: não foi possível ler", self.focused_id);
                 *failed = Some((sender, path));
                 return None;
@@ -763,9 +791,17 @@ impl Bar {
     /// Itens de um menu do app (lidos de novo ao abrir: o app pode ter mudado o menu).
     /// Submenus aparecem logo abaixo do título deles, com recuo.
     fn native_items(&mut self, index: usize) -> Vec<MenuItem> {
-        let (Some((_, conn)), Some((sender, path, top))) = (&self.appmenu, &self.native) else {
+        let (Some((_, conn)), Some((sender, path, top))) = (&self.appmenu, &mut self.native) else {
             return Vec::new();
         };
+        if let Some((menu, actions)) = &mut self.native_gtk {
+            // GTK: lê a barra inteira de novo (ações ligadas e marcadas mudam).
+            if let Some((items, new_actions)) = mide::gmenu::read(conn, menu) {
+                *top = items.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect();
+                *actions = new_actions;
+            }
+            return top.get(index).map(|m| dbus_entries(&m.children, &MenuAction::Native)).unwrap_or_default();
+        }
         let Some(menu) = top.get(index) else {
             return Vec::new();
         };
@@ -1281,8 +1317,14 @@ impl Bar {
         match action {
             MenuAction::About => spawn_sibling("mide-about"),
             MenuAction::Native(item) => {
-                if let (Some((_, conn)), Some((sender, path, _))) = (&self.appmenu, &self.native) {
-                    mide::appmenu::click(conn, sender, path, item);
+                match (&self.appmenu, &self.native, &self.native_gtk) {
+                    (Some((_, conn)), _, Some((menu, actions))) => {
+                        if let Some(action) = usize::try_from(item).ok().and_then(|i| actions.get(i)) {
+                            mide::gmenu::activate(conn, menu, action);
+                        }
+                    }
+                    (Some((_, conn)), Some((sender, path, _)), None) => mide::appmenu::click(conn, sender, path, item),
+                    _ => {}
                 }
             }
             MenuAction::Tray(index, id) => {

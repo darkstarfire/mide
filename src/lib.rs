@@ -8,6 +8,7 @@ pub mod calendar;
 pub mod control_client;
 pub mod displays;
 pub mod files;
+pub mod gmenu;
 pub mod icons;
 pub mod kit;
 pub mod launcher_layout;

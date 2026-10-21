@@ -1095,3 +1095,10 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - `src/tray.rs`: a barra é o registro `org.kde.StatusNotifierWatcher` (no barramento da sessão; com outro painel já atendendo, fica sem tray). Cada app que registra um ícone (`StatusNotifierItem`, pelo nome no barramento ou só pelo objeto, como o Ayatana) tem as propriedades lidas numa thread: título, estado (os "passivos" não aparecem), ícone pelo nome (pasta do app, depois o tema) ou a imagem mandada (ARGB32), e o menu. Sinais `NewIcon`/`NewStatus`/... releem o ícone; o app que sai do barramento perde os ícones.
 - Na barra: os ícones ficam à esquerda dos do sistema (como no macOS); clique esquerdo chama `Activate` (os apps que só têm menu abrem o menu); clique direito abre o menu do app (`dbusmenu`, o mesmo leitor do menu global), com o título dele no topo; o item clicado chega ao app.
 - Exemplo de teste `examples/mide-tray-teste.rs` (ícone laranja, menu "Abrir"/"Sair", tempo de vida `TRAY_TESTE_SEGUNDOS`).
+
+## Menu global dos apps GTK e Qt no Wayland (B2)
+
+- **GTK (`gtk_shell1`)** (`src/app_menus.rs`): o mide anuncia o `gtk_shell1` com a capacidade de menu global; o app GTK diz onde está a barra de menus dele no D-Bus (`set_dbus_properties`) e deixa de desenhar a barra dentro da janela. A barra do mide pergunta ao compositor (`appmenu`) e lê os menus pelo `org.gtk.Menus` (`src/gmenu.rs`: seções viram separadores, submenus, atalhos `<Primary>s` → `Ctrl+S`), com o estado das ações pelo `org.gtk.Actions` (desligadas em cinza, opções marcadas com ✓). O item clicado manda `Activate` ao app (`app.` no objeto do app, `win.` no da janela). O menu é relido ao abrir.
+- **Qt (`org_kde_kwin_appmenu`)**: o app diz o serviço e o objeto do `dbusmenu`; a barra usa o mesmo leitor do menu global do X11 (depende do tema de plataforma do Qt publicar o menu).
+- O registrar (`com.canonical.AppMenu.Registrar`) continua tendo preferência; o caminho pelo compositor entra quando o app não registrou nada nele.
+- App de teste `tests/apps/gtk-menu-teste.py` (GTK 3: Arquivo/Exibir/Ajuda, uma seção e uma opção marcável).

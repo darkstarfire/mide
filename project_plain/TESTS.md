@@ -803,3 +803,5 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh`: "layer-shell: popup de um painel de terceiros aparece embaixo dele" (`cargo build --example mide-layer-popup-teste` antes; o `tests/ui.sh` usa `target/debug/examples/`).
 - `tests/ui.sh` (tray, barramento de teste): o ícone aparece na barra, o clique ativa o app, o clique direito abre o menu e o item chega ao app, o ícone some quando o app sai.
 - Manual (sessão de verdade): Discord, Steam, Nextcloud, Telegram ou o `nm-applet --indicator` mostram o ícone; clique e menu funcionam.
+- `tests/ui.sh`: "menu global: app GTK no Wayland" (no barramento da sessão, com `python3-gi`: a barra mostra Arquivo, Exibir, Ajuda do `tests/apps/gtk-menu-teste.py` e "Abrir" chega ao app); `cargo test` `atalhos_do_gtk`.
+- Manual (sessão de verdade): gedit/Gnome Text Editor, Inkscape e outros apps GTK com barra de menus mostram os menus na barra do mide; apps Qt com o tema do KDE (`QT_QPA_PLATFORMTHEME=kde`) também.

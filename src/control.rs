@@ -87,6 +87,16 @@ pub fn handle(state: &mut State, command: &str) -> String {
     let mut words = command.split_whitespace();
     match words.next() {
         Some("list") => list(state),
+        // Onde está o menu da janela em foco (apps GTK e Qt no Wayland): `gtk<TAB>bus
+        // <TAB>barra<TAB>app<TAB>janela`, `dbusmenu<TAB>serviço<TAB>objeto` ou vazio.
+        Some("appmenu") => {
+            let focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
+            match focus.and_then(|s| crate::app_menus::menu_of(&s)) {
+                Some(crate::app_menus::AppMenu::Gtk { bus, menubar, app, window }) => format!("gtk\t{bus}\t{menubar}\t{app}\t{window}\n"),
+                Some(crate::app_menus::AppMenu::DbusMenu { service, path }) => format!("dbusmenu\t{service}\t{path}\n"),
+                None => "\n".into(),
+            }
+        }
         // A barra pergunta se há algo para ela (a confirmação do botão de ligar).
         Some("bar_request") => format!("{}\n", state.bar_request.take().unwrap_or("")),
         Some("icons") => {

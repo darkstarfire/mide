@@ -632,6 +632,22 @@ else
     echo "pulo  tray (rode cargo build --examples)"
 fi
 
+# Menu global de app GTK no Wayland (gtk-shell + org.gtk.Menus): "Arquivo" do app em
+# (218, 14) na barra; "Abrir" em (215, 55) chega ao app. No barramento da sessão (o GTK
+# não mostra janela no barramento de teste); o app tem id próprio e NON_UNIQUE.
+if python3 -c "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk" 2>/dev/null; then
+    GTKM="$(mktemp -d)"
+    SCENARIO_OUT="$GTKM/scen" SCENARIO_WAIT=12 timeout 100 tests/scenario.sh "450 click 218 14; 490 click 215 55; 530 list" -- "GTK_TESTE_ARQUIVO=$GTKM/acao.txt python3 $PWD/tests/apps/gtk-menu-teste.py" >/dev/null 2>&1
+    if grep -q "menu do app gtk-menu-teste.py: Arquivo, Exibir, Ajuda" "$GTKM/scen/mide.log" && [ "$(cat "$GTKM/acao.txt" 2>/dev/null)" = "abrir" ]; then
+        echo "ok    menu global: app GTK no Wayland (menus na barra, ação chega ao app)"; PASS=$((PASS + 1))
+    else
+        echo "FALHA menu global: app GTK no Wayland"; FAIL=$((FAIL + 1))
+    fi
+    rm -rf "$GTKM"
+else
+    echo "pulo  menu global GTK (sem python3-gi)"
+fi
+
 echo "== área de trabalho (ícones)"
 # Pasta de teste com um arquivo: o ícone fica na coluna da direita, em (1298, 76)
 # (área útil abaixo da barra e acima da dock). Fundo vazio em (400, 300): menu com

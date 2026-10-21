@@ -17,6 +17,8 @@ smithay = { version = "0.7.0", default-features = false, features = ["wayland_fr
 smithay-client-toolkit = "0.21"
 tiny-skia = { version = "0.12", features = ["std"] }
 toml = "1.1.8"
+# Código dos protocolos que não vêm no Smithay (protocols/*.xml): gtk-shell e o menu do KDE.
+wayland-scanner = "0.31"
 toml_edit = "0.25.17"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

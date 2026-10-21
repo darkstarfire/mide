@@ -316,6 +316,8 @@ impl State {
         smithay::wayland::output::OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         // Captura de tela pelos apps (OBS e outros, pelo portal wlr).
         crate::screencopy::init(&display_handle);
+        // Onde está o menu de cada janela (apps GTK e Qt no Wayland).
+        crate::app_menus::init(&display_handle);
         // Escala exata da tela para cada janela (nítidas em 1,25, 1,5...).
         smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(&display_handle);
         let xdg_activation_state = smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(&display_handle);
