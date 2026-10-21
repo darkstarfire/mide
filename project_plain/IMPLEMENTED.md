@@ -1078,3 +1078,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - **`xdg-activation`:** um app pede para trazer uma janela para a frente (link aberto de outro app, notificação clicada, o xwayland-satellite passando o foco de uma janela X11). Pedido recente (até 10 s do token): a janela sobe, volta se estava minimizada e ganha o teclado (`src/activation.rs`).
 - **`wp_fractional_scale`:** cada janela, camada e tela de bloqueio recebe a escala exata da tela onde está (1,25, 1,5...), atualizada a cada quadro só quando muda; apps GTK 4, Qt 6, Firefox e Chromium desenham nítidos em vez de esticados. (O `wp_viewporter`, que eles usam junto, já existia.)
+
+## Transparência de janelas inteiras (A11)
+
+- `[opacity]` no config: `inactive` (janelas sem foco, de 1 = opacas até 0,2) e a opacidade por `app_id` (`"mide-terminal" = 0.95`; multiplica a de sem foco). A janela inteira fica translúcida: conteúdo, barra de título, título, botões e contorno; a sombra fica mais leve na mesma proporção.
+- O foco considerado é o do teclado (o estado "ativo" do xdg só muda quando o app confirma, e os apps do kit só confirmam quando redesenham).
+- Configurações → Efeitos → Transparência: "Janelas sem foco" (0 a 60%).

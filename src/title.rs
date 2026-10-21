@@ -161,6 +161,7 @@ pub fn element(
     title: &str,
     focused: bool,
     bar: Rectangle<i32, Logical>,
+    alpha: f32,
 ) -> Option<smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<GlesRenderer>> {
     use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
     let max_width = bar.size.w - 2 * TITLE_SIDE_MARGIN;
@@ -172,7 +173,7 @@ pub fn element(
         renderer,
         location,
         &image.buffer,
-        None,
+        (alpha < 1.0).then_some(alpha),
         None,
         None,
         Kind::Unspecified,

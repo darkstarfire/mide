@@ -339,6 +339,8 @@ fn window_elements(
         surface_origin: Point<i32, Logical>,
         zoom: f64,
         alpha: f32,
+        /// Transparência da janela inteira (`[opacity]`): conteúdo, barra e contorno.
+        opacity: f32,
         frame: Rectangle<i32, Logical>,
         focused: bool,
         maximized: bool,
@@ -347,6 +349,7 @@ fn window_elements(
         genie: Option<(Rectangle<i32, Logical>, Rectangle<i32, Logical>, f32)>,
     }
     let mut placed: Vec<Placed> = Vec::new();
+    let keyboard_focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
     // `elements()` vai do fundo para o topo; aqui percorremos do topo para o fundo.
     for window in state.space.elements().rev() {
         let (Some(toplevel), Some(loc)) = (window.toplevel(), state.space.element_location(window))
@@ -400,6 +403,9 @@ fn window_elements(
             maximized,
             animating: state.animation_for(toplevel.wl_surface()).is_some(),
         alpha,
+            // Sem foco pelo teclado de verdade (o "ativo" do xdg só muda quando o app
+            // confirma, e alguns só confirmam quando redesenham).
+            opacity: state.config.opacity.for_window(&app_id_of(window), keyboard_focus.as_ref() == Some(toplevel.wl_surface())),
         });
     }
 
@@ -412,7 +418,8 @@ fn window_elements(
             .take(8)
             .map(|p| decorations::Caster {
                 frame: p.frame,
-                strength: decorations::shadow_strength(p.focused),
+                // Janela translúcida: sombra mais leve, na mesma proporção.
+                strength: decorations::shadow_strength(p.focused) * p.opacity,
             })
             .collect()
     } else {
@@ -475,6 +482,8 @@ fn window_elements(
         // Com a janela quase invisível (minimizando ou restaurando), a moldura não aparece.
         let decorated = (!p.maximized || p.animating) && p.alpha > 0.99 && p.genie.is_none();
         let phys: Point<i32, smithay::utils::Physical> = crate::clip::phys(p.surface_origin);
+        // Moldura, barra e conteúdo com a opacidade da janela (`[opacity]`).
+        decorations::set_alpha(p.opacity);
 
         // Janela maximizada ocupa a tela inteira: sem cantos, contorno nem sombra.
         // Cada efeito pode ser desligado em `[effects]` no config.toml.
@@ -497,7 +506,7 @@ fn window_elements(
         // conteúdo na lista, para ficarem na frente dele.
         if bar_h > 0 && p.genie.is_none() {
             let title = toplevel_title_of(&p.window);
-            if let Some(text) = crate::title::element(renderer, titles, &title, p.focused, bar) {
+            if let Some(text) = crate::title::element(renderer, titles, &title, p.focused, bar, p.opacity) {
                 elements.push(MideRenderElement::Title(text));
             }
             elements.extend(
@@ -532,7 +541,7 @@ fn window_elements(
                 Vec::new()
             };
             let title = if bar_h > 0 {
-                crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar)
+                crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar, 1.0)
             } else {
                 None
             };
@@ -572,7 +581,7 @@ fn window_elements(
             let local_bar = Rectangle::new((0, 0).into(), (p.frame.size.w, bar_h).into());
             let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
             let bar_parts = if bar_h > 0 { decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip) } else { Vec::new() };
-            let title = if bar_h > 0 { crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar) } else { None };
+            let title = if bar_h > 0 { crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar, 1.0) } else { None };
             let mut overlays: Vec<&dyn smithay::backend::renderer::element::RenderElement<GlesRenderer>> = Vec::new();
             if let Some(t) = title.as_ref() {
                 overlays.push(t);
@@ -587,7 +596,7 @@ fn window_elements(
 
         // Conteúdo do app, com zoom durante a animação.
         let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            p.window.render_elements(renderer, phys, Scale::from(crate::clip::scale()), p.alpha);
+            p.window.render_elements(renderer, phys, Scale::from(crate::clip::scale()), p.alpha * p.opacity);
         let program = shaders.clip_program();
         for element in content {
             if (p.zoom - 1.0).abs() > f64::EPSILON {
@@ -676,6 +685,9 @@ fn window_elements(
             elements.extend(surface.into_iter().map(MideRenderElement::from));
         }
     }
+
+    // Daqui em diante, opaco (a opacidade era da última janela desenhada).
+    decorations::set_alpha(1.0);
 
     // Fundo do desktop (papel de parede) com as sombras de todas as janelas, atrás
     // de tudo (fim da lista). Se a textura falhar, usa a cor lisa.
@@ -940,6 +952,20 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
 }
 
 /// Título da janela (vazio se o app não definiu um).
+/// `app_id` da janela (vazio sem ele).
+fn app_id_of(window: &Window) -> String {
+    window
+        .toplevel()
+        .and_then(|t| {
+            smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+                s.data_map
+                    .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                    .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
+            })
+        })
+        .unwrap_or_default()
+}
+
 pub fn window_title(window: &Window) -> String {
     toplevel_title_of(window)
 }

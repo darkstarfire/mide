@@ -40,10 +40,12 @@ mod stable {
         /// (tela, programa, ordem) → elemento.
         elements: HashMap<(String, u8, usize), Entry>,
         frame: u64,
+        /// Opacidade dos próximos elementos (a da janela sendo desenhada; 1 fora dela).
+        alpha: f32,
     }
 
-    /// Elemento guardado, os uniformes dele e o quadro em que foi usado.
-    type Entry = (PixelShaderElement, Vec<Uniform<'static>>, u64);
+    /// Elemento guardado, os uniformes dele, a opacidade e o quadro em que foi usado.
+    type Entry = (PixelShaderElement, Vec<Uniform<'static>>, f32, u64);
 
     thread_local! {
         static CACHE: RefCell<Cache> = RefCell::default();
@@ -57,8 +59,15 @@ mod stable {
             c.output = output.to_string();
             c.counts.clear();
             let frame = c.frame;
-            c.elements.retain(|_, (_, _, used)| frame - *used < 8);
+            c.elements.retain(|_, (_, _, _, used)| frame - *used < 8);
+            c.alpha = 1.0;
         });
+    }
+
+    /// Opacidade dos elementos criados daqui em diante (a moldura de uma janela
+    /// translúcida, `[opacity]`); `1.0` volta ao normal.
+    pub fn set_alpha(alpha: f32) {
+        CACHE.with_borrow_mut(|c| c.alpha = alpha);
     }
 
     pub fn pixel(program: &GlesPixelProgram, tag: u8, area: Rect, uniforms: Vec<Uniform<'static>>) -> PixelShaderElement {
@@ -67,8 +76,13 @@ mod stable {
             let key = (c.output.clone(), tag, *n);
             *n += 1;
             let frame = c.frame;
+            let alpha = c.alpha;
+            // Opacidade diferente: elemento novo (o do Smithay não muda de opacidade).
+            if c.elements.get(&key).is_some_and(|(_, _, a, _)| *a != alpha) {
+                c.elements.remove(&key);
+            }
             match c.elements.get_mut(&key) {
-                Some((element, old, used)) => {
+                Some((element, old, _, used)) => {
                     element.resize(area, None);
                     if *old != uniforms {
                         element.update_uniforms(uniforms.clone());
@@ -78,8 +92,8 @@ mod stable {
                     element.clone()
                 }
                 None => {
-                    let element = PixelShaderElement::new(program.clone(), area, None, 1.0, uniforms.clone(), Kind::Unspecified);
-                    c.elements.insert(key, (element.clone(), uniforms, frame));
+                    let element = PixelShaderElement::new(program.clone(), area, None, alpha, uniforms.clone(), Kind::Unspecified);
+                    c.elements.insert(key, (element.clone(), uniforms, alpha, frame));
                     element
                 }
             }
@@ -87,7 +101,7 @@ mod stable {
     }
 }
 
-pub use stable::begin_frame;
+pub use stable::{begin_frame, set_alpha};
 use stable::pixel;
 
 /// Altura da barra de título em pixels.

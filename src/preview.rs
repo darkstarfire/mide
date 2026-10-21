@@ -207,7 +207,7 @@ pub fn elements(
         // Título embaixo da miniatura.
         let title = crate::render::window_title(&thumb.window);
         let title_bar = Rectangle::new((thumb.boxed.loc.x - 40, thumb.boxed.loc.y + THUMB_H).into(), (THUMB_W + 80, TITLE_H).into());
-        if let Some(el) = crate::title::element(renderer, titles, &title, true, title_bar) {
+        if let Some(el) = crate::title::element(renderer, titles, &title, true, title_bar, 1.0) {
             middle.push(MideRenderElement::from(el));
         }
         // A janela reduzida, centralizada na caixa. Janelas com a barra do mide

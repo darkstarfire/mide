@@ -84,6 +84,7 @@ struct FileConfig {
     monitors: Monitors,
     input: Input,
     lock: Lock,
+    opacity: Opacity,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -281,6 +282,38 @@ impl Desktop {
     }
 }
 
+/// Transparência das janelas inteiras (`[opacity]`): conteúdo, barra de título e
+/// contorno juntos. `inactive` vale para as janelas sem foco; os outros nomes são
+/// `app_id` com a opacidade do app (multiplicam a de sem foco).
+///
+/// ```toml
+/// [opacity]
+/// inactive = 0.9
+/// "mide-terminal" = 0.95
+/// ```
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Opacity {
+    pub inactive: f32,
+    #[serde(flatten)]
+    pub apps: BTreeMap<String, f32>,
+}
+
+impl Default for Opacity {
+    fn default() -> Self {
+        Self { inactive: 1.0, apps: BTreeMap::new() }
+    }
+}
+
+impl Opacity {
+    /// Opacidade de uma janela (entre 0,2 e 1: nunca some de vez).
+    pub fn for_window(&self, app_id: &str, focused: bool) -> f32 {
+        let app = self.apps.iter().find(|(k, _)| k.eq_ignore_ascii_case(app_id)).map(|(_, v)| *v).unwrap_or(1.0);
+        let base = if focused { 1.0 } else { self.inactive };
+        (app * base).clamp(0.2, 1.0)
+    }
+}
+
 /// Atalhos padrão. Um atalho do arquivo com a mesma combinação substitui o padrão.
 const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     // Super é capturada pelo desktop hospedeiro durante o desenvolvimento.
@@ -322,6 +355,7 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
 /// Configuração carregada, com os atalhos já convertidos.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub opacity: Opacity,
     pub bindings: Vec<Binding>,
     pub effects: Effects,
     pub desktop: Desktop,
@@ -334,7 +368,7 @@ pub struct Config {
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
-        let (user, effects, desktop, keyboard, monitors, input, lock) = match config_path() {
+        let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
                 let mut file = toml::from_str::<FileConfig>(&text)
@@ -345,9 +379,10 @@ impl Config {
                 let monitors = std::mem::take(&mut file.monitors);
                 let input = std::mem::take(&mut file.input);
                 let lock = std::mem::take(&mut file.lock);
-                (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock)
+                let opacity = std::mem::take(&mut file.opacity);
+                (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock, opacity)
             }
-            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default()),
+            _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default(), Opacity::default()),
         };
         let mut config = Self::from_entries(&user)?;
         config.effects = effects;
@@ -356,6 +391,7 @@ impl Config {
         config.monitors = monitors;
         config.input = input;
         config.lock = lock;
+        config.opacity = opacity;
         Ok(config)
     }
 
@@ -387,6 +423,7 @@ impl Config {
             monitors: Monitors::default(),
             input: Input::default(),
             lock: Lock::default(),
+            opacity: Opacity::default(),
         })
     }
 
@@ -783,5 +820,16 @@ mod tests {
         // O que não está no arquivo fica no padrão (rolagem natural no trackpad, como no Mac).
         assert!(file.input.touchpad_natural_scroll && file.input.mouse_acceleration && !file.input.mouse_natural_scroll);
         assert!(file.all_bindings().is_empty());
+    }
+
+    #[test]
+    fn opacidade_das_janelas() {
+        let file: FileConfig = toml::from_str("[opacity]\ninactive = 0.5\n\"mide-terminal\" = 0.8\n").unwrap();
+        let o = file.opacity;
+        assert_eq!(o.inactive, 0.5);
+        assert_eq!(o.for_window("mide-terminal", true), 0.8);
+        assert_eq!(o.for_window("mide-terminal", false), 0.4);
+        assert_eq!(o.for_window("firefox", true), 1.0);
+        assert_eq!(o.for_window("firefox", false), 0.5);
     }
 }

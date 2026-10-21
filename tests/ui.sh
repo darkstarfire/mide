@@ -105,6 +105,22 @@ check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press
 # App que esconde a janela sem fechar e mostra de novo (como o Chromium/Brave em
 # segundo plano; `MIDE_KIT_TEST_HIDE` faz o kit esconder 2 s e mostrar 2 s depois).
 SCENARIO_WAIT=14 check "janela escondida pelo app volta quando ele mostra" "janela mostrada de novo pelo app" "150 list; 600 list" "MIDE_KIT_TEST_HIDE=1 $CALCULATOR"
+# Transparência de janelas inteiras ([opacity] inactive): o Terminal sem foco deixa o
+# papel de parede aparecer através dele (em (500, 500) ele é branco quando opaco).
+OPC="$(mktemp -d)"
+mkdir -p "$OPC/cfg/mide"
+printf '[opacity]\ninactive = 0.5\n' > "$OPC/cfg/mide/config.toml"
+XDG_CONFIG_HOME="$OPC/cfg" SCENARIO_OUT="$OPC/scen" timeout 150 "$SCEN" "400 list" 420 -- "$TERMINAL" "$CALCULATOR" >/dev/null 2>&1
+if python3 -c "
+import sys
+from PIL import Image
+im = Image.open(sys.argv[1]).convert('RGB')
+sys.exit(0 if im.getpixel((500, 500)) != (255, 255, 255) and im.getpixel((150, 300)) == (36, 36, 40) else 1)" "$OPC/scen/frame.png" 2>/dev/null; then
+    echo "ok    janela sem foco translúcida ([opacity] inactive), a com foco opaca"; PASS=$((PASS + 1))
+else
+    echo "FALHA janela sem foco translúcida ([opacity] inactive)"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$OPC"
 # Clique numa janela por cima da barra de título de outra (Calculadora em (48, 46),
 # Terminal arrastado para cobrir a barra dela): o clique é do Terminal, a de trás não sobe.
 check_last "clique não atravessa para a barra de título de trás" 'janela "Terminal"' "400 press 400 93; 405 move 400 60; 410 move 400 20; 415 release 400 20; 460 click 200 68; 490 list" "$CALCULATOR" "$TERMINAL"

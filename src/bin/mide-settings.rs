@@ -780,7 +780,26 @@ impl Settings {
                 }
             }
         });
-        ui.note("As mudanças valem na hora.");
+        // Transparência das janelas sem foco (`[opacity] inactive`): 0% é opaca.
+        let mut clear = match settings_file::get("opacity", "inactive") {
+            Some(Value::Float(x)) => ((1.0 - x) * 100.0) as f32,
+            _ => 0.0,
+        };
+        ui.heading("Transparência");
+        ui.card(|ui| {
+            if ui.slider("Janelas sem foco", &mut clear, 0.0, 60.0).submitted() {
+                let opacity = ((100.0 - clear.round()) / 100.0) as f64;
+                tracing::info!("janelas sem foco: opacidade {opacity}");
+                let value = (opacity < 0.995).then_some(Value::Float(opacity));
+                match settings_file::set("opacity", "inactive", value) {
+                    Ok(()) => {
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("transparência não gravada: {err}"),
+                }
+            }
+        });
+        ui.note("As mudanças valem na hora. Transparência por app: [opacity] no config.toml (\"app_id\" = 0.9).");
     }
 
     /// Mouse e trackpad (`[input]`): velocidade, aceleração, rolagem natural e toque
