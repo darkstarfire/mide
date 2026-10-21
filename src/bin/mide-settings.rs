@@ -500,6 +500,23 @@ impl Settings {
                 d.scale = displays::SCALES[scale_i];
             }
         });
+        // Espelhar: todas as telas mostram a principal (vale na hora).
+        if self.screens.len() >= 2 {
+            let mut mirror = matches!(settings_file::get("monitors", "mirror"), Some(Value::Bool(true)));
+            ui.card(|ui| {
+                if ui.switch_detail("Espelhar telas", "Todas as telas mostram a principal, com a barra e a dock dela", &mut mirror).changed() {
+                    match settings_file::set("monitors", "mirror", mirror.then_some(Value::Bool(true))) {
+                        Ok(()) => {
+                            tracing::info!("monitores: espelhar {}", if mirror { "ligado" } else { "desligado" });
+                            ask_compositor("outputs apply");
+                            // O arranjo novo vem do compositor no próximo quadro.
+                            self.screens_applied.clear();
+                        }
+                        Err(err) => tracing::warn!("espelhar não gravado: {err}"),
+                    }
+                }
+            });
+        }
     }
 
     /// Depois de aplicar as telas: janelinha (modal) "Manter estas configurações?", por

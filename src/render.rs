@@ -183,7 +183,7 @@ impl Scene {
             return Ok((result.sync, damage));
         }
         // Prévias das janelas: só na tela da dock (a posição delas vem da dock).
-        if layer_map_for_output(output).layers().any(|l| l.namespace() == "mide-dock") {
+        if layer_map_for_output(&state.layer_output(output)).layers().any(|l| l.namespace() == "mide-dock") {
             custom.extend(crate::preview::elements(renderer, state, origin, shaders, titles));
         }
         custom.extend(popup_elements(renderer, state, origin).into_iter().map(MideRenderElement::from));
@@ -675,7 +675,8 @@ fn window_elements(
     // Camadas de fundo (ícones da área de trabalho): atrás das janelas e na frente
     // do papel de parede.
     {
-        let map = layer_map_for_output(output);
+        let source = state.layer_output(output);
+        let map = layer_map_for_output(&source);
         for layer in crate::state::back_layers(&map) {
             let Some(geo) = map.layer_geometry(&layer) else {
                 continue;
@@ -711,7 +712,8 @@ fn layer_elements(
     blur: &crate::blur::Blur,
     wallpaper: &crate::wallpaper::Wallpaper,
 ) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
-    let map = layer_map_for_output(output);
+    let source = state.layer_output(output);
+    let map = layer_map_for_output(&source);
     let mut elements: Vec<MideRenderElement> = Vec::new();
     let mut glass = Vec::new();
     // Do topo para o fundo, como a lista de render.

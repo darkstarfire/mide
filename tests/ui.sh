@@ -1065,6 +1065,10 @@ if [ "$TELAS" = 1 ]; then
 else
     echo "FALHA tela desligada fica de fora (esperado 1, obtido $TELAS)"; FAIL=$((FAIL + 1))
 fi
+# Espelhar (A15): as duas telas no mesmo lugar, a segunda com a escala que iguala a
+# largura da principal (1920 ÷ 1366 → 1366 lógicos).
+printf '[monitors]\nmirror = true\n' > "$MONCFG/mide/config.toml"
+check "espelhar telas: a segunda mostra a principal" 'tela HEADLESS-2 em \(0, 0\) 1366x' "300 list"
 : > "$MONCFG/mide/config.toml"
 # Configurações → Monitores: HEADLESS-2 no arranjo em (654, 255); "Usar como tela
 # principal" em (404, 526); "Aplicar" em (430, 422); na janelinha de confirmação,

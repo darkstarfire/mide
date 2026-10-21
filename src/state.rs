@@ -1245,9 +1245,22 @@ impl State {
             .cloned()
     }
 
-    /// Tela sob o ponto (coordenadas globais), ou a principal.
+    /// Tela sob o ponto (coordenadas globais), ou a principal. Espelhando, a principal.
     pub fn output_at(&self, pos: Point<f64, Logical>) -> Option<Output> {
+        if self.config.monitors.mirror {
+            return self.primary_output();
+        }
         self.space.output_under(pos).next().cloned().or_else(|| self.primary_output())
+    }
+
+    /// Tela de onde vêm as camadas (barra, dock, área de trabalho) desenhadas em
+    /// `output`: ela mesma, ou a principal quando as telas estão espelhadas.
+    pub fn layer_output(&self, output: &Output) -> Output {
+        if self.config.monitors.mirror {
+            self.primary_output().unwrap_or_else(|| output.clone())
+        } else {
+            output.clone()
+        }
     }
 
     /// Algo mudou na tela: pede um quadro ao anfitrião já.

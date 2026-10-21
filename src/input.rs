@@ -839,9 +839,9 @@ fn window_under(state: &State, pos: Point<f64, Logical>) -> Option<Window> {
 /// cima das janelas, então um clique nelas não chega a nenhuma janela.
 fn top_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
     // As camadas ficam na tela sob o ponto; a posição delas é relativa a essa tela.
-    let output = state.space.output_under(pos).next()?;
-    let screen = state.space.output_geometry(output)?.loc;
-    let map = layer_map_for_output(output);
+    let output = state.output_at(pos)?;
+    let screen = state.space.output_geometry(&output)?.loc;
+    let map = layer_map_for_output(&output);
     for layer in crate::state::front_layers(&map).iter() {
         let Some(geo) = map.layer_geometry(layer) else {
             continue;
@@ -856,9 +856,9 @@ fn top_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface
 
 /// Camada de fundo (área de trabalho) sob `pos`, quando não há janela por cima.
 fn back_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-    let output = state.space.output_under(pos).next()?;
-    let screen = state.space.output_geometry(output)?.loc;
-    let map = layer_map_for_output(output);
+    let output = state.output_at(pos)?;
+    let screen = state.space.output_geometry(&output)?.loc;
+    let map = layer_map_for_output(&output);
     for layer in crate::state::back_layers(&map).iter() {
         let Some(geo) = map.layer_geometry(layer) else {
             continue;

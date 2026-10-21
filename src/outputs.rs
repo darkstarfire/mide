@@ -22,6 +22,10 @@ pub fn arrange(heads: &[Head], monitors: &Monitors) -> Vec<(String, (i32, i32))>
     if let Some(primary) = monitors.primary.as_deref() {
         order.sort_by_key(|h| h.name != primary);
     }
+    // Espelhadas: todas no mesmo lugar.
+    if monitors.mirror {
+        return enabled.iter().map(|h| (h.name.clone(), (0, 0))).collect();
+    }
     let mut placed: Vec<(String, (i32, i32), (i32, i32))> = Vec::new();
     // Primeiro as que têm posição definida.
     for head in &order {
@@ -64,6 +68,23 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
         if !live.contains(&output) {
             tracing::info!("tela {} saiu", output.name());
             state.space.unmap_output(&output);
+        }
+    }
+    // Escala de cada tela: a das Configurações, ou, espelhando, a que deixa a largura
+    // igual à da principal (o mesmo conteúdo em telas de tamanhos diferentes).
+    let primary_name = state.config.monitors.primary.clone().filter(|p| live.iter().any(|o| o.name() == *p)).or_else(|| live.first().map(|o| o.name()));
+    let mode_of = |o: &smithay::output::Output| o.current_mode().map(|m| (m.size.w, m.size.h)).unwrap_or((1366, 768));
+    let configured = |name: &str| state.config.monitors.outputs.get(name).map(|m| m.scale).filter(|s| s.is_finite() && *s >= 0.5).unwrap_or(1.0);
+    let primary_width = primary_name.as_ref().and_then(|p| live.iter().find(|o| o.name() == *p)).map(|o| logical_size(mode_of(o), configured(&o.name())).0);
+    for output in live {
+        let name = output.name();
+        let wanted = match (state.config.monitors.mirror, primary_width) {
+            (true, Some(width)) if Some(&name) != primary_name.as_ref() && width > 0 => mode_of(output).0 as f64 / width as f64,
+            _ => configured(&name),
+        };
+        if (output.current_scale().fractional_scale() - wanted).abs() > 0.001 {
+            tracing::info!("tela {name}: escala {wanted:.3}");
+            output.change_current_state(None, None, Some(smithay::output::Scale::Fractional(wanted)), None);
         }
     }
     let heads: Vec<Head> = live
@@ -123,6 +144,13 @@ mod tests {
 
     fn head(name: &str, w: i32, h: i32) -> Head {
         Head { name: name.into(), size: (w, h) }
+    }
+
+    #[test]
+    fn espelhadas_no_mesmo_lugar() {
+        let heads = [head("eDP-1", 1366, 768), head("HDMI-A-1", 1920, 1080)];
+        let monitors = Monitors { mirror: true, ..Default::default() };
+        assert_eq!(arrange(&heads, &monitors), vec![("eDP-1".into(), (0, 0)), ("HDMI-A-1".into(), (0, 0))]);
     }
 
     #[test]

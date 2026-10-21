@@ -819,3 +819,5 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Manual: arrastar vários itens para uma pasta da lista e com Ctrl (copiar); "Abrir com…" de uma imagem e de um PDF.
 - `cargo test` `curvas_comecam_em_0_e_terminam_em_1` (`mide::motion`). Manual: menus da barra e da dock no claro e no escuro com o mesmo azul dos apps.
 - Manual (ícones): `data/mide-atualizar` e abrir o Arquivos numa pasta com .deb, .mp3 e Makefile (sem caixa marrom, sem a nota do Apple Music, sem o Xcode); Nautilus e GNOME Software na barra/alt+tab com os símbolos novos. `cargo run --example mide-folha-de-icones -- folha.png 48 <svgs>` para revisar.
+- `tests/ui.sh`: "espelhar telas: a segunda mostra a principal" (duas telas virtuais, HEADLESS-2 em (0, 0) com 1366 de largura lógica); `cargo test` `espelhadas_no_mesmo_lugar`. Com `MIDE_DUMP_OUTPUT=HEADLESS-2` o quadro salvo é o da segunda tela (barra e dock aparecem nela).
+- Manual (dois monitores de verdade): ligar "Espelhar telas" e conferir o mesmo conteúdo nos dois, o mouse e os cliques na barra; desligar e ver o arranjo voltar.

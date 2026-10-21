@@ -262,6 +262,9 @@ impl Keyboard {
 pub struct Monitors {
     /// Tela da barra, da dock e do launcher. Sem ela, a primeira.
     pub primary: Option<String>,
+    /// Espelhar: todas as telas mostram a principal (na mesma posição, com a escala
+    /// que deixa a largura igual à dela, e com a barra e a dock dela).
+    pub mirror: bool,
     pub outputs: BTreeMap<String, Monitor>,
 }
 

@@ -1162,3 +1162,8 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - No fork (`mide/apply.py`, etapas 5 e 6; commit `11f8484`): a caixa marrom com fita do instalador de pacotes virou caixa verde-azulada lisa (pacotes, executáveis, componentes do sistema e o compactador); Apple Music, Xcode, rosto do Finder, bússola do Safari, "A" da App Store e das pastas de modelos e o pássaro do Swift deram lugar a desenhos do próprio tema (ou à sacola com seta). Ícones de apps de terceiros que usam caixas como marca ficaram.
 - `data/icons.version` aponta para a versão nova (o `mide-atualizar` instala).
 - `data/mide-conferir`: avisa quando falta o plugin do GTK para Qt 5 ou Qt 6 (`qt5-gtk-platformtheme`, `qt6-gtk-platformtheme`); recomendados na instalação.
+
+## Espelhar telas (A15)
+
+- `[monitors] mirror = true` (Configurações → Monitores → "Espelhar telas", no fim da página, vale na hora): todas as telas ficam em (0, 0); as que não são a principal ganham a escala que deixa a largura lógica igual à da principal (uma tela de 1920 espelhando uma de 1366 fica em 1,41, nítida), e ao desligar voltam à escala das Configurações.
+- As telas espelhadas desenham a barra, a dock, a área de trabalho e as prévias da principal (`State::layer_output`); o ponteiro e os cliques nas camadas usam a principal (`output_at`).
