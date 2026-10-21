@@ -1135,3 +1135,11 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - Lista "Layout" (o do sistema, ABNT2, EUA, EUA internacional com acentos, EUA AltGr, Reino Unido, Portugal, Espanha, América Latina, França, Alemanha, Itália), gravada em `[keyboard] layout`/`variant`; o compositor troca o mapa de teclas na hora (`reload`), sem reiniciar, e usa o mesmo ao iniciar. Vazio = `/etc/default/keyboard`.
 - Listas suspensas do mide-ui ficam da largura do nome mais longo (antes cortavam em 220 px).
+
+## Configurações: Idioma e região, Energia e Apps padrão (B7)
+
+- **Idioma e região:** "Idioma" e "Formatos (data, hora, números e moeda)" entre os idiomas instalados que a lista sabe nomear (`locale -a`), gravados em `[locale] lang`/`formats`; o `mide-session` exporta `LANG`/`LANGUAGE` e `LC_TIME`, `LC_NUMERIC`, `LC_MONETARY`, `LC_PAPER`, `LC_MEASUREMENT` no próximo login, e a sessão passa os mesmos aos serviços do D-Bus.
+- **Energia:** "Suspender o computador após" (nunca, 15/30 min, 1/2/3 h; `[power] suspend_minutes`), contado como o bloqueio (não suspende enquanto um app pede a tela acesa) e uma vez por período sem uso; "Botão de ligar" (perguntar, suspender, desligar, nada; `[power] button`).
+- **Suspender, reiniciar, desligar e bloquear pelo logind no D-Bus** (`org.freedesktop.login1`): funciona com o systemd e com o elogind (Slackware, Void, Gentoo sem systemd); sem resposta, cai no `systemctl`/`loginctl`.
+- **Apps padrão:** Navegador, E-mail, Pastas, Textos, Imagens, Vídeos, Músicas e PDF; a lista vem dos apps que declaram o tipo (`MimeType`) e a escolha vai para `~/.config/mimeapps.list` (`[Default Applications]`, mantendo o resto do arquivo), o mesmo do `gio open`, `xdg-open`, GNOME e Cinnamon (`src/default_apps.rs`). O mide respeita a escolha: com outro app padrão para pastas ou textos, eles não abrem mais no Arquivos/Editor do mide.
+- **Barra lateral do mide-ui rola** com a roda do mouse quando os itens não cabem, e abre mostrando o item escolhido.

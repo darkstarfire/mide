@@ -146,11 +146,11 @@ sed -i '/^dnd = true/d' "$XDG_CONFIG_HOME/mide/config.toml" 2>/dev/null
 check "engrenagem abre as Configurações" "sistema \(teste\): mide-settings" "400 click 1149 14; 440 list"
 # Menu do mide: Repouso em y=153, Reiniciar… em y=177; confirmação no meio da tela:
 # Reiniciar em (753, 412), Cancelar em (614, 412). Nada é executado de verdade (simulado).
-check "menu do mide: Repouso (simulado)" "sistema \(teste\): systemctl suspend" "400 click 25 14; 430 click 100 153; 460 list"
+check "menu do mide: Repouso (simulado)" "sistema \(teste\): logind Suspend" "400 click 25 14; 430 click 100 153; 460 list"
 check "menu do mide: Reiniciar pede confirmação" "menu aberto: ConfirmRestart" "400 click 25 14; 430 click 100 177; 460 list"
-check "confirmar reinicia (simulado)" "sistema \(teste\): systemctl reboot" "400 click 25 14; 430 click 100 177; 460 click 753 412; 500 list"
+check "confirmar reinicia (simulado)" "sistema \(teste\): logind Reboot" "400 click 25 14; 430 click 100 177; 460 click 753 412; 500 list"
 CLOG="$(timeout 150 "$SCEN" "400 click 25 14; 430 click 100 177; 460 click 614 412; 500 list" 2>&1)"
-if echo "$CLOG" | grep -q "menu aberto: ConfirmRestart" && ! echo "$CLOG" | grep -q "systemctl reboot"; then
+if echo "$CLOG" | grep -q "menu aberto: ConfirmRestart" && ! echo "$CLOG" | grep -q "logind Reboot"; then
     echo "ok    Cancelar não reinicia"; PASS=$((PASS + 1))
 else
     echo "FALHA Cancelar não reinicia"; FAIL=$((FAIL + 1))
@@ -498,6 +498,40 @@ else
     echo "FALHA Teclado: o layout escolhido vale ao digitar ($(cat "$SCFG/layout.txt"))"; FAIL=$((FAIL + 1))
 fi
 sed -i '/^layout = "us"/d' "$SCFG/mide/config.toml"
+# Energia: "Suspender o computador após" em (783, 162) (apertar e soltar); "30 minutos"
+# é o terceiro item (y=253).
+timeout 150 "$SCEN" "300 move 783 162; 310 press 783 162; 320 release 783 162; 370 click 700 253; 420 list" -- "$SETTINGS energy" >/dev/null 2>&1
+if grep -q 'suspend_minutes = 30' "$SCFG/mide/config.toml"; then
+    echo "ok    Energia: suspender após 30 minutos grava"; PASS=$((PASS + 1))
+else
+    echo "FALHA Energia: suspender após 30 minutos grava"; FAIL=$((FAIL + 1))
+fi
+sed -i '/^suspend_minutes = 30/d' "$SCFG/mide/config.toml"
+# Idioma e região: a lista em (768, 162); "Português (Brasil)" é o 12º item (y=460)
+# quando os idiomas da lista estão instalados (Debian com locales-all).
+if locale -a 2>/dev/null | grep -q '^pt_BR.utf8' && [ "$(locale -a | grep -cE '^(de_DE|en_GB|en_US|es_AR|es_ES|es_MX|fr_FR|it_IT|nl_NL|pt_BR|pt_PT|ru_RU|zh_CN|ja_JP)\.utf8')" = 14 ]; then
+    timeout 150 "$SCEN" "300 move 768 162; 310 press 768 162; 320 release 768 162; 370 click 688 460; 420 list" -- "$SETTINGS region" >/dev/null 2>&1
+    if grep -q 'lang = "pt_BR.UTF-8"' "$SCFG/mide/config.toml"; then
+        echo "ok    Idioma e região: escolher o idioma grava"; PASS=$((PASS + 1))
+    else
+        echo "FALHA Idioma e região: escolher o idioma grava"; FAIL=$((FAIL + 1))
+    fi
+    sed -i '/^lang = "pt_BR.UTF-8"/d' "$SCFG/mide/config.toml"
+else
+    echo "pulo  Idioma e região (os idiomas da lista não estão todos instalados)"
+fi
+# Apps padrão: só os apps de teste (XDG_DATA_DIRS próprio); "Navegador" em (783, 162),
+# com "Nenhum", "Navegador A" e "Navegador B" (y=253). Grava no mimeapps.list.
+APPS_DIR="$SCFG/apps-teste"
+mkdir -p "$APPS_DIR/applications"
+for n in A B; do printf '[Desktop Entry]\nType=Application\nName=Navegador %s\nExec=true\nMimeType=x-scheme-handler/http;text/html;\n' "$n" > "$APPS_DIR/applications/navegador-$(echo "$n" | tr AB ab).desktop"; done
+timeout 150 "$SCEN" "300 move 783 162; 310 press 783 162; 320 release 783 162; 370 click 700 253; 420 list" -- "XDG_DATA_DIRS='$APPS_DIR' XDG_DATA_HOME='$APPS_DIR' $SETTINGS default-apps" >/dev/null 2>&1
+if grep -q '^x-scheme-handler/http=navegador-b.desktop' "$SCFG/mimeapps.list" 2>/dev/null; then
+    echo "ok    Apps padrão: escolher o navegador grava no mimeapps.list"; PASS=$((PASS + 1))
+else
+    echo "FALHA Apps padrão: escolher o navegador grava no mimeapps.list"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$APPS_DIR" "$SCFG/mimeapps.list"
 # "Vidro líquido" em (807, 505): grava no config.toml e a dock troca para o vidro clássico.
 check "Efeitos → Vidro líquido desligado: a dock volta ao vidro clássico" "vidro líquido na dock: desligado" "400 click 807 505; 480 list" "$SETTINGS effects"
 if grep -q "liquid_glass = false" "$SCFG/mide/config.toml"; then
@@ -871,6 +905,12 @@ check "tela apaga depois do tempo sem uso" "autoteste: tela apagada" "200 move 5
 check_count "mexer o mouse acende a tela" "autoteste: tela apagada" 0 "200 move 500 400; 600 move 520 420; 610 list"
 printf '[lock]\nidle_minutes = 3\nblank_minutes = 0\n' > "$IDLECFG/mide/config.toml"
 SCENARIO_WAIT=16 check "bloqueia sozinho depois do tempo sem uso" "autoteste: tela bloqueada" "200 move 500 400; 700 list"
+# Energia: suspender depois do tempo sem uso (simulado: só registra o pedido ao logind)
+# e o botão de ligar configurado para suspender.
+printf '[lock]\nidle_minutes = 0\nblank_minutes = 0\n[power]\nsuspend_minutes = 3\n' > "$IDLECFG/mide/config.toml"
+check "Energia: suspende depois do tempo sem uso" "sistema \(teste\): logind Suspend" "200 move 500 400; 600 list"
+printf '[power]\nbutton = "suspend"\n' > "$IDLECFG/mide/config.toml"
+check "Energia: botão de ligar configurado para suspender" "sistema \(teste\): logind Suspend" "400 key power; 460 list"
 export XDG_CONFIG_HOME="$OLD_IDLE_CFG"
 unset MIDE_LOCK_IDLE MIDE_IDLE_UNIT
 rm -rf "$IDLECFG"

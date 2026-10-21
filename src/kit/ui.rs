@@ -2495,7 +2495,43 @@ impl<'a> Ui<'a> {
             self.width = old_w;
             self.cursor_y = old_y;
         }
+        // Itens que não cabem: a lista rola com a roda do mouse sobre a barra lateral
+        // (o campo de busca fica parado), e o item escolhido aparece ao abrir.
+        let list_top = row_y;
+        let list_bottom = y0 + h - 8.0;
+        let total: f32 = items
+            .iter()
+            .enumerate()
+            .map(|(i, (name, icon, _))| if !icon.is_empty() { 34.0 } else if name.is_empty() { 12.0 } else if i > 0 { 32.0 } else { 24.0 })
+            .sum();
+        let scroll_id = self.ctx.id();
+        let max_scroll = (total - (list_bottom - list_top)).max(0.0);
+        let mut scroll = self.ctx.memory.scroll.get(&scroll_id).copied().unwrap_or_else(|| {
+            // Primeira vez: rola até o item escolhido, se ele estiver fora.
+            let before: f32 = items[..selected.min(items.len())]
+                .iter()
+                .enumerate()
+                .map(|(i, (name, icon, _))| if !icon.is_empty() { 34.0 } else if name.is_empty() { 12.0 } else if i > 0 { 32.0 } else { 24.0 })
+                .sum();
+            (before + 34.0 - (list_bottom - list_top)).max(0.0)
+        });
+        if self.over((x, list_top, side_w, list_bottom - list_top)) && self.ctx.input.scroll != 0.0 && max_scroll > 0.0 {
+            scroll += std::mem::take(&mut self.ctx.input.scroll);
+            self.ctx.repaint = true;
+        }
+        let scroll = scroll.clamp(0.0, max_scroll);
+        self.ctx.memory.scroll.insert(scroll_id, scroll);
+        row_y -= scroll;
         for (i, (name, icon, tint)) in items.iter().enumerate() {
+            // Fora da faixa da lista (rolada): só conta o lugar.
+            let row_h = if !icon.is_empty() { 34.0 } else if name.is_empty() { 12.0 } else if i > 0 { 32.0 } else { 24.0 };
+            if row_y < list_top - 0.5 || row_y + row_h - 4.0 > list_bottom + 0.5 {
+                if !icon.is_empty() {
+                    let _ = self.ctx.id();
+                }
+                row_y += row_h;
+                continue;
+            }
             // Item sem ícone é um título de grupo ("Favoritos"); nome vazio é só espaço.
             if icon.is_empty() {
                 if name.is_empty() {

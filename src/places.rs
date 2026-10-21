@@ -455,10 +455,12 @@ pub fn open(target: &str) {
     }
     // Pastas e a Lixeira abrem no Arquivos do mide, e arquivos de texto no Editor de
     // Texto do mide (quando instalados).
+    // Se o usuário escolheu outro app padrão (Configurações → Apps padrão), vale ele.
     let path = Path::new(target.strip_prefix("file://").unwrap_or(target));
-    let native = if target.starts_with("trash:") || path.is_dir() {
+    let chosen_other = |mime: &str, ours: &str| crate::default_apps::user_choice(mime).is_some_and(|id| id != ours);
+    let native = if target.starts_with("trash:") || (path.is_dir() && !chosen_other("inode/directory", "mide-files.desktop")) {
         Some(("mide-files", "Arquivos"))
-    } else if crate::files::is_text(path) {
+    } else if crate::files::is_text(path) && !chosen_other("text/plain", "mide-text.desktop") {
         Some(("mide-text", "Editor de Texto"))
     } else {
         None

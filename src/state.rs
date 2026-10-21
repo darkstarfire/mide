@@ -258,6 +258,9 @@ pub struct State {
     pub inhibitors: Vec<WlSurface>,
     /// A tela está apagada (DPMS desligado no DRM; preto nos outros backends).
     pub blanked: bool,
+    /// Já pediu para suspender por tempo sem uso (`[power] suspend_minutes`); volta a
+    /// valer depois de qualquer uso.
+    pub idle_suspended: bool,
     /// O computador voltou da suspensão: as telas refazem o estado no próximo quadro.
     pub resumed: bool,
     /// Pedido para a barra (lido por ela com `bar_request`), como a confirmação de
@@ -396,6 +399,7 @@ impl State {
             idle_inhibit_state,
             inhibitors: Vec::new(),
             blanked: false,
+            idle_suspended: false,
             resumed: false,
             bar_request: None,
             screencopy: Default::default(),
@@ -493,6 +497,7 @@ impl State {
     /// avisa os programas e acende a tela apagada.
     pub fn activity(&mut self) {
         self.last_activity = Instant::now();
+        self.idle_suspended = false;
         let seat = self.seat.clone();
         self.idle_notifier_state.notify_activity(&seat);
         if self.blanked {

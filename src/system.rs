@@ -220,13 +220,38 @@ pub enum Power {
     Lock,
 }
 
+/// Pelo logind no D-Bus (`org.freedesktop.login1`): funciona com o systemd e com o
+/// elogind (distribuições sem systemd, como o Slackware e o Void). Sem resposta do
+/// logind, tenta o `systemctl`/`loginctl`.
 pub fn power(action: Power) {
-    match action {
-        Power::Sleep => run("systemctl", &["suspend"]),
-        Power::Restart => run("systemctl", &["reboot"]),
-        Power::Shutdown => run("systemctl", &["poweroff"]),
-        Power::Lock => run("loginctl", &["lock-session"]),
+    let (method, fallback): (&str, (&str, &[&str])) = match action {
+        Power::Sleep => ("Suspend", ("systemctl", &["suspend"])),
+        Power::Restart => ("Reboot", ("systemctl", &["reboot"])),
+        Power::Shutdown => ("PowerOff", ("systemctl", &["poweroff"])),
+        Power::Lock => ("LockSessions", ("loginctl", &["lock-session"])),
+    };
+    if dry_run() {
+        tracing::info!("sistema (teste): logind {method}");
+        return;
     }
+    std::thread::spawn(move || {
+        let called = zbus::blocking::Connection::system().and_then(|conn| {
+            let proxy = zbus::blocking::Proxy::new(&conn, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")?;
+            if method == "LockSessions" {
+                proxy.call::<_, _, ()>(method, &())
+            } else {
+                // `true`: o logind pode pedir a senha (polkit) se for preciso.
+                proxy.call::<_, _, ()>(method, &(true,))
+            }
+        });
+        match called {
+            Ok(()) => tracing::info!("sistema: logind {method}"),
+            Err(err) => {
+                tracing::warn!("sistema: logind {method} falhou ({err}); tentando {}", fallback.0);
+                run(fallback.0, fallback.1);
+            }
+        }
+    });
 }
 
 pub fn set_muted(muted: bool) {

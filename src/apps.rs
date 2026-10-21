@@ -20,6 +20,8 @@ pub struct App {
     pub terminal: bool,
     /// Palavras extras para a busca (nome genérico e palavras-chave).
     pub keywords: String,
+    /// Tipos de arquivo que o app abre (`MimeType`), para os apps padrão.
+    pub mime: Vec<String>,
 }
 
 /// Grupos do launcher, na ordem em que aparecem.
@@ -209,6 +211,7 @@ pub fn load() -> Vec<App> {
                 group: group_of(&categories),
                 terminal: e.terminal(),
                 keywords,
+                mime: e.mime_type().unwrap_or_default().into_iter().map(str::to_string).collect(),
             })
         })
         .collect();
@@ -243,6 +246,7 @@ mod tests {
             group,
             terminal: false,
             keywords: keywords.into(),
+            mime: Vec::new(),
         }
     }
 

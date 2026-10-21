@@ -137,7 +137,8 @@ fn publish_environment(socket: &str) {
     }
     // Perfil do dconf da sessão (tema de ícones do mide, definido pelo `mide-session`) e
     // o tema do Qt: os serviços ativados (portais) também precisam deles.
-    for name in ["DCONF_PROFILE", "QT_QPA_PLATFORMTHEME"] {
+    // O idioma (Configurações → Idioma e região, exportado pelo `mide-session`) também.
+    for name in ["DCONF_PROFILE", "QT_QPA_PLATFORMTHEME", "LANG", "LANGUAGE", "LC_TIME", "LC_NUMERIC", "LC_MONETARY", "LC_PAPER", "LC_MEASUREMENT"] {
         if let Ok(value) = std::env::var(name) {
             vars.push(format!("{name}={value}"));
         }

@@ -34,6 +34,20 @@ if command -v dconf >/dev/null; then
         export DCONF_PROFILE="$conf/profile"
     fi
 fi
+# Idioma e formatos escolhidos em Configurações → Idioma e região (`[locale]` no
+# config.toml do mide); sem escolha, valem os do sistema (tela de login).
+cfg="${XDG_CONFIG_HOME:-$HOME/.config}/mide/config.toml"
+if [ -f "$cfg" ]; then
+    locale_value() { sed -n '/^\[locale\]/,/^\[/{s/^'"$1"' *= *"\([^"]*\)".*/\1/p}' "$cfg" | head -n 1; }
+    lang="$(locale_value lang)"
+    formats="$(locale_value formats)"
+    if [ -n "$lang" ]; then
+        export LANG="$lang" LANGUAGE="${lang%%.*}"
+    fi
+    if [ -n "$formats" ]; then
+        export LC_TIME="$formats" LC_NUMERIC="$formats" LC_MONETARY="$formats" LC_PAPER="$formats" LC_MEASUREMENT="$formats"
+    fi
+fi
 # Apps Qt seguem o GTK (tema de ícones, fontes) quando o plugin existe.
 [ -z "$QT_QPA_PLATFORMTHEME" ] && export QT_QPA_PLATFORMTHEME=gtk3
 

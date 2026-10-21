@@ -39,6 +39,9 @@ enum Section {
     Lock,
     Mouse,
     Keyboard,
+    Region,
+    Energy,
+    DefaultApps,
     About,
 }
 
@@ -59,6 +62,9 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (None, "", "", [0, 0, 0]),
     (Some(Section::Mouse), "Mouse e trackpad", "input-mouse", [142, 142, 147]),
     (Some(Section::Keyboard), "Teclado", "preferences-desktop-keyboard", [142, 142, 147]),
+    (Some(Section::Region), "Idioma e região", "preferences-desktop-locale", [10, 132, 255]),
+    (Some(Section::Energy), "Energia", "battery", [52, 199, 89]),
+    (Some(Section::DefaultApps), "Apps padrão", "preferences-desktop-default-applications", [142, 142, 147]),
     (Some(Section::About), "Sobre", "help-about", [142, 142, 147]),
 ];
 
@@ -113,6 +119,11 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
     ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
     ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
+    ("Idioma", "idioma lingua language traducao portugues ingles locale", Section::Region),
+    ("Formatos de data e números", "regiao formato data hora numeros moeda locale", Section::Region),
+    ("Suspender o computador após", "energia suspender dormir repouso inatividade bateria", Section::Energy),
+    ("Botão de ligar", "energia botao ligar desligar power suspender", Section::Energy),
+    ("Apps padrão", "apps padrao navegador email abrir com pdf imagens videos musica pastas texto", Section::DefaultApps),
     ("Sobre este computador", "sistema versao memoria processador", Section::About),
 ];
 
@@ -178,6 +189,8 @@ struct Settings {
     screens_revert: Option<(std::time::Instant, Vec<Display>)>,
     /// Busca na lista de atalhos.
     shortcut_query: String,
+    /// Idiomas instalados (`locale -a`), lidos ao abrir Idioma e região.
+    locales: Vec<String>,
 }
 
 impl Settings {
@@ -213,6 +226,7 @@ impl Settings {
             screen_selected: 0,
             screens_revert: None,
             shortcut_query: String::new(),
+            locales: Vec::new(),
             volume: 0.0,
             dock_size: match settings_file::get("dock", "icon_size") {
                 Some(Value::Int(n)) => (n as f32).clamp(DOCK_MIN, DOCK_MAX),
@@ -992,6 +1006,130 @@ impl Settings {
         }
     }
 
+    /// Idioma e formatos (`[locale] lang`/`formats`): o `mide-session` exporta no
+    /// próximo login (`LANG` e `LC_TIME`, `LC_NUMERIC`, `LC_MONETARY`...).
+    fn region(&mut self, ui: &mut Ui) {
+        ui.title("Idioma e região");
+        if self.locales.is_empty() {
+            self.locales = installed_locales();
+        }
+        let current = |key: &str| match settings_file::get("locale", key) {
+            Some(Value::Text(t)) => t,
+            _ => String::new(),
+        };
+        let mut options = vec!["O do sistema".to_string()];
+        options.extend(self.locales.iter().map(|l| locale_name(l)));
+        let index_of = |value: &str| self.locales.iter().position(|l| *l == value).map_or(0, |i| i + 1);
+        let (mut lang_i, mut formats_i) = (index_of(&current("lang")), index_of(&current("formats")));
+        let locales = self.locales.clone();
+        let save = |key: &str, i: usize| {
+            let value = i.checked_sub(1).and_then(|i| locales.get(i)).map(|l| Value::Text(l.clone()));
+            match settings_file::set("locale", key, value) {
+                Ok(()) => tracing::info!("idioma e região: {key} = {}", options_name(&locales, i)),
+                Err(err) => tracing::warn!("idioma não gravado: {err}"),
+            }
+        };
+        ui.card(|ui| {
+            if ui.dropdown("Idioma", &options, &mut lang_i).changed() {
+                save("lang", lang_i);
+            }
+            if ui.dropdown("Formatos (data, hora, números e moeda)", &options, &mut formats_i).changed() {
+                save("formats", formats_i);
+            }
+        });
+        ui.note("Vale a partir do próximo login. Os idiomas da lista são os instalados no sistema (locale -a).");
+    }
+
+    /// Suspender por tempo sem uso e o botão de ligar (`[power]`).
+    fn energy(&mut self, ui: &mut Ui) {
+        ui.title("Energia");
+        const SUSPEND: &[(&str, i64)] = &[("Nunca", 0), ("15 minutos", 15), ("30 minutos", 30), ("1 hora", 60), ("2 horas", 120), ("3 horas", 180)];
+        const BUTTON: &[(&str, &str)] = &[("Perguntar o que fazer", "ask"), ("Suspender", "suspend"), ("Desligar", "poweroff"), ("Não fazer nada", "nothing")];
+        let minutes = match settings_file::get("power", "suspend_minutes") {
+            Some(Value::Int(n)) => n,
+            _ => 0,
+        };
+        let button = match settings_file::get("power", "button") {
+            Some(Value::Text(t)) => t,
+            _ => "ask".into(),
+        };
+        let suspend_names: Vec<String> = SUSPEND.iter().map(|(n, _)| n.to_string()).collect();
+        let button_names: Vec<String> = BUTTON.iter().map(|(n, _)| n.to_string()).collect();
+        let mut suspend_i = SUSPEND.iter().position(|(_, m)| *m == minutes).unwrap_or(0);
+        let mut button_i = BUTTON.iter().position(|(_, b)| *b == button).unwrap_or(0);
+        let save = |key: &str, value: Option<Value>| match settings_file::set("power", key, value) {
+            Ok(()) => {
+                ask_compositor("reload");
+            }
+            Err(err) => tracing::warn!("energia não gravada: {err}"),
+        };
+        ui.card(|ui| {
+            if ui.dropdown("Suspender o computador após", &suspend_names, &mut suspend_i).changed() {
+                let (name, m) = SUSPEND[suspend_i];
+                tracing::info!("energia: suspender após {name}");
+                save("suspend_minutes", (m > 0).then_some(Value::Int(m)));
+            }
+            if ui.dropdown("Botão de ligar", &button_names, &mut button_i).changed() {
+                let (name, b) = BUTTON[button_i];
+                tracing::info!("energia: botão de ligar = {name}");
+                save("button", (b != "ask").then(|| Value::Text(b.into())));
+            }
+        });
+        ui.note("Sem uso: o computador não suspende enquanto um app pede para a tela ficar acesa (vídeo). Apagar e bloquear a tela ficam em Bloqueio de tela.");
+    }
+
+    /// App que abre cada tipo de arquivo (`~/.config/mimeapps.list`).
+    fn default_apps(&mut self, ui: &mut Ui) {
+        ui.title("Apps padrão");
+        // Por categoria: os apps que abrem o tipo (ids sem ".desktop"), os nomes e o
+        // escolhido agora.
+        let mut rows: Vec<(&mide::default_apps::Category, Vec<String>, Vec<String>, usize)> = Vec::new();
+        for category in mide::default_apps::CATEGORIES {
+            let candidates = mide::default_apps::candidates(&self.apps, category);
+            let mut ids: Vec<String> = candidates.iter().map(|a| a.id.clone()).collect();
+            let mut names: Vec<String> = candidates.iter().map(|a| a.name.clone()).collect();
+            let current = mide::default_apps::current(category.mimes[0]).map(|c| desktop_id(&c));
+            // O padrão atual pode não estar na lista (app sem o tipo no .desktop).
+            if let Some(id) = current.as_ref().filter(|id| !ids.contains(id)) {
+                ids.insert(0, id.clone());
+                names.insert(0, id.clone());
+            }
+            if ids.is_empty() {
+                continue;
+            }
+            let chosen = match current.and_then(|c| ids.iter().position(|i| *i == c)) {
+                Some(i) => i,
+                None => {
+                    ids.insert(0, String::new());
+                    names.insert(0, "Nenhum".into());
+                    0
+                }
+            };
+            rows.push((category, ids, names, chosen));
+        }
+        let mut changed = None;
+        ui.card(|ui| {
+            for (i, (category, _, names, chosen)) in rows.iter_mut().enumerate() {
+                if ui.dropdown(category.label, names, chosen).changed() {
+                    changed = Some(i);
+                }
+            }
+        });
+        if let Some((category, ids, _, chosen)) = changed.and_then(|i| rows.get(i)) {
+            if !ids[*chosen].is_empty() {
+                let id = format!("{}.desktop", ids[*chosen]);
+                match mide::default_apps::set(category, &id) {
+                    Ok(()) => tracing::info!("apps padrão: {} = {id}", category.label),
+                    Err(err) => tracing::warn!("app padrão não gravado: {err}"),
+                }
+            }
+        }
+        if rows.is_empty() {
+            ui.note("Nenhum app instalado abre esses tipos de arquivo.");
+        }
+        ui.note("Vale para o mide e para os outros apps (o mesmo mimeapps.list do GNOME e do Cinnamon).");
+    }
+
     /// Avisa o compositor e relê os atalhos em uso.
     fn apply_bindings(&mut self) {
         ask_compositor("reload");
@@ -1259,6 +1397,9 @@ impl App for Settings {
                 Section::Effects => self.effects(ui),
                 Section::Mouse => self.mouse(ui),
                 Section::Keyboard => self.keyboard(ui),
+                Section::Region => self.region(ui),
+                Section::Energy => self.energy(ui),
+                Section::DefaultApps => self.default_apps(ui),
                 Section::About => self.about(ui),
             }
         });
@@ -1291,6 +1432,59 @@ impl App for Settings {
             }
         }
     }
+}
+
+/// Id do app sem o ".desktop" (como em `mide::apps::App::id`).
+fn desktop_id(id: &str) -> String {
+    id.trim_end_matches(".desktop").to_string()
+}
+
+/// Idiomas instalados com UTF-8 (`locale -a`) que a lista sabe nomear, no formato do
+/// `LANG` (`pt_BR.UTF-8`).
+fn installed_locales() -> Vec<String> {
+    let out = std::process::Command::new("locale").arg("-a").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let mut list: Vec<String> = out
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.to_lowercase().ends_with(".utf8") || l.to_lowercase().ends_with(".utf-8"))
+        .map(|l| format!("{}.UTF-8", l.split('.').next().unwrap_or(l)))
+        .filter(|l| LOCALE_NAMES.iter().any(|(code, _)| l.starts_with(&format!("{code}."))))
+        .collect();
+    list.sort_by_key(|l| locale_name(l));
+    list.dedup();
+    list
+}
+
+/// Idiomas com nome na lista (os outros instalados não aparecem: são muitos, e a
+/// lista precisa caber na janela).
+const LOCALE_NAMES: &[(&str, &str)] = &[
+    ("pt_BR", "Português (Brasil)"),
+    ("pt_PT", "Português (Portugal)"),
+    ("en_US", "English (United States)"),
+    ("en_GB", "English (United Kingdom)"),
+    ("es_ES", "Español (España)"),
+    ("es_MX", "Español (México)"),
+    ("es_AR", "Español (Argentina)"),
+    ("fr_FR", "Français (France)"),
+    ("de_DE", "Deutsch (Deutschland)"),
+    ("it_IT", "Italiano (Italia)"),
+    ("nl_NL", "Nederlands"),
+    ("ru_RU", "Русский"),
+    ("ja_JP", "日本語"),
+    ("zh_CN", "中文 (简体)"),
+];
+
+/// Nome do idioma para a lista ("Português (Brasil) — pt_BR").
+fn locale_name(code: &str) -> String {
+    let base = code.split('.').next().unwrap_or(code);
+    match LOCALE_NAMES.iter().find(|(c, _)| *c == base) {
+        Some((_, name)) => format!("{name} — {base}"),
+        None => base.to_string(),
+    }
+}
+
+fn options_name(locales: &[String], i: usize) -> String {
+    i.checked_sub(1).and_then(|i| locales.get(i)).cloned().unwrap_or_else(|| "o do sistema".into())
 }
 
 fn section_name(section: Section) -> &'static str {
@@ -1512,6 +1706,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("lock") => Section::Lock,
         Some("mouse") => Section::Mouse,
         Some("keyboard") => Section::Keyboard,
+        Some("region") => Section::Region,
+        Some("energy") => Section::Energy,
+        Some("default-apps") => Section::DefaultApps,
         Some("about") => Section::About,
         _ => Section::Wifi,
     };
@@ -1544,6 +1741,7 @@ mod tests {
             group: "Utilitários",
             terminal: false,
             keywords: String::new(),
+            mime: Vec::new(),
         };
         assert_eq!(describe_action("launch:foot", &[app]), "Abrir Foot");
     }

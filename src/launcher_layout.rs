@@ -242,6 +242,7 @@ mod tests {
             group,
             terminal: false,
             keywords: String::new(),
+            mime: Vec::new(),
         }
     }
 

@@ -166,6 +166,14 @@ pub fn tick(state: &mut State) {
             state.wake();
         }
     }
+    // Suspender depois do tempo escolhido em Configurações → Energia (uma vez por
+    // período sem uso).
+    let suspend_after = state.config.power.suspend_minutes;
+    if suspend_after > 0 && !state.idle_suspended && idle >= minutes(suspend_after) {
+        tracing::info!("suspendendo (sem uso há {suspend_after} min)");
+        state.idle_suspended = true;
+        mide::system::power(mide::system::Power::Sleep);
+    }
 }
 
 /// Pedidos do logind: "Lock" da sessão (`loginctl lock-session`) e "PrepareForSleep"

@@ -86,6 +86,7 @@ struct FileConfig {
     lock: Lock,
     opacity: Opacity,
     appearance: Appearance,
+    power: Power,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -188,6 +189,24 @@ pub struct Lock {
 impl Default for Lock {
     fn default() -> Self {
         Self { idle_minutes: 5, on_suspend: true, blank_minutes: 10 }
+    }
+}
+
+/// Energia, na seção `[power]` (Configurações → Energia).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Power {
+    /// Suspender depois de tantos minutos sem uso (0: nunca). Só na sessão de verdade,
+    /// e não enquanto um app pede para a tela ficar acesa (vídeo).
+    pub suspend_minutes: u32,
+    /// Botão de ligar: `"ask"` (pergunta antes de desligar), `"suspend"`, `"poweroff"`
+    /// ou `"nothing"`.
+    pub button: String,
+}
+
+impl Default for Power {
+    fn default() -> Self {
+        Self { suspend_minutes: 0, button: "ask".into() }
     }
 }
 
@@ -390,12 +409,14 @@ pub struct Config {
     pub lock: Lock,
     /// Tema escuro (`[appearance] theme = "dark"`).
     pub dark: bool,
+    pub power: Power,
 }
 
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
         let mut dark = false;
+        let mut power = Power::default();
         let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
@@ -409,6 +430,7 @@ impl Config {
                 let lock = std::mem::take(&mut file.lock);
                 let opacity = std::mem::take(&mut file.opacity);
                 dark = file.appearance.theme == "dark";
+                power = std::mem::take(&mut file.power);
                 (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock, opacity)
             }
             _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default(), Opacity::default()),
@@ -422,6 +444,7 @@ impl Config {
         config.lock = lock;
         config.opacity = opacity;
         config.dark = dark;
+        config.power = power;
         Ok(config)
     }
 
@@ -455,6 +478,7 @@ impl Config {
             lock: Lock::default(),
             opacity: Opacity::default(),
             dark: false,
+            power: Power::default(),
         })
     }
 

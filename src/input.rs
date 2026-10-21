@@ -413,10 +413,22 @@ fn run_action(state: &mut State, action: Action) {
         Action::RestoreMinimized => state.restore_minimized(),
         Action::ToggleLauncher => state.toggle_launcher(),
         Action::ToggleSearch => state.toggle_search(),
-        Action::PowerButton => {
-            tracing::info!("botão de ligar: pedindo confirmação para desligar");
-            state.bar_request = Some("confirm-shutdown");
-        }
+        // O que fazer vem de Configurações → Energia (`[power] button`).
+        Action::PowerButton => match state.config.power.button.as_str() {
+            "suspend" => {
+                tracing::info!("botão de ligar: suspendendo");
+                mide::system::power(mide::system::Power::Sleep);
+            }
+            "poweroff" => {
+                tracing::info!("botão de ligar: desligando");
+                mide::system::power(mide::system::Power::Shutdown);
+            }
+            "nothing" => tracing::info!("botão de ligar: nada a fazer (Configurações → Energia)"),
+            _ => {
+                tracing::info!("botão de ligar: pedindo confirmação para desligar");
+                state.bar_request = Some("confirm-shutdown");
+            }
+        },
         Action::SwitchVt(n) => match state.session.as_mut() {
             Some(session) => {
                 use smithay::backend::session::Session;
