@@ -167,9 +167,9 @@ struct Drag {
 
 /// Durações das animações.
 const CLOSE_MS: f32 = 1000.0;
-const PAGE_MS: f32 = 320.0;
+const PAGE_MS: f32 = mide::motion::LAUNCHER_PAGE.as_millis() as f32;
 /// Pasta abrindo ou fechando (cresce a partir do ícone, como o launcher abrindo).
-const FOLDER_MS: f32 = 240.0;
+const FOLDER_MS: f32 = mide::motion::LAUNCHER_FOLDER.as_millis() as f32;
 
 /// Transição da pasta (`[effects] transitions`): a grade sem a pasta e a tela com a
 /// pasta aberta são desenhadas uma vez; cada quadro copia a grade e desenha o painel
@@ -186,24 +186,13 @@ struct FolderAnim {
     /// Vidro das pastas da grade e do painel aberto.
     glass: (Vec<GlassRect>, Vec<GlassRect>),
 }
-const POP_MS: f32 = 340.0;
+const POP_MS: f32 = mide::motion::LAUNCHER_POP.as_millis() as f32;
 
 /// Região de vidro líquido pedida ao compositor: x, y, largura, altura, raio e
 /// opacidade (pastas e o painel da pasta aberta).
 type GlassRect = (f32, f32, f32, f32, f32, f32);
 
-/// Desaceleração suave (cúbica).
-fn ease_out(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    1.0 - (1.0 - t).powi(3)
-}
-
-/// Cresce passando um pouco do tamanho final e volta (efeito de mola).
-fn ease_out_back(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    let c = 1.70158;
-    1.0 + (c + 1.0) * (t - 1.0).powi(3) + c * (t - 1.0).powi(2)
-}
+use mide::motion::{ease_out, ease_out_back};
 
 /// Troca de página em andamento: o carrossel desliza da página `from` para `to`.
 struct PageAnim {

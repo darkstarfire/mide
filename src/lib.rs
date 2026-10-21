@@ -14,6 +14,7 @@ pub mod gmenu;
 pub mod icons;
 pub mod kit;
 pub mod launcher_layout;
+pub mod motion;
 pub mod notify;
 pub mod places;
 pub mod search;

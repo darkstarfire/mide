@@ -51,7 +51,7 @@ pub struct Preview {
 }
 
 /// Duração da entrada das prévias e do alternador.
-pub const APPEAR: std::time::Duration = std::time::Duration::from_millis(160);
+pub const APPEAR: std::time::Duration = mide::motion::PREVIEW_APPEAR;
 
 impl Preview {
     /// Quanto já apareceu (0 a 1, suavizado).

@@ -645,6 +645,8 @@ impl Menu {
 #[derive(Clone, Copy)]
 struct Palette {
     dark: bool,
+    /// O azul de destaque do tema (o mesmo dos apps do mide-ui).
+    accent: [u8; 4],
     text: [u8; 4],
     secondary: [u8; 4],
     faint: [u8; 4],
@@ -652,8 +654,18 @@ struct Palette {
 }
 
 impl Palette {
-    const LIGHT: Palette = Palette { dark: false, text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255] };
-    const DARK: Palette = Palette { dark: true, text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255] };
+    const LIGHT: Palette = Palette { dark: false, accent: [10, 110, 235, 255], text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255] };
+    const DARK: Palette = Palette { dark: true, accent: [30, 125, 245, 255], text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255] };
+
+    fn accent_color(&self) -> tiny_skia::Color {
+        rgba(self.accent[0], self.accent[1], self.accent[2], 255)
+    }
+
+    /// Destaque apertado (um pouco mais escuro).
+    fn accent_pressed(&self) -> tiny_skia::Color {
+        let d = |c: u8| c.saturating_sub(25);
+        rgba(d(self.accent[0]), d(self.accent[1]), d(self.accent[2]), 255)
+    }
 
     /// Linhas, bordas e fundos de botão: preto no claro, branco no escuro.
     fn ink(&self, alpha: u8) -> tiny_skia::Color {
@@ -709,7 +721,9 @@ fn pal() -> Palette {
 
 /// Lê o tema (claro/escuro) para os próximos desenhos.
 fn refresh_palette() {
-    PALETTE.with(|p| p.set(if mide::kit::system_dark() { Palette::DARK } else { Palette::LIGHT }));
+    let theme = mide::kit::Theme::system();
+    let base = if theme.dark { Palette::DARK } else { Palette::LIGHT };
+    PALETTE.with(|p| p.set(Palette { accent: theme.accent, ..base }));
 }
 
 struct Bar {
@@ -989,7 +1003,7 @@ impl Bar {
         // Com o launcher aberto, o fundo some e o texto fica branco, numa transição
         // suave (`launcher_k`), junto com o esmaecer do launcher.
         let k = self.launcher_k;
-        let ease = k * k * (3.0 - 2.0 * k);
+        let ease = mide::motion::smooth(k);
         // Cor do texto em 8 níveis: o cache de texto (por cor) guarda poucas versões.
         let level = (ease * 8.0).round() / 8.0;
         let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
@@ -1217,7 +1231,7 @@ impl Bar {
                 MenuItem::Entry(label, shortcut, action) => {
                     let active = hovered == Some(i);
                     if active {
-                        fill_rounded(&mut pixmap, mx + 5.0, y, mw - 10.0, ITEM_H, 5.0, rgba(10, 100, 225, 255));
+                        fill_rounded(&mut pixmap, mx + 5.0, y, mw - 10.0, ITEM_H, 5.0, pal().accent_color());
                     }
                     let color = match (action.is_some(), active) {
                         (_, true) => [255, 255, 255, 255],
@@ -1515,7 +1529,7 @@ impl Bar {
     fn panel_row(&mut self, p: &mut Pixmap, pw: f32, y: f32, h: f32, label: &str, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>, action: PanelAction) -> bool {
         let hovered = hover == Some(regions.len());
         if hovered {
-            fill_rounded(p, 6.0, y, pw - 12.0, h, 6.0, rgba(10, 100, 225, 255));
+            fill_rounded(p, 6.0, y, pw - 12.0, h, 6.0, pal().accent_color());
         }
         let color = if hovered { [255, 255, 255, 255] } else { pal().text };
         self.text.draw(p, label, 16.0, y + (h - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
@@ -1553,7 +1567,7 @@ impl Bar {
             }
             let size = if label.len() > 2 { 12.5 } else { 17.0 };
             let lw = self.text.measure(label, size, FontWeight::Semibold);
-            self.text.draw(p, label, bx + (bw - lw) / 2.0, 46.0 - size * 0.62, size, FontWeight::Semibold, [10, 100, 225, 255]);
+            self.text.draw(p, label, bx + (bw - lw) / 2.0, 46.0 - size * 0.62, size, FontWeight::Semibold, pal().accent);
             regions.push(((bx, 34.0, bw, 24.0), action));
         }
         let cell = (pw - 24.0) / 7.0;
@@ -1571,7 +1585,7 @@ impl Bar {
             if day.date == today {
                 if let Some(c) = PathBuilder::from_circle(cx, cy, 13.0) {
                     let mut paint = Paint::default();
-                    paint.set_color(rgba(10, 100, 225, 255));
+                    paint.set_color(pal().accent_color());
                     paint.anti_alias = true;
                     p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
                 }
@@ -1598,7 +1612,7 @@ impl Bar {
             if hover == Some(regions.len()) {
                 fill_rounded(p, bx - 6.0, y - 2.0, lw + 12.0, 22.0, 6.0, rgba(0, 0, 0, 22));
             }
-            self.text.draw(p, "Limpar", bx, y + 1.0, 12.5, FontWeight::Semibold, [10, 100, 225, 255]);
+            self.text.draw(p, "Limpar", bx, y + 1.0, 12.5, FontWeight::Semibold, pal().accent);
             regions.push(((bx - 6.0, y - 2.0, lw + 12.0, 22.0), PanelAction::ClearNotifications));
         }
         y += 26.0;
@@ -1658,7 +1672,7 @@ impl Bar {
         let (tx, tw) = (44.0, pw - 64.0);
         fill_rounded(p, tx, 54.0, tw, 8.0, 4.0, pal().ink(30));
         let level = if muted { 0.0 } else { volume.clamp(0.0, 1.0) };
-        fill_rounded(p, tx, 54.0, tw * level, 8.0, 4.0, rgba(10, 100, 225, 255));
+        fill_rounded(p, tx, 54.0, tw * level, 8.0, 4.0, pal().accent_color());
         let kx = tx + tw * level;
         if let Some(knob) = PathBuilder::from_circle(kx, 58.0, 9.0) {
             let mut paint = Paint::default();
@@ -1730,7 +1744,7 @@ impl Bar {
                 let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Device(i));
                 let color = if hovered { [255, 255, 255, 255] } else { pal().text };
                 // Círculo azul para aparelho conectado, cinza para os outros.
-                let dot = if device.connected { rgba(10, 100, 225, 255) } else { rgba(170, 170, 176, 255) };
+                let dot = if device.connected { pal().accent_color() } else { rgba(170, 170, 176, 255) };
                 fill_rounded(p, 16.0, y + 7.0, 16.0, 16.0, 8.0, if hovered { rgba(255, 255, 255, 255) } else { dot });
                 self.text.draw(p, &device.name, 42.0, y + (30.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
                 if device.connected {
@@ -1758,7 +1772,7 @@ impl Bar {
             if let Some(c) = PathBuilder::from_circle(cx, cy, 15.0) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
-                paint.set_color(if on { rgba(10, 120, 240, 255) } else { pal().ink(28) });
+                paint.set_color(if on { pal().accent_color() } else { pal().ink(28) });
                 p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
             }
         };
@@ -1798,7 +1812,7 @@ impl Bar {
             fill_rounded(p, tx, ty - 5.0, tw, 10.0, 5.0, pal().ink(30));
             // Parte preenchida no azul de destaque (como os trilhos das Configurações):
             // branco sumia sobre o ladrilho claro.
-            fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, rgba(10, 120, 240, 255));
+            fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, pal().accent_color());
             if let Some(knob) = PathBuilder::from_circle(tx + tw * value, ty, 9.0) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
@@ -1839,7 +1853,7 @@ impl Bar {
         regions.push(((18.0, by, bw, 30.0), PanelAction::ConfirmNo));
         let ok_hover = hover == Some(regions.len());
         let ox = 30.0 + bw;
-        fill_rounded(p, ox, by, bw, 30.0, 8.0, if ok_hover { rgba(0, 88, 200, 255) } else { rgba(10, 100, 225, 255) });
+        fill_rounded(p, ox, by, bw, 30.0, 8.0, if ok_hover { pal().accent_pressed() } else { pal().accent_color() });
         let ow = self.text.measure(button, FONT, FontWeight::Semibold);
         self.text.draw(p, button, ox + (bw - ow) / 2.0, by + 6.0, FONT, FontWeight::Semibold, [255, 255, 255, 255]);
         regions.push(((ox, by, bw, 30.0), PanelAction::ConfirmYes));
@@ -2139,7 +2153,7 @@ fn draw_moon_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
 
 /// Interruptor no estilo do macOS: pílula azul (ligado) ou cinza, com a bolinha.
 fn draw_switch(p: &mut Pixmap, x: f32, y: f32, on: bool) {
-    let fill = if on { rgba(10, 120, 240, 255) } else { pal().ink(40) };
+    let fill = if on { pal().accent_color() } else { pal().ink(40) };
     fill_rounded(p, x, y, 38.0, 22.0, 11.0, fill);
     let kx = if on { x + 27.0 } else { x + 11.0 };
     if let Some(knob) = PathBuilder::from_circle(kx, y + 11.0, 9.0) {

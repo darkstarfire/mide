@@ -84,14 +84,14 @@ pub struct ResizeGrab {
     pub start_size: Size<i32, Logical>,
 }
 
-/// Duração da animação de maximizar.
-pub const ANIMATION_DURATION: Duration = Duration::from_millis(220);
-
-/// Duração do efeito lâmpada (minimizar e restaurar): mais longo para ser legível.
-pub const GENIE_DURATION: Duration = Duration::from_millis(650);
+// Durações das animações: todas em `mide::motion` (a tabela do `docs/design.md`).
+/// Maximizar, restaurar, metade da tela.
+pub const ANIMATION_DURATION: Duration = mide::motion::WINDOW_MOVE;
+/// Efeito lâmpada (minimizar e restaurar): mais longo para ser legível.
+pub const GENIE_DURATION: Duration = mide::motion::GENIE;
 /// Abrir e fechar o launcher.
-pub const LAUNCHER_OPEN: Duration = Duration::from_millis(260);
-pub const LAUNCHER_CLOSE: Duration = Duration::from_millis(170);
+pub const LAUNCHER_OPEN: Duration = mide::motion::LAUNCHER_OPEN;
+pub const LAUNCHER_CLOSE: Duration = mide::motion::LAUNCHER_CLOSE;
 
 /// Animação de maximizar: a janela vai da posição e do tamanho antigos aos novos.
 #[derive(Debug, Clone)]
@@ -131,9 +131,9 @@ impl WindowAnimation {
             .clamp(0.0, 1.0);
         if self.genie {
             // Lâmpada: acelera e desacelera suave, para o funil ser visível do começo ao fim.
-            if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
+            mide::motion::ease_in_out(t)
         } else {
-            1.0 - (1.0 - t).powi(3)
+            mide::motion::ease_out(t)
         }
     }
 
@@ -1052,9 +1052,9 @@ pub struct SsdMarker;
 
 /// Duração do esmaecer ao fechar uma janela.
 /// Duração da entrada dos menus.
-pub const MENU_APPEAR: std::time::Duration = std::time::Duration::from_millis(120);
+pub const MENU_APPEAR: std::time::Duration = mide::motion::MENU_APPEAR;
 
-pub const CLOSE_FADE: std::time::Duration = std::time::Duration::from_millis(180);
+pub const CLOSE_FADE: std::time::Duration = mide::motion::CLOSE_FADE;
 
 /// Número da janela, dado quando ela abre e único na sessão.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1008,8 +1008,9 @@ impl Files {
                     if let Some((folder, at)) = &self.expanding {
                         if entry.path != *folder && entry.path.starts_with(folder) {
                             let order = rows.iter().take(i).filter(|(_, e)| e.path.starts_with(folder) && e.path != *folder).count();
-                            let t = ((at.elapsed().as_secs_f32() - order as f32 * 0.025) / 0.18).clamp(0.0, 1.0);
-                            veil(ui, r.rect, 1.0 - t * (2.0 - t));
+                            let delay = order as f32 * mide::motion::LIST_STAGGER.as_secs_f32();
+                            let t = ((at.elapsed().as_secs_f32() - delay) / mide::motion::LIST_EXPAND.as_secs_f32()).clamp(0.0, 1.0);
+                            veil(ui, r.rect, 1.0 - mide::motion::ease_out_soft(t));
                         }
                     }
                     if toggled {
@@ -1062,8 +1063,8 @@ impl Files {
             let area = ui.region();
             // Troca entre ícones e lista: o conteúdo novo aparece esmaecendo.
             if let Some(at) = self.view_switched {
-                let t = (at.elapsed().as_secs_f32() / 0.2).clamp(0.0, 1.0);
-                veil(ui, area, 0.9 * (1.0 - t * (2.0 - t)));
+                let t = mide::motion::progress(at, mide::motion::VIEW_SWITCH);
+                veil(ui, area, 0.9 * (1.0 - mide::motion::ease_out_soft(t)));
             }
             let bg = ui.background(area);
             if bg.clicked() {

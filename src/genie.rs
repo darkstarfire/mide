@@ -130,7 +130,7 @@ pub struct Genie {
 }
 
 /// Duração da entrada do vidro de uma janela.
-pub const GLASS_FADE: std::time::Duration = std::time::Duration::from_millis(220);
+pub const GLASS_FADE: std::time::Duration = mide::motion::GLASS_FADE;
 
 impl Genie {
     pub fn compile(renderer: &mut GlesRenderer) -> Result<Self, GlesError> {

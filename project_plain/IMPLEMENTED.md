@@ -1150,3 +1150,8 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Arrastar e soltar:** apertar num item e andar mais de 6 pontos arrasta a seleção (ou só ele); o nome (ou "N itens") segue o ponteiro numa etiqueta azul e a pasta de destino ganha contorno; soltar move para a pasta (com Ctrl, copia), também entre discos (`files::move_into`: troca de nome, ou copia e apaga). Mensagem "N itens movido(s) para …".
 - **"Abrir com…":** no menu de um arquivo, abre a lista dos apps que abrem o tipo dele (tipo pelo shared-mime-info, `default_apps::mime_for`; o padrão primeiro, marcado "padrão"); clicar abre o arquivo no app (`apps::open_with`). Os apps são carregados numa thread ao abrir o Arquivos.
 - **mide-ui:** `ui.pointer()` e `ui.over(rect)` públicos (achar onde soltar algo arrastado).
+
+## Movimento num lugar só e o azul único (B17)
+
+- `src/motion.rs` (`mide::motion`): todas as durações da tabela do `docs/design.md` (menus 120 ms, prévias 160, fechar 180, dock 200/450, lista do Arquivos 180+25, troca de visão 200, vidro 220, mover janela 220, pasta do launcher 240, launcher 260/170, página 320, pasta nova 340, papel de parede 450, lâmpada 650) e as curvas (`ease_out` cúbica, `ease_out_soft`, `smooth`, `ease_in_out`, `ease_out_back`, `progress`). O compositor (`state.rs`, `genie.rs`, `wallpaper.rs`, `preview.rs`), a barra, a dock, o launcher, o Arquivos e os menus do mide-ui usam daqui.
+- Azul de destaque único: a barra superior (menus, painéis, calendário, controles, confirmações) e os menus da dock usam a cor de destaque do tema do mide-ui (`[10, 110, 235]`; no escuro, `[30, 125, 245]`), em vez de três azuis diferentes; os menus da dock também seguem o tema escuro.

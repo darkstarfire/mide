@@ -100,8 +100,8 @@ fn configured_autohide() -> bool {
 /// Faixa da dock escondida que fica na tela (invisível) para o ponteiro achar.
 const PEEK: i32 = 2;
 /// Duração do deslizar ao mostrar e esconder, e a espera antes de esconder.
-const SLIDE: Duration = Duration::from_millis(200);
-const HIDE_DELAY: Duration = Duration::from_millis(450);
+const SLIDE: Duration = mide::motion::DOCK_SLIDE;
+const HIDE_DELAY: Duration = mide::motion::DOCK_HIDE_DELAY;
 
 /// Margem de baixo com a dock toda escondida (negativa: só `PEEK` pixels na tela).
 fn hidden_margin() -> i32 {
@@ -1826,11 +1826,15 @@ const ARROW_H: f32 = mide::ui::draw::ARROW_H;
 
 /// Ponta do menu com o bico em (`cx`, `top + ARROW_H`), da cor do painel.
 fn draw_arrow(pixmap: &mut Pixmap, cx: f32, top: f32, glass: bool) {
-    mide::ui::draw::menu_arrow(pixmap, cx, top, true, [246, 246, 248, if glass { 180 } else { 242 }]);
+    let [r, g, b, _] = mide::kit::Theme::system().menu;
+    mide::ui::draw::menu_arrow(pixmap, cx, top, true, [r, g, b, if glass { 180 } else { 242 }]);
 }
 
 fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bool) {
     let (px, py, pw, ph) = panel.rect;
+    // Cores do tema (claro ou escuro), as mesmas dos menus da barra e dos apps.
+    let theme = mide::kit::Theme::system();
+    let ink = |a: u8| theme.shade(a);
     for (grow, alpha) in [(6.0, 14u8), (3.0, 22), (1.0, 34)] {
         mide::ui::draw::fill_rounded(pixmap, px - grow, py - grow + 4.0, pw + 2.0 * grow, ph + 2.0 * grow, MENU_RADIUS + grow, Color::from_rgba8(0, 0, 0, alpha));
     }
@@ -1839,10 +1843,12 @@ fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bo
     if glass {
         mide::ui::draw::clear_rounded(pixmap, px, py, pw, ph, MENU_RADIUS);
     }
-    mide::ui::draw::fill_rounded(pixmap, px, py, pw, ph, MENU_RADIUS, Color::from_rgba8(246, 246, 248, if glass { 180 } else { 242 }));
+    let [mr, mg, mb, _] = theme.menu;
+    mide::ui::draw::fill_rounded(pixmap, px, py, pw, ph, MENU_RADIUS, Color::from_rgba8(mr, mg, mb, if glass { 180 } else { 242 }));
     if let Some(path) = rounded_rect(px + 0.5, py + 0.5, pw - 1.0, ph - 1.0, MENU_RADIUS) {
         let mut paint = Paint::default();
-        paint.set_color(Color::from_rgba8(0, 0, 0, 46));
+        let [ir, ig, ib, ia] = ink(46);
+        paint.set_color(Color::from_rgba8(ir, ig, ib, ia));
         paint.anti_alias = true;
         pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
     }
@@ -1854,19 +1860,21 @@ fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bo
         panel.spans.push((y, y + h));
         let hovered = panel.hover == Some(i) && row.clickable();
         if hovered {
-            mide::ui::draw::fill_rounded(pixmap, px + 5.0, y, pw - 10.0, h, 6.0, Color::from_rgba8(10, 100, 230, 255));
+            let [ar, ag, ab, _] = theme.accent;
+            mide::ui::draw::fill_rounded(pixmap, px + 5.0, y, pw - 10.0, h, 6.0, Color::from_rgba8(ar, ag, ab, 255));
         }
         let (color, weight, size) = match row.kind {
-            RowKind::Header => ([30, 30, 34, 255], FontWeight::Bold, 13.0),
-            RowKind::Note => ([110, 110, 118, 255], FontWeight::Regular, 12.5),
-            RowKind::Danger if !hovered => ([210, 40, 40, 255], FontWeight::Regular, 13.0),
-            _ if hovered => ([255, 255, 255, 255], FontWeight::Regular, 13.0),
-            _ if !row.clickable() => ([150, 150, 156, 255], FontWeight::Regular, 13.0),
-            _ => ([30, 30, 34, 255], FontWeight::Regular, 13.0),
+            RowKind::Header => (theme.text, FontWeight::Bold, 13.0),
+            RowKind::Note => (theme.text_secondary, FontWeight::Regular, 12.5),
+            RowKind::Danger if !hovered => (theme.danger, FontWeight::Regular, 13.0),
+            _ if hovered => (theme.on_accent, FontWeight::Regular, 13.0),
+            _ if !row.clickable() => (theme.text_secondary, FontWeight::Regular, 13.0),
+            _ => (theme.text, FontWeight::Regular, 13.0),
         };
         match row.kind {
             RowKind::Separator => {
-                mide::ui::draw::fill_rounded(pixmap, px + 12.0, y + 4.0, pw - 24.0, 1.0, 0.0, Color::from_rgba8(0, 0, 0, 30));
+                let [sr, sg, sb, sa] = ink(30);
+                mide::ui::draw::fill_rounded(pixmap, px + 12.0, y + 4.0, pw - 24.0, 1.0, 0.0, Color::from_rgba8(sr, sg, sb, sa));
             }
             _ => {
                 let mut tx = px + 14.0;
@@ -1879,7 +1887,7 @@ fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bo
                 let label = fit_text(text, &row.label, size, weight, max);
                 text.draw(pixmap, &label, tx, y + (h - size * 1.25) / 2.0, size, weight, color);
                 if !row.detail.is_empty() {
-                    let dc = if hovered { [230, 236, 255, 255] } else { [130, 130, 138, 255] };
+                    let dc = if hovered { [230, 236, 255, 255] } else { theme.text_secondary };
                     let dw = detail_w - 10.0;
                     text.draw(pixmap, &row.detail, px + pw - 14.0 - dw, y + (h - 11.5 * 1.25) / 2.0, 11.5, FontWeight::Regular, dc);
                 }

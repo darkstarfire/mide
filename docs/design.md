@@ -12,7 +12,7 @@ O mide se inspira no visual do macOS (sem copiar nada dele): claro, limpo, com v
 cantos arredondados, movimento curto e suave. Bonito, mas sempre leve.
 
 Valores marcados com `código:` estão no código e devem ser lidos de lá (o tema do
-mide-ui em `src/kit/theme.rs`, as durações em `src/state.rs` e afins). Se mudar aqui,
+mide-ui em `src/kit/theme.rs`, as durações e curvas em `src/motion.rs`). Se mudar aqui,
 mude lá, e vice-versa.
 
 ---
@@ -200,7 +200,7 @@ não fica só no app.
 
 ## 8. Movimento
 
-`código: src/state.rs, src/preview.rs, src/genie.rs, src/wallpaper.rs, src/bin/mide-launcher.rs, src/bin/mide-dock.rs`
+`código: src/motion.rs` (durações e curvas num lugar só: o compositor, a barra, a dock, o launcher, o Arquivos e o mide-ui usam daqui)
 
 ### Curvas
 
@@ -215,6 +215,8 @@ não fica só no app.
 | O quê | Duração | Movimento |
 |---|---|---|
 | Menu aparecendo (barra, dock, apps, contexto) | 120 ms | esmaece e desce 6 px |
+| Pasta abrindo na lista do Arquivos | 180 ms (+25 ms por linha) | as linhas de dentro esmaecem de cima para baixo |
+| Troca entre ícones e lista (Arquivos) | 200 ms | o conteúdo novo esmaece |
 | Prévias da dock e alternador (Alt+Tab) | 160 ms | esmaecem e sobem 8 px |
 | Fechar janela | 180 ms | encolhe 6% e esmaece |
 | Dock aparecendo/escondendo | 200 ms | desliza (espera 450 ms antes de esconder) |

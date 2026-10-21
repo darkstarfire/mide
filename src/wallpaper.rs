@@ -80,7 +80,7 @@ pub struct Wallpaper {
 }
 
 /// Duração do esmaecer ao trocar de papel de parede.
-const FADE: std::time::Duration = std::time::Duration::from_millis(450);
+const FADE: std::time::Duration = mide::motion::WALLPAPER_FADE;
 
 impl Wallpaper {
     /// Compila o shader e carrega a imagem. Se a imagem não abrir, usa o gradiente.

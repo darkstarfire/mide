@@ -478,7 +478,7 @@ impl Ctx {
         let Some(opened) = self.memory.menu.as_ref().and_then(|m| m.opened) else {
             return (1.0, 0);
         };
-        let t = (opened.elapsed().as_secs_f32() / 0.12).clamp(0.0, 1.0);
+        let t = crate::motion::progress(opened, crate::motion::MENU_APPEAR);
         if t < 1.0 {
             self.ticking = true;
         }
