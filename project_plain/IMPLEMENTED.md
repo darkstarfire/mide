@@ -1155,3 +1155,10 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - `src/motion.rs` (`mide::motion`): todas as durações da tabela do `docs/design.md` (menus 120 ms, prévias 160, fechar 180, dock 200/450, lista do Arquivos 180+25, troca de visão 200, vidro 220, mover janela 220, pasta do launcher 240, launcher 260/170, página 320, pasta nova 340, papel de parede 450, lâmpada 650) e as curvas (`ease_out` cúbica, `ease_out_soft`, `smooth`, `ease_in_out`, `ease_out_back`, `progress`). O compositor (`state.rs`, `genie.rs`, `wallpaper.rs`, `preview.rs`), a barra, a dock, o launcher, o Arquivos e os menus do mide-ui usam daqui.
 - Azul de destaque único: a barra superior (menus, painéis, calendário, controles, confirmações) e os menus da dock usam a cor de destaque do tema do mide-ui (`[10, 110, 235]`; no escuro, `[30, 125, 245]`), em vez de três azuis diferentes; os menus da dock também seguem o tema escuro.
+
+## Tema de ícones: tipos de arquivo e símbolos (B15, etapa 4)
+
+- Revisados os 298 tipos de arquivo e 565 símbolos monocromáticos do fork com folhas de contato (`examples/mide-folha-de-icones`: desenha uma grade de SVG/PNG com o carregador do mide, que abre os SVGs do WhiteSur que o ImageMagick não abre).
+- No fork (`mide/apply.py`, etapas 5 e 6; commit `11f8484`): a caixa marrom com fita do instalador de pacotes virou caixa verde-azulada lisa (pacotes, executáveis, componentes do sistema e o compactador); Apple Music, Xcode, rosto do Finder, bússola do Safari, "A" da App Store e das pastas de modelos e o pássaro do Swift deram lugar a desenhos do próprio tema (ou à sacola com seta). Ícones de apps de terceiros que usam caixas como marca ficaram.
+- `data/icons.version` aponta para a versão nova (o `mide-atualizar` instala).
+- `data/mide-conferir`: avisa quando falta o plugin do GTK para Qt 5 ou Qt 6 (`qt5-gtk-platformtheme`, `qt6-gtk-platformtheme`); recomendados na instalação.

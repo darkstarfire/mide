@@ -41,6 +41,19 @@ for nome in mide-terminal mide-files mide-settings; do
     [ -e "$dados/hicolor/scalable/apps/$nome.svg" ] || aviso "$nome não está no hicolor (menus de outros ambientes sem o ícone)"
 done
 
+echo "== apps Qt com o tema do mide (ícones, claro/escuro)"
+for versao in 5 6; do
+    achou=""
+    for plugin in /usr/lib/*/qt$versao/plugins/platformthemes/libqgtk3.so /usr/lib/qt$versao/plugins/platformthemes/libqgtk3.so; do
+        [ -e "$plugin" ] && achou=1
+    done
+    if [ -n "$achou" ]; then
+        ok "Qt $versao segue o GTK (qt$versao-gtk-platformtheme)"
+    else
+        aviso "Qt $versao sem o plugin do GTK: sudo apt install qt$versao-gtk-platformtheme (apps Qt $versao sem os ícones e o tema do mide)"
+    fi
+done
+
 echo "== gravar a tela (OBS e vídeo do mide)"
 if command -v xdg-desktop-portal-wlr >/dev/null || [ -x /usr/libexec/xdg-desktop-portal-wlr ]; then
     ok "xdg-desktop-portal-wlr instalado"
