@@ -1258,3 +1258,13 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - Nos testes nada usa a internet: o `scenario.sh` marca `MIDE_NO_NETWORK=1`, e sem o `curl` falso da bateria a Calculadora não busca.
 - `curl` entra no `INSTALATION.md` e no `data/mide-conferir` (aviso, não obrigatório).
 - Ficam para depois: a reserva no Banco Central Europeu (parte 6, opcional) e as moedas e unidades dentro das notas (parte 11).
+
+## Pastas coloridas nas listas da dock (B24)
+
+- Causa: no tema do mide (do WhiteSur), os ícones de 16, 22 e 24 px das pastas (e de outros lugares) são desenhos só de contorno, na cor do texto; a lista de Downloads e da Lixeira pede 24 px e recebia o contorno, que parecia um símbolo ou um tema mal acabado.
+- Correção (`src/icons.rs`): para nomes que não são `-symbolic`, a busca no tema usa o desenho grande (48 px ou mais, o colorido) e reduz para o tamanho pedido. Vale em todo lugar que mostra arquivos (dock, Arquivos, busca, área de trabalho, Abrir com…); os ícones `-symbolic` das barras laterais continuam de contorno, como devem.
+
+## Teclas multimídia (A23)
+
+- O compositor trata as teclas XF86 de qualquer teclado (o receptor USB de um teclado sem fio aparece como mais um aparelho do libinput, e as teclas chegam iguais): volume +5% e −5% (`wpctl`, no máximo 100%, com o som de confirmação do volume), mudo, microfone mudo, brilho ±5% (`brightnessctl`, sem chegar a apagar) e tocar/pausar, pausar, parar, próxima e anterior pelo MPRIS no D-Bus (no player que está tocando, ou no primeiro aberto). Volume e brilho valem também com a tela bloqueada; a mídia, não. As teclas não chegam mais ao app em foco.
+- O ícone de som da barra acompanha na consulta seguinte. Fica para depois: o aviso flutuante no meio da tela (OSD) ao mudar volume e brilho.

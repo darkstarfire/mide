@@ -52,6 +52,50 @@ pub enum Action {
     /// Botão de ligar do computador: pergunta antes de desligar (a confirmação da
     /// barra), em vez do logind desligar direto. Fixo, não vem do arquivo.
     PowerButton,
+    /// Teclas multimídia do teclado (volume, brilho, mídia). Fixas, não vêm do arquivo.
+    Media(Media),
+}
+
+/// Uma tecla multimídia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Media {
+    VolumeUp,
+    VolumeDown,
+    Mute,
+    MicMute,
+    BrightnessUp,
+    BrightnessDown,
+    PlayPause,
+    Pause,
+    Stop,
+    Next,
+    Previous,
+}
+
+impl Media {
+    /// A tecla (keysym do xkb) é multimídia?
+    pub fn from_keysym(raw: u32) -> Option<Media> {
+        use xkbcommon::xkb::keysyms as k;
+        Some(match raw {
+            k::KEY_XF86AudioRaiseVolume => Media::VolumeUp,
+            k::KEY_XF86AudioLowerVolume => Media::VolumeDown,
+            k::KEY_XF86AudioMute => Media::Mute,
+            k::KEY_XF86AudioMicMute => Media::MicMute,
+            k::KEY_XF86MonBrightnessUp => Media::BrightnessUp,
+            k::KEY_XF86MonBrightnessDown => Media::BrightnessDown,
+            k::KEY_XF86AudioPlay => Media::PlayPause,
+            k::KEY_XF86AudioPause => Media::Pause,
+            k::KEY_XF86AudioStop => Media::Stop,
+            k::KEY_XF86AudioNext => Media::Next,
+            k::KEY_XF86AudioPrev => Media::Previous,
+            _ => return None,
+        })
+    }
+
+    /// Vale com a tela bloqueada (volume e brilho; a mídia, não).
+    pub fn when_locked(self) -> bool {
+        matches!(self, Media::VolumeUp | Media::VolumeDown | Media::Mute | Media::MicMute | Media::BrightnessUp | Media::BrightnessDown)
+    }
 }
 
 /// Combinação de teclas já convertida, pronta para comparar com o input.
@@ -671,6 +715,7 @@ impl fmt::Display for Action {
             Action::LockScreen => write!(f, "lock_screen"),
             Action::SwitchVt(n) => write!(f, "switch_vt:{n}"),
             Action::PowerButton => write!(f, "power_button"),
+            Action::Media(m) => write!(f, "media:{m:?}"),
             Action::TerminalKey(c) => write!(f, "terminal_key:{c}"),
         }
     }

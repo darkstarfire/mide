@@ -205,6 +205,55 @@ pub fn set_volume(value: f32) {
     run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &value]);
 }
 
+/// Teclas de volume do teclado: 5% a mais ou a menos (no máximo 100%).
+pub fn volume_step(up: bool) {
+    run("wpctl", &["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", if up { "5%+" } else { "5%-" }]);
+}
+
+/// Tecla de mudo: liga ou desliga o som.
+pub fn toggle_mute() {
+    run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
+}
+
+/// Tecla de microfone mudo.
+pub fn toggle_mic_mute() {
+    run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"]);
+}
+
+/// Teclas de brilho: 5% a mais ou a menos (sem chegar a apagar a tela).
+pub fn brightness_step(up: bool) {
+    run("brightnessctl", &["-c", "backlight", "-n", "1%", "set", if up { "5%+" } else { "5%-" }]);
+}
+
+/// Teclas de mídia (tocar/pausar, próxima, anterior, parar): pelo MPRIS no D-Bus da
+/// sessão, no player que está tocando (ou no primeiro que houver). `method` é o do
+/// `org.mpris.MediaPlayer2.Player` ("PlayPause", "Next", "Previous", "Stop").
+pub fn media_player(method: &'static str) {
+    if dry_run() {
+        tracing::info!("sistema (teste): mpris {method}");
+        return;
+    }
+    std::thread::spawn(move || {
+        let called = (|| -> zbus::Result<Option<String>> {
+            let conn = zbus::blocking::Connection::session()?;
+            let dbus = zbus::blocking::fdo::DBusProxy::new(&conn)?;
+            let players: Vec<String> = dbus.list_names()?.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")).collect();
+            let proxy = |name: &str| zbus::blocking::Proxy::new(&conn, name.to_string(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player");
+            let playing = players.iter().find(|n| proxy(n).and_then(|p| p.get_property::<String>("PlaybackStatus")).is_ok_and(|s| s == "Playing"));
+            let Some(name) = playing.or(players.first()).cloned() else {
+                return Ok(None);
+            };
+            proxy(&name)?.call::<_, _, ()>(method, &())?;
+            Ok(Some(name))
+        })();
+        match called {
+            Ok(Some(name)) => tracing::info!("sistema: mpris {method} em {name}"),
+            Ok(None) => tracing::info!("sistema: mpris {method}: nenhum player aberto"),
+            Err(err) => tracing::warn!("sistema: mpris {method} falhou: {err}"),
+        }
+    });
+}
+
 pub fn set_brightness(value: f32) {
     let value = format!("{}%", (value.clamp(0.01, 1.0) * 100.0).round() as i32);
     run("brightnessctl", &["-c", "backlight", "set", &value]);

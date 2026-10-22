@@ -113,6 +113,15 @@ pub fn evdev_code(name: &str) -> Option<u32> {
     let code = match name {
         "enter" => 28,
         "esc" => 1,
+        // Teclas multimídia (códigos do evdev).
+        "mute" => 113,
+        "volumedown" => 114,
+        "volumeup" => 115,
+        "playpause" => 164,
+        "nextsong" => 163,
+        "previoussong" => 165,
+        "brightnessdown" => 224,
+        "brightnessup" => 225,
         "backspace" => 14,
         "delete" => 111,
         "." => 52,
@@ -296,6 +305,14 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             if keysym.modified_sym() == xkbcommon::xkb::Keysym::XF86_PowerOff {
                 return FilterResult::Intercept((!locked).then_some(Action::PowerButton));
             }
+            // Teclas multimídia (volume, brilho, mídia): do mide, em qualquer app; volume e
+            // brilho também com a tela bloqueada.
+            if let Some(media) = crate::config::Media::from_keysym(keysym.modified_sym().raw()) {
+                if !locked || media.when_locked() {
+                    return FilterResult::Intercept(Some(Action::Media(media)));
+                }
+                return FilterResult::Forward;
+            }
             if locked {
                 let vt = keysym.modified_sym().raw();
                 if (xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1..=xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12).contains(&vt) {
@@ -425,6 +442,25 @@ fn run_action(state: &mut State, action: Action) {
                     xkb.layout_name(xkb.active_layout()).to_string()
                 });
                 tracing::info!("teclado: layout {name}");
+            }
+        }
+        Action::Media(media) => {
+            use crate::config::Media;
+            use mide::system;
+            tracing::info!("tecla multimídia: {media:?}");
+            match media {
+                Media::VolumeUp | Media::VolumeDown => {
+                    system::volume_step(media == Media::VolumeUp);
+                    mide::sounds::play("audio-volume-change");
+                }
+                Media::Mute => system::toggle_mute(),
+                Media::MicMute => system::toggle_mic_mute(),
+                Media::BrightnessUp | Media::BrightnessDown => system::brightness_step(media == Media::BrightnessUp),
+                Media::PlayPause => system::media_player("PlayPause"),
+                Media::Pause => system::media_player("Pause"),
+                Media::Stop => system::media_player("Stop"),
+                Media::Next => system::media_player("Next"),
+                Media::Previous => system::media_player("Previous"),
             }
         }
         // O que fazer vem de Configurações → Energia (`[power] button`).
