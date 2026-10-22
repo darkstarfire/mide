@@ -1,5 +1,10 @@
 //! Captura de tela pelos apps (A19): o protocolo `wlr-screencopy` (v3).
 //!
+//! O `xdg-desktop-portal-wlr` 0.7 só aceita a tela se o quadro anunciar também um
+//! formato por dmabuf (sem isso o OBS ficava preto). O mide anuncia, mas entrega por
+//! memória compartilhada: sem o `linux-dmabuf` no compositor, o portal não tem como
+//! criar buffers na GPU e usa só a memória compartilhada.
+//!
 //! O OBS, o navegador numa videochamada e outros pedem a tela ao portal
 //! (`xdg-desktop-portal-wlr`), e o portal pede a imagem ao mide por este protocolo e a
 //! entrega pelo PipeWire. Programas como `grim` e `wf-recorder` usam o protocolo direto.
@@ -127,6 +132,7 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
         let (w, h) = (region.size.w as u32, region.size.h as u32);
         frame.buffer(wl_shm::Format::Xrgb8888, w, h, w * 4);
         if frame.version() >= 3 {
+            frame.linux_dmabuf(Fourcc::Xrgb8888 as u32, w, h);
             frame.buffer_done();
         }
     }
