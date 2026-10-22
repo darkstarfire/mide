@@ -166,7 +166,15 @@ impl Conv {
     /// volta para a categoria por `category_order()[grupo]`.
     pub fn picker(&self, row: usize) -> ListPicker {
         let order = category_order();
-        let groups = order
+        let title = if row == self.active { "Converter de" } else { "Converter para" };
+        let group = order.iter().position(|&c| c == self.category).unwrap_or(0);
+        ListPicker::new(title, "Todas as categorias", "Buscar unidade", picker_groups(), (group, self.unit[row]))
+    }
+}
+
+/// Os grupos do seletor de unidades, na ordem de `category_order` (a Moeda primeiro).
+fn picker_groups() -> Vec<PickGroup> {
+    category_order()
             .iter()
             .map(|&c| {
                 if is_money(c) {
@@ -186,19 +194,22 @@ impl Conv {
                         .units
                         .iter()
                         .map(|u| {
-                            // O símbolo e os apelidos são as chaves exatas da busca ("MB").
+                            // O símbolo e os apelidos da unidade são as chaves exatas da busca
+                            // ("MB"); os da categoria ("peso" na Massa) só entram na busca,
+                            // sem passar à frente ("peso" acha antes o Peso argentino).
                             let detail = if u.detail.is_empty() { u.symbol.to_string() } else { format!("{} · {}", u.symbol, u.detail) };
-                            let keys: Vec<&str> = std::iter::once(u.symbol).chain(u.aliases.iter().copied()).chain(cat.aliases.iter().copied()).collect();
-                            PickItem::new(u.name, &detail, &keys)
+                            let keys: Vec<&str> = std::iter::once(u.symbol).chain(u.aliases.iter().copied()).collect();
+                            let mut item = PickItem::new(u.name, &detail, &keys);
+                            for alias in cat.aliases {
+                                item.search.push(' ');
+                                item.search.push_str(&mide::apps::fold(alias));
+                            }
+                            item
                         })
                         .collect(),
                 }
             })
-            .collect();
-        let title = if row == self.active { "Converter de" } else { "Converter para" };
-        let group = order.iter().position(|&c| c == self.category).unwrap_or(0);
-        ListPicker::new(title, "Todas as categorias", "Buscar unidade", groups, (group, self.unit[row]))
-    }
+            .collect()
 }
 
 /// O que o visor do conversor mostra num quadro.
@@ -406,6 +417,20 @@ mod tests {
         let other = Conv { category: len, unit: [km, km], active: 0 };
         let usd = currency::currencies().iter().position(|m| m.code == "USD").unwrap();
         assert_eq!(ids(&other.choose(&Pairs::default(), 0, units::money(), usd)), ("moeda", ["USD", "BRL"]));
+    }
+
+    #[test]
+    fn busca_por_peso_acha_as_moedas_antes_da_massa() {
+        let groups = picker_groups();
+        let found = mide::kit::picker::filter(&groups, "peso");
+        // O primeiro resultado é uma moeda (grupo 0, a Moeda); a Massa vem depois (o
+        // apelido "peso" da categoria ainda vale na busca).
+        assert_eq!(found.first().map(|&(g, _)| g), Some(0));
+        let mass = category_order().iter().position(|&c| category_id(c) == "massa").unwrap();
+        assert!(found.iter().any(|&(g, _)| g == mass));
+        // A busca exata pelo símbolo continua na frente ("kg").
+        let (g, i) = mide::kit::picker::filter(&groups, "kg")[0];
+        assert_eq!(groups[g].items[i].label, "Quilogramas");
     }
 
     #[test]

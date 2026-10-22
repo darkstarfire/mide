@@ -1275,3 +1275,8 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - Moedas: prefixos R$, US$, $, €, £, ¥ (e CA$, AU$, CN¥...), nomes, plurais e códigos depois de número ("100 usd em brl ="); a conversão usa as mesmas cotações do conversor; sem cotação, o erro diz qual falta e a data da última. Uma nota que converte moedas pede as cotações ao Banco Central (com a pergunta da primeira vez) e é recalculada quando elas chegam; a linha de estado mostra "Cotações: BCB · 21/10/2026".
 - Unidade ou moeda pelo nome só vale depois de um número ou como alvo de "em/para/→": "a", "m", "min", "real" da prosa continuam prosa ("De 2 a 5 × 3 =" dá 15).
 - Revisado (11 achados corrigidos, entre eles unidade depois de parênteses e variáveis, símbolos com letras, desempenho e diferença de temperaturas). Bancada: 500 linhas em ~1 ms, 5.000 em ~11 ms.
+
+## Calculadora completa: fechamento da E3b (parte 12)
+
+- Conferência visual em 1366×768, em escala 1,25 e nos temas claro e escuro: teclado, conversor, seletor de unidades, Moeda (faixa, pergunta, aviso de rede, janela de cotações na Básica de 250 pt) e Notas. Achado e corrigido na conferência: buscar "peso" no seletor punha todas as unidades de massa à frente das moedas (o apelido "peso" da Massa contava como palavra exata de cada unidade); agora os apelidos da categoria só entram na busca, e "peso" acha primeiro o Peso argentino.
+- A E3b fica feita. Ficam para depois (registrados no plano da etapa 2): a reserva das cotações no Banco Central Europeu (opcional), o resultado no meio da frase e inserir o resultado como texto nas notas, contas que criam outra grandeza (km ÷ h), "Janela → Nova janela" e a quebra automática de linha nas notas, e o buscador do mide usando o avaliador das notas.
