@@ -69,6 +69,35 @@ impl Response {
     }
 }
 
+/// Aparência de uma área de texto (`Ui::text_area_with`). O padrão é o do editor:
+/// números de linha e fonte de largura fixa no tamanho do tema.
+pub struct TextAreaLook<'a> {
+    /// Margem com os números das linhas.
+    pub line_numbers: bool,
+    /// Fonte proporcional (texto corrido) no lugar da de largura fixa.
+    pub sans: bool,
+    /// Tamanho da fonte; `None`, o do tema.
+    pub size: Option<f32>,
+    /// Texto cinza com o documento vazio.
+    pub placeholder: &'a str,
+    /// Cores, sublinhados e texto no fim das linhas: chamado a cada quadro, depois das
+    /// teclas do quadro e antes do desenho (o resultado nunca atrasa um quadro).
+    pub decorate: Option<&'a mut dyn FnMut(&super::textarea::TextDoc) -> super::textarea::Decorations>,
+}
+
+impl Default for TextAreaLook<'_> {
+    fn default() -> Self {
+        Self { line_numbers: true, sans: false, size: None, placeholder: "", decorate: None }
+    }
+}
+
+/// Resposta da `text_area_with`: a do componente e a posição do texto sob o ponteiro
+/// (o menu de contexto do app sabe em que linha foi o clique).
+pub struct TextAreaResponse {
+    pub response: Response,
+    pub pointer_index: Option<usize>,
+}
+
 /// Imagem de um ladrilho (`tile`): ícone do tema pelo nome ou uma imagem pronta.
 pub enum Tile<'p> {
     Icon(&'p str),
@@ -962,6 +991,8 @@ impl<'a> Ui<'a> {
         let t = self.ctx.theme.clone();
         let size = t.font + 1.0;
         let room = if self.flow == Flow::Column { self.width } else { self.width - (self.row_x - self.x) };
+        // Dentro de `sized`, a largura pedida também limita: o texto encolhe com "…".
+        let room = self.next_width.map_or(room, |w| room.min(w));
         let shown = self.fit(s, size, FontWeight::Semibold, room.max(0.0));
         let w = self.measure(&shown, size, FontWeight::Semibold);
         let rect = self.alloc(Some(w), 28.0);
@@ -1109,6 +1140,25 @@ impl<'a> Ui<'a> {
     }
 
     /// Corta o texto com reticências para caber em `max`.
+    /// Como `fit`, na fonte proporcional (`sans`) ou na de largura fixa.
+    fn fit_face(&mut self, s: &str, size: f32, sans: bool, max: f32) -> String {
+        if sans {
+            return self.fit(s, size, FontWeight::Regular, max);
+        }
+        if self.ctx.text.measure_mono(s, size) <= max {
+            return s.to_string();
+        }
+        let mut chars: Vec<char> = s.chars().collect();
+        while !chars.is_empty() {
+            chars.pop();
+            let c = format!("{}…", chars.iter().collect::<String>().trim_end());
+            if self.ctx.text.measure_mono(&c, size) <= max {
+                return c;
+            }
+        }
+        "…".into()
+    }
+
     fn fit(&mut self, s: &str, size: f32, weight: FontWeight, max: f32) -> String {
         if self.measure(s, size, weight) <= max {
             return s.to_string();
@@ -1777,10 +1827,20 @@ impl<'a> Ui<'a> {
     /// transferência e rolagem. Só as linhas à vista são desenhadas. Os outros atalhos
     /// com Ctrl (salvar, buscar...) ficam para o app. `changed` diz se o texto mudou.
     pub fn text_area(&mut self, doc: &mut super::textarea::TextDoc, height: f32) -> Response {
-        use super::textarea::{index_in_line, line_end, line_of, Change};
+        self.text_area_with(doc, height, TextAreaLook::default()).response
+    }
+
+    /// A área de texto com outra aparência (`TextAreaLook`): sem números de linha, em
+    /// fonte proporcional, com uma dica no documento vazio e decorações (cores,
+    /// sublinhados de erro, texto depois do fim da linha). Os atalhos são os da
+    /// `text_area`: com a área em foco, Ctrl+A/C/X/V, Ctrl+Z e Ctrl+Y, também com Shift
+    /// (Ctrl+Shift+Z refaz), são dela; os outros atalhos com Ctrl ficam para o app.
+    pub fn text_area_with(&mut self, doc: &mut super::textarea::TextDoc, height: f32, mut look: TextAreaLook) -> TextAreaResponse {
+        use super::textarea::{color_runs, index_in_line, line_end, line_of, tab_pieces, underline_runs, Change};
         use super::textedit::Edit;
         let t = self.ctx.theme.clone();
-        let size = t.font;
+        let size = look.size.unwrap_or(t.font);
+        let sans = look.sans;
         let line_h = (size * 1.5).round();
         let pad = 6.0;
         let id = self.ctx.id();
@@ -1788,16 +1848,18 @@ impl<'a> Ui<'a> {
         let mut r = self.interact(id, rect);
         let mut starts = doc.line_starts();
         let digits = starts.len().to_string().len().max(2);
-        let gutter = self.ctx.text.measure_mono(&"0".repeat(digits), size * 0.9) + 20.0;
+        let gutter = if look.line_numbers { self.ctx.text.measure_mono(&"0".repeat(digits), size * 0.9) + 20.0 } else { 0.0 };
         let text_x = rect.0 + gutter + 8.0;
         let view = (rect.2 - gutter - 16.0, rect.3 - 2.0 * pad);
         let rows = (view.1 / line_h).floor().max(1.0) as usize;
+        // Largura do começo de uma linha até um ponto, na fonte da área.
+        let width = |ui: &mut Self, s: &str| if sans { ui.ctx.text.measure(s, size, FontWeight::Regular) } else { ui.ctx.text.measure_mono(s, size) };
         // Linha e posição sob o ponteiro.
         let pointer_at = |ui: &mut Self, doc: &super::textarea::TextDoc, starts: &[usize]| -> Option<usize> {
             let (px, py) = ui.pointer()?;
             let line = (((py - rect.1 - pad + doc.scroll) / line_h).floor().max(0.0) as usize).min(starts.len() - 1);
             let x = px - text_x + doc.scroll_x;
-            Some(index_in_line(&doc.text, starts, line, x, |s| ui.ctx.text.measure_mono(s, size)))
+            Some(index_in_line(&doc.text, starts, line, x, |s| width(ui, s)))
         };
         if std::mem::take(&mut self.ctx.memory.focus_next) {
             self.ctx.memory.focus = Some(id);
@@ -1840,12 +1902,10 @@ impl<'a> Ui<'a> {
                 starts = doc.line_starts();
                 let line = line_of(&starts, doc.edit.cursor);
                 // Coluna em pixels do cursor (para subir e descer mantendo a coluna).
-                let col_x = |ui: &mut Self, doc: &super::textarea::TextDoc| {
-                    doc.goal_x.unwrap_or_else(|| ui.ctx.text.measure_mono(&doc.text[starts[line]..doc.edit.cursor], size))
-                };
+                let col_x = |ui: &mut Self, doc: &super::textarea::TextDoc| doc.goal_x.unwrap_or_else(|| width(ui, &doc.text[starts[line]..doc.edit.cursor]));
                 let vertical = |ui: &mut Self, doc: &mut super::textarea::TextDoc, to: usize| {
                     let x = col_x(ui, doc);
-                    let at = index_in_line(&doc.text, &starts, to, x, |s| ui.ctx.text.measure_mono(s, size));
+                    let at = index_in_line(&doc.text, &starts, to, x, |s| width(ui, s));
                     doc.edit.move_to(at, shift);
                     doc.goal_x = Some(x);
                 };
@@ -1926,8 +1986,16 @@ impl<'a> Ui<'a> {
             }
         }
         starts = doc.line_starts();
+        // Posição do texto sob o ponteiro só no quadro de um clique (o menu de contexto
+        // do app usa): medir a cada movimento do mouse custaria caro em linhas longas.
+        let clicking = r.secondary_clicked || (r.hovered && (self.ctx.input.pressed || self.ctx.input.released));
+        let pointer_index = if clicking { pointer_at(self, doc, &starts) } else { None };
         let cursor_line = line_of(&starts, doc.edit.cursor);
-        let cursor_x = self.ctx.text.measure_mono(&doc.text[starts[cursor_line]..doc.edit.cursor], size);
+        let cursor_x = width(self, &doc.text[starts[cursor_line]..doc.edit.cursor]);
+        // As decorações já com a tecla deste quadro, antes da rolagem: o texto do fim da
+        // linha do cursor também precisa ficar à vista.
+        let deco = look.decorate.as_mut().map(|f| f(doc)).unwrap_or_default();
+        let has_trailing = |line: usize| deco.trailing.iter().any(|(l, _, _)| *l == line);
         // O cursor fica à vista depois de mexer nele.
         let content_h = starts.len() as f32 * line_h;
         if moved {
@@ -1945,45 +2013,104 @@ impl<'a> Ui<'a> {
                 doc.scroll_x = cursor_x - view.0 + 40.0;
             }
         }
+        // Com o cursor no fim de uma linha que tem texto depois do fim (o resultado das
+        // notas), esse texto também fica à vista, sem o cursor sair da área. Vale em todo
+        // quadro: o texto muda sem tecla (Graus/Radianos, casas decimais).
+        let clip_w = view.0 + 8.0;
+        if doc.edit.cursor == line_end(&doc.text, &starts, cursor_line) && has_trailing(cursor_line) {
+            let mut right = cursor_x;
+            for (_, extra, _) in deco.trailing.iter().filter(|(l, _, _)| *l == cursor_line) {
+                right += 4.0 + width(self, extra);
+            }
+            if right > doc.scroll_x + clip_w - 4.0 {
+                doc.scroll_x = (right - clip_w + 8.0).min(cursor_x).max(0.0);
+            }
+        }
         doc.scroll = doc.scroll.clamp(0.0, (content_h - view.1).max(0.0));
 
         // Desenho: fundo, margem com os números e só as linhas à vista.
         fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
-        fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color(t.shade(10)));
+        if look.line_numbers {
+            fill_rounded(self.canvas, rect.0, rect.1, gutter, rect.3, t.control_radius, color(t.shade(10)));
+        }
         let first = (doc.scroll / line_h).floor() as usize;
         let last = (first + rows + 2).min(starts.len());
-        let (w, h) = ((view.0 + 8.0).ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
+        let (w, h) = (clip_w.ceil().max(1.0) as u32, rect.3.ceil().max(1.0) as u32);
         let k = crate::ui::draw::scale();
         let Some(mut clip) = Pixmap::new((w as f32 * k).ceil() as u32, (h as f32 * k).ceil() as u32) else {
-            return r;
+            return TextAreaResponse { response: r, pointer_index };
         };
         let selection = doc.edit.selection();
         let [ar, ag, ab, _] = t.accent;
+        let text_y = (line_h - size * 1.25) / 2.0;
+        // Desenha um texto na fonte da área; devolve a largura desenhada.
+        let draw = |ui: &mut Self, pixmap: &mut Pixmap, s: &str, x: f32, y: f32, c: Rgba| -> f32 {
+            if sans {
+                ui.ctx.text.draw(pixmap, s, x, y, size, FontWeight::Regular, c)
+            } else {
+                ui.ctx.text.draw_mono(pixmap, s, x, y, size, c)
+            }
+        };
+        if doc.text.is_empty() && !look.placeholder.is_empty() {
+            // A dica cortada com "…" quando a área é estreita.
+            let hint = self.fit_face(look.placeholder, size, sans, view.0);
+            draw(self, &mut clip, &hint, -doc.scroll_x, pad + text_y, t.text_secondary);
+        }
         for line in first..last {
             let (start, end) = (starts[line], line_end(&doc.text, &starts, line));
             let y = pad + line as f32 * line_h - doc.scroll;
             let x0 = -doc.scroll_x;
+            let trailing = has_trailing(line);
             if focused && line == cursor_line && selection.is_none() {
                 fill_rounded(&mut clip, 0.0, y, w as f32, line_h, 0.0, color([ar, ag, ab, 14]));
             }
             if let Some((a, b)) = selection.filter(|(a, b)| *a <= end && *b >= start && !(a == b)) {
                 let (sa, sb) = (a.max(start), b.min(end));
-                let xa = self.ctx.text.measure_mono(&doc.text[start..sa], size);
-                let xb = self.ctx.text.measure_mono(&doc.text[start..sb], size);
-                // A quebra de linha selecionada aparece como um pouco a mais no fim.
-                let extra = if b > end { size * 0.5 } else { 0.0 };
+                let xa = width(self, &doc.text[start..sa]);
+                let xb = width(self, &doc.text[start..sb]);
+                // A quebra de linha selecionada aparece como um pouco a mais no fim (menos
+                // numa linha com texto depois do fim: a marca ficaria embaixo dele).
+                let extra = if b > end && !trailing { size * 0.5 } else { 0.0 };
                 fill_rounded(&mut clip, x0 + xa, y, xb - xa + extra, line_h, 0.0, color([ar, ag, ab, 70]));
             }
-            let content = &doc.text[start..end];
-            if !content.is_empty() {
-                self.ctx.text.draw_mono(&mut clip, content, x0, y + (line_h - size * 1.25) / 2.0, size, t.text);
+            // O texto em pedaços por cor; o x de cada pedaço é medido do começo da linha
+            // (sem somar pedaço a pedaço, que acumularia erro). Um pedaço do meio da linha
+            // com tabulação é cortado nela (`tab_pieces`).
+            for (a, b, c) in color_runs(&doc.text, start, end, &deco.colors) {
+                let rgba = c.unwrap_or(t.text);
+                for (p, q) in tab_pieces(&doc.text, start, a, b) {
+                    let x = x0 + if p == start { 0.0 } else { width(self, &doc.text[start..p]) };
+                    draw(self, &mut clip, &doc.text[p..q], x, y + text_y, rgba);
+                }
             }
-            let number = (line + 1).to_string();
-            let nw = self.ctx.text.measure_mono(&number, size * 0.9);
-            let ny = rect.1 + y + (line_h - size * 0.9 * 1.25) / 2.0;
-            if ny > rect.1 && ny < rect.1 + rect.3 - size {
-                let shade = if line == cursor_line && focused { t.text } else { t.text_secondary };
-                self.ctx.text.draw_mono(self.canvas, &number, rect.0 + gutter - 10.0 - nw, ny, size * 0.9, shade);
+            // Sublinhado pontilhado (erros), logo abaixo das letras.
+            for (a, b) in underline_runs(&doc.text, start, end, &deco.underlines) {
+                let xa = x0 + width(self, &doc.text[start..a]);
+                let xb = x0 + width(self, &doc.text[start..b]);
+                dotted_line(&mut clip, xa, xb, y + text_y + size * 1.2, t.danger);
+            }
+            // O texto do fim da linha (vários vêm um depois do outro, com 4 pt antes de
+            // cada um); o fim da linha só é medido quando ela tem algum. O que não cabe
+            // até a borda termina com "…": um número cortado não pode parecer inteiro.
+            if trailing {
+                let mut x = x0 + width(self, &doc.text[start..end]) + 4.0;
+                for (_, extra, rgba) in deco.trailing.iter().filter(|(l, _, _)| *l == line) {
+                    let room = w as f32 - 4.0 - x;
+                    let shown = if width(self, extra) <= room { extra.clone() } else { self.fit_face(extra, size, sans, room) };
+                    if room <= 0.0 || width(self, &shown) > room {
+                        break;
+                    }
+                    x += draw(self, &mut clip, &shown, x, y + text_y, *rgba) + 4.0;
+                }
+            }
+            if look.line_numbers {
+                let number = (line + 1).to_string();
+                let nw = self.ctx.text.measure_mono(&number, size * 0.9);
+                let ny = rect.1 + y + (line_h - size * 0.9 * 1.25) / 2.0;
+                if ny > rect.1 && ny < rect.1 + rect.3 - size {
+                    let shade = if line == cursor_line && focused { t.text } else { t.text_secondary };
+                    self.ctx.text.draw_mono(self.canvas, &number, rect.0 + gutter - 10.0 - nw, ny, size * 0.9, shade);
+                }
             }
         }
         if focused && selection.is_none() {
@@ -1997,7 +2124,7 @@ impl<'a> Ui<'a> {
             let bar_y = rect.1 + pad + (view.1 - bar_h) * doc.scroll / (content_h - view.1);
             fill_rounded(self.canvas, rect.0 + rect.2 - 8.0, bar_y, 4.0, bar_h, 2.0, color(t.shade(60)));
         }
-        r
+        TextAreaResponse { response: r, pointer_index }
     }
 
     /// Item de lista clicável: texto à esquerda, detalhe cinza à direita.
@@ -2650,7 +2777,9 @@ impl<'a> Ui<'a> {
                 .sum();
             (before + 34.0 - (list_bottom - list_top)).max(0.0)
         });
-        if self.over((x, list_top, side_w, list_bottom - list_top)) && self.ctx.input.scroll != 0.0 && max_scroll > 0.0 {
+        // Com um modal aberto, a roda é dele (a lista atrás não rola).
+        let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
+        if !blocked && self.over((x, list_top, side_w, list_bottom - list_top)) && self.ctx.input.scroll != 0.0 && max_scroll > 0.0 {
             scroll += std::mem::take(&mut self.ctx.input.scroll);
             self.ctx.repaint = true;
         }
@@ -2738,6 +2867,25 @@ impl<'a> Ui<'a> {
     pub fn sidebar_area(&mut self, items: &[(&str, &str)], selected: usize, content: impl FnOnce(&mut Ui, usize)) -> usize {
         self.sidebar_raw = true;
         self.sidebar(items, selected, content)
+    }
+}
+
+/// Pontilhado de `x0` a `x1` na altura `y` (o sublinhado dos erros): pontos redondos de
+/// 2 pt a cada 3 pt, centrados no trecho, num caminho só (um preenchimento por trecho,
+/// não um por ponto); um trecho curto ganha pelo menos um ponto.
+fn dotted_line(pixmap: &mut Pixmap, x0: f32, x1: f32, y: f32, c: Rgba) {
+    let step = 3.0;
+    let n = (((x1 - x0) / step).floor().max(0.0) as usize) + 1;
+    let first = x0 + ((x1 - x0) - (n - 1) as f32 * step) / 2.0;
+    let mut pb = tiny_skia::PathBuilder::new();
+    for i in 0..n {
+        pb.push_circle(first + i as f32 * step, y, 1.0);
+    }
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(color(c));
+        paint.anti_alias = true;
+        pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, crate::ui::draw::tf(), None);
     }
 }
 
@@ -2853,6 +3001,119 @@ mod tests {
         let changed = click(&mut ctx, 200.0, 16.0, |ui| ui.switch("Wi-Fi", &mut ligado).changed());
         assert!(changed);
         assert!(ligado);
+    }
+
+    #[test]
+    fn area_de_texto_com_decoracoes() {
+        use super::super::textarea::{index_in_line, line_starts, Decorations, TextDoc};
+        let mut ctx = Ctx::new(Theme::default());
+        let t = Theme::default();
+        let size = t.font;
+        let mut doc = TextDoc::new("2 + 3 =\nx".into());
+        let mut seen: Vec<String> = Vec::new();
+        let (green, blue) = ([0, 200, 0, 255], [0, 0, 255, 255]);
+        // Fonte proporcional, sem números de linha: o "2" em verde, o "+" sublinhado e o
+        // resultado "5" depois do fim da primeira linha.
+        let view = |ui: &mut Ui, doc: &mut TextDoc, seen: &mut Vec<String>| {
+            let mut decorate = |d: &TextDoc| {
+                seen.push(d.text.clone());
+                Decorations { colors: vec![(0..1, green)], underlines: std::iter::once(2..3).collect(), trailing: vec![(0, "5".into(), blue)] }
+            };
+            ui.text_area_with(doc, 200.0, TextAreaLook { line_numbers: false, sans: true, decorate: Some(&mut decorate), ..Default::default() })
+        };
+        let sans = |ctx: &mut Ctx, s: &str| ctx.text.measure(s, size, FontWeight::Regular);
+        // A área começa em x = 8 (sem margem de números); a linha 0, em y = 6.
+        let line_h = (size * 1.5).round();
+        let line_y = 6.0 + line_h / 2.0;
+        let line_w = sans(&mut ctx, "2 + 3 =");
+        let (five_x, five_w) = (8.0 + line_w + 4.0, sans(&mut ctx, "5"));
+        // Clique em cima do resultado: o cursor vai para o fim da linha (o resultado não
+        // é texto); a posição sob o ponteiro vem no quadro do clique.
+        let r = click(&mut ctx, five_x + five_w / 2.0, line_y, |ui| view(ui, &mut doc, &mut seen));
+        assert_eq!(doc.edit.cursor, 7);
+        assert_eq!(r.pointer_index, Some(7));
+        // Só passando o ponteiro, sem clicar, ela não é medida.
+        let hover = frame(&mut ctx, |ui| view(ui, &mut doc, &mut seen));
+        assert_eq!(hover.pointer_index, None);
+        // Clique no meio, num x em que a fonte proporcional e a fixa dariam posições
+        // diferentes: vale a proporcional, que é a desenhada. Com uma fonte só no sistema
+        // (as duas são a mesma face), não há o que distinguir.
+        let same_face = ["iiii", "MMMM"].iter().all(|s| ctx.text.measure(s, size, FontWeight::Regular) == ctx.text.measure_mono(s, size));
+        if same_face {
+            eprintln!("aviso: a fonte proporcional e a fixa são a mesma face; clique no meio não conferido");
+        } else {
+            let starts = line_starts(&doc.text);
+            let text = doc.text.clone();
+            let x = (1..120)
+                .map(|i| i as f32 / 2.0)
+                .find(|x| {
+                    index_in_line(&text, &starts, 0, *x, |s| ctx.text.measure(s, size, FontWeight::Regular)) != index_in_line(&text, &starts, 0, *x, |s| ctx.text.measure_mono(s, size))
+                })
+                .expect("um x em que as fontes dão posições diferentes");
+            let expected = index_in_line(&text, &starts, 0, x, |s| ctx.text.measure(s, size, FontWeight::Regular));
+            click(&mut ctx, 8.0 + x, line_y, |ui| view(ui, &mut doc, &mut seen));
+            assert_eq!(doc.edit.cursor, expected);
+        }
+        // O decorate do mesmo quadro já vê o que foi digitado.
+        doc.edit = super::super::textedit::Edit { cursor: 7, anchor: Some(7) };
+        ctx.input.text = "4".into();
+        frame(&mut ctx, |ui| view(ui, &mut doc, &mut seen));
+        assert_eq!(doc.text, "2 + 3 =4\nx");
+        assert_eq!(seen.last().map(String::as_str), Some("2 + 3 =4\nx"));
+        // O desenho: o "2" verde, o pontilhado vermelho embaixo do "+" e o resultado
+        // azul depois do fim da linha.
+        let mut canvas = Pixmap::new(400, 300).unwrap();
+        ctx.begin_frame();
+        {
+            let mut ui = Ui::root(&mut canvas, &mut ctx);
+            view(&mut ui, &mut doc, &mut seen);
+        }
+        ctx.end_frame();
+        let count = |x0: f32, x1: f32, y0: f32, y1: f32, pick: &dyn Fn([i32; 3]) -> bool| {
+            let mut n = 0;
+            for y in y0.floor() as u32..y1.ceil() as u32 {
+                for x in x0.floor() as u32..x1.ceil() as u32 {
+                    if let Some(p) = canvas.pixel(x, y) {
+                        let c = p.demultiply();
+                        n += usize::from(pick([c.red().into(), c.green().into(), c.blue().into()]));
+                    }
+                }
+            }
+            n
+        };
+        let text_y = (line_h - size * 1.25) / 2.0;
+        let (top, base) = (6.0 + text_y, 6.0 + text_y + size * 1.1);
+        let two_w = sans(&mut ctx, "2");
+        assert!(count(8.0, 8.0 + two_w, top, base, &|[r, g, b]| g > r + 60 && g > b + 60) > 3, "o 2 em verde");
+        let plus = (8.0 + sans(&mut ctx, "2 "), 8.0 + sans(&mut ctx, "2 +"));
+        let dots = 6.0 + text_y + size * 1.2;
+        assert!(count(plus.0, plus.1, dots - 1.5, dots + 1.5, &|[r, g, b]| r > g + 60 && r > b + 60) > 0, "o pontilhado vermelho");
+        let end = 8.0 + sans(&mut ctx, "2 + 3 =4") + 4.0;
+        assert!(count(end, end + five_w + 1.0, top, base, &|[r, g, b]| b > r + 60 && b > g + 60) > 3, "o resultado em azul");
+    }
+
+    #[test]
+    fn texto_do_fim_da_linha_fica_a_vista() {
+        use super::super::textarea::{Decorations, TextDoc};
+        let mut ctx = Ctx::new(Theme::default());
+        // Linha quase da largura da área, com o resultado depois: com o cursor no fim, a
+        // área rola o bastante para o resultado aparecer inteiro, sem perder o cursor.
+        let mut doc = TextDoc::new(format!("{} =", "1 + ".repeat(40)));
+        doc.edit = super::super::textedit::Edit::at_end(&doc.text);
+        let view = |ui: &mut Ui, doc: &mut TextDoc| {
+            let mut decorate = |_: &TextDoc| Decorations { trailing: vec![(0, "1.234.567,89".into(), [0, 0, 255, 255])], ..Default::default() };
+            ui.focus_next_input();
+            ui.text_area_with(doc, 100.0, TextAreaLook { line_numbers: false, sans: true, decorate: Some(&mut decorate), ..Default::default() })
+        };
+        frame(&mut ctx, |ui| view(ui, &mut doc));
+        let t = Theme::default();
+        let line_w = ctx.text.measure(&doc.text, t.font, FontWeight::Regular);
+        let result_w = ctx.text.measure("1.234.567,89", t.font, FontWeight::Regular);
+        // A área tem 400 de largura: o recorte vai de 8 a 400 − 16 + 8.
+        let clip_w = 400.0 - 16.0 + 8.0;
+        assert!(doc.scroll_x > 0.0);
+        assert!(line_w + 4.0 + result_w - doc.scroll_x <= clip_w - 4.0 + 0.5, "o resultado inteiro à vista");
+        assert!(line_w - doc.scroll_x >= 0.0, "o cursor à vista");
     }
 
     #[test]

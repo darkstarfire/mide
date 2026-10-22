@@ -130,6 +130,103 @@ pub fn valid_name(name: &str) -> Result<&str, &'static str> {
     Ok(name)
 }
 
+/// O kernel segue este link? A mesma regra do `fs.protected_symlinks`: numa pasta com
+/// "sticky bit" e escrita para todos (`/tmp`), só um link do próprio usuário ou do dono
+/// da pasta. Senão, outro usuário podia plantar `/tmp/notas.txt -> ~/.bashrc`.
+fn may_follow(link: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = fs::symlink_metadata(link) else {
+        return false;
+    };
+    let me = rustix::process::geteuid().as_raw();
+    let dir = link.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let Ok(dir_meta) = fs::metadata(dir) else {
+        return false;
+    };
+    let shared = dir_meta.mode() & 0o1002 == 0o1002;
+    !shared || meta.uid() == me || meta.uid() == dir_meta.uid()
+}
+
+/// O arquivo de verdade por trás de `path`: segue os links simbólicos, também um link
+/// quebrado (grava no destino dele, como os editores fazem: um `~/.bashrc` que aponta
+/// para um repositório de configurações continua link). Arquivo novo: o próprio
+/// caminho. Um link que o kernel não seguiria (plantado por outro usuário numa pasta
+/// compartilhada) dá erro de permissão.
+fn real_path(path: &Path) -> std::io::Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..40 {
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                if !may_follow(&current) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "link de outro usuário numa pasta compartilhada"));
+                }
+                let target = fs::read_link(&current)?;
+                current = match current.parent() {
+                    Some(dir) if target.is_relative() => dir.join(target),
+                    _ => target,
+                };
+            }
+            _ => return Ok(current),
+        }
+    }
+    Err(std::io::Error::other("links simbólicos demais"))
+}
+
+/// Grava sem risco de perder o arquivo (o Editor de Texto e as notas da Calculadora):
+/// escreve um temporário na pasta do arquivo de verdade (seguindo links simbólicos),
+/// que nasce sem permissões a mais que o original, e troca de uma vez; o modo, o grupo
+/// e o setuid do original são refeitos no temporário (no que o sistema de arquivos
+/// deixar). O temporário tem nome único e é criado sem seguir nem truncar nada que já
+/// exista; se algo falha, ele é apagado e o arquivo de antes continua como estava.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let real = real_path(path)?;
+    let path = real.as_path();
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = path.file_name().ok_or_else(|| std::io::Error::other("caminho sem nome de arquivo"))?;
+    let original = fs::metadata(path).ok();
+    // Arquivo novo: o modo padrão (0666 menos a umask), como o `File::create`.
+    let mode = original.as_ref().map_or(0o666, |m| m.permissions().mode() & 0o777);
+    // Nome longo: o do temporário fica abaixo do limite de 255 bytes.
+    let lossy = name.to_string_lossy();
+    let mut cut = lossy.len().min(200);
+    while !lossy.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let (mut file, tmp) = {
+        let mut tries = 0;
+        loop {
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let tmp = dir.join(format!(".{}.{}-{n}.mide-tmp", &lossy[..cut], std::process::id()));
+            match fs::OpenOptions::new().write(true).create_new(true).mode(mode).open(&tmp) {
+                Ok(file) => break (file, tmp),
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && tries < 100 => tries += 1,
+                Err(err) => return Err(err),
+            }
+        }
+    };
+    let written = (|| {
+        file.write_all(bytes)?;
+        if let Some(meta) = &original {
+            // O grupo do original (se o usuário é dele) e depois o modo exato: a escrita e
+            // a troca de grupo tiram o setuid. Melhor esforço: alguns sistemas de arquivos
+            // (FAT, FUSE) recusam, e o modo da criação já não é mais aberto que o original.
+            let _ = std::os::unix::fs::fchown(&file, None, Some(meta.gid()));
+            let _ = file.set_permissions(meta.permissions());
+        }
+        file.sync_all()
+    })();
+    drop(file);
+    let result = written.and_then(|()| fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Renomeia sem sobrescrever: falha se já existir algo com o nome novo.
 pub fn rename(path: &Path, new_name: &str) -> Result<PathBuf, String> {
     let name = valid_name(new_name)?;
@@ -481,6 +578,71 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn gravacao_segura_mantem_permissoes_e_nao_deixa_sobras() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("gravar");
+        let path = dir.join("notas.txt");
+        // Arquivo novo e depois por cima do antigo, com acentos.
+        write_atomic(&path, "primeira versão".as_bytes()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        write_atomic(&path, "segunda versão, ação".as_bytes()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "segunda versão, ação");
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        // O temporário não fica na pasta.
+        let names: Vec<String> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["notas.txt"]);
+        // Pasta que não existe: erro, e nada é criado.
+        assert!(write_atomic(&dir.join("nao-existe/x.txt"), b"x").is_err());
+        // Uma sobra de outra gravação com o nome antigo do temporário não atrapalha nem é
+        // apagada.
+        fs::write(dir.join(".notas.txt.mide-tmp"), "sobra").unwrap();
+        write_atomic(&path, b"terceira").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "terceira");
+        assert_eq!(fs::read_to_string(dir.join(".notas.txt.mide-tmp")).unwrap(), "sobra");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gravacao_segura_segue_links_simbolicos() {
+        use std::os::unix::fs::symlink;
+        let dir = temp("links");
+        // Link para um arquivo (como um ~/.bashrc de um repositório de configurações):
+        // o link continua link e o arquivo de verdade recebe o texto.
+        fs::write(dir.join("real.txt"), "antigo").unwrap();
+        symlink("real.txt", dir.join("link.txt")).unwrap();
+        write_atomic(&dir.join("link.txt"), b"novo").unwrap();
+        assert!(fs::symlink_metadata(dir.join("link.txt")).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(dir.join("real.txt")).unwrap(), "novo");
+        // Link quebrado: grava no destino dele.
+        symlink("ainda-nao.txt", dir.join("quebrado.txt")).unwrap();
+        write_atomic(&dir.join("quebrado.txt"), b"criado").unwrap();
+        assert!(fs::symlink_metadata(dir.join("quebrado.txt")).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(dir.join("ainda-nao.txt")).unwrap(), "criado");
+        // Nenhum temporário sobrou.
+        assert!(fs::read_dir(&dir).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".mide-tmp")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gravacao_segura_com_nome_longo_e_setuid() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("longo");
+        // Nome de 240 bytes: o temporário não passa do limite, em várias gravações.
+        let path = dir.join(format!("{}.txt", "ç".repeat(118)));
+        for i in 0..12 {
+            write_atomic(&path, format!("versão {i}").as_bytes()).unwrap();
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "versão 11");
+        // O modo com setuid volta depois da escrita.
+        let script = dir.join("roda.sh");
+        fs::write(&script, "#!/bin/sh").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o4755)).unwrap();
+        write_atomic(&script, b"#!/bin/sh\necho oi").unwrap();
+        assert_eq!(fs::metadata(&script).unwrap().permissions().mode() & 0o7777, 0o4755);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

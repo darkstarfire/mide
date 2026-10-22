@@ -229,6 +229,10 @@ fn gamma(x: f64) -> f64 {
     if x < 0.5 {
         return std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * gamma(1.0 - x));
     }
+    // Γ(171,7) já passa do f64; bem mais adiante, a conta daria ∞ × 0 = NaN.
+    if x > 171.7 {
+        return f64::INFINITY;
+    }
     let x = x - 1.0;
     let mut a = C[0];
     let t = x + G + 0.5;
@@ -1023,6 +1027,17 @@ mod tests {
         e.press(Key::Equals);
         assert_eq!(e.history.last().map(|h| h.expression.as_str()), Some("√(9) + 3"));
         assert_eq!(e.display(), "6");
+    }
+
+    #[test]
+    fn fatorial_alem_do_f64() {
+        // Passou do f64: infinito (a tela mostra "Erro"; as notas, "Número grande
+        // demais"), nunca NaN.
+        for x in [171.0, 200.5, 750.0, 1000.0, 1e10, 1e300] {
+            assert_eq!(factorial(x), f64::INFINITY, "{x}");
+        }
+        // Negativo grande e não inteiro: quase zero.
+        assert!(factorial(-1000.5).abs() < 1e-300);
     }
 
     #[test]

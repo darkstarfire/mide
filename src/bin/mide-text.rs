@@ -75,7 +75,7 @@ impl Editor {
             return false;
         };
         let text = if self.crlf { self.doc.text.replace('\n', "\r\n") } else { self.doc.text.clone() };
-        match write_atomic(&path, text.as_bytes()) {
+        match mide::files::write_atomic(&path, text.as_bytes()) {
             Ok(()) => {
                 tracing::info!("salvo: {}", path.display());
                 self.doc.modified = false;
@@ -404,26 +404,6 @@ fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
     let text = String::from_utf8(bytes).map_err(|_| std::io::Error::other("não é um arquivo de texto (UTF-8)"))?;
     let crlf = text.contains("\r\n");
     Ok((if crlf { text.replace("\r\n", "\n") } else { text }, crlf))
-}
-
-/// Grava sem risco de perder o arquivo: escreve um temporário na mesma pasta, mantém
-/// as permissões do original e troca de uma vez.
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let name = path.file_name().ok_or_else(|| std::io::Error::other("caminho sem nome de arquivo"))?;
-    let tmp = dir.join(format!(".{}.mide-text", name.to_string_lossy()));
-    {
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    if let Ok(meta) = std::fs::metadata(path) {
-        let _ = std::fs::set_permissions(&tmp, meta.permissions());
-    }
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
 }
 
 /// Pasta sugerida para um arquivo novo: Documentos, ou a pasta pessoal.

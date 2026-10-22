@@ -1,15 +1,16 @@
 //! Calculadora do mide (E3, E3b): modos Básico, Científico e Programador, notação
-//! polonesa reversa (RPN), memória, histórico, casas decimais, desfazer e o conversor
-//! de unidades. As contas ficam em `mide::calculator` (escritas do zero); aqui ficam as
-//! teclas, o teclado e os menus.
+//! polonesa reversa (RPN), memória, histórico, casas decimais, desfazer, o conversor
+//! de unidades e as notas matemáticas. As contas ficam em `mide::calculator` (escritas
+//! do zero); aqui ficam as teclas, o teclado e os menus.
 //!
 //! Teclado (também o numérico): números, + - * / ^ ( ), Enter ou =, %, Backspace, Esc,
-//! Ctrl+C e Ctrl+V; Ctrl+Z desfaz e Ctrl+Shift+Z refaz; Ctrl+1/2/3 trocam o modo,
+//! Ctrl+C e Ctrl+V; Ctrl+Z desfaz e Ctrl+Shift+Z refaz; Ctrl+1/2/3/4 trocam o modo,
 //! Ctrl+T mostra o histórico; no Programador, A a F, & | ^ ~ % < >. Conversor: Ctrl+U
 //! liga, Ctrl+Shift+U troca as unidades, Ctrl+L escolhe a unidade, ↑/↓ usam a outra
-//! linha.
+//! linha. Notas: Ctrl+N cria uma nota e Ctrl+T mostra a lista.
 
 mod converter;
+mod notes;
 
 use std::error::Error;
 
@@ -36,6 +37,8 @@ enum Mode {
     Basic,
     Scientific,
     Programmer,
+    /// Notas matemáticas: contas digitadas em texto (`notes.rs`).
+    Notes,
 }
 
 impl Mode {
@@ -44,6 +47,7 @@ impl Mode {
             Mode::Basic => "basica",
             Mode::Scientific => "cientifica",
             Mode::Programmer => "programador",
+            Mode::Notes => "notas",
         }
     }
 
@@ -51,6 +55,7 @@ impl Mode {
         match key {
             "cientifica" => Mode::Scientific,
             "programador" => Mode::Programmer,
+            "notas" => Mode::Notes,
             _ => Mode::Basic,
         }
     }
@@ -61,6 +66,7 @@ impl Mode {
             Mode::Basic => ((250, 380), (220, 320)),
             Mode::Scientific => ((620, 380), (560, 320)),
             Mode::Programmer => ((520, 560), (480, 500)),
+            Mode::Notes => ((720, 480), (520, 320)),
         }
     }
 }
@@ -143,6 +149,8 @@ struct Calculator {
     /// Última tela e conversão registradas no log (para os testes acompanharem).
     logged: String,
     logged_conv: String,
+    /// Notas matemáticas (abertas na primeira vez que o modo aparece).
+    notes: notes::Notes,
 }
 
 fn op(o: Binary) -> Btn {
@@ -206,6 +214,7 @@ impl Calculator {
             conv_label_w: [80.0; 2],
             logged: String::new(),
             logged_conv: String::new(),
+            notes: notes::Notes::new(!matches!(settings_file::get("calculator", "notes_list"), Some(Value::Bool(false)))),
         }
     }
 
@@ -260,6 +269,13 @@ impl Calculator {
         }
     }
 
+    /// Ângulos em radianos (ou em graus): no teclado e nas notas.
+    fn set_radians(&mut self, radians: bool) {
+        self.engine.radians = radians;
+        self.rpn.radians = radians;
+        self.save("radians", radians.then_some(Value::Bool(true)));
+    }
+
     fn set_style(&mut self, style: Style) {
         self.engine.style = style;
         self.rpn.style = style;
@@ -278,15 +294,30 @@ impl Calculator {
         if mode == self.mode {
             return;
         }
-        // O número da tela passa de um modo para o outro.
-        if mode == Mode::Programmer && self.mode != Mode::Programmer {
-            self.programmer.load(self.value());
-        } else if mode != Mode::Programmer && self.mode == Mode::Programmer {
-            let v = self.programmer.value() as i64 as f64;
-            if self.rpn_on {
-                self.rpn.push(v);
-            } else {
-                self.engine.load(v);
+        // Saindo das notas, a nota fica gravada; entrando, o texto recebe as teclas e o
+        // modo de teclado fica lembrado ("Levar para a calculadora" volta para ele).
+        if self.mode == Mode::Notes {
+            self.notes.save_now();
+            ui.blur();
+        }
+        if mode == Mode::Notes {
+            self.notes.keypad = Some(self.mode);
+            ui.focus_next_input();
+        }
+        // O número da tela passa entre os modos de teclado. As Notas não usam esse
+        // número: entrar nelas não passa nada, e sair conta a partir do modo de teclado
+        // lembrado (Programador → Notas → Programador deixa a conta como estava).
+        let from = if self.mode == Mode::Notes { self.notes.keypad.unwrap_or(Mode::Basic) } else { self.mode };
+        if mode != Mode::Notes {
+            if mode == Mode::Programmer && from != Mode::Programmer {
+                self.programmer.load(self.value());
+            } else if mode != Mode::Programmer && from == Mode::Programmer {
+                let v = self.programmer.value() as i64 as f64;
+                if self.rpn_on {
+                    self.rpn.push(v);
+                } else {
+                    self.engine.load(v);
+                }
             }
         }
         self.mode = mode;
@@ -302,12 +333,12 @@ impl Calculator {
 
     /// Conversor ligado e à vista (na Básica e na Científica).
     fn converting(&self) -> bool {
-        self.convert_on && self.mode != Mode::Programmer
+        self.convert_on && matches!(self.mode, Mode::Basic | Mode::Scientific)
     }
 
     /// Liga ou desliga o conversor: a janela cresce ou diminui só a altura dele.
     fn toggle_converter(&mut self, ui: &mut Ui) {
-        if self.mode == Mode::Programmer {
+        if !matches!(self.mode, Mode::Basic | Mode::Scientific) {
             return;
         }
         self.convert_on = !self.convert_on;
@@ -435,11 +466,7 @@ impl Calculator {
     fn press(&mut self, btn: Btn) {
         match btn {
             Btn::Second => self.second = !self.second,
-            Btn::Angle => {
-                self.engine.radians = !self.engine.radians;
-                self.rpn.radians = self.engine.radians;
-                self.save("radians", self.engine.radians.then_some(Value::Bool(true)));
-            }
+            Btn::Angle => self.set_radians(!self.engine.radians),
             _ => self.change(|c| c.press_key(btn)),
         }
         // A tecla 2nd vale para uma função só.
@@ -544,7 +571,8 @@ impl Calculator {
                 rows.extend(basic);
                 rows
             }
-            Mode::Basic => basic,
+            // As notas não têm teclas (o `view` delas não chama o `grid`).
+            Mode::Basic | Mode::Notes => basic,
             Mode::Scientific => {
                 let sc = Kind::Science;
                 // No RPN, ( e ) viram as teclas da pilha (com 2nd, LASTx e R↑).
@@ -624,8 +652,8 @@ impl Calculator {
             self.open_picker(self.conv.active);
             return;
         }
-        // Ctrl+1/2/3: modos; Ctrl+T: histórico; Ctrl+R: RPN.
-        for (key, mode) in [("1", Mode::Basic), ("2", Mode::Scientific), ("3", Mode::Programmer)] {
+        // Ctrl+1/2/3/4: modos; Ctrl+T: histórico; Ctrl+R: RPN.
+        for (key, mode) in [("1", Mode::Basic), ("2", Mode::Scientific), ("3", Mode::Programmer), ("4", Mode::Notes)] {
             if input.shortcut(key) {
                 self.set_mode(ui, mode);
             }
@@ -784,10 +812,15 @@ impl Calculator {
 
     fn menu_actions(&mut self, ui: &mut Ui) {
         for action in ui.input().menu.clone() {
+            // Nas notas, Editar e Arquivo são da nota.
+            if self.mode == Mode::Notes && self.notes_menu_action(ui, &action) {
+                continue;
+            }
             match action.as_str() {
                 "basica" => self.set_mode(ui, Mode::Basic),
                 "cientifica" => self.set_mode(ui, Mode::Scientific),
                 "programador" => self.set_mode(ui, Mode::Programmer),
+                "notas" => self.set_mode(ui, Mode::Notes),
                 "rpn" => self.toggle_rpn(ui),
                 "historico" => self.toggle_history(ui),
                 "limpar-historico" => self.engine.history.clear(),
@@ -806,6 +839,7 @@ impl Calculator {
                     self.set_style(style);
                 }
                 "conversor" => self.toggle_converter(ui),
+                "radianos" => self.set_radians(!self.engine.radians),
                 "conv-unidade" => self.open_picker(self.conv.active),
                 "conv-trocar" if self.converting() => self.set_conv(self.conv.swapped()),
                 "conv-outra" if self.converting() => self.use_other_row(),
@@ -832,6 +866,12 @@ impl Calculator {
 impl App for Calculator {
     fn view(&mut self, ui: &mut Ui) {
         self.menu_actions(ui);
+        // Notas: outra tela, sem o teclado da calculadora.
+        if self.mode == Mode::Notes {
+            self.picker = None;
+            self.notes_view(ui);
+            return;
+        }
         // O conversor sumiu (Programador, desligado): o seletor dele fecha junto.
         if !self.converting() {
             self.picker = None;
@@ -1181,10 +1221,18 @@ impl App for Calculator {
                 None => {}
             }
         }
+        // Avisos das notas (fechar sem gravar) também por cima do teclado.
+        self.notes_dialogs(ui);
+    }
+
+    fn close_requested(&mut self) -> bool {
+        // As notas com alterações são gravadas; se falhar, um aviso pergunta o que fazer.
+        self.notes_close()
     }
 
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
         let mode = self.mode;
+        let notes = mode == Mode::Notes;
         let style = self.engine.style;
         let has_history = !self.engine.history.is_empty();
         let decimals = DECIMALS
@@ -1197,8 +1245,11 @@ impl App for Calculator {
                 MenuItem::action(&action, &label).checked(style.decimals == *d).enabled(mode != Mode::Programmer)
             })
             .collect();
-        let mut groups = vec![
-            MenuGroup {
+        // Nas notas, Arquivo e Editar são da nota; o resto do Visualizar é o mesmo.
+        let keypad_groups = if notes {
+            self.notes_menus()
+        } else {
+            vec![MenuGroup {
                 title: "Editar".into(),
                 items: vec![
                     MenuItem::action("desfazer", "Desfazer").shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
@@ -1211,23 +1262,32 @@ impl App for Calculator {
                     MenuItem::action("copiar-historico", "Copiar o histórico").enabled(has_history),
                     MenuItem::action("limpar-historico", "Limpar o histórico").enabled(has_history),
                 ],
-            },
-            MenuGroup {
-                title: "Visualizar".into(),
-                items: vec![
-                    MenuItem::action("basica", "Básica").shortcut("Ctrl+1").checked(mode == Mode::Basic),
-                    MenuItem::action("cientifica", "Científica").shortcut("Ctrl+2").checked(mode == Mode::Scientific),
-                    MenuItem::action("programador", "Programador").shortcut("Ctrl+3").checked(mode == Mode::Programmer),
-                    MenuItem::Separator,
-                    MenuItem::action("rpn", "Notação polonesa reversa (RPN)").shortcut("Ctrl+R").checked(self.rpn_on).enabled(mode != Mode::Programmer),
-                    MenuItem::action("historico", "Mostrar o histórico").shortcut("Ctrl+T").checked(self.history_shown),
-                    MenuItem::action("conversor", "Conversor de unidades").shortcut("Ctrl+U").checked(self.convert_on).enabled(mode != Mode::Programmer),
-                    MenuItem::Separator,
-                    MenuItem::action("milhar", "Separador de milhar").checked(style.grouping).enabled(mode != Mode::Programmer),
-                    MenuItem::Submenu { label: "Casas decimais".into(), items: decimals },
-                ],
-            },
-        ];
+            }]
+        };
+        let keypad = matches!(mode, Mode::Basic | Mode::Scientific);
+        let list_item = if notes {
+            MenuItem::action("notas-lista", "Mostrar a lista de notas").shortcut("Ctrl+T").checked(self.notes.list_shown)
+        } else {
+            MenuItem::action("historico", "Mostrar o histórico").shortcut("Ctrl+T").checked(self.history_shown)
+        };
+        let mut groups = keypad_groups;
+        groups.push(MenuGroup {
+            title: "Visualizar".into(),
+            items: vec![
+                MenuItem::action("basica", "Básica").shortcut("Ctrl+1").checked(mode == Mode::Basic),
+                MenuItem::action("cientifica", "Científica").shortcut("Ctrl+2").checked(mode == Mode::Scientific),
+                MenuItem::action("programador", "Programador").shortcut("Ctrl+3").checked(mode == Mode::Programmer),
+                MenuItem::action("notas", "Notas matemáticas").shortcut("Ctrl+4").checked(notes),
+                MenuItem::Separator,
+                MenuItem::action("rpn", "Notação polonesa reversa (RPN)").shortcut("Ctrl+R").checked(self.rpn_on).enabled(keypad),
+                list_item,
+                MenuItem::action("conversor", "Conversor de unidades").shortcut("Ctrl+U").checked(self.convert_on).enabled(keypad),
+                MenuItem::Separator,
+                MenuItem::action("radianos", "Ângulos em radianos").checked(self.engine.radians).enabled(mode != Mode::Programmer),
+                MenuItem::action("milhar", "Separador de milhar").checked(style.grouping).enabled(mode != Mode::Programmer),
+                MenuItem::Submenu { label: "Casas decimais".into(), items: decimals },
+            ],
+        });
         // O menu Converter só aparece com o conversor à vista.
         if self.converting() {
             let all = units::categories();
@@ -1257,6 +1317,10 @@ impl App for Calculator {
 /// Tamanho da janela e o mínimo: o do modo, mais a fileira da pilha do RPN (Básica), o
 /// conversor (Básica e Científica) e o histórico ao lado.
 fn window_size_for(mode: Mode, rpn: bool, history: bool, converting: bool) -> ((u32, u32), (u32, u32)) {
+    // As notas têm a lista dentro da janela: o histórico, o RPN e o conversor não contam.
+    if mode == Mode::Notes {
+        return mode.size();
+    }
     let ((w, h), (mw, mh)) = mode.size();
     let extra_w = if history { HISTORY_W as u32 } else { 0 };
     let mut extra_h = if mode == Mode::Basic && rpn { RPN_ROW } else { 0 };
@@ -1340,5 +1404,7 @@ mod tests {
         assert_eq!(window_size_for(Mode::Basic, false, true, true).0, (480, 444));
         // O Programador não mostra o conversor (o `converting` já vem falso).
         assert_eq!(window_size_for(Mode::Programmer, false, false, false).0, (520, 560));
+        // As notas não somam o histórico, o RPN nem o conversor.
+        assert_eq!(window_size_for(Mode::Notes, true, true, true), ((720, 480), (520, 320)));
     }
 }

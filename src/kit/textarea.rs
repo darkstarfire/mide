@@ -1,13 +1,15 @@
 //! Texto de várias linhas para editar (o documento do `Ui::text_area`): o texto, o
-//! cursor e a seleção, desfazer e refazer, e as contas de linha e coluna.
+//! cursor e a seleção, desfazer e refazer, as contas de linha e coluna e as
+//! decorações (cores, sublinhados e texto no fim da linha, do `Ui::text_area_with`).
 //!
 //! Lógica pura, testável sem janela. O desenho e as teclas ficam no `Ui::text_area`.
 //! O histórico guarda cópias do texto (simples e suficiente para um editor mínimo);
 //! um editor de arquivos grandes trocaria isso por uma estrutura própria.
 
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use super::textedit::Edit;
+use super::{textedit::Edit, theme::Rgba};
 
 /// Tipo de mudança, para juntar no histórico o que foi digitado em sequência (desfazer
 /// volta uma palavra digitada de uma vez, e não letra por letra).
@@ -73,6 +75,16 @@ impl TextDoc {
         true
     }
 
+    /// Há o que desfazer (o menu Editar desativa "Desfazer" sem isso).
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Há o que refazer.
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
     /// Refaz o que foi desfeito; devolve se havia o que refazer.
     pub fn redo(&mut self) -> bool {
         let Some((text, edit)) = self.redo.pop() else {
@@ -128,19 +140,104 @@ pub fn line_end(text: &str, starts: &[usize], line: usize) -> usize {
 }
 
 /// Posição na linha `line` mais perto de `x` pixels, medindo com `width` (largura do
-/// começo da linha até um ponto).
+/// começo da linha até um ponto). A largura do começo só cresce, então a busca é
+/// binária: poucas medidas mesmo numa linha de milhares de caracteres (um JSON
+/// minificado), em vez de uma por caractere.
 pub fn index_in_line(text: &str, starts: &[usize], line: usize, x: f32, mut width: impl FnMut(&str) -> f32) -> usize {
     let (start, end) = (starts[line], line_end(text, starts, line));
     let content = &text[start..end];
-    let mut left = 0.0;
-    for (i, c) in content.char_indices() {
-        let right = width(&content[..i + c.len_utf8()]);
-        if x < (left + right) / 2.0 {
-            return start + i;
+    // Fim de cada caractere; o caractere k fica entre ends[k-1] (ou 0) e ends[k].
+    let ends: Vec<usize> = content.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+    let mut w = |k: usize| if k == 0 { 0.0 } else { width(&content[..ends[k - 1]]) };
+    // O primeiro caractere cujo meio passa de x: o cursor fica antes dele.
+    let (mut lo, mut hi) = (0, ends.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if x < (w(mid) + w(mid + 1)) / 2.0 {
+            hi = mid;
+        } else {
+            lo = mid + 1;
         }
-        left = right;
     }
-    end
+    if lo == ends.len() { end } else { start + if lo == 0 { 0 } else { ends[lo - 1] } }
+}
+
+/// Decorações de uma área de texto (`Ui::text_area_with`), em índices de byte do
+/// texto: trechos coloridos, trechos sublinhados (pontilhado na cor de perigo: os
+/// erros) e um texto desenhado depois do fim de uma linha (o resultado das notas da
+/// Calculadora). Ficam fora do texto: cursor, seleção, setas e clique não mudam.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Decorations {
+    pub colors: Vec<(Range<usize>, Rgba)>,
+    pub underlines: Vec<Range<usize>>,
+    /// (linha a partir de 0, texto, cor): o texto vem 4 pt depois do fim da linha;
+    /// vários na mesma linha vêm na ordem da lista, com 4 pt entre eles. O que não cabe
+    /// até a borda termina com "…".
+    pub trailing: Vec<(usize, String, Rgba)>,
+}
+
+/// O trecho `r` cortado na linha `start..end`, se ele vale: dentro do texto, nos
+/// limites de caractere e não vazio depois do corte.
+fn clip_to_line(text: &str, start: usize, end: usize, r: &Range<usize>) -> Option<(usize, usize)> {
+    let ok = |i: usize| i <= text.len() && text.is_char_boundary(i);
+    if r.start >= r.end || !ok(r.start) || !ok(r.end) {
+        return None;
+    }
+    let (a, b) = (r.start.max(start), r.end.min(end));
+    (a < b).then_some((a, b))
+}
+
+/// Pedaços da linha `start..end` por cor, em ordem e cobrindo a linha inteira:
+/// (início, fim, cor), com `None` na cor normal do texto. Trechos fora do texto ou fora
+/// do limite de um caractere são ignorados; quando dois se cobrem, vale o primeiro da
+/// lista.
+pub fn color_runs(text: &str, start: usize, end: usize, colors: &[(Range<usize>, Rgba)]) -> Vec<(usize, usize, Option<Rgba>)> {
+    let spans: Vec<(usize, usize, Rgba)> = colors.iter().filter_map(|(r, c)| clip_to_line(text, start, end, r).map(|(a, b)| (a, b, *c))).collect();
+    let mut cuts = vec![start, end];
+    for (a, b, _) in &spans {
+        cuts.push(*a);
+        cuts.push(*b);
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut runs: Vec<(usize, usize, Option<Rgba>)> = Vec::new();
+    for pair in cuts.windows(2) {
+        let (p, q) = (pair[0], pair[1]);
+        let color = spans.iter().find(|(a, b, _)| *a <= p && q <= *b).map(|s| s.2);
+        match runs.last_mut() {
+            Some(last) if last.2 == color => last.1 = q,
+            _ => runs.push((p, q, color)),
+        }
+    }
+    runs
+}
+
+/// Os trechos do pedaço `a..b` (da linha que começa em `start`) que podem ser
+/// desenhados sozinhos. O texto desenhado conta as paradas de tabulação do começo dele:
+/// um pedaço do meio da linha com tabulação é cortado nela, e cada trecho vai para o x
+/// medido do começo da linha (a tabulação em si não desenha nada). Um pedaço que começa
+/// a linha fica inteiro (o Editor de Texto, sem cores, desenha a linha de uma vez).
+pub fn tab_pieces(text: &str, start: usize, a: usize, b: usize) -> Vec<(usize, usize)> {
+    if a == start || !text[a..b].contains('\t') {
+        return vec![(a, b)];
+    }
+    let mut pieces = Vec::new();
+    let mut from = a;
+    for (i, _) in text[a..b].match_indices('\t') {
+        if from < a + i {
+            pieces.push((from, a + i));
+        }
+        from = a + i + 1;
+    }
+    if from < b {
+        pieces.push((from, b));
+    }
+    pieces
+}
+
+/// Os sublinhados que caem na linha `start..end`, cortados nela (os inválidos saem).
+pub fn underline_runs(text: &str, start: usize, end: usize, underlines: &[Range<usize>]) -> Vec<(usize, usize)> {
+    underlines.iter().filter_map(|r| clip_to_line(text, start, end, r)).collect()
 }
 
 #[cfg(test)]
@@ -171,6 +268,32 @@ mod tests {
     }
 
     #[test]
+    fn coluna_por_largura_em_linha_longa() {
+        // Mesmo resultado da busca caractere a caractere, com poucas medidas.
+        let text = format!("{}é{}", "a".repeat(3000), "b".repeat(10));
+        let starts = line_starts(&text);
+        let width = |s: &str| s.chars().count() as f32 * 7.0;
+        for x in [0.0, 3.4, 3.6, 7000.0, 21_003.0, 21_004.0, 21_010.0, 99_999.0] {
+            let slow = {
+                let mut left = 0.0;
+                let mut at = text.len();
+                for (i, c) in text.char_indices() {
+                    let right = width(&text[..i + c.len_utf8()]);
+                    if x < (left + right) / 2.0 {
+                        at = i;
+                        break;
+                    }
+                    left = right;
+                }
+                at
+            };
+            let mut calls = 0;
+            assert_eq!(index_in_line(&text, &starts, 0, x, |s| { calls += 1; width(s) }), slow, "x = {x}");
+            assert!(calls < 60, "{calls} medidas");
+        }
+    }
+
+    #[test]
     fn desfazer_junta_a_digitacao_e_refazer_volta() {
         let mut doc = TextDoc::new(String::new());
         doc.type_text("o");
@@ -191,6 +314,54 @@ mod tests {
         // Mudar o texto depois de desfazer apaga o que dava para refazer.
         doc.type_text("!");
         assert!(!doc.redo());
+    }
+
+    #[test]
+    fn pedacos_de_cor() {
+        let text = "x = 2 + y\nsegunda";
+        let starts = line_starts(text);
+        let (s, e) = (starts[0], line_end(text, &starts, 0));
+        let blue = [0, 0, 255, 255];
+        let red = [255, 0, 0, 255];
+        // Sem cores: a linha inteira na cor normal; linha vazia, nada.
+        assert_eq!(color_runs(text, s, e, &[]), [(0, 9, None)]);
+        assert!(color_runs("", 0, 0, &[]).is_empty());
+        // Em ordem, com os buracos na cor normal; o trecho que passa da linha é cortado.
+        let runs = color_runs(text, s, e, &[(8..12, red), (0..1, blue)]);
+        assert_eq!(runs, [(0, 1, Some(blue)), (1, 8, None), (8, 9, Some(red))]);
+        // Fora do texto, no meio de um caractere, vazio ou invertido: ignorados.
+        let acento = "pé = 1";
+        #[allow(clippy::reversed_empty_ranges)]
+        let bad = [(0..2, blue), (0..99, red), (3..3, red), (4..2, red)];
+        assert_eq!(color_runs(acento, 0, acento.len(), &bad), [(0, acento.len(), None)]);
+        // Dois que se cobrem: vale o primeiro da lista.
+        assert_eq!(color_runs(text, s, e, &[(0..5, blue), (2..9, red)]), [(0, 5, Some(blue)), (5, 9, Some(red))]);
+        // Sublinhados: cortados na linha, os inválidos saem.
+        assert_eq!(underline_runs(text, starts[1], text.len(), &[8..13, 0..99]), [(10, 13)]);
+    }
+
+    #[test]
+    fn tabulacao_corta_o_pedaco_do_meio() {
+        let text = "aluguel\t* 2 =\tfim";
+        // O pedaço que começa a linha fica inteiro, mesmo com tabulação.
+        assert_eq!(tab_pieces(text, 0, 0, 7), [(0, 7)]);
+        assert_eq!(tab_pieces(text, 0, 0, text.len()), [(0, text.len())]);
+        // Do meio da linha: cortado em cada tabulação, sem ela.
+        assert_eq!(tab_pieces(text, 0, 7, text.len()), [(8, 13), (14, 17)]);
+        // Tabulações seguidas e no fim: nenhum trecho vazio.
+        assert_eq!(tab_pieces("a\t\tb\t", 0, 1, 5), [(3, 4)]);
+        // Sem tabulação: o pedaço como veio.
+        assert_eq!(tab_pieces(text, 0, 8, 13), [(8, 13)]);
+    }
+
+    #[test]
+    fn pode_desfazer_e_refazer() {
+        let mut doc = TextDoc::new("a".into());
+        assert!(!doc.can_undo() && !doc.can_redo());
+        doc.type_text("b");
+        assert!(doc.can_undo() && !doc.can_redo());
+        doc.undo();
+        assert!(!doc.can_undo() && doc.can_redo());
     }
 
     #[test]

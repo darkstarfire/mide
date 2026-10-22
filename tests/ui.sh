@@ -968,16 +968,22 @@ echo "== Calculadora (mide-calculator: modos, contas, RPN e histórico)"
 #   (linha 0: ( ) mc m+ m− mr; linha 3: x! sen cos tg e EE).
 # - Programador (520x560): bases HEX/DEC/OCT/BIN em y=95, x = 84 + 58i; bits em
 #   y=189 (63–32) e y=233 (31–0), bit n de 31 a 0 em x = 50 + 15,6(31 − n) + 8.
-# - Barra: "Visualizar" em x=232; no menu, Básica y=55, Científica 79, Programador 103.
+# - Barra: "Visualizar" em x=232; no menu, Básica y=55, Científica 79, Programador 103,
+#   Notas matemáticas 127.
+# - Notas (720x480): a nota começa em x=276, y=145 (linhas de 23 pt); botão da Lixeira
+#   em (738, 102).
 CDIR="$(mktemp -d)"
 # calc_run "roteiro" [opções de [calculator]]: abre a Calculadora (com CALC_SCEN, outro
-# cenário, como o do barramento D-Bus de teste).
+# cenário, como o do barramento D-Bus de teste). As notas e a Lixeira ficam em
+# $CDIR/data (XDG_DATA_HOME só da Calculadora), apagada a cada execução (com
+# CALC_KEEP_DATA=1, fica a da execução anterior).
 calc_run() {
     local script="$1" saved="${2:-}"
     rm -rf "$CDIR/cfg" "$CDIR/calc.log"
-    mkdir -p "$CDIR/cfg/mide"
+    [ -z "${CALC_KEEP_DATA:-}" ] && rm -rf "$CDIR/data"
+    mkdir -p "$CDIR/cfg/mide" "$CDIR/data"
     [ -n "$saved" ] && printf '[calculator]\n%b\n' "$saved" > "$CDIR/cfg/mide/config.toml"
-    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "RUST_LOG=mide_calculator=debug $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
+    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "RUST_LOG=mide_calculator=debug XDG_DATA_HOME='$CDIR/data' $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
 }
 # calc_screen "nome" "tela esperada" "roteiro" [opções]: confere a última tela.
 calc_screen() {
@@ -1064,7 +1070,60 @@ calc_screen "Calculadora: Esc fecha o seletor sem apagar a conta" "12,5" "400 ty
 calc_convert "Calculadora: clicar no nome da linha de baixo escolhe a unidade dela" "1 pol = 0,0254 m" "400 type 1; 420 click 78 195; 450 type metro; 480 key enter; 510 list" 'convert = true'
 # Menus da Calculadora na barra (num barramento D-Bus de teste, como os do Terminal).
 CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Científica pela barra" 'janela "Calculadora" .*visível=620x380' "500 click 232 14; 540 click 250 79; 580 list"
-CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Conversor de unidades pela barra" 'janela "Calculadora" .*visível=250x444' "500 click 232 14; 540 click 250 184; 580 list"
+CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Conversor de unidades pela barra" 'janela "Calculadora" .*visível=250x444' "500 click 232 14; 540 click 250 208; 580 list"
+# Notas matemáticas (E3b, etapa 2): o log registra o que muda em cada linha
+# ("calculadora: notas: linha 1 = 360" ou "...linha 4: erro: ...").
+# notes_line "nome" N "resultado": a última linha "notas: linha N" da última execução
+# (" = 360" ou ": erro: ..."); várias conferências de uma vez só.
+notes_line() {
+    local got
+    got="$(grep -a "calculadora: notas: linha $2[ :]" "$CDIR/calc.log" | tail -1 | sed "s/.*calculadora: notas: linha $2//")"
+    if [ "$got" = "$3" ]; then
+        echo "ok    $1"; PASS=$((PASS + 1))
+    else
+        echo "FALHA $1 (esperado \"$3\", obtido \"$got\")"; FAIL=$((FAIL + 1))
+    fi
+}
+# calc_file "nome" "caminho dentro de $CDIR/data (com *)" "conteúdo": confere um arquivo
+# das notas ou da Lixeira.
+calc_file() {
+    local got
+    got="$(cat "$CDIR"/data/$2 2>/dev/null)"
+    if [ "$got" = "$3" ]; then
+        echo "ok    $1"; PASS=$((PASS + 1))
+    else
+        echo "FALHA $1 (esperado \"$3\", obtido \"$got\")"; FAIL=$((FAIL + 1))
+    fi
+}
+calc_window "Calculadora: Ctrl+4 abre as Notas (720x480)" 'janela "Calculadora" .*visível=720x480' "400 combo ctrl+4; 440 list"
+calc_run "400 type 120x3=; 420 key enter; 440 type aluguel=1.200; 460 key enter; 480 type aluguel*12=; 500 key enter; 520 type y*2=; 540 key enter; 560 type hoje_gastei_2*3=; 580 key up; 590 key up; 600 key up; 610 key end; 620 key backspace; 625 key backspace; 630 key backspace; 635 key backspace; 640 key backspace; 650 type 1.500; 720 list" 'mode = "notas"'
+notes_line "Notas: 120x3= dá 360" 1 " = 360"
+calc_log "Notas: variável (aluguel*12= dá 14.400)" "notas: linha 3 = 14\.400"
+notes_line "Notas: nome desconhecido dá erro" 4 ": erro: “y” não é uma variável nem uma unidade"
+notes_line "Notas: prosa antes da conta (hoje gastei 2*3= dá 6)" 5 " = 6"
+notes_line "Notas: mudar a variável em cima refaz a conta de baixo (18.000)" 3 " = 18.000"
+calc_file "Notas: a nota fica gravada só com o que foi digitado" "mide/calculadora/notas/*.txt" "$(printf '120x3=\naluguel=1.500\naluguel*12=\ny*2=\nhoje gastei 2*3=')"
+calc_run "400 combo shift+9; 410 type 2+3; 420 combo shift+0; 430 type *4=; 440 key enter; 450 type 100+10; 460 combo shift+5; 470 type =; 520 list" 'mode = "notas"'
+notes_line "Notas: parênteses ((2+3)*4= dá 20)" 1 " = 20"
+notes_line "Notas: porcentagem (100+10%= dá 110)" 2 " = 110"
+# O cenário dura 9 s ao todo (SCENARIO_WAIT é o tempo total): a tecla vem perto de 5,5 s
+# e a nota é gravada 1 s depois; uma espera de 3,5 s ou mais deixaria a nota sem arquivo.
+SCENARIO_WAIT=9 calc_run "400 type 2+2=; 520 list" 'mode = "notas"'
+calc_file "Notas: grava 1 s depois da última tecla" "mide/calculadora/notas/*.txt" "2+2="
+CALC_KEEP_DATA=1 calc_run "400 list" 'mode = "notas"'
+notes_line "Notas: reabrir mostra a nota com o resultado" 1 " = 4"
+calc_run "400 type 2+2=; 480 key backspace; 485 key backspace; 490 type 3=; 560 combo ctrl+z; 570 combo ctrl+z; 620 list" 'mode = "notas"'
+notes_line "Notas: Ctrl+Z volta a conta de antes (depois de gravar)" 1 " = 4"
+calc_run "400 type 1+1=; 420 combo ctrl+n; 460 list" 'mode = "notas"'
+calc_log "Notas: Ctrl+N cria outra nota" "nova nota, 2 nota\(s\)"
+calc_run "400 type 1+1=; 500 click 738 102; 540 list" 'mode = "notas"'
+calc_log "Notas: Lixeira pela barra de ferramentas" "notas: na Lixeira "
+calc_file "Notas: a nota vai para a Lixeira" "Trash/files/*.txt" "1+1="
+calc_run "400 type 120x3=; 500 rclick 345 145; 530 click 380 170; 560 list" 'mode = "notas"'
+calc_log "Notas: clique direito no resultado copia ele" "notas: copiado 360"
+calc_run "400 type 2x21=; 500 rclick 330 145; 530 click 410 222; 560 list" 'mode = "notas"'
+calc_log "Notas: Levar para a calculadora volta ao teclado com o número" "calculadora: tela 42$"
+CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Notas matemáticas pela barra" 'janela "Calculadora" .*visível=720x480' "500 click 232 14; 540 click 250 127; 580 list"
 rm -rf "$CDIR"
 
 echo "== apps X11 (XWayland, precisa de xwayland-satellite, Xwayland e xclock)"

@@ -170,6 +170,7 @@ não fica só no app.
 | Menu de contexto | `ui.context_menu` |
 | Pergunta ou formulário curto | `ui.modal` (janelinha) |
 | Busca numa lista | `ui.text_input` no topo, filtrando enquanto digita (sem acentos: `mide::apps::fold`) |
+| Texto de várias linhas | `ui.text_area` (editor, fonte fixa) / `ui.text_area_with` (fonte proporcional, dica, decorações: cores, erro com pontilhado vermelho, resultado depois do fim da linha na cor de destaque) |
 | Painel por cima de tudo | `Window::overlay` + `ui.glass_panel` |
 
 ### Menus

@@ -20,7 +20,8 @@ fn config_home() -> PathBuf {
         .unwrap_or_else(|| home().join(".config"))
 }
 
-fn data_home() -> PathBuf {
+/// Pasta dos dados do usuário (`$XDG_DATA_HOME`, ou `~/.local/share`).
+pub fn data_home() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".local/share"))

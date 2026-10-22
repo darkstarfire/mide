@@ -181,6 +181,61 @@ ui.glass_panel((w - 600.0) / 2.0, h * 0.2, 600.0, 18.0, |ui| {
 instante e o ícone surge assim que fica pronto. Para já ter os ícones na primeira
 vez, carregue numa thread e entregue com `ui.provide_icon(nome, tamanho, imagem)`.
 
+## Área de texto (várias linhas)
+
+`ui.text_area(&mut doc, altura)` é o editor do Editor de Texto: números de linha, fonte
+de largura fixa, cursor, seleção com mouse e teclado, desfazer (Ctrl+Z) e refazer
+(Ctrl+Shift+Z, Ctrl+Y), área de transferência (Ctrl+A/C/X/V, também com Shift) e
+rolagem; só as linhas à vista são desenhadas. Os outros atalhos com Ctrl (salvar,
+buscar...) ficam para o app. O documento (`TextDoc`) guarda o texto, o cursor e o
+histórico; `version` aumenta a cada mudança (começa em 0 em cada `TextDoc::new`) e
+`can_undo()`/`can_redo()` servem ao menu Editar. Quando o app muda o texto por conta
+própria, use `type_text` ou chame `before_change` antes: senão a mudança não entra no
+desfazer e o `version` não muda.
+
+`ui.text_area_with(&mut doc, altura, TextAreaLook { .. })` muda a aparência: sem os
+números de linha, em fonte proporcional, outro tamanho, uma dica com o documento vazio
+(cortada com "…" se não couber) e decorações, pedidas a cada quadro depois das teclas
+(nunca atrasam um quadro). As decorações ficam fora do texto (cursor, seleção e clique
+não mudam):
+
+- `colors`: trechos coloridos;
+- `underlines`: trechos sublinhados com pontilhado vermelho (erros);
+- `trailing`: um texto depois do fim de uma linha (o resultado das notas da
+  Calculadora), 4 pt depois do fim; vários na mesma linha vêm na ordem da lista. Com o
+  cursor no fim dessa linha, a área rola para ele ficar à vista; o que não cabe até a
+  borda termina com "…".
+
+Índices em bytes do texto; trechos fora do texto ou no meio de um caractere são
+ignorados. A resposta traz, no quadro de um clique (esquerdo ou direito), a posição do
+texto sob o ponteiro: guarde a linha no clique direito para o menu de contexto usar
+depois (com o menu aberto, o ponteiro está em cima dele e a posição não vem):
+
+```rust
+use mide::kit::{Decorations, TextAreaLook, TextDoc};
+use mide::kit::textarea::{line_of, line_starts};
+
+let destaque = ui.theme().accent;
+let mut decorar = |doc: &TextDoc| Decorations {
+    colors: vec![(0..5, destaque)],                  // "total" em azul
+    underlines: vec![],
+    trailing: vec![(0, "1.200".into(), destaque)],   // depois do fim da linha 0
+};
+let r = ui.text_area_with(&mut self.doc, 300.0, TextAreaLook {
+    line_numbers: false,
+    sans: true,
+    size: Some(15.0),
+    placeholder: "Digite uma conta e termine com =",
+    decorate: Some(&mut decorar),
+});
+if r.response.secondary_clicked {
+    self.linha_do_menu = r.pointer_index.map(|i| line_of(&line_starts(&self.doc.text), i));
+}
+ui.context_menu(&r.response, |m| {
+    if m.item("Copiar o resultado") { /* usa self.linha_do_menu */ }
+});
+```
+
 ## Diálogos e seletor de arquivos
 
 `ui.modal(largura, |ui| ...)` escurece a janela e mostra um painel no meio; só o que
@@ -204,13 +259,14 @@ Para escolher numa lista longa, em grupos e com busca (as 140 unidades da Calcul
 em 15 categorias), há o seletor de lista (`ListPicker`): sem busca, mostra o grupo do item
 atual, com "‹ Todos os grupos" no topo; com busca (sem acento nem maiúscula, todas as
 palavras, também pelo nome do grupo), uma lista só. ↑/↓ andam (pulando os itens
-desativados), Enter escolhe (o primeiro, se nenhum estiver marcado), Esc e "Cancelar"
-fecham:
+desativados), Enter escolhe o marcado (sem busca, o item atual; com busca, o melhor
+resultado: a palavra exata, depois o começo do nome), Esc e "Cancelar" fecham:
 
 ```rust
 use mide::kit::{ListPicker, PickGroup, PickItem, Picked};
 
-let grupos = vec![PickGroup { name: "Comprimento".into(), items: vec![PickItem::new("Metros", "m", "metro")] }];
+// Rótulo, detalhe cinza e as palavras exatas do item (símbolo, apelidos).
+let grupos = vec![PickGroup { name: "Comprimento".into(), items: vec![PickItem::new("Metros", "m", &["m", "metro"])] }];
 self.escolher = Some(ListPicker::new("Converter de", "Todas as categorias", "Buscar unidade", grupos, (0, 0)));
 // a cada quadro, por cima do resto:
 if let Some(seletor) = self.escolher.as_mut() {

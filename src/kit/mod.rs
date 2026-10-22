@@ -44,5 +44,6 @@ pub use chooser::{Choice, FileChooser};
 pub use input::{Input, Key, KeyPress};
 pub use menubar::{window_menu, MenuGroup, MenuItem};
 pub use picker::{ListPicker, PickGroup, PickItem, Picked};
+pub use textarea::{Decorations, TextDoc};
 pub use theme::{system_dark, Rgba, Theme};
-pub use ui::{ArrangedScreen, Menu, Response, Tile, Ui};
+pub use ui::{ArrangedScreen, Menu, Response, TextAreaLook, TextAreaResponse, Tile, Ui};

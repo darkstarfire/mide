@@ -131,12 +131,16 @@ impl FileChooser {
         let enter = ui.input().key(Key::Enter);
         // Confirmação de substituir, por cima do seletor.
         if let Some(path) = self.replace.clone() {
+            // O aviso não tem campo: o Enter e o Esc são dele (o nome perde o foco).
+            ui.blur();
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let message = "Já existe um arquivo com esse nome nesta pasta. Substituir troca o conteúdo dele.";
             return match ui.alert(&format!("Substituir \"{name}\"?"), message, &["Cancelar", "Substituir"]) {
                 Some(1) => Some(Choice::Chosen(path)),
                 Some(_) => {
+                    // De volta ao nome, para corrigir.
                     self.replace = None;
+                    ui.focus_next_input();
                     None
                 }
                 None => None,
