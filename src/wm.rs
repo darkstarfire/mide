@@ -331,6 +331,12 @@ impl State {
         let Some(window) = self.window_for(surface) else {
             return;
         };
+        // Já minimizada (ainda na animação de saída: "minimizar tudo" de novo, dois
+        // cliques no botão): uma entrada só. Duas deixavam a janela restaurada ainda na
+        // lista, e o mide ignorava os cliques e as teclas dela (parecia congelada).
+        if self.minimized.iter().any(|m| m.window == window) {
+            return;
+        }
         let Some(loc) = self.space.element_location(&window) else {
             return;
         };
@@ -384,6 +390,8 @@ impl State {
         let Some(MinimizedWindow { window, loc, size }) = self.minimized.pop() else {
             return;
         };
+        // Nenhuma outra entrada da mesma janela fica para trás (ela receberia o input).
+        self.minimized.retain(|m| m.window != window);
         let Some(surface) = window.toplevel().map(|t| t.wl_surface().clone()) else {
             return;
         };

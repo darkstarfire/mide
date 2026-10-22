@@ -490,7 +490,13 @@ fn run_action(state: &mut State, action: Action) {
         }
         Action::ShowDesktop => {
             // Minimiza todas as janelas à mostra (a área de trabalho aparece).
-            let surfaces: Vec<_> = state.space.elements().filter_map(|w| w.toplevel().map(|t| t.wl_surface().clone())).collect();
+            // As que já estão saindo (minimizadas, na animação) ficam como estão.
+            let surfaces: Vec<_> = state
+                .space
+                .elements()
+                .filter(|w| interactive(state, w))
+                .filter_map(|w| w.toplevel().map(|t| t.wl_surface().clone()))
+                .collect();
             tracing::info!("mostrar a área de trabalho: {} janela(s) minimizada(s)", surfaces.len());
             for surface in surfaces {
                 state.minimize(&surface);
