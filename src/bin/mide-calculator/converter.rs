@@ -1,0 +1,300 @@
+//! Conversor de unidades da Calculadora (E3b, etapa 2): a categoria, as duas unidades
+//! (uma em cada linha do visor) e qual linha é o número da tela. As contas ficam em
+//! `mide::calculator::units`; aqui ficam as regras de escolha, os textos e os lugares no
+//! visor.
+
+use mide::{
+    calculator::{
+        format::Style,
+        units::{self, Pairs, Unit},
+    },
+    kit::{ListPicker, PickGroup, PickItem},
+    ui::{
+        draw::{fill_rounded, rgba},
+        text::{FontWeight, Text},
+    },
+};
+use tiny_skia::Pixmap;
+
+use crate::{fit_left, PAD, SCIENCE};
+
+/// Altura a mais do visor com o conversor (pontos).
+pub const CONVERT_H: u32 = 64;
+
+/// As unidades do conversor: a categoria, a unidade de cada linha (0 em cima) e qual
+/// linha é o número da tela (a outra mostra a conversão).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Conv {
+    pub category: usize,
+    pub unit: [usize; 2],
+    pub active: usize,
+}
+
+impl Conv {
+    /// O par mais recente lembrado; sem nenhum, o padrão do Comprimento (pol → cm).
+    pub fn from_pairs(pairs: &Pairs) -> Self {
+        let first = pairs.recent(1).first().copied().or_else(|| {
+            let c = units::category_index("comprimento")?;
+            let (a, b) = units::default_pair(c)?;
+            Some((c, a, b))
+        });
+        let (category, a, b) = first.unwrap_or((0, 0, 1));
+        Conv { category, unit: [a, b], active: 0 }
+    }
+
+    /// Unidade de uma linha.
+    pub fn unit(&self, row: usize) -> &'static Unit {
+        &units::categories()[self.category].units[self.unit[row]]
+    }
+
+    /// A linha que não é a ativa.
+    pub fn other(&self) -> usize {
+        1 - self.active
+    }
+
+    /// O número da linha ativa convertido para a outra (`None`: sem resultado).
+    pub fn convert(&self, x: f64) -> Option<f64> {
+        units::convert(x, self.unit(self.active), self.unit(self.other()))
+    }
+
+    /// "12,5 pol = 31,75 cm" (Copiar a conversão e o log).
+    pub fn text(&self, x: f64, style: Style) -> String {
+        let other = self.convert(x).map_or_else(|| "—".to_string(), |v| style.value(v));
+        format!("{} {} = {} {}", style.value(x), self.unit(self.active).symbol, other, self.unit(self.other()).symbol)
+    }
+
+    /// "12,5 pol → cm": a conversão como conta, no histórico.
+    pub fn history(&self, x: f64, style: Style) -> String {
+        format!("{} {} → {}", style.value(x), self.unit(self.active).symbol, self.unit(self.other()).symbol)
+    }
+
+    /// As unidades trocam de linha; a linha ativa fica (o número passa a ser da outra
+    /// unidade: "100 °F = 37,8 °C" vira "100 °C = 212 °F").
+    pub fn swapped(self) -> Conv {
+        Conv { unit: [self.unit[1], self.unit[0]], ..self }
+    }
+
+    /// Escolheu a unidade `unit` da categoria `category` para a linha `row`. Na mesma
+    /// categoria, só aquela linha muda (se for a unidade da outra, as duas trocam). Em
+    /// outra, a escolhida fica na linha e a outra recebe o par lembrado dali (ou o
+    /// padrão). O número não muda.
+    pub fn choose(self, pairs: &Pairs, row: usize, category: usize, unit: usize) -> Conv {
+        if category == self.category {
+            return if self.unit[1 - row] == unit { self.swapped() } else { Conv { unit: with(self.unit, row, unit), ..self } };
+        }
+        let (a, b) = pairs.get(category).or_else(|| units::default_pair(category)).unwrap_or((0, 1));
+        let mut pair = with([a, b], row, unit);
+        if pair[1 - row] == unit {
+            pair[1 - row] = [a, b][row];
+        }
+        Conv { category, unit: pair, active: self.active }
+    }
+
+    /// O seletor de unidades para a linha `row`: todas as categorias, com a unidade da
+    /// linha marcada.
+    pub fn picker(&self, row: usize) -> ListPicker {
+        let groups = units::categories()
+            .iter()
+            .map(|c| PickGroup {
+                name: c.name.into(),
+                items: c
+                    .units
+                    .iter()
+                    .map(|u| {
+                        // O símbolo e os apelidos são as chaves exatas da busca ("MB").
+                        let detail = if u.detail.is_empty() { u.symbol.to_string() } else { format!("{} · {}", u.symbol, u.detail) };
+                        let keys: Vec<&str> = std::iter::once(u.symbol).chain(u.aliases.iter().copied()).chain(c.aliases.iter().copied()).collect();
+                        PickItem::new(u.name, &detail, &keys)
+                    })
+                    .collect(),
+            })
+            .collect();
+        let title = if row == self.active { "Converter de" } else { "Converter para" };
+        ListPicker::new(title, "Todas as categorias", "Buscar unidade", groups, (self.category, self.unit[row]))
+    }
+}
+
+/// O que o visor do conversor mostra num quadro.
+pub struct Shown {
+    /// Nome e símbolo da unidade de cada linha (o símbolo quando o nome não cabe).
+    pub names: [String; 2],
+    pub symbols: [String; 2],
+    /// O número de cada linha: a ativa como na tela; a outra, a conversão ou "—".
+    pub numbers: [String; 2],
+    pub active: usize,
+    pub category: String,
+}
+
+/// Menor letra do número de uma linha do conversor.
+const MIN_SIZE: f32 = 12.0;
+
+/// O número no maior tamanho que cabe em `room`, de `max` até `MIN_SIZE`; se nem assim
+/// cabe, cortado pela esquerda com "…".
+fn fit_number(text: &mut Text, number: &str, room: f32, max: f32) -> (String, f32) {
+    let mut size = max;
+    while size > MIN_SIZE && text.measure(number, size, FontWeight::Regular) > room {
+        size -= 2.0;
+    }
+    (fit_left(text, number, size, room), size)
+}
+
+/// Desenha as duas linhas do conversor (a ativa branca e maior), o ⇅ e a categoria;
+/// `typing`: o ⌫ está na linha ativa (o número abre espaço para ele). O nome da unidade
+/// fica inteiro se sobra lugar para o número; senão, o símbolo. Devolve a largura do
+/// nome de cada linha (o clique e o ⌫ do próximo quadro seguem ela).
+pub fn draw(pixmap: &mut Pixmap, text: &mut Text, (ox, oy): (f32, f32), w: f32, shown: &Shown, typing: bool) -> [f32; 2] {
+    let small = [180, 180, 188, 255];
+    let mut widths = [0.0; 2];
+    for (row, width) in widths.iter_mut().enumerate() {
+        let (rx, ry, rw, rh) = row_rect(w, row);
+        let active = row == shown.active;
+        let erase = if active && typing { 34.0 } else { 0.0 };
+        let max = if active { 40.0 } else { 28.0 };
+        let room = |label_w: f32| rw - label_w - 16.0 - erase;
+        let mut label = format!("{} ⌄", shown.names[row]);
+        let mut label_w = text.measure(&label, 13.0, FontWeight::Regular);
+        let number_w = text.measure(&shown.numbers[row], 16.0, FontWeight::Regular);
+        if label_w > rw * 0.5 || number_w > room(label_w) {
+            label = format!("{} ⌄", shown.symbols[row]);
+            label_w = text.measure(&label, 13.0, FontWeight::Regular);
+        }
+        *width = label_w;
+        text.draw(pixmap, &label, ox + rx + 4.0, oy + ry + (rh - 13.0 * 1.25) / 2.0, 13.0, FontWeight::Regular, small);
+        let (number, size) = fit_number(text, &shown.numbers[row], room(label_w), max);
+        let nw = text.measure(&number, size, FontWeight::Regular);
+        let color = if active { [255, 255, 255, 255] } else { small };
+        text.draw(pixmap, &number, ox + rx + rw - 4.0 - nw, oy + ry + (rh - size * 1.25) / 2.0, size, FontWeight::Regular, color);
+    }
+    let (sx, sy, sw, sh) = swap_rect();
+    fill_rounded(pixmap, ox + sx, oy + sy, sw, sh, sh / 2.0, rgba(SCIENCE[0], SCIENCE[1], SCIENCE[2], SCIENCE[3]));
+    let lw = text.measure("⇅", 13.0, FontWeight::Regular);
+    text.draw(pixmap, "⇅", ox + sx + (sw - lw) / 2.0, oy + sy + (sh - 13.0 * 1.25) / 2.0, 13.0, FontWeight::Regular, [235, 235, 240, 255]);
+    let cw = text.measure(&shown.category, 11.0, FontWeight::Regular);
+    text.draw(pixmap, &shown.category, ox + w - PAD - 4.0 - cw, oy + sy + (sh - 11.0 * 1.25) / 2.0, 11.0, FontWeight::Regular, small);
+    widths
+}
+
+/// Os pares de Converter → Recentes: o de agora e os lembrados, até 5 (a ação
+/// "conv-recente:N" usa o N desta lista).
+pub fn recent_pairs(pairs: &Pairs, conv: &Conv) -> Vec<(usize, usize, usize)> {
+    let mut list = vec![(conv.category, conv.unit[0], conv.unit[1])];
+    for pair in pairs.recent(6) {
+        if !list.contains(&pair) {
+            list.push(pair);
+        }
+    }
+    list.truncate(5);
+    list
+}
+
+/// Um par como aparece no menu: "°F → °C".
+pub fn pair_label((category, a, b): (usize, usize, usize)) -> String {
+    let units = &units::categories()[category].units;
+    format!("{} → {}", units[a].symbol, units[b].symbol)
+}
+
+/// O par com `unit` na posição `row`.
+fn with(mut pair: [usize; 2], row: usize, unit: usize) -> [usize; 2] {
+    pair[row] = unit;
+    pair
+}
+
+/// Lugar de uma linha do visor (x, y, largura, altura), com o visor `w` de largura.
+pub fn row_rect(w: f32, row: usize) -> (f32, f32, f32, f32) {
+    (PAD, 22.0 + row as f32 * 72.0, w - 2.0 * PAD, 50.0)
+}
+
+/// A parte da linha com o nome da unidade (o clique abre o seletor), com o nome de
+/// `label_w` de largura.
+pub fn name_rect(w: f32, row: usize, label_w: f32) -> (f32, f32, f32, f32) {
+    let (x, y, _, h) = row_rect(w, row);
+    (x, y, (label_w + 8.0).max(40.0), h)
+}
+
+/// O botão ⇅, entre as linhas.
+pub fn swap_rect() -> (f32, f32, f32, f32) {
+    (PAD, 73.0, 30.0, 20.0)
+}
+
+/// O ⌫ do toque, na linha ativa, logo depois do nome da unidade.
+pub fn erase_rect(w: f32, active: usize, label_w: f32) -> (f32, f32, f32, f32) {
+    let (x, y, nw, h) = name_rect(w, active, label_w);
+    (x + nw + 2.0, y + (h - 24.0) / 2.0, 30.0, 24.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ids(c: &Conv) -> (&'static str, [&'static str; 2]) {
+        (units::categories()[c.category].id, [c.unit(0).id, c.unit(1).id])
+    }
+
+    #[test]
+    fn par_inicial() {
+        assert_eq!(ids(&Conv::from_pairs(&Pairs::default())), ("comprimento", ["pol", "cm"]));
+        assert_eq!(ids(&Conv::from_pairs(&Pairs::from_text("temperatura=f>c"))), ("temperatura", ["f", "c"]));
+        assert_eq!(ids(&Conv::from_pairs(&Pairs::from_text("xyz=a>b"))), ("comprimento", ["pol", "cm"]));
+    }
+
+    #[test]
+    fn textos() {
+        let c = Conv::from_pairs(&Pairs::default());
+        let style = Style::default();
+        assert_eq!(c.text(12.5, style), "12,5 pol = 31,75 cm");
+        assert_eq!(c.history(12.5, style), "12,5 pol → cm");
+        let t = Conv::from_pairs(&Pairs::from_text("temperatura=f>c"));
+        assert_eq!(t.text(100.0, style), "100 °F = 37,7777777778 °C");
+        assert_eq!(t.swapped().text(100.0, style), "100 °C = 212 °F");
+        // Sem resultado: "—".
+        let fuel = Conv::from_pairs(&Pairs::from_text("consumo=l100>kml"));
+        assert_eq!(fuel.text(0.0, style), "0 L/100 km = — km/L");
+        // A linha ativa embaixo: o número é o de baixo.
+        let low = Conv { active: 1, ..c };
+        assert_eq!(low.text(2.54, style), "2,54 cm = 1 pol");
+    }
+
+    #[test]
+    fn escolher_unidade() {
+        let pairs = Pairs::from_text("temperatura=c>k");
+        let c = Conv::from_pairs(&Pairs::default());
+        let (length, km) = units::find("comprimento", "km").unwrap();
+        let (_, cm) = units::find("comprimento", "cm").unwrap();
+        // Mesma categoria: só a linha muda.
+        assert_eq!(ids(&c.choose(&pairs, 0, length, km)), ("comprimento", ["km", "cm"]));
+        // A unidade da outra linha: as duas trocam.
+        assert_eq!(ids(&c.choose(&pairs, 0, length, cm)), ("comprimento", ["cm", "pol"]));
+        // Outra categoria: o par lembrado dali, com a escolhida na linha.
+        let (temp, f) = units::find("temperatura", "f").unwrap();
+        assert_eq!(ids(&c.choose(&pairs, 0, temp, f)), ("temperatura", ["f", "k"]));
+        assert_eq!(ids(&c.choose(&pairs, 1, temp, f)), ("temperatura", ["c", "f"]));
+        let (_, k) = units::find("temperatura", "k").unwrap();
+        assert_eq!(ids(&c.choose(&pairs, 0, temp, k)), ("temperatura", ["k", "c"]));
+        // Sem par lembrado: o padrão.
+        let (mass, kg) = units::find("massa", "kg").unwrap();
+        assert_eq!(ids(&c.choose(&pairs, 0, mass, kg)), ("massa", ["kg", "lb"]));
+        // A linha ativa não muda.
+        assert_eq!(Conv { active: 1, ..c }.choose(&pairs, 0, mass, kg).active, 1);
+    }
+
+    #[test]
+    fn recentes() {
+        let c = Conv::from_pairs(&Pairs::default());
+        // Sem nada lembrado: só o par de agora.
+        let list = recent_pairs(&Pairs::default(), &c);
+        assert_eq!(list.iter().map(|&p| pair_label(p)).collect::<Vec<_>>(), ["pol → cm"]);
+        // O de agora primeiro, sem repetir, até 5.
+        let pairs = Pairs::from_text("temperatura=f>c;comprimento=pol>cm;massa=lb>kg;tempo=h>min;volume=gal>l;area=alq_sp>ha");
+        let list = recent_pairs(&pairs, &c);
+        assert_eq!(list.len(), 5);
+        assert_eq!(list.iter().map(|&p| pair_label(p)).collect::<Vec<_>>(), ["pol → cm", "°F → °C", "lb → kg", "h → min", "gal → L"]);
+    }
+
+    #[test]
+    fn seletor_marca_a_unidade_da_linha() {
+        let c = Conv::from_pairs(&Pairs::default());
+        // Só confere que monta (os grupos e o item marcado são do mide-ui).
+        let _ = c.picker(0);
+        let _ = c.picker(1);
+    }
+}

@@ -357,7 +357,7 @@ pub struct Ctx {
     icon_pending: std::collections::HashSet<String>,
     /// Camada por cima de tudo (menus de contexto) e o tamanho da janela.
     overlay: Option<Pixmap>,
-    window: (u32, u32),
+    pub(crate) window: (u32, u32),
     /// Algum componente está sob o ponteiro neste quadro.
     hover_claimed: bool,
     /// Desenhando o conteúdo do modal (só ele reage enquanto está aberto).
@@ -679,7 +679,10 @@ impl<'a> Ui<'a> {
         let under_menu = self.ctx.memory.menu_rect.is_some_and(|r| self.ctx.input.over(r));
         // Com um modal aberto, só o que está dentro dele reage.
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
-        let hovered = !under_menu && !blocked && self.over(rect) && self.ctx.memory.active.is_none_or(|a| a == id);
+        // Numa área que rola, só a parte à vista recebe o ponteiro (um item escondido
+        // pela rolagem não pode ser clicado por cima do que está fora da área).
+        let in_view = self.pointer().is_some_and(|(_, py)| py >= self.visible.0 && py <= self.visible.1);
+        let hovered = !under_menu && !blocked && in_view && self.over(rect) && self.ctx.memory.active.is_none_or(|a| a == id);
         if hovered {
             self.ctx.hover_claimed = true;
         }
@@ -767,18 +770,34 @@ impl<'a> Ui<'a> {
     /// ```
     pub fn alert(&mut self, title: &str, message: &str, buttons: &[&str]) -> Option<usize> {
         let mut chosen = None;
-        let bw = 120.0;
-        let width = (buttons.len() as f32 * (bw + 8.0) + 40.0).max(420.0);
+        let n = buttons.len().max(1) as f32;
+        let width = (n * 128.0 + 40.0).max(420.0).min(self.ctx.window.0 as f32 - 32.0);
+        // Os botões têm a largura do rótulo; janela estreita (a Calculadora básica):
+        // se não cabem lado a lado no painel, ficam um embaixo do outro (o principal em
+        // cima).
+        let font = self.ctx.theme.font;
+        let widths: Vec<f32> = buttons.iter().map(|b| self.measure(b, font, FontWeight::Semibold) + 32.0).collect();
+        let row_w = widths.iter().sum::<f32>() + (n - 1.0) * 8.0;
+        let stacked = row_w > width - 20.0;
         self.modal(width, |ui| {
             ui.strong(title);
             if !message.is_empty() {
                 ui.note(message);
             }
+            if stacked {
+                for (i, label) in buttons.iter().enumerate().rev() {
+                    let r = if i + 1 == buttons.len() { ui.primary_button(label) } else { ui.button(label) };
+                    if r.clicked() {
+                        chosen = Some(i);
+                    }
+                }
+                return;
+            }
             ui.row(|ui| {
-                ui.push_right(buttons.len() as f32 * (bw + 8.0) - 8.0);
+                ui.push_right(row_w);
                 for (i, label) in buttons.iter().enumerate() {
                     let primary = i + 1 == buttons.len();
-                    ui.sized(bw, |ui| {
+                    ui.sized(widths[i], |ui| {
                         let r = if primary { ui.primary_button(label) } else { ui.button(label) };
                         if r.clicked() {
                             chosen = Some(i);
@@ -909,6 +928,11 @@ impl<'a> Ui<'a> {
     /// O próximo campo de texto desenhado já começa com o foco (para digitar).
     pub fn focus_next_input(&mut self) {
         self.ctx.memory.focus_next = true;
+    }
+
+    /// Tira o foco do campo de texto (um diálogo que fechou devolve as teclas ao app).
+    pub fn blur(&mut self) {
+        self.ctx.memory.focus = None;
     }
 
     /// Algum campo de texto está com o foco (as teclas são dele).
@@ -2000,6 +2024,45 @@ impl<'a> Ui<'a> {
         r
     }
 
+    /// Item de uma lista de escolha (o seletor de lista): texto, detalhe cinza à direita;
+    /// o marcado numa pílula na cor de destaque; desativado, em cinza e sem clique. Ocupa
+    /// a altura de uma linha (`theme().row`).
+    pub fn choice_item(&mut self, label: &str, detail: &str, selected: bool, enabled: bool) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(None, t.row);
+        let mut r = self.interact(id, (rect.0 - 8.0, rect.1, rect.2 + 16.0, rect.3));
+        if !enabled {
+            r.clicked = false;
+            r.double_clicked = false;
+        }
+        if !self.visible(rect) {
+            return r;
+        }
+        // A pílula fica dentro da linha (numa lista sem margem, nada sai cortado); o texto
+        // recua 10 pt, e o detalhe para 14 pt antes da borda (lugar da barra de rolagem).
+        let (fg, sub) = if selected {
+            fill_rounded(self.canvas, rect.0, rect.1 + 2.0, rect.2, rect.3 - 4.0, t.control_radius, color(t.accent));
+            (t.on_accent, t.on_accent)
+        } else {
+            if r.hovered && enabled {
+                fill_rounded(self.canvas, rect.0, rect.1 + 2.0, rect.2, rect.3 - 4.0, t.control_radius, color(t.control));
+            }
+            (if enabled { t.text } else { t.text_secondary }, t.text_secondary)
+        };
+        let (left, right) = (rect.0 + 10.0, rect.0 + rect.2 - 14.0);
+        let room = ((right - left) * 0.4).max(0.0);
+        let measured = if detail.is_empty() { 0.0 } else { self.measure(detail, t.font_small, FontWeight::Regular) };
+        let detail = if measured <= room { detail.to_string() } else { self.fit(detail, t.font_small, FontWeight::Regular, room) };
+        let dw = if detail.is_empty() { 0.0 } else { measured.min(room) + 12.0 };
+        let label = self.fit(label, t.font, FontWeight::Regular, right - left - dw);
+        self.draw_text(&label, left, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, fg);
+        if !detail.is_empty() {
+            self.draw_text(&detail, right - dw + 12.0, rect.1 + (rect.3 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, sub);
+        }
+        r
+    }
+
     /// Ícone do tema do usuário pelo nome (por exemplo, "folder" ou "audio-volume-high").
     pub fn icon(&mut self, name: &str, size: u32) {
         let icon = self.ctx.icon(&[name], size, false);
@@ -2423,20 +2486,33 @@ impl<'a> Ui<'a> {
     pub fn page(&mut self, add: impl FnOnce(&mut Ui)) {
         let h = self.visible.1 - self.cursor_y;
         let pad = self.ctx.theme.padding;
-        self.scroll_impl(h, pad, add);
+        self.scroll_impl(h, pad, None, add);
     }
 
     /// Área que rola com altura fixa (`height`), sem margem: listas dentro de
     /// diálogos (o seletor de arquivos) e painéis.
     pub fn scroll_area(&mut self, height: f32, add: impl FnOnce(&mut Ui)) {
-        self.scroll_impl(height, 0.0, add);
+        self.scroll_impl(height, 0.0, None, add);
     }
 
-    fn scroll_impl(&mut self, h: f32, pad: f32, add: impl FnOnce(&mut Ui)) {
+    /// Como `scroll_area`, mas rola o mínimo para a faixa `keep` (do topo do conteúdo,
+    /// em pontos) ficar à vista: o item marcado pelo teclado numa lista longa.
+    pub fn scroll_area_showing(&mut self, height: f32, keep: Option<(f32, f32)>, add: impl FnOnce(&mut Ui)) {
+        self.scroll_impl(height, 0.0, keep, add);
+    }
+
+    fn scroll_impl(&mut self, h: f32, pad: f32, keep: Option<(f32, f32)>, add: impl FnOnce(&mut Ui)) {
         let id = self.ctx.id();
         let (x, y0) = (self.x, self.cursor_y);
         let w = self.width;
-        let scroll = *self.ctx.memory.scroll.get(&id).unwrap_or(&0.0);
+        let mut scroll = *self.ctx.memory.scroll.get(&id).unwrap_or(&0.0);
+        if let Some((top, bottom)) = keep {
+            if top < scroll {
+                scroll = top;
+            } else if bottom > scroll + h {
+                scroll = bottom - h;
+            }
+        }
         // A imagem cobre só a área visível da página (começando com o que já está lá);
         // o conteúdo começa rolado.
         let (inner, used) = self.sub_area_from(x + pad, y0, w - 2.0 * pad, h, y0 + pad - scroll, true, add);
@@ -2444,7 +2520,6 @@ impl<'a> Ui<'a> {
         let max_scroll = (content_h - h).max(0.0);
         // Roda do mouse sobre a área.
         let over = self.over((x, y0, w, h));
-        let mut scroll = scroll;
         if over && self.ctx.input.scroll != 0.0 {
             scroll += self.ctx.input.scroll;
             self.ctx.repaint = true;

@@ -160,6 +160,7 @@ não fica só no app.
 | Grupo de opções | `ui.card` com `ui.heading` em cima |
 | Liga/desliga com explicação | `ui.switch_detail` |
 | Escolha numa lista | `ui.dropdown` |
+| Escolha numa lista longa, em grupos e com busca | `ListPicker` (diálogo; itens com `ui.choice_item`) |
 | Valor contínuo | `ui.slider` (grava ao soltar: `submitted`) |
 | Linha clicável com detalhe à direita | `ui.list_item` |
 | Navegação por seções | `ui.sidebar` / `ui.sidebar_search` (com busca) / `ui.glass_sidebar` |

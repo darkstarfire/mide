@@ -315,6 +315,9 @@ pub struct Engine {
     pub style: Style,
     /// A conta terminada no último "=", mostrada acima do resultado até a próxima tecla.
     finished: Option<String>,
+    /// Texto da última conversão aplicada (`apply`): sozinha, ela vai para o histórico
+    /// sem os parênteses de fora.
+    conversion: Option<String>,
     seed: u64,
 }
 
@@ -333,6 +336,7 @@ impl Default for Engine {
             history: Vec::new(),
             style: Style::default(),
             finished: None,
+            conversion: None,
             seed,
         }
     }
@@ -665,8 +669,12 @@ impl Engine {
                 text = format!("{} {} {}", self.operand_text(), op.symbol(), self.style.value(b));
                 self.set_value(op.apply(self.value(), b));
             } else if let Some(operand) = self.operand.take() {
-                // Só uma função ou parênteses (√9 =): também vai para o histórico.
-                text = operand;
+                // Só uma função, parênteses ou uma conversão (√9 =): também vai para o
+                // histórico; a conversão sozinha, sem os parênteses de fora.
+                text = match &self.conversion {
+                    Some(c) if operand == format!("({c})") => c.clone(),
+                    _ => operand,
+                };
                 let v = self.value();
                 self.set_value(v);
             } else {
@@ -723,6 +731,20 @@ impl Engine {
         if self.history.len() > HISTORY_MAX {
             self.history.remove(0);
         }
+    }
+
+    /// Uma conversão (ou outra conta feita fora do motor) aplicada ao número da tela,
+    /// como uma tecla de função: o resultado vira o número da tela e, no histórico, a
+    /// conta aparece entre parênteses ("2 + (12,5 pol → cm)"). Com Erro, nada muda.
+    pub fn apply(&mut self, v: f64, text: &str) {
+        if self.error {
+            return;
+        }
+        self.finished = None;
+        self.set_value(v);
+        self.operand = Some(format!("({text})"));
+        self.conversion = Some(text.to_string());
+        self.after_op = false;
     }
 
     /// Número entre 0 e 1 (xorshift64).
@@ -1064,6 +1086,28 @@ mod tests {
         assert_eq!(run(&keys("2*(3+4")).expression(), "2 × (3 +");
         assert_eq!(run(&keys("2+3*4=")).expression(), "2 + 3 × 4 =");
         assert_eq!(run(&keys("2+3*4=1")).expression(), "");
+    }
+
+    #[test]
+    fn conversao_como_funcao() {
+        // 2 + (12,5 pol → cm) = 33,75; o próximo algarismo começa outro número.
+        let mut e = run(&keys("2+12,5"));
+        e.apply(31.75, "12,5 pol → cm");
+        e.press(Key::Equals);
+        assert_eq!(e.display(), "33,75");
+        assert_eq!(e.history.last().map(|h| h.expression.as_str()), Some("2 + (12,5 pol → cm)"));
+        e.press(Key::Digit(4));
+        assert_eq!(e.display(), "4");
+        // Sozinha, também entra no histórico.
+        let mut e = run(&keys("100"));
+        e.apply(37.5, "100 °F → °C");
+        e.press(Key::Equals);
+        assert_eq!(e.history.last().map(|h| h.expression.as_str()), Some("100 °F → °C"));
+        assert_eq!(e.expression(), "100 °F → °C =");
+        // Com Erro, nada acontece.
+        let mut e = run(&keys("1/0="));
+        e.apply(5.0, "x");
+        assert_eq!(e.display(), "Erro");
     }
 
     #[test]

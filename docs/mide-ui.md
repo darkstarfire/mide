@@ -68,6 +68,7 @@ novo.
 | `ui.slider("Texto", &mut f32, min, max)` | Linha com trilho | `.changed()` |
 | `ui.text_input(&mut String, "dica")` | Campo de texto de uma linha | `.changed()`, `.submitted()` (Enter) |
 | `ui.list_item("Texto", "detalhe")` | Item de lista clicável | `.clicked()` |
+| `ui.choice_item("Texto", "detalhe", marcado, ativo)` | Item de uma lista de escolha: o marcado numa pílula azul, o desativado em cinza e sem clique | `.clicked()` |
 | `ui.icon("nome-do-icone", 24)` | Ícone do tema do usuário | — |
 | `ui.separator()` | Linha fina | — |
 | `ui.space(12.0)` | Espaço vazio | — |
@@ -79,6 +80,7 @@ novo.
 | `ui.strong("Texto")` | Texto em negrito numa linha só (corta com "…") | — |
 
 | `ui.scroll_area(240.0, \|ui\| ...)` | Área de altura fixa que rola (listas dentro de diálogos) | — |
+| `ui.scroll_area_showing(240.0, Some((topo, base)), \|ui\| ...)` | A mesma, rolando o mínimo para a faixa (do topo do conteúdo) ficar à vista: o item marcado pelo teclado | — |
 | `ui.dropdown("Texto", &opções, &mut índice)` | Linha com o valor escolhido; o clique abre a lista | `.changed()` |
 
 Todas as respostas também trazem `.hovered()`, `.double_clicked()`,
@@ -190,6 +192,31 @@ if self.confirmar {
     match ui.alert("Apagar o arquivo?", "Não dá para desfazer.", &["Cancelar", "Apagar"]) {
         Some(1) => { self.apagar(); self.confirmar = false; }
         Some(_) => self.confirmar = false,
+        None => {}
+    }
+}
+```
+
+Numa janela estreita (a Calculadora básica, 250 pt), os botões do aviso encolhem para
+caber; estreitos demais, ficam um embaixo do outro, com o principal em cima.
+
+Para escolher numa lista longa, em grupos e com busca (as 140 unidades da Calculadora,
+em 15 categorias), há o seletor de lista (`ListPicker`): sem busca, mostra o grupo do item
+atual, com "‹ Todos os grupos" no topo; com busca (sem acento nem maiúscula, todas as
+palavras, também pelo nome do grupo), uma lista só. ↑/↓ andam (pulando os itens
+desativados), Enter escolhe (o primeiro, se nenhum estiver marcado), Esc e "Cancelar"
+fecham:
+
+```rust
+use mide::kit::{ListPicker, PickGroup, PickItem, Picked};
+
+let grupos = vec![PickGroup { name: "Comprimento".into(), items: vec![PickItem::new("Metros", "m", "metro")] }];
+self.escolher = Some(ListPicker::new("Converter de", "Todas as categorias", "Buscar unidade", grupos, (0, 0)));
+// a cada quadro, por cima do resto:
+if let Some(seletor) = self.escolher.as_mut() {
+    match seletor.show(ui) {
+        Some(Picked::Chosen { group, item }) => { self.usar(group, item); self.escolher = None; }
+        Some(Picked::Cancelled) => self.escolher = None,
         None => {}
     }
 }

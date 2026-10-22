@@ -12,3 +12,4 @@ pub mod engine;
 pub mod format;
 pub mod programmer;
 pub mod rpn;
+pub mod units;

@@ -285,6 +285,24 @@ impl Rpn {
         self.lift_disabled = false;
     }
 
+    /// Uma conversão aplicada a X, como uma função: X vira `v` e o LASTx guarda o de
+    /// antes; `None` (sem resultado) mostra Erro e a pilha fica. `true` se aplicou.
+    pub fn apply(&mut self, v: Option<f64>) -> bool {
+        if !self.ready() {
+            return false;
+        }
+        self.commit();
+        let Some(v) = v.and_then(Self::finite) else {
+            self.error = true;
+            self.lift_disabled = true;
+            return false;
+        };
+        self.last_x = self.stack[0];
+        self.stack[0] = v;
+        self.lift_disabled = false;
+        true
+    }
+
     /// LASTx: traz de volta o X de antes da última conta.
     pub fn recall_last_x(&mut self) {
         let v = self.last_x;
@@ -497,6 +515,26 @@ mod tests {
         r.unary(Unary::Sqrt);
         r.recall_last_x();
         assert_eq!(r.display(), "9");
+    }
+
+    #[test]
+    fn conversao_no_x() {
+        // 5 Enter 12, converter 12 pol em cm: X = 30,48, Y continua 5, LASTx = 12.
+        let mut r = Rpn::default();
+        r.digit(5);
+        r.enter();
+        r.digit(1);
+        r.digit(2);
+        assert!(r.apply(Some(30.48)));
+        assert_eq!(r.display(), "30,48");
+        assert_eq!(r.upper()[0], "5");
+        r.recall_last_x();
+        assert_eq!(r.display(), "12");
+        // Sem resultado: Erro, e a pilha fica.
+        assert!(!r.apply(None));
+        assert_eq!(r.display(), "Erro");
+        r.swap();
+        assert_eq!(r.display(), "12");
     }
 
     #[test]

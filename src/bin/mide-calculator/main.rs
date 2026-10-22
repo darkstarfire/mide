@@ -1,13 +1,19 @@
 //! Calculadora do mide (E3, E3b): modos Básico, Científico e Programador, notação
-//! polonesa reversa (RPN), memória, histórico, casas decimais e desfazer. As contas
-//! ficam em `mide::calculator` (escritas do zero); aqui ficam as teclas, o teclado e
-//! os menus.
+//! polonesa reversa (RPN), memória, histórico, casas decimais, desfazer e o conversor
+//! de unidades. As contas ficam em `mide::calculator` (escritas do zero); aqui ficam as
+//! teclas, o teclado e os menus.
 //!
 //! Teclado (também o numérico): números, + - * / ^ ( ), Enter ou =, %, Backspace, Esc,
 //! Ctrl+C e Ctrl+V; Ctrl+Z desfaz e Ctrl+Shift+Z refaz; Ctrl+1/2/3 trocam o modo,
-//! Ctrl+T mostra o histórico; no Programador, A a F, & | ^ ~ % < >.
+//! Ctrl+T mostra o histórico; no Programador, A a F, & | ^ ~ % < >. Conversor: Ctrl+U
+//! liga, Ctrl+Shift+U troca as unidades, Ctrl+L escolhe a unidade, ↑/↓ usam a outra
+//! linha.
+
+mod converter;
 
 use std::error::Error;
+
+use converter::{Conv, CONVERT_H};
 
 use mide::{
     calculator::{
@@ -15,8 +21,9 @@ use mide::{
         format::Style,
         programmer::{self, Base, Programmer},
         rpn::Rpn,
+        units::{self, Pairs},
     },
-    kit::{run, window_menu, App, MenuGroup, MenuItem, Rgba, Ui, Window},
+    kit::{run, window_menu, App, ListPicker, MenuGroup, MenuItem, Picked, Rgba, Ui, Window},
     settings_file::{self, Value},
     ui::{
         draw::fill_rounded,
@@ -106,6 +113,7 @@ struct Snapshot {
     engine: Engine,
     programmer: Programmer,
     rpn: Rpn,
+    conv: Conv,
 }
 
 struct Calculator {
@@ -121,8 +129,20 @@ struct Calculator {
     /// Rolagem do histórico (pontos acima da conta mais nova) e o tamanho dele quando
     /// rolou (uma conta nova volta para o fim).
     history_scroll: (f32, usize),
-    /// Última tela registrada no log (para os testes acompanharem as contas).
+    /// Conversor de unidades ligado (aparece na Básica e na Científica).
+    convert_on: bool,
+    conv: Conv,
+    /// Pares de unidades lembrados por categoria e o texto gravado na configuração.
+    pairs: Pairs,
+    saved_pairs: String,
+    /// Seletor de unidades aberto e a linha que ele muda.
+    picker: Option<(usize, ListPicker)>,
+    /// Largura do nome da unidade em cada linha, medida no último desenho (os cliques no
+    /// nome e o ⌫ seguem ela).
+    conv_label_w: [f32; 2],
+    /// Última tela e conversão registradas no log (para os testes acompanharem).
     logged: String,
+    logged_conv: String,
 }
 
 fn op(o: Binary) -> Btn {
@@ -152,6 +172,11 @@ impl Calculator {
             grouping: !matches!(settings_file::get("calculator", "thousands"), Some(Value::Bool(false))),
         };
         let radians = flag("radians");
+        let saved_pairs = match settings_file::get("calculator", "convert_pairs") {
+            Some(Value::Text(t)) => t,
+            _ => String::new(),
+        };
+        let pairs = Pairs::from_text(&saved_pairs);
         // A base do Programador fica lembrada (HEX, OCT ou BIN; sem a opção, DEC).
         let mut programmer = Programmer::default();
         if let Some(Value::Text(base)) = settings_file::get("calculator", "base") {
@@ -173,12 +198,19 @@ impl Calculator {
             undo: Vec::new(),
             redo: Vec::new(),
             history_scroll: (0.0, 0),
+            convert_on: flag("convert"),
+            conv: Conv::from_pairs(&pairs),
+            pairs,
+            saved_pairs,
+            picker: None,
+            conv_label_w: [80.0; 2],
             logged: String::new(),
+            logged_conv: String::new(),
         }
     }
 
     fn snapshot(&self) -> Snapshot {
-        Snapshot { engine: self.engine.clone(), programmer: self.programmer.clone(), rpn: self.rpn.clone() }
+        Snapshot { engine: self.engine.clone(), programmer: self.programmer.clone(), rpn: self.rpn.clone(), conv: self.conv }
     }
 
     /// Volta a um estado guardado. O histórico, Rad/Grau e as casas decimais são do
@@ -186,7 +218,7 @@ impl Calculator {
     fn restore(&mut self, s: Snapshot) {
         let history = std::mem::take(&mut self.engine.history);
         let (radians, style, base) = (self.engine.radians, self.engine.style, self.programmer.base);
-        (self.engine, self.rpn, self.programmer) = (s.engine, s.rpn, s.programmer);
+        (self.engine, self.rpn, self.programmer, self.conv) = (s.engine, s.rpn, s.programmer, s.conv);
         self.engine.history = history;
         (self.engine.radians, self.engine.style) = (radians, style);
         (self.rpn.radians, self.rpn.style) = (radians, style);
@@ -208,15 +240,23 @@ impl Calculator {
 
     fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
+            let before = self.conv;
             self.redo.push(self.snapshot());
             self.restore(s);
+            if self.conv != before {
+                self.remember_conv();
+            }
         }
     }
 
     fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
+            let before = self.conv;
             self.undo.push(self.snapshot());
             self.restore(s);
+            if self.conv != before {
+                self.remember_conv();
+            }
         }
     }
 
@@ -257,10 +297,91 @@ impl Calculator {
 
     /// Tamanho da janela no modo atual (com o histórico, se aparece) e o mínimo.
     fn window_size(&self) -> ((u32, u32), (u32, u32)) {
-        let ((w, h), (mw, mh)) = self.mode.size();
-        let extra = if self.history_shown { HISTORY_W as u32 } else { 0 };
-        let rows = if self.mode == Mode::Basic && self.rpn_on { RPN_ROW } else { 0 };
-        ((w + extra, h + rows), (mw + extra, mh + rows))
+        window_size_for(self.mode, self.rpn_on, self.history_shown, self.converting())
+    }
+
+    /// Conversor ligado e à vista (na Básica e na Científica).
+    fn converting(&self) -> bool {
+        self.convert_on && self.mode != Mode::Programmer
+    }
+
+    /// Liga ou desliga o conversor: a janela cresce ou diminui só a altura dele.
+    fn toggle_converter(&mut self, ui: &mut Ui) {
+        if self.mode == Mode::Programmer {
+            return;
+        }
+        self.convert_on = !self.convert_on;
+        tracing::info!("calculadora: conversor {}", if self.convert_on { "ligado" } else { "desligado" });
+        self.save("convert", self.convert_on.then_some(Value::Bool(true)));
+        let (w, h) = ui.window_size();
+        let h = if self.convert_on { h + CONVERT_H as f32 } else { h - CONVERT_H as f32 };
+        let (_, min) = self.window_size();
+        ui.request_size(((w.round() as u32).max(min.0), (h.round() as u32).max(min.1)), min);
+    }
+
+    /// Outras unidades no conversor (⇅, seletor, menus): entram no desfazer, e o par fica
+    /// lembrado para a categoria.
+    fn set_conv(&mut self, conv: Conv) {
+        if conv == self.conv {
+            return;
+        }
+        self.change(|c| c.conv = conv);
+        self.remember_conv();
+    }
+
+    /// O par do conversor fica lembrado para a categoria (também depois de desfazer).
+    fn remember_conv(&mut self) {
+        let conv = self.conv;
+        self.pairs.touch(conv.category, conv.unit[0], conv.unit[1]);
+        let text = self.pairs.to_text();
+        if text != self.saved_pairs {
+            self.save("convert_pairs", Some(Value::Text(text.clone())));
+            self.saved_pairs = text;
+        }
+        let cat = &units::categories()[conv.category];
+        tracing::info!("calculadora: unidades {} {}>{}", cat.id, conv.unit(0).id, conv.unit(1).id);
+    }
+
+    /// A tela mostra Erro (no motor da vez).
+    fn has_error(&self) -> bool {
+        if self.rpn_on { self.rpn.has_error() } else { self.engine.has_error() }
+    }
+
+    /// O número da outra linha do conversor (`None` com Erro na tela ou sem conversão,
+    /// como consumo zero: a linha mostra "—" e não há o que copiar nem usar).
+    fn conversion(&self) -> Option<f64> {
+        if self.has_error() { None } else { self.conv.convert(self.value()) }
+    }
+
+    /// Usa a outra linha do conversor: o número convertido vira o da tela, como uma
+    /// tecla de função (no meio da conta, vira o operando; no RPN, troca o X), e a outra
+    /// linha passa a ser a ativa.
+    fn use_other_row(&mut self) {
+        if (self.rpn_on && self.rpn.has_error()) || (!self.rpn_on && self.engine.has_error()) {
+            return;
+        }
+        let x = self.value();
+        let Some(v) = self.conv.convert(x) else {
+            return;
+        };
+        let text = self.conv.history(x, self.engine.style);
+        self.change(|c| {
+            if c.rpn_on {
+                if c.rpn.apply(Some(v)) {
+                    c.record_rpn(text);
+                }
+            } else {
+                c.engine.apply(v, &text);
+            }
+            c.conv.active = c.conv.other();
+        });
+    }
+
+    /// Abre o seletor de unidades para uma linha do conversor.
+    fn open_picker(&mut self, row: usize) {
+        if self.converting() {
+            self.picker = Some((row, self.conv.picker(row)));
+        }
     }
 
     fn resize(&self, ui: &mut Ui) {
@@ -492,6 +613,17 @@ impl Calculator {
 
     fn keyboard(&mut self, ui: &mut Ui) {
         let input = ui.input().clone();
+        // Conversor: Ctrl+U liga, Ctrl+Shift+U troca as unidades, Ctrl+L escolhe a
+        // unidade (com o seletor aberto, as teclas deste quadro param aqui).
+        match input.shortcut_shift("u") {
+            Some(false) => self.toggle_converter(ui),
+            Some(true) if self.converting() => self.set_conv(self.conv.swapped()),
+            _ => {}
+        }
+        if input.shortcut("l") && self.converting() {
+            self.open_picker(self.conv.active);
+            return;
+        }
         // Ctrl+1/2/3: modos; Ctrl+T: histórico; Ctrl+R: RPN.
         for (key, mode) in [("1", Mode::Basic), ("2", Mode::Scientific), ("3", Mode::Programmer)] {
             if input.shortcut(key) {
@@ -522,6 +654,11 @@ impl Calculator {
         // "1 2 ⌫ 3" dá 13 mesmo chegando no mesmo quadro). Com Ctrl, Alt ou ⌘ são atalhos.
         for press in &input.presses {
             if press.ctrl || press.alt || press.logo {
+                continue;
+            }
+            // ↑/↓ (também do teclado numérico): usar a outra linha do conversor.
+            if self.converting() && matches!(press.keysym, 0xff52 | 0xff54 | 0xff97 | 0xff99) {
+                self.use_other_row();
                 continue;
             }
             if let Some(btn) = self.special_button(press.keysym) {
@@ -668,10 +805,23 @@ impl Calculator {
                     let style = Style { grouping: !self.engine.style.grouping, ..self.engine.style };
                     self.set_style(style);
                 }
+                "conversor" => self.toggle_converter(ui),
+                "conv-unidade" => self.open_picker(self.conv.active),
+                "conv-trocar" if self.converting() => self.set_conv(self.conv.swapped()),
+                "conv-outra" if self.converting() => self.use_other_row(),
+                "copiar-conversao" if self.converting() && self.conversion().is_some() => ui.copy(&self.conv.text(self.value(), self.engine.style)),
                 other => {
                     if let Some(d) = other.strip_prefix("casas:") {
                         let style = Style { decimals: d.parse().ok(), ..self.engine.style };
                         self.set_style(style);
+                    } else if let Some(i) = other.strip_prefix("conv-recente:").and_then(|i| i.parse::<usize>().ok()) {
+                        if let Some(&(category, a, b)) = converter::recent_pairs(&self.pairs, &self.conv).get(i) {
+                            self.set_conv(Conv { category, unit: [a, b], active: self.conv.active });
+                        }
+                    } else if let Some(category) = other.strip_prefix("conv-cat:").and_then(units::category_index) {
+                        // Outra categoria: o par lembrado dela (ou o padrão).
+                        let (a, b) = self.pairs.get(category).or_else(|| units::default_pair(category)).unwrap_or((0, 1));
+                        self.set_conv(Conv { category, unit: [a, b], active: self.conv.active });
                     }
                 }
             }
@@ -682,15 +832,27 @@ impl Calculator {
 impl App for Calculator {
     fn view(&mut self, ui: &mut Ui) {
         self.menu_actions(ui);
-        self.keyboard(ui);
+        // O conversor sumiu (Programador, desligado): o seletor dele fecha junto.
+        if !self.converting() {
+            self.picker = None;
+        }
+        // Com o seletor de unidades aberto, as teclas são dele.
+        if self.picker.is_none() {
+            self.keyboard(ui);
+        }
         let (_, _, total_w, h) = ui.region();
         let history = self.history_shown;
         let w = if history { total_w - HISTORY_W } else { total_w };
         let grid = self.grid();
         let cols = grid.iter().map(Vec::len).max().unwrap_or(4) as f32;
         let rows = grid.len() as f32;
-        // Programador: a tela e os 64 bits em cima.
-        let top = if self.mode == Mode::Programmer { DISPLAY_H + 112.0 } else { DISPLAY_H };
+        // Programador: a tela e os 64 bits em cima; conversor: as duas linhas.
+        let converting = self.converting();
+        let top = match self.mode {
+            Mode::Programmer => DISPLAY_H + 112.0,
+            _ if converting => DISPLAY_H + CONVERT_H as f32,
+            _ => DISPLAY_H,
+        };
         let bw = (w - 2.0 * PAD - (cols - 1.0) * GAP) / cols;
         let bh = ((h - top - PAD - (rows - 1.0) * GAP) / rows).max(20.0);
         let mut pressed = None;
@@ -726,9 +888,63 @@ impl App for Calculator {
             (_, true) => self.rpn.typing(),
             _ => self.engine.clear_label() == "C",
         };
-        let erase = if self.mode == Mode::Programmer { (w - PAD - 30.0, 6.0, 30.0, 24.0) } else { (PAD, DISPLAY_H - GAP - 30.0, 30.0, 24.0) };
+        let erase = match self.mode {
+            Mode::Programmer => (w - PAD - 30.0, 6.0, 30.0, 24.0),
+            _ if converting => converter::erase_rect(w, self.conv.active, self.conv_label_w[self.conv.active]),
+            _ => (PAD, DISPLAY_H - GAP - 30.0, 30.0, 24.0),
+        };
         if typing && ui.background(erase).clicked {
             self.press(if self.mode == Mode::Programmer { Btn::P(programmer::Key::Backspace) } else { Btn::K(EKey::Backspace) });
+        }
+        // Conversor: o nome da unidade abre o seletor; a outra linha usa a conversão; o
+        // ⇅ troca as unidades; clique direito numa linha, o menu dela.
+        if converting {
+            let mut act: Option<(usize, u8)> = None;
+            let has_conversion = self.conversion().is_some();
+            for row in 0..2 {
+                // O nome vem antes da linha: clicar nele abre o seletor (também na linha
+                // que não é a ativa).
+                let name = ui.background(converter::name_rect(w, row, self.conv_label_w[row])).clicked;
+                let r = ui.background(converter::row_rect(w, row));
+                if name {
+                    act = Some((row, 0));
+                } else if r.clicked && row != self.conv.active {
+                    act = Some((row, 1));
+                }
+                let active = row == self.conv.active;
+                ui.context_menu(&r, |m| {
+                    if (active || has_conversion) && m.item("Copiar o número") {
+                        act = Some((row, 2));
+                    }
+                    if has_conversion && m.item("Copiar a conversão") {
+                        act = Some((row, 3));
+                    }
+                    if m.item("Escolher a unidade…") {
+                        act = Some((row, 0));
+                    }
+                    if m.item("Trocar as unidades") {
+                        act = Some((row, 4));
+                    }
+                });
+            }
+            if ui.background(converter::swap_rect()).clicked {
+                act = Some((0, 4));
+            }
+            match act {
+                Some((row, 0)) => self.open_picker(row),
+                Some((_, 1)) => self.use_other_row(),
+                Some((row, 2)) => {
+                    // O número da linha, sem pontos de milhar.
+                    let plain = Style { grouping: false, ..self.engine.style };
+                    let text = if row == self.conv.active { Some(self.copy_text()) } else { self.conversion().map(|v| plain.value(v)) };
+                    if let Some(text) = text {
+                        ui.copy(&text);
+                    }
+                }
+                Some((_, 3)) => ui.copy(&self.conv.text(self.value(), self.engine.style)),
+                Some((_, 4)) => self.set_conv(self.conv.swapped()),
+                _ => {}
+            }
         }
 
         // Programador: a base escolhida e os bits clicáveis.
@@ -813,19 +1029,46 @@ impl App for Calculator {
         let value = self.programmer.value();
         let character = self.programmer.character();
         let expression = if self.rpn_on || self.mode == Mode::Programmer { String::new() } else { self.engine.expression() };
+        // Conversor: a unidade e o número de cada linha (a outra mostra a conversão).
+        let error = if self.rpn_on { self.rpn.has_error() } else { self.engine.has_error() };
+        let conv_view = converting.then(|| {
+            let c = self.conv;
+            let mut numbers = [String::new(), String::new()];
+            numbers[c.active] = screen.clone();
+            numbers[c.other()] = if error { "—".to_string() } else { c.convert(self.value()).map_or_else(|| "—".to_string(), |v| self.engine.style.value(v)) };
+            converter::Shown {
+                names: [c.unit(0).name.to_string(), c.unit(1).name.to_string()],
+                symbols: [c.unit(0).symbol.to_string(), c.unit(1).symbol.to_string()],
+                numbers,
+                active: c.active,
+                category: units::categories()[c.category].name.to_string(),
+            }
+        });
+        if converting && !error {
+            let line = self.conv.text(self.value(), self.engine.style);
+            if line != self.logged_conv {
+                tracing::debug!("calculadora: conversão {line}");
+                self.logged_conv = line;
+            }
+        }
+        let mut label_w = self.conv_label_w;
         ui.paint_text(|pixmap, text, (ox, oy)| {
             let bg = |c: Rgba| mide::ui::draw::rgba(c[0], c[1], c[2], c[3]);
             fill_rounded(pixmap, ox, oy, total_w, h, 0.0, bg(BACKGROUND));
-            // Tela: o número à direita, menor quando não cabe.
-            // Com o ⌫ na tela, o número não passa por cima dele.
-            let room = if typing && mode != Mode::Programmer { 36.0 } else { 0.0 };
-            let (screen, size) = fit_display(text, &screen, w - 2.0 * PAD - 8.0 - room, mode == Mode::Programmer);
-            let tw = text.measure(&screen, size, FontWeight::Regular);
-            // Pela base: no Programador, logo acima da fileira de bits.
-            let display_y = if mode == Mode::Programmer { DISPLAY_H + 8.0 - size * 1.3 } else { DISPLAY_H - GAP - size * 1.3 };
-            text.draw(pixmap, &screen, ox + w - PAD - 4.0 - tw, oy + display_y, size, FontWeight::Regular, [255, 255, 255, 255]);
-            // Indicadores pequenos à esquerda da tela: Rad, memória, RPN (Y Z T).
             let small = [180, 180, 188, 255];
+            if let Some(cv) = &conv_view {
+                label_w = converter::draw(pixmap, text, (ox, oy), w, cv, typing);
+            } else {
+                // Tela: o número à direita, menor quando não cabe; com o ⌫ na tela, o
+                // número não passa por cima dele.
+                let room = if typing && mode != Mode::Programmer { 36.0 } else { 0.0 };
+                let (screen, size) = fit_display(text, &screen, w - 2.0 * PAD - 8.0 - room, mode == Mode::Programmer, 48.0);
+                let tw = text.measure(&screen, size, FontWeight::Regular);
+                // Pela base: no Programador, logo acima da fileira de bits.
+                let display_y = if mode == Mode::Programmer { DISPLAY_H + 8.0 - size * 1.3 } else { DISPLAY_H - GAP - size * 1.3 };
+                text.draw(pixmap, &screen, ox + w - PAD - 4.0 - tw, oy + display_y, size, FontWeight::Regular, [255, 255, 255, 255]);
+            }
+            // Indicadores pequenos à esquerda da tela: Rad, memória, RPN (Y Z T).
             // A conta em andamento, pequena, acima do número.
             if !expression.is_empty() {
                 let x0 = if mode == Mode::Scientific { PAD + 70.0 } else { PAD + 4.0 };
@@ -919,6 +1162,25 @@ impl App for Calculator {
                 }
             }
         });
+        // O nome mudou de largura (o símbolo no lugar do nome): os cliques e o ⌫ seguem a
+        // largura nova no quadro seguinte, pedido já.
+        if label_w != self.conv_label_w {
+            self.conv_label_w = label_w;
+            ui.request_repaint();
+        }
+        // O seletor de unidades fica por cima de tudo.
+        if let Some((row, picker)) = self.picker.as_mut() {
+            let row = *row;
+            match picker.show(ui) {
+                Some(Picked::Chosen { group, item }) => {
+                    self.picker = None;
+                    let conv = self.conv.choose(&self.pairs, row, group, item);
+                    self.set_conv(conv);
+                }
+                Some(Picked::Cancelled) => self.picker = None,
+                None => {}
+            }
+        }
     }
 
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
@@ -935,7 +1197,7 @@ impl App for Calculator {
                 MenuItem::action(&action, &label).checked(style.decimals == *d).enabled(mode != Mode::Programmer)
             })
             .collect();
-        vec![
+        let mut groups = vec![
             MenuGroup {
                 title: "Editar".into(),
                 items: vec![
@@ -944,6 +1206,7 @@ impl App for Calculator {
                     MenuItem::Separator,
                     MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C"),
                     MenuItem::action("colar", "Colar").shortcut("Ctrl+V"),
+                    MenuItem::action("copiar-conversao", "Copiar a conversão").enabled(self.converting() && self.conversion().is_some()),
                     MenuItem::Separator,
                     MenuItem::action("copiar-historico", "Copiar o histórico").enabled(has_history),
                     MenuItem::action("limpar-historico", "Limpar o histórico").enabled(has_history),
@@ -958,24 +1221,59 @@ impl App for Calculator {
                     MenuItem::Separator,
                     MenuItem::action("rpn", "Notação polonesa reversa (RPN)").shortcut("Ctrl+R").checked(self.rpn_on).enabled(mode != Mode::Programmer),
                     MenuItem::action("historico", "Mostrar o histórico").shortcut("Ctrl+T").checked(self.history_shown),
+                    MenuItem::action("conversor", "Conversor de unidades").shortcut("Ctrl+U").checked(self.convert_on).enabled(mode != Mode::Programmer),
                     MenuItem::Separator,
                     MenuItem::action("milhar", "Separador de milhar").checked(style.grouping).enabled(mode != Mode::Programmer),
                     MenuItem::Submenu { label: "Casas decimais".into(), items: decimals },
                 ],
             },
-            window_menu(Vec::new()),
-        ]
+        ];
+        // O menu Converter só aparece com o conversor à vista.
+        if self.converting() {
+            let all = units::categories();
+            let recent = converter::recent_pairs(&self.pairs, &self.conv)
+                .into_iter()
+                .enumerate()
+                .map(|(i, pair)| MenuItem::action(&format!("conv-recente:{i}"), &converter::pair_label(pair)))
+                .collect();
+            let categories = all.iter().enumerate().map(|(i, c)| MenuItem::action(&format!("conv-cat:{}", c.id), c.name).checked(i == self.conv.category)).collect();
+            groups.push(MenuGroup {
+                title: "Converter".into(),
+                items: vec![
+                    MenuItem::action("conv-unidade", "Escolher a unidade…").shortcut("Ctrl+L"),
+                    MenuItem::action("conv-trocar", "Trocar as unidades").shortcut("Ctrl+Shift+U"),
+                    MenuItem::action("conv-outra", "Usar a outra linha"),
+                    MenuItem::Separator,
+                    MenuItem::Submenu { label: "Recentes".into(), items: recent },
+                    MenuItem::Submenu { label: "Categoria".into(), items: categories },
+                ],
+            });
+        }
+        groups.push(window_menu(Vec::new()));
+        groups
     }
 }
 
-/// O número da tela e o tamanho da letra para caber em `width`: de 48 até 16 pontos;
+/// Tamanho da janela e o mínimo: o do modo, mais a fileira da pilha do RPN (Básica), o
+/// conversor (Básica e Científica) e o histórico ao lado.
+fn window_size_for(mode: Mode, rpn: bool, history: bool, converting: bool) -> ((u32, u32), (u32, u32)) {
+    let ((w, h), (mw, mh)) = mode.size();
+    let extra_w = if history { HISTORY_W as u32 } else { 0 };
+    let mut extra_h = if mode == Mode::Basic && rpn { RPN_ROW } else { 0 };
+    if converting {
+        extra_h += CONVERT_H;
+    }
+    ((w + extra_w, h + extra_h), (mw + extra_w, mh + extra_h))
+}
+
+/// O número da tela e o tamanho da letra para caber em `width`: de `max` até 16 pontos;
 /// no Programador (64 bits em binário), até 10, depois sem os espaços entre os grupos
 /// e, por fim, cortado pela esquerda (os bits de cima continuam na fileira de bits).
-fn fit_display(text: &mut Text, screen: &str, width: f32, small: bool) -> (String, f32) {
+fn fit_display(text: &mut Text, screen: &str, width: f32, small: bool, max: f32) -> (String, f32) {
     let min = if small { 10.0 } else { 16.0 };
     let candidates = [screen.to_string(), screen.replace(' ', "")];
     for candidate in candidates.iter().take(if small { 2 } else { 1 }) {
-        let mut size = 48.0;
+        let mut size = max;
         while size > min && text.measure(candidate, size, FontWeight::Regular) > width {
             size -= 2.0;
         }
@@ -983,8 +1281,7 @@ fn fit_display(text: &mut Text, screen: &str, width: f32, small: bool) -> (Strin
             return (candidate.clone(), size);
         }
     }
-    let ellipsis = text.measure("…", min, FontWeight::Regular);
-    (format!("…{}", fit_left(text, &candidates[usize::from(small)], min, width - ellipsis)), min)
+    (fit_left(text, &candidates[usize::from(small)], min, width), min)
 }
 
 /// Corta o começo do texto até caber em `width`, com "…" no lugar do que saiu (o fim
@@ -1028,4 +1325,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ((w, h), (mw, mh)) = calculator.window_size();
     let window = Window::new("Calculadora").app_id("mide-calculator").size(w, h).min_size(mw, mh);
     run(window, calculator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tamanhos_da_janela() {
+        assert_eq!(window_size_for(Mode::Basic, false, false, false).0, (250, 380));
+        assert_eq!(window_size_for(Mode::Basic, false, false, true), ((250, 444), (220, 384)));
+        assert_eq!(window_size_for(Mode::Basic, true, false, true).0, (250, 502));
+        assert_eq!(window_size_for(Mode::Scientific, false, false, true).0, (620, 444));
+        assert_eq!(window_size_for(Mode::Basic, false, true, true).0, (480, 444));
+        // O Programador não mostra o conversor (o `converting` já vem falso).
+        assert_eq!(window_size_for(Mode::Programmer, false, false, false).0, (520, 560));
+    }
 }
