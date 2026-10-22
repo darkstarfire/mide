@@ -123,8 +123,13 @@ fn themed(names: &[&str], size: u32) -> Option<Pixmap> {
 /// Primeiro dos nomes encontrado em `theme` (sem cair no `hicolor`).
 fn in_theme(theme: &str, names: &[&str], size: u32) -> Option<Pixmap> {
     for name in names {
+        // Nos tamanhos pequenos (16 a 24), temas como o do mide (do WhiteSur) trazem
+        // desenhos só de contorno na cor do texto: a pasta da lista da dock parecia um
+        // símbolo. Um ícone colorido vem do desenho grande, reduzido para `size`; só os
+        // "-symbolic" são de contorno de propósito.
+        let lookup = if name.ends_with("-symbolic") { size } else { size.max(48) };
         let path = freedesktop_icons::lookup(name)
-            .with_size(size.min(u16::MAX as u32) as u16)
+            .with_size(lookup.min(u16::MAX as u32) as u16)
             .with_theme(theme)
             .with_cache()
             .find();
