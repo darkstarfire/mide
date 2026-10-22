@@ -469,8 +469,26 @@ fn prefix_len(text: &str, candidate: &str, exact: bool) -> Option<usize> {
     }
 }
 
+/// Índice da categoria Moeda no conversor: logo depois das categorias físicas (as
+/// unidades dela são as moedas de `currency::currencies()`, na ordem de lá).
+pub fn money() -> usize {
+    categories().len()
+}
+
+/// Identificador da Moeda nos pares lembrados.
+pub const MONEY_ID: &str = "moeda";
+
+/// (categoria, unidade) de um par lembrado, também na Moeda (pelo código: "USD").
+fn find_pair_unit(category: &str, unit: &str) -> Option<(usize, usize)> {
+    if category == MONEY_ID {
+        let code = unit.to_uppercase();
+        return super::currency::currencies().iter().position(|c| c.code == code).map(|i| (money(), i));
+    }
+    find(category, unit)
+}
+
 /// Pares de unidades lembrados por categoria, do mais recente ao mais antigo; como
-/// texto para a configuração: "temperatura=f>c;comprimento=pol>cm".
+/// texto para a configuração: "temperatura=f>c;comprimento=pol>cm;moeda=USD>BRL".
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pairs(Vec<(usize, usize, usize)>);
 
@@ -485,7 +503,7 @@ impl Pairs {
             let Some((from, to)) = units.split_once('>') else {
                 continue;
             };
-            if let (Some((c, a)), Some((_, b))) = (find(cat.trim(), from.trim()), find(cat.trim(), to.trim()))
+            if let (Some((c, a)), Some((_, b))) = (find_pair_unit(cat.trim(), from.trim()), find_pair_unit(cat.trim(), to.trim()))
                 && !pairs.iter().any(|(pc, _, _)| *pc == c)
             {
                 pairs.push((c, a, b));
@@ -496,9 +514,16 @@ impl Pairs {
 
     pub fn to_text(&self) -> String {
         let all = categories();
+        let money = super::currency::currencies();
         self.0
             .iter()
-            .map(|&(c, a, b)| format!("{}={}>{}", all[c].id, all[c].units[a].id, all[c].units[b].id))
+            .map(|&(c, a, b)| {
+                if c == self::money() {
+                    format!("{MONEY_ID}={}>{}", money[a].code, money[b].code)
+                } else {
+                    format!("{}={}>{}", all[c].id, all[c].units[a].id, all[c].units[b].id)
+                }
+            })
             .collect::<Vec<_>>()
             .join(";")
     }
@@ -705,6 +730,15 @@ mod tests {
         assert_eq!(longest("milhas por galão"), Some(("mpg", "milhas por galão".len())));
         assert_eq!(longest("kmx"), None);
         assert_eq!(longest_at("sem açúcar", false), None);
+    }
+
+    #[test]
+    fn pares_lembrados_com_moeda() {
+        let p = Pairs::from_text("moeda=usd>BRL;comprimento=pol>cm;moeda=EUR>BRL;moeda=XXX>BRL");
+        let usd = super::super::currency::currencies().iter().position(|c| c.code == "USD").unwrap();
+        let brl = super::super::currency::currencies().iter().position(|c| c.code == "BRL").unwrap();
+        assert_eq!(p.get(money()), Some((usd, brl)));
+        assert_eq!(p.to_text(), "moeda=USD>BRL;comprimento=pol>cm");
     }
 
     #[test]

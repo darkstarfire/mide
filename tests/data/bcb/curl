@@ -1,0 +1,26 @@
+#!/bin/sh
+# curl falso da bateria (cotações da Calculadora): nunca usa a rede. Anota cada pedido
+# em "chamadas" (na pasta de $MIDE_CURL_DIR); com o arquivo "sem-rede" lá, sai como
+# sem conexão (6); com o boletim da data pedida (AAAAMMDD.csv, aqui ao lado), grava na
+# saída e responde 200; senão, 404 (o --fail sai com 22).
+here="$(dirname "$0")"
+state="${MIDE_CURL_DIR:-$here}"
+out=""
+url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --output) out="$2"; shift ;;
+        *) url="$1" ;;
+    esac
+    shift
+done
+echo "$url" >> "$state/chamadas"
+[ -e "$state/sem-rede" ] && exit 6
+file="$here/$(basename "$url")"
+if [ -e "$file" ]; then
+    cp "$file" "$out"
+    printf 200
+    exit 0
+fi
+printf 404
+exit 22

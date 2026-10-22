@@ -10,6 +10,7 @@
 
 - **Obrigatórias, porque sustentam recursos que o desktop promete** (decisão do usuário em 2026-10-21: sem elas, parece que o mide não funciona). O instalador instala sempre, e o `data/mide-conferir` acusa FALTA se não estiverem:
   - `xdg-desktop-portal-wlr` + PipeWire: gravar e compartilhar a tela pelos apps (OBS, navegador em videochamada) (A19).
+  - `curl`: buscar as cotações das moedas do Banco Central na Calculadora (só quando a pessoa usa moeda e deixa buscar na internet). Sem ele, a conversão de moedas usa a última cotação guardada ou fica sem cotação; o resto funciona. O Ubuntu Desktop pode não trazer: o instalador confere.
   - `ffmpeg`: gravar a tela em vídeo, com áudio, pela ferramenta de captura do mide (A21). Só codifica e salva; a captura das imagens e do som é do mide.
 
 - `Xwayland` (pacote `xwayland`) e `xwayland-satellite`, para abrir apps X11 dentro do mide (A14). O satellite pode vir do pacote da distribuição, quando houver, ou de `cargo install --git https://github.com/Supreeeme/xwayland-satellite`. O instalador deve colocar o satellite no PATH (ou ao lado do binário do mide); sem ele, o mide funciona, só sem apps X11.

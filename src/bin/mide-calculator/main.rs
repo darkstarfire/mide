@@ -10,6 +10,7 @@
 //! linha. Notas: Ctrl+N cria uma nota e Ctrl+T mostra a lista.
 
 mod converter;
+mod money;
 mod notes;
 
 use std::error::Error;
@@ -22,7 +23,7 @@ use mide::{
         format::Style,
         programmer::{self, Base, Programmer},
         rpn::Rpn,
-        units::{self, Pairs},
+        units::Pairs,
     },
     kit::{run, window_menu, App, ListPicker, MenuGroup, MenuItem, Picked, Rgba, Ui, Window},
     settings_file::{self, Value},
@@ -151,6 +152,8 @@ struct Calculator {
     logged_conv: String,
     /// Notas matemáticas (abertas na primeira vez que o modo aparece).
     notes: notes::Notes,
+    /// Cotações das moedas (lidas na primeira vez que a Moeda aparece).
+    money: money::Money,
 }
 
 fn op(o: Binary) -> Btn {
@@ -214,6 +217,7 @@ impl Calculator {
             conv_label_w: [80.0; 2],
             logged: String::new(),
             logged_conv: String::new(),
+            money: money::Money::default(),
             notes: notes::Notes::new(!matches!(settings_file::get("calculator", "notes_list"), Some(Value::Bool(false)))),
         }
     }
@@ -369,8 +373,35 @@ impl Calculator {
             self.save("convert_pairs", Some(Value::Text(text.clone())));
             self.saved_pairs = text;
         }
-        let cat = &units::categories()[conv.category];
-        tracing::info!("calculadora: unidades {} {}>{}", cat.id, conv.unit(0).id, conv.unit(1).id);
+        tracing::info!("calculadora: unidades {} {}>{}", converter::category_id(conv.category), conv.label(0).2, conv.label(1).2);
+    }
+
+    /// A pessoa deixou buscar cotações na internet (`None`: ainda não perguntada).
+    fn currency_online(&self) -> Option<bool> {
+        match settings_file::get("calculator", "currency_online") {
+            Some(Value::Bool(on)) => Some(on),
+            _ => None,
+        }
+    }
+
+    /// As janelas das cotações e o que a pessoa respondeu nelas.
+    fn money_dialogs(&mut self, ui: &mut Ui) {
+        let pair = if converter::is_money(self.conv.category) { (self.conv.symbol(0), self.conv.symbol(1)) } else { ("USD", "BRL") };
+        let online = self.currency_online();
+        let Some(answer) = money::dialogs(ui, &mut self.money, online, pair) else {
+            return;
+        };
+        match answer {
+            money::Answer::Online(on) | money::Answer::Toggle(on) => {
+                self.save("currency_online", Some(Value::Bool(on)));
+                tracing::info!("calculadora: buscar cotações na internet: {}", if on { "sim" } else { "não" });
+                if on {
+                    self.money.ensure(Some(true), false, ui.waker());
+                }
+            }
+            money::Answer::Refresh => self.money.ensure(self.currency_online(), true, ui.waker()),
+        }
+        ui.request_repaint();
     }
 
     /// A tela mostra Erro (no motor da vez).
@@ -381,7 +412,7 @@ impl Calculator {
     /// O número da outra linha do conversor (`None` com Erro na tela ou sem conversão,
     /// como consumo zero: a linha mostra "—" e não há o que copiar nem usar).
     fn conversion(&self) -> Option<f64> {
-        if self.has_error() { None } else { self.conv.convert(self.value()) }
+        if self.has_error() { None } else { self.conv.convert(self.value(), self.money.rates.as_ref()) }
     }
 
     /// Usa a outra linha do conversor: o número convertido vira o da tela, como uma
@@ -392,7 +423,7 @@ impl Calculator {
             return;
         }
         let x = self.value();
-        let Some(v) = self.conv.convert(x) else {
+        let Some(v) = self.conv.convert(x, self.money.rates.as_ref()) else {
             return;
         };
         let text = self.conv.history(x, self.engine.style);
@@ -843,7 +874,8 @@ impl Calculator {
                 "conv-unidade" => self.open_picker(self.conv.active),
                 "conv-trocar" if self.converting() => self.set_conv(self.conv.swapped()),
                 "conv-outra" if self.converting() => self.use_other_row(),
-                "copiar-conversao" if self.converting() && self.conversion().is_some() => ui.copy(&self.conv.text(self.value(), self.engine.style)),
+                "copiar-conversao" if self.converting() && self.conversion().is_some() => ui.copy(&self.conv.text(self.value(), self.engine.style, self.money.rates.as_ref())),
+                "cotacoes" => self.money.window = true,
                 other => {
                     if let Some(d) = other.strip_prefix("casas:") {
                         let style = Style { decimals: d.parse().ok(), ..self.engine.style };
@@ -852,9 +884,9 @@ impl Calculator {
                         if let Some(&(category, a, b)) = converter::recent_pairs(&self.pairs, &self.conv).get(i) {
                             self.set_conv(Conv { category, unit: [a, b], active: self.conv.active });
                         }
-                    } else if let Some(category) = other.strip_prefix("conv-cat:").and_then(units::category_index) {
+                    } else if let Some(category) = other.strip_prefix("conv-cat:").and_then(|id| converter::category_order().into_iter().find(|&c| converter::category_id(c) == id)) {
                         // Outra categoria: o par lembrado dela (ou o padrão).
-                        let (a, b) = self.pairs.get(category).or_else(|| units::default_pair(category)).unwrap_or((0, 1));
+                        let (a, b) = self.pairs.get(category).or_else(|| converter::default_pair(category)).unwrap_or((0, 1));
                         self.set_conv(Conv { category, unit: [a, b], active: self.conv.active });
                     }
                 }
@@ -876,8 +908,20 @@ impl App for Calculator {
         if !self.converting() {
             self.picker = None;
         }
-        // Com o seletor de unidades aberto, as teclas são dele.
-        if self.picker.is_none() {
+        // Moeda: o resultado de uma busca que terminou, e buscar se precisar (a busca
+        // só acontece quando a pessoa usa moeda).
+        if self.money.poll() {
+            ui.request_repaint();
+        }
+        if self.converting() && converter::is_money(self.conv.category) {
+            self.money.ensure(self.currency_online(), false, ui.waker());
+            if self.money.fetching() {
+                ui.wake_after(std::time::Duration::from_millis(200));
+            }
+        }
+        // Com o seletor de unidades ou uma janela das cotações aberta, as teclas são dela.
+        let money_open = self.money.asking || self.money.window || self.money.failure.is_some();
+        if self.picker.is_none() && !money_open {
             self.keyboard(ui);
         }
         let (_, _, total_w, h) = ui.region();
@@ -970,6 +1014,10 @@ impl App for Calculator {
             if ui.background(converter::swap_rect()).clicked {
                 act = Some((0, 4));
             }
+            // Na Moeda, a faixa (fonte e data) abre "Cotações de moedas".
+            if converter::is_money(self.conv.category) && ui.background((w / 2.0, 73.0, w / 2.0 - PAD, 20.0)).clicked {
+                self.money.window = true;
+            }
             match act {
                 Some((row, 0)) => self.open_picker(row),
                 Some((_, 1)) => self.use_other_row(),
@@ -981,7 +1029,7 @@ impl App for Calculator {
                         ui.copy(&text);
                     }
                 }
-                Some((_, 3)) => ui.copy(&self.conv.text(self.value(), self.engine.style)),
+                Some((_, 3)) => ui.copy(&self.conv.text(self.value(), self.engine.style, self.money.rates.as_ref())),
                 Some((_, 4)) => self.set_conv(self.conv.swapped()),
                 _ => {}
             }
@@ -1075,17 +1123,27 @@ impl App for Calculator {
             let c = self.conv;
             let mut numbers = [String::new(), String::new()];
             numbers[c.active] = screen.clone();
-            numbers[c.other()] = if error { "—".to_string() } else { c.convert(self.value()).map_or_else(|| "—".to_string(), |v| self.engine.style.value(v)) };
+            let rates = self.money.rates.as_ref();
+            numbers[c.other()] = if error {
+                "—".to_string()
+            } else {
+                c.convert(self.value(), rates).map_or_else(|| "—".to_string(), |v| c.style(c.other(), self.engine.style).value(v))
+            };
+            // Na Moeda, a faixa mostra a fonte e a data da cotação (ou o estado).
+            let category = if converter::is_money(c.category) { self.money.band(self.currency_online()) } else { converter::category_name(c.category).to_string() };
             converter::Shown {
-                names: [c.unit(0).name.to_string(), c.unit(1).name.to_string()],
-                symbols: [c.unit(0).symbol.to_string(), c.unit(1).symbol.to_string()],
+                names: [c.label(0).0.to_string(), c.label(1).0.to_string()],
+                symbols: [c.symbol(0).to_string(), c.symbol(1).to_string()],
                 numbers,
                 active: c.active,
-                category: units::categories()[c.category].name.to_string(),
+                category,
             }
         });
         if converting && !error {
-            let line = self.conv.text(self.value(), self.engine.style);
+            let mut line = self.conv.text(self.value(), self.engine.style, self.money.rates.as_ref());
+            if converter::is_money(self.conv.category) {
+                line = format!("{line} {}", self.money.log_tag());
+            }
             if line != self.logged_conv {
                 tracing::debug!("calculadora: conversão {line}");
                 self.logged_conv = line;
@@ -1214,14 +1272,20 @@ impl App for Calculator {
             match picker.show(ui) {
                 Some(Picked::Chosen { group, item }) => {
                     self.picker = None;
-                    let conv = self.conv.choose(&self.pairs, row, group, item);
+                    // Os grupos do seletor vêm na ordem de `category_order` (a Moeda primeiro).
+                    let category = converter::category_order()[group];
+                    let conv = self.conv.choose(&self.pairs, row, category, item);
                     self.set_conv(conv);
                 }
                 Some(Picked::Cancelled) => self.picker = None,
                 None => {}
             }
         }
-        // Avisos das notas (fechar sem gravar) também por cima do teclado.
+        // Janelas das cotações (sem o seletor aberto) e avisos das notas (fechar sem
+        // gravar), por cima do teclado.
+        if self.picker.is_none() {
+            self.money_dialogs(ui);
+        }
         self.notes_dialogs(ui);
     }
 
@@ -1290,13 +1354,15 @@ impl App for Calculator {
         });
         // O menu Converter só aparece com o conversor à vista.
         if self.converting() {
-            let all = units::categories();
             let recent = converter::recent_pairs(&self.pairs, &self.conv)
                 .into_iter()
                 .enumerate()
                 .map(|(i, pair)| MenuItem::action(&format!("conv-recente:{i}"), &converter::pair_label(pair)))
                 .collect();
-            let categories = all.iter().enumerate().map(|(i, c)| MenuItem::action(&format!("conv-cat:{}", c.id), c.name).checked(i == self.conv.category)).collect();
+            let categories = converter::category_order()
+                .into_iter()
+                .map(|c| MenuItem::action(&format!("conv-cat:{}", converter::category_id(c)), converter::category_name(c)).checked(c == self.conv.category))
+                .collect();
             groups.push(MenuGroup {
                 title: "Converter".into(),
                 items: vec![
@@ -1306,6 +1372,8 @@ impl App for Calculator {
                     MenuItem::Separator,
                     MenuItem::Submenu { label: "Recentes".into(), items: recent },
                     MenuItem::Submenu { label: "Categoria".into(), items: categories },
+                    MenuItem::Separator,
+                    MenuItem::action("cotacoes", "Cotações de moedas…"),
                 ],
             });
         }

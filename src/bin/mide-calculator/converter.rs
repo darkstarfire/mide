@@ -5,8 +5,9 @@
 
 use mide::{
     calculator::{
+        currency::{self, Currency, Rates},
         format::Style,
-        units::{self, Pairs, Unit},
+        units::{self, Pairs},
     },
     kit::{ListPicker, PickGroup, PickItem},
     ui::{
@@ -20,6 +21,51 @@ use crate::{fit_left, PAD, SCIENCE};
 
 /// Altura a mais do visor com o conversor (pontos).
 pub const CONVERT_H: u32 = 64;
+
+/// A categoria é a Moeda (as unidades são as moedas, convertidas pelas cotações).
+pub fn is_money(category: usize) -> bool {
+    category == units::money()
+}
+
+/// Nome da categoria ("Comprimento", "Moeda").
+pub fn category_name(category: usize) -> &'static str {
+    if is_money(category) { "Moeda" } else { units::categories()[category].name }
+}
+
+/// Identificador da categoria no log e no config ("comprimento", "moeda").
+pub fn category_id(category: usize) -> &'static str {
+    if is_money(category) { units::MONEY_ID } else { units::categories()[category].id }
+}
+
+/// Todas as categorias, na ordem do seletor e do menu: a Moeda primeiro.
+pub fn category_order() -> Vec<usize> {
+    std::iter::once(units::money()).chain(0..units::money()).collect()
+}
+
+fn money(unit: usize) -> &'static Currency {
+    &currency::currencies()[unit]
+}
+
+/// (nome, símbolo, identificador) de uma unidade; numa moeda, o símbolo é o código
+/// ("USD": "$" sozinho seria ambíguo na tela).
+pub fn unit_label(category: usize, unit: usize) -> (&'static str, &'static str, &'static str) {
+    if is_money(category) {
+        let c = money(unit);
+        (c.name, c.code, c.code)
+    } else {
+        let u = &units::categories()[category].units[unit];
+        (u.name, u.symbol, u.id)
+    }
+}
+
+/// O par padrão de uma categoria (USD → BRL na Moeda).
+pub fn default_pair(category: usize) -> Option<(usize, usize)> {
+    if is_money(category) {
+        let at = |code: &str| currency::currencies().iter().position(|c| c.code == code);
+        return Some((at("USD")?, at("BRL")?));
+    }
+    units::default_pair(category)
+}
 
 /// As unidades do conversor: a categoria, a unidade de cada linha (0 em cima) e qual
 /// linha é o número da tela (a outra mostra a conversão).
@@ -42,9 +88,19 @@ impl Conv {
         Conv { category, unit: [a, b], active: 0 }
     }
 
-    /// Unidade de uma linha.
-    pub fn unit(&self, row: usize) -> &'static Unit {
-        &units::categories()[self.category].units[self.unit[row]]
+    /// Nome, símbolo e identificador da unidade de uma linha.
+    pub fn label(&self, row: usize) -> (&'static str, &'static str, &'static str) {
+        unit_label(self.category, self.unit[row])
+    }
+
+    /// Símbolo da unidade de uma linha ("cm", "USD").
+    pub fn symbol(&self, row: usize) -> &'static str {
+        self.label(row).1
+    }
+
+    /// Casas decimais da moeda da linha (só na Moeda).
+    pub fn decimals(&self, row: usize) -> Option<u8> {
+        is_money(self.category).then(|| money(self.unit[row]).decimals)
     }
 
     /// A linha que não é a ativa.
@@ -52,20 +108,35 @@ impl Conv {
         1 - self.active
     }
 
-    /// O número da linha ativa convertido para a outra (`None`: sem resultado).
-    pub fn convert(&self, x: f64) -> Option<f64> {
-        units::convert(x, self.unit(self.active), self.unit(self.other()))
+    /// O número da linha ativa convertido para a outra (`None`: sem resultado; na
+    /// Moeda, também sem a cotação das duas).
+    pub fn convert(&self, x: f64, rates: Option<&Rates>) -> Option<f64> {
+        let (from, to) = (self.unit[self.active], self.unit[self.other()]);
+        if is_money(self.category) {
+            return rates?.convert(x, money(from).code, money(to).code);
+        }
+        let all = &units::categories()[self.category].units;
+        units::convert(x, &all[from], &all[to])
+    }
+
+    /// O formato da linha: na Moeda, com "Casas decimais" em Automático, as casas da
+    /// moeda (2 no real, 0 no iene).
+    pub fn style(&self, row: usize, style: Style) -> Style {
+        match self.decimals(row) {
+            Some(d) if style.decimals.is_none() => Style { decimals: Some(d), ..style },
+            _ => style,
+        }
     }
 
     /// "12,5 pol = 31,75 cm" (Copiar a conversão e o log).
-    pub fn text(&self, x: f64, style: Style) -> String {
-        let other = self.convert(x).map_or_else(|| "—".to_string(), |v| style.value(v));
-        format!("{} {} = {} {}", style.value(x), self.unit(self.active).symbol, other, self.unit(self.other()).symbol)
+    pub fn text(&self, x: f64, style: Style, rates: Option<&Rates>) -> String {
+        let other = self.convert(x, rates).map_or_else(|| "—".to_string(), |v| self.style(self.other(), style).value(v));
+        format!("{} {} = {} {}", style.value(x), self.symbol(self.active), other, self.symbol(self.other()))
     }
 
     /// "12,5 pol → cm": a conversão como conta, no histórico.
     pub fn history(&self, x: f64, style: Style) -> String {
-        format!("{} {} → {}", style.value(x), self.unit(self.active).symbol, self.unit(self.other()).symbol)
+        format!("{} {} → {}", style.value(x), self.symbol(self.active), self.symbol(self.other()))
     }
 
     /// As unidades trocam de linha; a linha ativa fica (o número passa a ser da outra
@@ -82,7 +153,7 @@ impl Conv {
         if category == self.category {
             return if self.unit[1 - row] == unit { self.swapped() } else { Conv { unit: with(self.unit, row, unit), ..self } };
         }
-        let (a, b) = pairs.get(category).or_else(|| units::default_pair(category)).unwrap_or((0, 1));
+        let (a, b) = pairs.get(category).or_else(|| default_pair(category)).unwrap_or((0, 1));
         let mut pair = with([a, b], row, unit);
         if pair[1 - row] == unit {
             pair[1 - row] = [a, b][row];
@@ -90,27 +161,43 @@ impl Conv {
         Conv { category, unit: pair, active: self.active }
     }
 
-    /// O seletor de unidades para a linha `row`: todas as categorias, com a unidade da
-    /// linha marcada.
+    /// O seletor de unidades para a linha `row`: todas as categorias (a Moeda primeiro,
+    /// na ordem de `category_order`), com a unidade da linha marcada. O grupo escolhido
+    /// volta para a categoria por `category_order()[grupo]`.
     pub fn picker(&self, row: usize) -> ListPicker {
-        let groups = units::categories()
+        let order = category_order();
+        let groups = order
             .iter()
-            .map(|c| PickGroup {
-                name: c.name.into(),
-                items: c
-                    .units
-                    .iter()
-                    .map(|u| {
-                        // O símbolo e os apelidos são as chaves exatas da busca ("MB").
-                        let detail = if u.detail.is_empty() { u.symbol.to_string() } else { format!("{} · {}", u.symbol, u.detail) };
-                        let keys: Vec<&str> = std::iter::once(u.symbol).chain(u.aliases.iter().copied()).chain(c.aliases.iter().copied()).collect();
-                        PickItem::new(u.name, &detail, &keys)
-                    })
-                    .collect(),
+            .map(|&c| {
+                if is_money(c) {
+                    let items = currency::currencies()
+                        .iter()
+                        .map(|m| {
+                            let keys: Vec<&str> = [m.code, m.symbol(), m.plural, "moeda", "dinheiro", "câmbio"].into_iter().chain(m.aliases.iter().copied()).collect();
+                            PickItem::new(m.name, m.code, &keys)
+                        })
+                        .collect();
+                    return PickGroup { name: "Moeda".into(), items };
+                }
+                let cat = &units::categories()[c];
+                PickGroup {
+                    name: cat.name.into(),
+                    items: cat
+                        .units
+                        .iter()
+                        .map(|u| {
+                            // O símbolo e os apelidos são as chaves exatas da busca ("MB").
+                            let detail = if u.detail.is_empty() { u.symbol.to_string() } else { format!("{} · {}", u.symbol, u.detail) };
+                            let keys: Vec<&str> = std::iter::once(u.symbol).chain(u.aliases.iter().copied()).chain(cat.aliases.iter().copied()).collect();
+                            PickItem::new(u.name, &detail, &keys)
+                        })
+                        .collect(),
+                }
             })
             .collect();
         let title = if row == self.active { "Converter de" } else { "Converter para" };
-        ListPicker::new(title, "Todas as categorias", "Buscar unidade", groups, (self.category, self.unit[row]))
+        let group = order.iter().position(|&c| c == self.category).unwrap_or(0);
+        ListPicker::new(title, "Todas as categorias", "Buscar unidade", groups, (group, self.unit[row]))
     }
 }
 
@@ -189,8 +276,7 @@ pub fn recent_pairs(pairs: &Pairs, conv: &Conv) -> Vec<(usize, usize, usize)> {
 
 /// Um par como aparece no menu: "°F → °C".
 pub fn pair_label((category, a, b): (usize, usize, usize)) -> String {
-    let units = &units::categories()[category].units;
-    format!("{} → {}", units[a].symbol, units[b].symbol)
+    format!("{} → {}", unit_label(category, a).1, unit_label(category, b).1)
 }
 
 /// O par com `unit` na posição `row`.
@@ -227,7 +313,13 @@ mod tests {
     use super::*;
 
     fn ids(c: &Conv) -> (&'static str, [&'static str; 2]) {
-        (units::categories()[c.category].id, [c.unit(0).id, c.unit(1).id])
+        (category_id(c.category), [c.label(0).2, c.label(1).2])
+    }
+
+    /// Trecho do boletim do Banco Central de 21/10/2026 (bcb.gov.br, "Cotação de todas
+    /// as moedas"): o dólar (tipo A) e o euro (tipo B).
+    fn rates() -> Rates {
+        currency::parse_bcb("21/10/2026;220;A;USD;5,02700000;5,02770000;1,00000000;1,00000000\n21/10/2026;978;B;EUR;5,63980000;5,64110000;1,12190000;1,12200000\n").unwrap()
     }
 
     #[test]
@@ -241,17 +333,17 @@ mod tests {
     fn textos() {
         let c = Conv::from_pairs(&Pairs::default());
         let style = Style::default();
-        assert_eq!(c.text(12.5, style), "12,5 pol = 31,75 cm");
+        assert_eq!(c.text(12.5, style, None), "12,5 pol = 31,75 cm");
         assert_eq!(c.history(12.5, style), "12,5 pol → cm");
         let t = Conv::from_pairs(&Pairs::from_text("temperatura=f>c"));
-        assert_eq!(t.text(100.0, style), "100 °F = 37,7777777778 °C");
-        assert_eq!(t.swapped().text(100.0, style), "100 °C = 212 °F");
+        assert_eq!(t.text(100.0, style, None), "100 °F = 37,7777777778 °C");
+        assert_eq!(t.swapped().text(100.0, style, None), "100 °C = 212 °F");
         // Sem resultado: "—".
         let fuel = Conv::from_pairs(&Pairs::from_text("consumo=l100>kml"));
-        assert_eq!(fuel.text(0.0, style), "0 L/100 km = — km/L");
+        assert_eq!(fuel.text(0.0, style, None), "0 L/100 km = — km/L");
         // A linha ativa embaixo: o número é o de baixo.
         let low = Conv { active: 1, ..c };
-        assert_eq!(low.text(2.54, style), "2,54 cm = 1 pol");
+        assert_eq!(low.text(2.54, style, None), "2,54 cm = 1 pol");
     }
 
     #[test]
@@ -288,6 +380,32 @@ mod tests {
         let list = recent_pairs(&pairs, &c);
         assert_eq!(list.len(), 5);
         assert_eq!(list.iter().map(|&p| pair_label(p)).collect::<Vec<_>>(), ["pol → cm", "°F → °C", "lb → kg", "h → min", "gal → L"]);
+    }
+
+    #[test]
+    fn moeda() {
+        let pairs = Pairs::from_text("moeda=USD>BRL");
+        let c = Conv::from_pairs(&pairs);
+        assert_eq!(ids(&c), ("moeda", ["USD", "BRL"]));
+        let style = Style::default();
+        // Pela taxa de venda: 100 USD = 502,77 BRL; sem cotações, "—".
+        assert_eq!(c.text(100.0, style, Some(&rates())), "100 USD = 502,77 BRL");
+        assert_eq!(c.text(100.0, style, None), "100 USD = — BRL");
+        // Com Automático, as casas da moeda (o real com 2); a casa escolhida vale.
+        assert_eq!(c.swapped().text(1.0, style, Some(&rates())), "1 BRL = 0,20 USD");
+        let two = Style { decimals: Some(4), ..style };
+        assert_eq!(c.swapped().text(1.0, two, Some(&rates())), "1,0000 BRL = 0,1989 USD");
+        // Moeda sem cotação no boletim: sem resultado.
+        let (_, jpy) = (0, currency::currencies().iter().position(|m| m.code == "JPY").unwrap());
+        assert_eq!(c.choose(&pairs, 1, units::money(), jpy).convert(1.0, Some(&rates())), None);
+        // A Moeda vem primeiro no seletor e no menu.
+        assert_eq!(category_order()[0], units::money());
+        assert_eq!(pair_label((units::money(), c.unit[0], c.unit[1])), "USD → BRL");
+        // Sem par lembrado, USD → BRL.
+        let (len, km) = units::find("comprimento", "km").unwrap();
+        let other = Conv { category: len, unit: [km, km], active: 0 };
+        let usd = currency::currencies().iter().position(|m| m.code == "USD").unwrap();
+        assert_eq!(ids(&other.choose(&Pairs::default(), 0, units::money(), usd)), ("moeda", ["USD", "BRL"]));
     }
 
     #[test]

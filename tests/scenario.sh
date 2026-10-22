@@ -57,6 +57,9 @@ fi
 # Sem XWayland por padrão (um Xwayland a menos por cenário); os testes de apps X11
 # ligam com MIDE_XWAYLAND=1.
 export MIDE_XWAYLAND="${MIDE_XWAYLAND:-0}"
+# Nada da bateria usa a internet: os apps que buscam algo (as cotações da Calculadora)
+# só usam o programa falso que o teste der (MIDE_CURL); sem ele, não buscam.
+export MIDE_NO_NETWORK=1
 
 # Socket próprio dos testes: uma sessão do mide aberta (mide-0) não é tocada.
 SOCK="${MIDE_TEST_SOCKET:-mide-test}"

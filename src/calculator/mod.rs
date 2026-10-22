@@ -9,9 +9,11 @@
 //! respeitam a precedência (2 + 3 × 4 = 14), `=` repetido refaz a última operação e
 //! as funções de uma tecla (x², √, sen...) valem na hora para o número da tela.
 
+pub mod currency;
 pub mod engine;
 pub mod format;
 pub mod notes;
 pub mod programmer;
+pub mod rates;
 pub mod rpn;
 pub mod units;

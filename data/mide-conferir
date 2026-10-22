@@ -71,6 +71,13 @@ else
     falta "configuração do portal wlr: rode data/mide-atualizar"
 fi
 
+echo "== cotações de moedas (Calculadora)"
+if command -v curl >/dev/null; then
+    ok "curl instalado (cotações do Banco Central)"
+else
+    aviso "curl: sudo apt install curl (sem ele, a Calculadora não busca as cotações das moedas)"
+fi
+
 echo "== sessão"
 sessao="$(command -v mide-session)"
 if [ -z "$sessao" ]; then

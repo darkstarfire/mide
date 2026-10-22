@@ -976,14 +976,25 @@ CDIR="$(mktemp -d)"
 # calc_run "roteiro" [opções de [calculator]]: abre a Calculadora (com CALC_SCEN, outro
 # cenário, como o do barramento D-Bus de teste). As notas e a Lixeira ficam em
 # $CDIR/data (XDG_DATA_HOME só da Calculadora), apagada a cada execução (com
-# CALC_KEEP_DATA=1, fica a da execução anterior).
+# CALC_KEEP_DATA=1, fica a da execução anterior). As cotações vêm do curl falso
+# (tests/data/bcb/curl, com os boletins de 20 e 21/10/2026; nada vai à internet), com
+# o cache em $CDIR/data/cache e os pedidos anotados em $CDIR/data/curl/chamadas; a hora
+# fica em 21/10/2026 15h (o boletim do dia já saiu). CALC_NO_CURL=1 tira o curl falso.
 calc_run() {
     local script="$1" saved="${2:-}"
     rm -rf "$CDIR/cfg" "$CDIR/calc.log"
     [ -z "${CALC_KEEP_DATA:-}" ] && rm -rf "$CDIR/data"
-    mkdir -p "$CDIR/cfg/mide" "$CDIR/data"
+    mkdir -p "$CDIR/cfg/mide" "$CDIR/data/curl"
     [ -n "$saved" ] && printf '[calculator]\n%b\n' "$saved" > "$CDIR/cfg/mide/config.toml"
-    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "RUST_LOG=mide_calculator=debug XDG_DATA_HOME='$CDIR/data' $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
+    local curl="MIDE_CURL='$PWD/tests/data/bcb/curl'"
+    [ -n "${CALC_NO_CURL:-}" ] && curl=""
+    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "RUST_LOG=mide_calculator=debug XDG_DATA_HOME='$CDIR/data' XDG_CACHE_HOME='$CDIR/data/cache' MIDE_CURL_DIR='$CDIR/data/curl' MIDE_RATES_NOW=2026-10-21T15:00:00-03:00 $curl $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
+}
+# calc_calls "nome" N: o curl falso recebeu N pedidos na última execução.
+calc_calls() {
+    local got
+    got="$(cat "$CDIR/data/curl/chamadas" 2>/dev/null | wc -l)"
+    if [ "$got" = "$2" ]; then echo "ok    $1"; PASS=$((PASS + 1)); else echo "FALHA $1 (esperado $2 pedido(s), obtido $got)"; FAIL=$((FAIL + 1)); fi
 }
 # calc_screen "nome" "tela esperada" "roteiro" [opções]: confere a última tela.
 calc_screen() {
@@ -1068,6 +1079,24 @@ calc_convert "Calculadora: unidade de outra categoria leva o par dela (°F → �
 calc_screen "Calculadora: Esc fecha o seletor sem apagar a conta" "12,5" "400 type 12,5; 410 combo ctrl+l; 440 key esc; 470 list" 'convert = true'
 # O nome da unidade da linha de baixo (78, 195) abre o seletor para ela.
 calc_convert "Calculadora: clicar no nome da linha de baixo escolhe a unidade dela" "1 pol = 0,0254 m" "400 type 1; 420 click 78 195; 450 type metro; 480 key enter; 510 list" 'convert = true'
+# Moeda (E3b, etapa 2): cotações do Banco Central pelo curl falso.
+calc_convert "Moeda: 100 USD em BRL pela cotação de 21/10" "100 USD = 502,77 BRL (BCB 2026-10-21)" "400 type 100; 500 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"\ncurrency_online = true'
+calc_calls "Moeda: um pedido ao Banco Central" 1
+CALC_KEEP_DATA=1 calc_convert "Moeda: reabrir no mesmo dia usa o cache" "100 USD = 502,77 BRL (BCB 2026-10-21)" "400 type 100; 500 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"\ncurrency_online = true'
+calc_calls "Moeda: reabrir no mesmo dia não busca de novo" 1
+calc_run "400 key enter; 460 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"'
+calc_config "Moeda: a primeira vez pergunta, e o Enter (Buscar) fica lembrado" '^currency_online = true'
+calc_calls "Moeda: depois de aceitar, busca" 1
+# Sem rede, com o boletim de 20/10 guardado: avisa e usa o de 20/10.
+rm -rf "$CDIR/data"; mkdir -p "$CDIR/data/cache/mide/cotacoes" "$CDIR/data/curl"
+cp tests/data/bcb/20261020.csv "$CDIR/data/cache/mide/cotacoes/bcb.csv"; touch "$CDIR/data/curl/sem-rede"
+CALC_KEEP_DATA=1 calc_convert "Moeda: sem rede vale a cotação guardada (20/10)" "100 USD = 501,00 BRL (BCB 2026-10-20)" "400 key enter; 420 type 100; 500 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"\ncurrency_online = true'
+calc_log "Moeda: sem rede, o log registra" "cotações BCB de 2026-10-20 \(sem conexão"
+rm -f "$CDIR/data/curl/sem-rede" "$CDIR/data/curl/chamadas"
+CALC_KEEP_DATA=1 calc_convert "Moeda: busca desligada usa o cache" "100 USD = 501,00 BRL (BCB 2026-10-20)" "400 type 100; 500 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"\ncurrency_online = false'
+calc_calls "Moeda: busca desligada não pede nada" 0
+CALC_NO_CURL=1 calc_run "400 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"\ncurrency_online = true'
+calc_log "Moeda: na bateria, sem o curl falso, nada é buscado" "cotações \(teste\): sem MIDE_CURL, nada buscado"
 # Menus da Calculadora na barra (num barramento D-Bus de teste, como os do Terminal).
 CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Científica pela barra" 'janela "Calculadora" .*visível=620x380' "500 click 232 14; 540 click 250 79; 580 list"
 CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Conversor de unidades pela barra" 'janela "Calculadora" .*visível=250x444' "500 click 232 14; 540 click 250 208; 580 list"

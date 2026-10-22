@@ -93,6 +93,21 @@ pub fn to_entry(v: f64) -> String {
     scientific(v)
 }
 
+/// Com `n` algarismos significativos, sem cortar a parte inteira (364282,08 com 5 dá
+/// "364282") e sem zeros sobrando ("1,122", não "1,1220"); notação científica quando a
+/// forma fixa passaria de 15 casas ou da faixa do `f64` exato.
+pub fn significant(v: f64, n: usize) -> String {
+    if v == 0.0 || !v.is_finite() {
+        return "0".into();
+    }
+    let magnitude = v.abs().log10().floor() as i32;
+    let decimals = (n as i32 - 1 - magnitude).max(0);
+    if decimals > 15 || v.abs() >= 1e15 {
+        return to_entry(v);
+    }
+    let s = fixed(v, decimals as usize);
+    if s.contains(',') { s.trim_end_matches('0').trim_end_matches(',').to_string() } else { s }
+}
 
 /// Notação científica com o máximo de algarismos que cabe ("1,125899907e15").
 fn scientific(v: f64) -> String {
@@ -231,5 +246,17 @@ mod tests {
         let many = Style { decimals: Some(15), grouping: false };
         assert_eq!(many.value(1.0 / 3.0), "0,333333333333333");
         assert_eq!(many.value(123_456.789), "123456,789000000000000");
+    }
+
+    #[test]
+    fn algarismos_significativos() {
+        assert_eq!(significant(5.0277, 5), "5,0277");
+        assert_eq!(significant(364_282.08, 5), "364282");
+        assert_eq!(significant(1.122_000_1, 5), "1,122");
+        assert_eq!(significant(2.745_126_9e-6, 5), "0,0000027451");
+        assert_eq!(significant(9.999_99, 5), "10");
+        assert_eq!(significant(-0.012_345_6, 3), "-0,0123");
+        assert_eq!(significant(0.0, 5), "0");
+        assert_eq!(significant(1.5e-20, 5), "1,5e-20");
     }
 }
