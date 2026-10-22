@@ -321,6 +321,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app: Box::new(app),
         menus: None,
         maximized: false,
+        constrained: false,
+        configured_size: (None, None),
+        wanted_size: None,
         compositor,
         hidden: false,
         others_drawn: None,
@@ -462,6 +465,13 @@ struct Runner {
     /// Menus publicados na barra superior.
     menus: Option<super::menubar::Published>,
     maximized: bool,
+    /// Maximizada, em tela cheia ou lado a lado: o tamanho é do compositor.
+    constrained: bool,
+    /// Último tamanho mandado pelo compositor (`configure`), para saber quando ele muda.
+    configured_size: (Option<NonZeroU32>, Option<NonZeroU32>),
+    /// Tamanho pedido pelo app com a janela presa (`constrained`): vale quando ela fica
+    /// solta de novo.
+    wanted_size: Option<(u32, u32)>,
     compositor: CompositorState,
     /// A superfície foi escondida (`Ui::set_hidden`): sem imagem até voltar.
     hidden: bool,
@@ -507,8 +517,9 @@ impl Runner {
         let mut pixmap = None;
         // Imagem em pixels (tamanho em pontos vezes a escala); o layout continua em pontos.
         crate::ui::draw::set_scale(self.scale);
-        let (pw, ph) = self.physical_size();
         for _ in 0..2 {
+            // Medido a cada passada: o app pode ter pedido outro tamanho na anterior.
+            let (pw, ph) = self.physical_size();
             let Some(mut canvas) = Pixmap::new(pw, ph) else {
                 return;
             };
@@ -526,6 +537,21 @@ impl Runner {
                 let (alpha, dy) = self.ctx.overlay_look();
                 let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
                 canvas.draw_pixmap(0, crate::ui::draw::px(dy as f32), overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
+            }
+            // Tamanho pedido pelo app: a janela muda no próximo quadro.
+            if let Some((size, min)) = self.ctx.size_request.take()
+                && let Shell::Xdg(xdg) = &self.shell
+            {
+                xdg.set_min_size(Some(min));
+                self.min_size = min;
+                if self.constrained {
+                    self.wanted_size = Some(size);
+                } else if size != self.size {
+                    tracing::info!("janela: {}x{} pedido pelo app", size.0, size.1);
+                    self.size = size;
+                    self.last_frame = None;
+                    self.dirty = true;
+                }
             }
             if let Some(title) = self.ctx.title.take() {
                 if title != self.title {
@@ -616,6 +642,11 @@ impl Runner {
         }
         self.glass_on = self.ctx.glass_capable.then(crate::control_client::panel_glass);
         let (w, h) = self.physical_size();
+        // Imagem de outro tamanho (o tamanho mudou depois de desenhar): desenha de novo.
+        if (pixmap.width(), pixmap.height()) != (w, h) {
+            self.dirty = true;
+            return;
+        }
         // Quadro igual ao último enviado (por exemplo, um quadro agendado sem mudança):
         // não manda de novo, para o compositor não refazer o que está atrás (vidro).
         if self.last_frame.as_ref().is_some_and(|last| last.width() == w && last.height() == h && last.data() == pixmap.data()) {
@@ -743,12 +774,33 @@ impl WindowHandler for Runner {
 
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow, configure: WindowConfigure, _: u32) {
         self.maximized = configure.is_maximized();
+        let constrained = configure.is_maximized()
+            || configure.is_fullscreen()
+            || configure.is_tiled_left()
+            || configure.is_tiled_right()
+            || configure.is_tiled_top()
+            || configure.is_tiled_bottom();
+        let was_constrained = std::mem::replace(&mut self.constrained, constrained);
+        // O compositor reenvia o último tamanho a cada troca de foco: com a janela solta,
+        // o mesmo tamanho de antes não desfaz um tamanho escolhido pelo app
+        // (`Ui::request_size`). Presa, vale sempre o do compositor.
+        let changed = constrained || was_constrained || configure.new_size != self.configured_size;
+        self.configured_size = configure.new_size;
         let (w, h) = configure.new_size;
-        if let Some(w) = w.map(NonZeroU32::get) {
-            self.size.0 = w.max(self.min_size.0);
+        if changed {
+            if let Some(w) = w.map(NonZeroU32::get) {
+                self.size.0 = w.max(self.min_size.0);
+            }
+            if let Some(h) = h.map(NonZeroU32::get) {
+                self.size.1 = h.max(self.min_size.1);
+            }
         }
-        if let Some(h) = h.map(NonZeroU32::get) {
-            self.size.1 = h.max(self.min_size.1);
+        // Pedido feito com a janela presa: vale quando ela fica solta de novo.
+        if was_constrained
+            && !constrained
+            && let Some(size) = self.wanted_size.take()
+        {
+            self.size = (size.0.max(self.min_size.0), size.1.max(self.min_size.1));
         }
         self.configured = true;
         self.dirty = true;
@@ -931,7 +983,7 @@ impl Runner {
             Keysym::Right => Some(Key::Right),
             Keysym::Up => Some(Key::Up),
             Keysym::Down => Some(Key::Down),
-            Keysym::Delete => Some(Key::Delete),
+            Keysym::Delete | Keysym::KP_Delete => Some(Key::Delete),
             Keysym::Home | Keysym::KP_Home => Some(Key::Home),
             Keysym::End | Keysym::KP_End => Some(Key::End),
             Keysym::Page_Up | Keysym::KP_Page_Up => Some(Key::PageUp),

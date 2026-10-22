@@ -340,6 +340,8 @@ pub struct Memory {
 pub struct Ctx {
     pub text: Text,
     pub theme: Theme,
+    /// Tamanho novo pedido pelo app (`Ui::request_size`), e o mínimo.
+    pub size_request: Option<((u32, u32), (u32, u32))>,
     pub input: Input,
     pub memory: Memory,
     /// Algo mudou: desenhar de novo logo em seguida.
@@ -396,6 +398,7 @@ impl Ctx {
         Self {
             text: Text::new(),
             theme,
+            size_request: None,
             input: Input::default(),
             memory: Memory::default(),
             repaint: false,
@@ -881,6 +884,13 @@ impl<'a> Ui<'a> {
     /// Troca o título da janela (por exemplo, o nome da pasta aberta).
     pub fn set_title(&mut self, title: &str) {
         self.ctx.title = Some(title.to_string());
+    }
+
+    /// Pede outro tamanho para a janela (em pontos), com o tamanho mínimo novo: por
+    /// exemplo, a Calculadora trocando de modo. Maximizada, a janela não muda.
+    pub fn request_size(&mut self, size: (u32, u32), min: (u32, u32)) {
+        self.ctx.size_request = Some((size, min));
+        self.ctx.repaint = true;
     }
 
     /// Pede outro quadro daqui a pouco (40 ms), mesmo sem mouse nem teclado: para

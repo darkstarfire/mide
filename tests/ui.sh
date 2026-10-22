@@ -124,9 +124,10 @@ rm -rf "$OPC"
 # Clique numa janela por cima da barra de título de outra (Calculadora em (48, 46),
 # Terminal arrastado para cobrir a barra dela): o clique é do Terminal, a de trás não sobe.
 check_last "clique não atravessa para a barra de título de trás" 'janela "Terminal"' "400 press 400 93; 405 move 400 60; 410 move 400 20; 415 release 400 20; 460 click 200 68; 490 list" "$CALCULATOR" "$TERMINAL"
-# Menus padrão do mide (a Calculadora não publica menus): "Editar" em x=234, "Janela" em 287.
-check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 234 14; 440 list" "$CALCULATOR"
-check "Janela > Zoom maximiza" "$CALC popups=0 posição=\(0, 58\) visível=1366x643" "400 click 287 14; 430 click 299 73; 480 list" "$CALCULATOR"
+# Menus padrão do mide (o Arquivos não publica menus): "Editar" em x=213, "Janela" em 268.
+FILES_APP="$PWD/target/debug/mide-files"
+check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 213 14; 440 list" "$FILES_APP"
+check "Janela > Zoom maximiza" 'janela "Pasta pessoal" popups=0 posição=\(0, 58\) visível=1366x643' "400 click 268 14; 430 click 280 73; 480 list" "$FILES_APP"
 # Menus do próprio Terminal (dbusmenu, num barramento de teste): Shell em x=140,
 # Editar 194, Janela 382; no menu, a primeira linha em y=55 e a segunda em y=79.
 RUST_LOG="mide=debug,mide_bar=info" SCEN=tests/scenario-dbus.sh check "a barra mostra os menus do Terminal" "menu do app mide-terminal: Shell, Editar, Visualizar, Perfis, Janela" "500 list" "$TERMINAL"
@@ -955,6 +956,79 @@ fi
 check "editor: alteração não salva marca o título" 'janela "• teste.rs' "400 type x; 460 list" "$TEXT_APP '$TDIR/teste.rs'"
 check "fechar com alteração pergunta antes (janela continua)" 'janela "• teste.rs' "400 type x; 430 click 63 61; 480 list" "$TEXT_APP '$TDIR/teste.rs'"
 rm -rf "$TDIR"
+
+echo "== Calculadora (mide-calculator: modos, contas, RPN e histórico)"
+# A Calculadora lembra o modo em [calculator] do config.toml: cada teste usa uma
+# configuração própria (um modo lembrado mudaria o tamanho dela nos outros testes) e o
+# log dela (RUST_LOG=mide_calculator=debug, no stdout) registra a tela ("calculadora:
+# tela 14"). Janela em (48, 76).
+# - Básica (250x380): coluna c em x = 84 + 59,5c, linha r em y = 187 + 58,4r
+#   (linha 1: 7 8 9 ×; linha 4: 0 , =).
+# - Científica (620x380): coluna c em x = 84 + 60,8c, linhas como na Básica
+#   (linha 0: ( ) mc m+ m− mr; linha 3: x! sen cos tg e EE).
+# - Programador (520x560): bases HEX/DEC/OCT/BIN em y=95, x = 84 + 58i; bits em
+#   y=189 (63–32) e y=233 (31–0), bit n de 31 a 0 em x = 50 + 15,6(31 − n) + 8.
+# - Barra: "Visualizar" em x=232; no menu, Básica y=55, Científica 79, Programador 103.
+CDIR="$(mktemp -d)"
+# calc_run "roteiro" [opções de [calculator]]: abre a Calculadora (com CALC_SCEN, outro
+# cenário, como o do barramento D-Bus de teste).
+calc_run() {
+    local script="$1" saved="${2:-}"
+    rm -rf "$CDIR/cfg" "$CDIR/calc.log"
+    mkdir -p "$CDIR/cfg/mide"
+    [ -n "$saved" ] && printf '[calculator]\n%b\n' "$saved" > "$CDIR/cfg/mide/config.toml"
+    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "RUST_LOG=mide_calculator=debug $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
+}
+# calc_screen "nome" "tela esperada" "roteiro" [opções]: confere a última tela.
+calc_screen() {
+    calc_run "$3" "${4:-}"
+    local got
+    got="$(grep -a "calculadora: tela " "$CDIR/calc.log" | tail -1 | sed 's/.*calculadora: tela //')"
+    if [ "$got" = "$2" ]; then
+        echo "ok    $1"; PASS=$((PASS + 1))
+    else
+        echo "FALHA $1 (esperado \"$2\", obtido \"$got\")"; FAIL=$((FAIL + 1))
+    fi
+}
+# calc_window "nome" "regex da janela no autoteste" "roteiro" [opções].
+calc_window() {
+    calc_run "$3" "${4:-}"
+    if grep -a "autoteste: janela" "$CDIR/scen.log" | tail -1 | grep -Eq "$2"; then
+        echo "ok    $1"; PASS=$((PASS + 1))
+    else
+        echo "FALHA $1"; echo "      esperado: $2"
+        grep -a "autoteste: janela" "$CDIR/scen.log" | tail -1 | sed 's/^/      /'; FAIL=$((FAIL + 1))
+    fi
+}
+calc_screen "Calculadora: precedência pelo teclado (2+3*4= dá 14)" "14" "400 type 2+3*4=; 440 list"
+calc_screen "Calculadora: clicar nas teclas (7 × 8 = 56)" "56" "400 click 84 246; 410 click 262 246; 420 click 143 246; 430 click 262 421; 460 list"
+calc_screen "Calculadora: precisão entre contas (1 ÷ 3 = × 3 = dá 1)" "1" "400 type 1/3=*3=; 440 list"
+calc_screen "Calculadora: desfazer (Ctrl+Z) volta antes do =" "3" "400 type 12+3=; 420 combo ctrl+z; 450 list"
+calc_screen "Calculadora: refazer (Ctrl+Shift+Z)" "15" "400 type 12+3=; 420 combo ctrl+z; 430 combo ctrl+shift+z; 460 list"
+calc_screen "Calculadora: 2 casas decimais, sem separador de milhar" "1234,50" "400 type 1234,5=; 440 list" 'decimals = 2\nthousands = false'
+calc_window "Calculadora: o modo lembrado abre no tamanho dele" 'janela "Calculadora" .*visível=620x380' "400 list" 'mode = "cientifica"'
+calc_window "Calculadora: Ctrl+3 abre o Programador" 'janela "Calculadora" .*visível=520x560' "400 combo ctrl+3; 440 list"
+calc_window "Calculadora: Ctrl+T mostra o histórico ao lado" 'janela "Calculadora" .*visível=480x380' "400 combo ctrl+t; 440 list"
+calc_screen "Calculadora: Científica, sen 30° = 0,5" "0,5" "400 type 30; 420 click 145 362; 450 list" 'mode = "cientifica"'
+calc_screen "Calculadora: Científica, 2 ( 3 + 4 ) = 14 (multiplicação implícita)" "14" "400 type 2; 410 click 84 187; 420 type 3+4; 430 click 145 187; 440 type =; 470 list" 'mode = "cientifica"'
+calc_screen "Calculadora: Programador, 255 em HEX é FF" "FF" "400 type 255; 420 click 84 95; 450 list" 'mode = "programador"'
+calc_screen "Calculadora: Programador, clicar no bit 4 de 1 dá 17" "17" "400 type 1; 420 click 488 233; 450 list" 'mode = "programador"'
+calc_screen "Calculadora: RPN, 3 Enter 4 + dá 7" "7" "400 type 3; 410 key enter; 420 type 4+; 450 list" 'rpn = true'
+calc_screen "Calculadora: o número passa do Programador para a Básica" "255" "400 type 255; 420 combo ctrl+1; 450 list" 'mode = "programador"'
+# ⌫ na tela (Básica) em (73, 136); na Científica, 2nd em (84, 246), yˣ (com 2nd) em
+# (328, 246) e EE em (388, 362); no Básico com RPN, a fileira da pilha em y=187 (LASTx
+# em x=262) e a janela 58 pt mais alta.
+calc_screen "Calculadora: ⌫ na tela apaga o último algarismo" "12" "400 type 123; 420 click 73 136; 450 list"
+calc_screen "Calculadora: 2nd troca eˣ por yˣ (3 yˣ 2 = 8)" "8" "400 type 3; 410 click 84 246; 420 click 328 246; 430 type 2=; 460 list" 'mode = "cientifica"'
+calc_screen "Calculadora: EE mostra o expoente enquanto digita (2 EE 3)" "2e3" "400 type 2; 410 click 388 362; 420 type 3; 450 list" 'mode = "cientifica"'
+calc_window "Calculadora: RPN no Básico ganha a fileira da pilha" 'janela "Calculadora" .*visível=250x438' "400 list" 'rpn = true'
+calc_window "Calculadora: Ctrl+R liga o RPN" 'janela "Calculadora" .*visível=250x438' "400 combo ctrl+r; 440 list"
+calc_screen "Calculadora: RPN no Básico, LASTx pela tecla da tela" "4" "400 type 3; 410 key enter; 420 type 4+; 430 click 262 187; 460 list" 'rpn = true'
+calc_window "Calculadora: histórico também no Programador" 'janela "Calculadora" .*visível=750x560' "400 list" 'mode = "programador"\nhistory = true'
+calc_screen "Calculadora: a base do Programador fica lembrada" "FF" "400 type ff; 440 list" 'mode = "programador"\nbase = "hex"'
+# Menus da Calculadora na barra (num barramento D-Bus de teste, como os do Terminal).
+CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Científica pela barra" 'janela "Calculadora" .*visível=620x380' "500 click 232 14; 540 click 250 79; 580 list"
+rm -rf "$CDIR"
 
 echo "== apps X11 (XWayland, precisa de xwayland-satellite, Xwayland e xclock)"
 if command -v xclock >/dev/null && { command -v xwayland-satellite >/dev/null || [ -x "$HOME/.cargo/bin/xwayland-satellite" ]; }; then

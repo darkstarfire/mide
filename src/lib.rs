@@ -5,6 +5,7 @@ pub mod apps;
 pub mod appearance;
 pub mod appmenu;
 pub mod backdrop;
+pub mod calculator;
 pub mod calendar;
 pub mod control_client;
 pub mod default_apps;

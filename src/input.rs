@@ -117,9 +117,13 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "delete" => 111,
         "." => 52,
         "," => 51,
-        "/" => 53,
         "-" => 12,
         "=" => 13,
+        // "/", "+" e "*" pelo teclado numérico: sem Shift nem AltGr, iguais em qualquer
+        // layout (no ABNT2, a tecla do "/" americano dá ";").
+        "/" => 98,
+        "+" => 78,
+        "*" => 55,
         "0" => 11,
         d @ ("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") => d.parse::<u32>().ok()? + 1,
         "tab" => 15,
