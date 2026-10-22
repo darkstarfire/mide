@@ -5,6 +5,7 @@
 
 use std::{
     path::PathBuf,
+    rc::Rc,
     sync::mpsc::{Receiver, TryRecvError},
 };
 
@@ -26,7 +27,8 @@ pub struct Money {
     loaded: bool,
     dir: Option<PathBuf>,
     pub status: Status,
-    pub rates: Option<Rates>,
+    /// As cotações em uso (compartilhadas com as notas, sem cópia).
+    pub rates: Option<Rc<Rates>>,
     fetching: Option<Receiver<(Report, Status)>>,
     /// A pergunta "Buscar cotações na internet?" está aberta.
     pub asking: bool,
@@ -66,12 +68,17 @@ impl Money {
         if let Some(dir) = &self.dir {
             let (status, cached) = rates::load(dir);
             self.status = status;
-            self.rates = cached;
+            self.rates = cached.map(Rc::new);
         }
         match &self.rates {
             Some(r) => tracing::info!("calculadora: cotações BCB de {} (cache)", r.date),
             None => tracing::info!("calculadora: cotações: nada guardado"),
         }
+    }
+
+    /// Alguma janela das cotações está aberta (a pergunta, o aviso ou a de cotações).
+    pub fn is_open(&self) -> bool {
+        self.asking || self.window || self.failure.is_some()
     }
 
     /// Há uma busca em andamento.
@@ -137,7 +144,7 @@ impl Money {
         self.fetching = None;
         self.status = status;
         if let Some(r) = report.rates {
-            self.rates = Some(r);
+            self.rates = Some(Rc::new(r));
         }
         let date = self.rates.as_ref().map_or_else(|| "sem cotação".to_string(), |r| r.date.to_string());
         let how = match report.outcome {
@@ -211,6 +218,10 @@ pub enum Answer {
 /// primeira vez, o aviso de falha e a janela "Cotações de moedas". `pair`: os códigos
 /// das duas linhas do conversor.
 pub fn dialogs(ui: &mut Ui, money: &mut Money, online: Option<bool>, pair: (&str, &str)) -> Option<Answer> {
+    // Com uma janela aberta, o teclado é dela (uma nota por trás não recebe o Enter).
+    if money.is_open() {
+        ui.blur();
+    }
     if money.asking {
         let message = "A Calculadora busca na internet a tabela pública do Banco Central do Brasil, no máximo uma vez por dia útil, sem dizer quais moedas você usa. Dá para mudar em Converter → Cotações de moedas….";
         return match ui.alert("Buscar cotações?", message, &["Não buscar", "Buscar"]) {
@@ -232,7 +243,7 @@ pub fn dialogs(ui: &mut Ui, money: &mut Money, online: Option<bool>, pair: (&str
     }
     let mut answer = None;
     let mut close = ui.input().key(mide::kit::Key::Escape);
-    let rate_line = money.rates.as_ref().and_then(|r| currency::format_rate(r, pair.0, pair.1));
+    let rate_line = money.rates.as_deref().and_then(|r| currency::format_rate(r, pair.0, pair.1));
     let next = money
         .status
         .next_check
@@ -282,12 +293,12 @@ mod tests {
         let mut m = Money::default();
         assert_eq!(m.band(None), "Sem cotações · Tentar de novo");
         assert_eq!(m.band(Some(false)), "Busca desligada · sem cotações");
-        m.rates = Some(rates_of("21/10/2026"));
+        m.rates = Some(Rc::new(rates_of("21/10/2026")));
         assert_eq!(m.band(Some(true)), "BCB · 21/10/2026");
         m.status.outcome = Some(Outcome::Offline);
         assert_eq!(m.band(Some(true)), "Sem conexão · cotação de 21/10");
         m.status.outcome = Some(Outcome::Updated);
-        m.rates = Some(rates_of("02/10/2026"));
+        m.rates = Some(Rc::new(rates_of("02/10/2026")));
         assert_eq!(m.band(Some(true)), "Cotação antiga: 02/10/2026");
         assert_eq!(m.log_tag(), "(BCB 2026-10-02)");
     }

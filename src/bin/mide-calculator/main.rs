@@ -412,7 +412,7 @@ impl Calculator {
     /// O número da outra linha do conversor (`None` com Erro na tela ou sem conversão,
     /// como consumo zero: a linha mostra "—" e não há o que copiar nem usar).
     fn conversion(&self) -> Option<f64> {
-        if self.has_error() { None } else { self.conv.convert(self.value(), self.money.rates.as_ref()) }
+        if self.has_error() { None } else { self.conv.convert(self.value(), self.money.rates.as_deref()) }
     }
 
     /// Usa a outra linha do conversor: o número convertido vira o da tela, como uma
@@ -423,7 +423,7 @@ impl Calculator {
             return;
         }
         let x = self.value();
-        let Some(v) = self.conv.convert(x, self.money.rates.as_ref()) else {
+        let Some(v) = self.conv.convert(x, self.money.rates.as_deref()) else {
             return;
         };
         let text = self.conv.history(x, self.engine.style);
@@ -874,7 +874,7 @@ impl Calculator {
                 "conv-unidade" => self.open_picker(self.conv.active),
                 "conv-trocar" if self.converting() => self.set_conv(self.conv.swapped()),
                 "conv-outra" if self.converting() => self.use_other_row(),
-                "copiar-conversao" if self.converting() && self.conversion().is_some() => ui.copy(&self.conv.text(self.value(), self.engine.style, self.money.rates.as_ref())),
+                "copiar-conversao" if self.converting() && self.conversion().is_some() => ui.copy(&self.conv.text(self.value(), self.engine.style, self.money.rates.as_deref())),
                 "cotacoes" => self.money.window = true,
                 other => {
                     if let Some(d) = other.strip_prefix("casas:") {
@@ -1029,7 +1029,7 @@ impl App for Calculator {
                         ui.copy(&text);
                     }
                 }
-                Some((_, 3)) => ui.copy(&self.conv.text(self.value(), self.engine.style, self.money.rates.as_ref())),
+                Some((_, 3)) => ui.copy(&self.conv.text(self.value(), self.engine.style, self.money.rates.as_deref())),
                 Some((_, 4)) => self.set_conv(self.conv.swapped()),
                 _ => {}
             }
@@ -1123,7 +1123,7 @@ impl App for Calculator {
             let c = self.conv;
             let mut numbers = [String::new(), String::new()];
             numbers[c.active] = screen.clone();
-            let rates = self.money.rates.as_ref();
+            let rates = self.money.rates.as_deref();
             numbers[c.other()] = if error {
                 "—".to_string()
             } else {
@@ -1140,7 +1140,7 @@ impl App for Calculator {
             }
         });
         if converting && !error {
-            let mut line = self.conv.text(self.value(), self.engine.style, self.money.rates.as_ref());
+            let mut line = self.conv.text(self.value(), self.engine.style, self.money.rates.as_deref());
             if converter::is_money(self.conv.category) {
                 line = format!("{line} {}", self.money.log_tag());
             }

@@ -68,7 +68,7 @@ pub struct Unit {
 
 impl Unit {
     /// Só vale como unidade logo depois de um número (ver `ambiguous`).
-    fn needs_number(&self) -> bool {
+    pub fn needs_number(&self) -> bool {
         let mut chars = self.symbol.chars();
         let single_letter = chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.next().is_none();
         self.ambiguous || single_letter
@@ -424,26 +424,46 @@ pub fn lookup(text: &str, after_number: bool) -> Option<(usize, usize)> {
     all().find(|(_, _, u)| fold(u.name) == folded || u.aliases.iter().any(|a| fold(a) == folded)).map(|(ci, ui, _)| (ci, ui))
 }
 
+/// Um jeito de escrever uma unidade: (categoria, unidade, texto, exato).
+type Written = (usize, usize, &'static str, bool);
+
+/// Cada jeito de escrever uma unidade (símbolo exato, nome e apelidos sem acento):
+/// (categoria, unidade, texto, exato), agrupados pelas letras do começo sem acento nem
+/// maiúscula ("km/h" em "km", "L/100 km" em "l", "°C" em ""), na ordem da tabela.
+static HEADS: LazyLock<std::collections::HashMap<String, Vec<Written>>> = LazyLock::new(|| {
+    let mut heads: std::collections::HashMap<String, Vec<Written>> = std::collections::HashMap::new();
+    for (ci, cat) in categories().iter().enumerate() {
+        for (ui, u) in cat.units.iter().enumerate() {
+            let names = std::iter::once(u.name).chain(u.aliases.iter().copied());
+            for (candidate, exact) in std::iter::once((u.symbol, true)).chain(names.map(|n| (n, false))) {
+                heads.entry(fold(head(candidate))).or_default().push((ci, ui, candidate, exact));
+            }
+        }
+    }
+    heads
+});
+
+/// As letras do começo do texto.
+fn head(text: &str) -> &str {
+    let end = text.char_indices().find(|&(_, c)| !c.is_alphabetic()).map_or(text.len(), |(i, _)| i);
+    &text[..end]
+}
+
 /// A unidade mais longa escrita a partir do começo de `text` ("km/h em m/s" acha
 /// "km/h", não "km"), terminando numa fronteira de palavra. Devolve (categoria,
 /// unidade, bytes usados). Símbolos casam exatos; nomes e apelidos, sem acento nem
-/// maiúscula.
+/// maiúscula. Só olha os jeitos de escrever que começam com as mesmas letras do texto
+/// (as notas perguntam por cada palavra depois de um número).
 pub fn longest_at(text: &str, after_number: bool) -> Option<(usize, usize, usize)> {
     let mut best: Option<(usize, usize, usize)> = None;
-    for (ci, cat) in categories().iter().enumerate() {
-        for (ui, u) in cat.units.iter().enumerate() {
-            if !after_number && u.needs_number() {
-                continue;
-            }
-            let names = std::iter::once(u.name).chain(u.aliases.iter().copied());
-            let candidates = std::iter::once((u.symbol, true)).chain(names.map(|n| (n, false)));
-            for (candidate, exact) in candidates {
-                if let Some(len) = prefix_len(text, candidate, exact)
-                    && best.is_none_or(|(_, _, b)| len > b)
-                {
-                    best = Some((ci, ui, len));
-                }
-            }
+    for &(ci, ui, candidate, exact) in HEADS.get(&fold(head(text)))? {
+        if !after_number && categories()[ci].units[ui].needs_number() {
+            continue;
+        }
+        if let Some(len) = prefix_len(text, candidate, exact)
+            && best.is_none_or(|(_, _, b)| len > b)
+        {
+            best = Some((ci, ui, len));
         }
     }
     best
@@ -456,7 +476,7 @@ fn prefix_len(text: &str, candidate: &str, exact: bool) -> Option<usize> {
     let mut chars = text.char_indices();
     for want in candidate.chars() {
         let (_, got) = chars.next()?;
-        let same = if exact { got == want } else { fold(&got.to_string()) == fold(&want.to_string()) };
+        let same = got == want || (!exact && same_folded(got, want));
         if !same {
             return None;
         }
@@ -467,6 +487,17 @@ fn prefix_len(text: &str, candidate: &str, exact: bool) -> Option<usize> {
         Some((i, _)) => Some(i),
         None => Some(text.len()),
     }
+}
+
+/// As duas letras são iguais sem acento nem maiúscula. No ASCII o `fold` só passa para
+/// minúscula: sem criar texto, que esta conta roda letra a letra.
+fn same_folded(a: char, b: char) -> bool {
+    if a.is_ascii() && b.is_ascii() {
+        return a.eq_ignore_ascii_case(&b);
+    }
+    let mut x = [0; 4];
+    let mut y = [0; 4];
+    fold(a.encode_utf8(&mut x)) == fold(b.encode_utf8(&mut y))
 }
 
 /// Índice da categoria Moeda no conversor: logo depois das categorias físicas (as
@@ -730,6 +761,49 @@ mod tests {
         assert_eq!(longest("milhas por galão"), Some(("mpg", "milhas por galão".len())));
         assert_eq!(longest("kmx"), None);
         assert_eq!(longest_at("sem açúcar", false), None);
+    }
+
+    /// O índice pelas letras do começo acha o mesmo que olhar a tabela inteira.
+    #[test]
+    fn longest_at_igual_a_busca_completa() {
+        fn full(text: &str, after_number: bool) -> Option<(usize, usize, usize)> {
+            let mut best: Option<(usize, usize, usize)> = None;
+            for (ci, cat) in categories().iter().enumerate() {
+                for (ui, u) in cat.units.iter().enumerate() {
+                    if !after_number && u.needs_number() {
+                        continue;
+                    }
+                    let names = std::iter::once(u.name).chain(u.aliases.iter().copied());
+                    for (candidate, exact) in std::iter::once((u.symbol, true)).chain(names.map(|n| (n, false))) {
+                        let folded = |s: &str| s.chars().map(|c| fold(&c.to_string())).collect::<Vec<_>>();
+                        let n = candidate.chars().count();
+                        let got: Vec<(usize, char)> = text.char_indices().take(n).collect();
+                        let same = got.len() == n
+                            && if exact { got.iter().map(|&(_, c)| c).eq(candidate.chars()) } else { folded(&got.iter().map(|&(_, c)| c).collect::<String>()) == folded(candidate) };
+                        let end = text.char_indices().nth(n).map_or(Some(text.len()), |(i, c)| (!c.is_alphanumeric()).then_some(i));
+                        if let (true, Some(len)) = (same, end)
+                            && best.is_none_or(|(_, _, b)| len > b)
+                        {
+                            best = Some((ci, ui, len));
+                        }
+                    }
+                }
+            }
+            best
+        }
+        let mut texts = vec!["kmx".to_string(), "KM/H em".into(), "Metros Quadrados!".into(), "°c".into(), "ÁREA".into(), "".into(), "1 km".into()];
+        for cat in categories() {
+            for u in &cat.units {
+                for key in std::iter::once(u.symbol).chain(std::iter::once(u.name)).chain(u.aliases.iter().copied()) {
+                    texts.extend([key.to_string(), key.to_uppercase(), fold(key), format!("{key} em m"), format!("{key}x"), format!("{key}/h")]);
+                }
+            }
+        }
+        for text in &texts {
+            for after in [false, true] {
+                assert_eq!(longest_at(text, after), full(text, after), "{text:?} {after}");
+            }
+        }
     }
 
     #[test]

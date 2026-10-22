@@ -5,13 +5,19 @@
 //! Antes, `roles` decide o papel de cada palavra pela posição (tabela B): "x" entre
 //! dois operandos é vezes, "e" entre dois operandos com espaços é a conjunção da
 //! prosa, "de" depois de porcentagem é vezes, "em" e "para" depois de um operando
-//! convertem. Ordem dos nomes: palavra da conta, variável, função, constante.
+//! convertem. Ordem dos nomes: variável, palavra da conta, função, constante, unidade,
+//! moeda. Unidade e moeda só valem logo depois de um operando ("5 km", "20 dólares",
+//! "(2 + 3) kg", "x kg", "2π rad"; ali o "min" é minuto, não a função, sem "(" depois)
+//! e depois de "em", "para" e "→" (onde vencem a variável). "R$", "US$", "$", "€", "£"
+//! e "¥" vêm antes do valor.
 
 use std::ops::Range;
 
+use super::super::currency::Currency;
 use super::eval::Env;
 use super::lexer::{Kind, Token};
-use super::value::Value;
+use super::value::{AngleUnit, UnitId, Value};
+use super::words;
 use crate::apps::fold;
 
 /// Aninhamento máximo (parênteses, funções, sinais, raízes e potências): a leitura é
@@ -42,6 +48,10 @@ pub enum Role {
     Conj,
     /// "de", "em", "para" ou "mod" fora do lugar de operação.
     Prose,
+    /// Unidade depois de um número ("5 km") ou de "em" ("em milhas").
+    Unit(UnitId),
+    /// Moeda pelo nome ou código depois de um número ("20 dólares") ou de "em".
+    Cur(&'static Currency),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,9 +185,22 @@ pub enum Post {
     Power(i32),
 }
 
+/// O alvo de "em", "para" e "→", fora o "%".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Target {
+    Unit(UnitId),
+    Money(&'static Currency),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Num(f64),
+    /// 1 da unidade (o "km" de "5 km", que é 5 × 1 km).
+    Unit(UnitId),
+    /// 1 da moeda (o "dólares" de "20 dólares").
+    Cur(&'static Currency),
+    /// Valor depois do símbolo da moeda: "R$ 1.200".
+    Money(&'static Currency, Box<Expr>),
     /// Variável: a chave e o trecho do nome (o nó pode ir além: "(a)", "+a").
     Var { key: String, name: Range<usize> },
     Const(Const),
@@ -189,6 +212,8 @@ pub enum Node {
     Call { func: Func, name: String, args: Vec<Expr> },
     /// "em %".
     ToPercent(Box<Expr>),
+    /// "em km", "em reais".
+    Convert(Box<Expr>, Target),
 }
 
 impl Node {
@@ -197,7 +222,7 @@ impl Node {
     /// uma espinha de mil nós, percorrida num laço: a recursão estouraria a pilha.
     pub fn left(&self) -> Option<&Expr> {
         match self {
-            Node::Binary(_, a, _) | Node::Post(_, a) | Node::ToPercent(a) => Some(a),
+            Node::Binary(_, a, _) | Node::Post(_, a) | Node::ToPercent(a) | Node::Convert(a, _) => Some(a),
             _ => None,
         }
     }
@@ -231,7 +256,7 @@ impl Drop for Expr {
 /// Tira o filho da espinha da esquerda, deixando um número no lugar do nó.
 fn take_left(node: &mut Node) -> Option<Box<Expr>> {
     match std::mem::replace(node, Node::Num(0.0)) {
-        Node::Binary(_, a, _) | Node::Post(_, a) | Node::ToPercent(a) => Some(a),
+        Node::Binary(_, a, _) | Node::Post(_, a) | Node::ToPercent(a) | Node::Convert(a, _) => Some(a),
         _ => None,
     }
 }
@@ -336,11 +361,25 @@ pub fn roles(toks: &[Token], env: &Env, opens: bool) -> Vec<Role> {
     for (i, t) in toks.iter().enumerate() {
         let role = match &t.kind {
             Kind::Name(word) => word_role(word, i, toks, &roles, env, opens),
+            Kind::Bang if !factorial_after(i.checked_sub(1).and_then(|p| toks.get(p).zip(roles.get(p)))) => Role::Prose,
             _ => Role::Plain,
         };
         roles.push(role);
     }
     roles
+}
+
+/// A "!" depois deste token é o fatorial: logo depois de número, ")", variável,
+/// constante ou outro pós-fixo ("5!", "(2+1)!", "n!", "5!!"). Depois de palavra de
+/// prosa, unidade, moeda ou no começo, é exclamação, pontuação que fecha a frase como
+/// "." e "?" ("farmácia! R$ 50", "Paguei 25 reais! −2 × 3", "Oba! Mercado − 2").
+fn factorial_after(prev: Option<(&Token, &Role)>) -> bool {
+    prev.is_some_and(|(t, r)| match t.kind {
+        Kind::Num(_) | Kind::Close | Kind::Percent | Kind::Degree | Kind::Sup(_) => true,
+        Kind::Bang => *r != Role::Prose,
+        Kind::Name(_) => matches!(r, Role::Var(_) | Role::Const(_)),
+        _ => false,
+    })
 }
 
 /// Papel de uma palavra: primeiro as que dependem da posição, depois o significado.
@@ -349,6 +388,15 @@ fn word_role(word: &str, i: usize, toks: &[Token], roles: &[Role], env: &Env, op
     let prev_ends = prev.is_some_and(|(t, r)| ends_operand(t, r));
     let next = toks.get(i + 1);
     let is = |k: &str| word.eq_ignore_ascii_case(k);
+    // Depois de "em", "para" e "→": a unidade ou a moeda do alvo (nunca variável).
+    if prev.is_some_and(|(t, r)| *r == Role::Convert || t.kind == Kind::Arrow) {
+        if let Some(u) = words::unit(word, true) {
+            return Role::Unit(u);
+        }
+        if let Some(c) = words::currency_word(word) {
+            return Role::Cur(c);
+        }
+    }
     if is("x") && prev_ends && next.is_some_and(|n| starts_operand(n, false)) {
         return Role::Times;
     }
@@ -371,7 +419,12 @@ fn word_role(word: &str, i: usize, toks: &[Token], roles: &[Role], env: &Env, op
     if KEYWORDS.iter().any(|k| is(k)) {
         return Role::Prose;
     }
-    meaning(word, env)
+    // Logo depois de um operando: número, ")", variável, constante ou pós-fixo ("2³ m");
+    // não depois de outra unidade ("5 km h") nem de "%" e "°".
+    let after_number = prev.is_some_and(|(t, r)| {
+        ends_operand(t, r) && !matches!(r, Role::Unit(_) | Role::Cur(_)) && !matches!(t.kind, Kind::Percent | Kind::Degree)
+    });
+    meaning(word, env, after_number, next.is_some_and(|n| n.kind == Kind::Open))
 }
 
 /// O "e" da prosa, e não a constante: com espaços, entre uma palavra e um operando
@@ -387,17 +440,28 @@ fn prose_e(prev: Option<&Role>, opens: bool, spaced: bool, next: Option<&Token>)
     }
 }
 
-/// O que um nome é fora das palavras da conta: variável, função, constante ou nada.
-fn meaning(word: &str, env: &Env) -> Role {
+/// O que um nome é fora das palavras da conta: variável, função, constante, unidade,
+/// moeda ou nada. Unidade e moeda só logo depois de um operando (`after_number`); ali, a
+/// unidade com nome de função vale sem "(" depois (`call`): "30 min" é minuto, "2
+/// min(3; 4)" é a função.
+fn meaning(word: &str, env: &Env, after_number: bool, call: bool) -> Role {
     let key = fold(word);
     if env.get(&key).is_some() {
-        Role::Var(key)
-    } else if let Some(f) = Func::find(&key) {
+        return Role::Var(key);
+    }
+    let unit = if after_number { words::unit(word, true) } else { None };
+    if let Some(f) = Func::find(&key)
+        && (unit.is_none() || call)
+    {
         Role::Func(f)
     } else if word == "π" || word.eq_ignore_ascii_case("pi") {
         Role::Const(Const::Pi)
     } else if word.eq_ignore_ascii_case("e") {
         Role::Const(Const::E)
+    } else if let Some(u) = unit {
+        Role::Unit(u)
+    } else if let Some(c) = words::currency_word(word).filter(|_| after_number) {
+        Role::Cur(c)
     } else {
         Role::Unknown(key)
     }
@@ -410,9 +474,12 @@ fn percent(t: &Token, role: &Role, env: &Env) -> bool {
 
 /// Um operando pode terminar neste token: número, ")", pós-fixo ou nome conhecido.
 pub fn ends_operand(t: &Token, role: &Role) -> bool {
+    if *role == Role::Prose {
+        return false;
+    }
     match t.kind {
         Kind::Num(_) | Kind::Close | Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_) => true,
-        Kind::Name(_) => matches!(role, Role::Var(_) | Role::Const(_)),
+        Kind::Name(_) => matches!(role, Role::Var(_) | Role::Const(_) | Role::Unit(_) | Role::Cur(_)),
         _ => false,
     }
 }
@@ -429,44 +496,52 @@ fn starts_operand(t: &Token, signs: bool) -> bool {
 
 /// A leitura de um operando pode começar neste token (com o sinal).
 fn can_start(t: &Token, role: &Role) -> bool {
-    matches!(t.kind, Kind::Num(_) | Kind::Open | Kind::Root(_) | Kind::Plus | Kind::Minus)
+    matches!(t.kind, Kind::Num(_) | Kind::Open | Kind::Root(_) | Kind::Plus | Kind::Minus | Kind::Money(_))
         || matches!(role, Role::Var(_) | Role::Func(_) | Role::Const(_) | Role::Unknown(_))
 }
 
-/// O token pede um operando depois dele: operador, "(", raiz, função, "em".
+/// O token pede um operando depois dele: operador, "(", raiz, moeda, função, "em".
 pub fn cola(t: &Token, role: &Role) -> bool {
-    matches!(t.kind, Kind::Plus | Kind::Minus | Kind::Times | Kind::Divide | Kind::Pow | Kind::Open | Kind::Root(_) | Kind::Arrow)
+    matches!(t.kind, Kind::Plus | Kind::Minus | Kind::Times | Kind::Divide | Kind::Pow | Kind::Open | Kind::Root(_) | Kind::Arrow | Kind::Money(_))
         || matches!(role, Role::Func(_) | Role::Times | Role::Mod | Role::Convert)
 }
 
-/// Multiplicação implícita entre `a` e `b` ("2x", "2π", "3(1 + 2)", "2√9"): só depois
-/// de número, ")", pós-fixo ou π, e nunca antes de número. Em `bare` (o argumento sem
-/// parênteses de uma função), uma função ou raiz depois termina o argumento:
+/// Multiplicação implícita entre `a` e `b` ("2x", "2π", "3(1 + 2)", "2√9", e a unidade:
+/// "5 km"): só depois de número, ")", pós-fixo ou π (a unidade e a moeda também depois
+/// de variável e constante: "x kg"), e nunca antes de número. Em `bare` (o argumento
+/// sem parênteses de uma função), uma função ou raiz depois termina o argumento:
 /// "sen 30 cos 30" é sen 30 × cos 30.
 pub fn juxtaposes(a: (&Token, &Role), b: (&Token, &Role), bare: bool) -> bool {
-    let left = matches!(a.0.kind, Kind::Num(_) | Kind::Close | Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_))
-        || *a.1 == Role::Const(Const::Pi);
+    let left = (matches!(a.0.kind, Kind::Num(_) | Kind::Close | Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_)) && *a.1 != Role::Prose)
+        || *a.1 == Role::Const(Const::Pi)
+        || (matches!(a.1, Role::Var(_) | Role::Const(_)) && matches!(b.1, Role::Unit(_) | Role::Cur(_)));
     let right = match (&b.0.kind, b.1) {
         (Kind::Open, _) => true,
         (Kind::Root(_), _) | (_, Role::Func(_)) => !bare,
-        (_, Role::Var(_) | Role::Const(_) | Role::Unknown(_)) => true,
+        (_, Role::Var(_) | Role::Const(_) | Role::Unknown(_) | Role::Unit(_) | Role::Cur(_)) => true,
         _ => false,
     };
     left && right
 }
 
-/// O token é prosa no meio da conta: pontuação, moeda (sem contas ainda) ou palavra da
-/// conta fora do lugar. Ele corta a conta ("Paguei 25. × 3": a conta é "× 3").
+/// O token é prosa no meio da conta: pontuação ou palavra da conta fora do lugar. Ele
+/// corta a conta ("Paguei 25. × 3": a conta é "× 3").
 pub fn prose(t: (&Token, &Role)) -> bool {
-    matches!(t.0.kind, Kind::Other(_) | Kind::Money(_)) || *t.1 == Role::Prose
+    matches!(t.0.kind, Kind::Other(_)) || *t.1 == Role::Prose
 }
 
 /// Um operador: o token pede um número antes ou depois dele.
 fn operator(t: &Token, role: &Role) -> bool {
-    matches!(
-        t.kind,
-        Kind::Plus | Kind::Minus | Kind::Times | Kind::Divide | Kind::Pow | Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_) | Kind::Arrow
-    ) || matches!(role, Role::Times | Role::Mod | Role::Convert)
+    // A "!" de exclamação é prosa, não o fatorial.
+    let post = matches!(t.kind, Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_)) && *role != Role::Prose;
+    post || matches!(t.kind, Kind::Plus | Kind::Minus | Kind::Times | Kind::Divide | Kind::Pow | Kind::Arrow)
+        || matches!(role, Role::Times | Role::Mod | Role::Convert)
+}
+
+/// "1 h 30 min": depois de uma unidade, um número seguido de outra unidade (`b` é o
+/// número, `next` o papel do que vem depois dele).
+pub fn mixes(a: &Role, b: &Token, next: Option<&Role>) -> bool {
+    matches!(a, Role::Unit(_)) && matches!(b.kind, Kind::Num(_)) && matches!(next, Some(Role::Unit(_)))
 }
 
 /// `a` e `b`, lado a lado, são da mesma conta (para achar o trecho a sublinhar).
@@ -481,6 +556,8 @@ pub fn linked(a: (&Token, &Role), b: (&Token, &Role)) -> bool {
 /// `b` é operação ou pós-fixo que pega `a` como o número da esquerda.
 pub fn takes_left(a: (&Token, &Role), b: (&Token, &Role)) -> bool {
     match (&b.0.kind, b.1) {
+        // A exclamação de prosa não pega nada.
+        (_, Role::Prose) => false,
         (Kind::Plus | Kind::Minus, _) => ends_operand(a.0, a.1),
         (Kind::Times | Kind::Divide | Kind::Pow | Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_) | Kind::Close | Kind::Arrow, _) => true,
         (_, Role::Times | Role::Mod | Role::Convert) => true,
@@ -508,6 +585,8 @@ enum Step {
     Post(Post),
     Convert,
     Juxtaposed,
+    /// "1 h 30 min": número com unidade logo depois de outro, somado a ele.
+    Mix,
 }
 
 struct Parser<'a> {
@@ -527,13 +606,16 @@ impl<'a> Parser<'a> {
     }
 
     /// Uma conta com operações de força `min` para cima. Forças: conversão 10,
-    /// + − 20, × ÷ mod 30, implícita 40, sinal 45, ^ 50 (à direita), pós-fixos 60.
+    /// + − 20, × ÷ mod 30, implícita e mistura 40, ^ 50 (à direita), pós-fixos 60.
+    ///
+    /// O sinal pega o que tem força 40 ou mais ("−1 h 30 min" é −(1 h 30 min)), mas
+    /// não mais que a conta em que está ("2^−1 km" é 2⁻¹ km).
     fn expr(&mut self, min: u8) -> Result<Expr, Fault> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             return Err(Fault::TooDeep(self.pos));
         }
-        let mut lhs = self.prefix()?;
+        let mut lhs = self.prefix(min)?;
         while let Some((bp, step)) = self.step() {
             if bp < min {
                 break;
@@ -552,6 +634,8 @@ impl<'a> Parser<'a> {
     fn step(&self) -> Option<(u8, Step)> {
         let (t, role) = self.get(self.pos)?;
         Some(match (&t.kind, role) {
+            // Prosa (também a "!" de exclamação) para a conta.
+            (_, Role::Prose) => return None,
             (Kind::Plus, _) => (20, Step::Binary(Op::Add, 21)),
             (Kind::Minus, _) => (20, Step::Binary(Op::Sub, 21)),
             (Kind::Times, _) | (_, Role::Times) => (30, Step::Binary(Op::Mul, 31)),
@@ -565,6 +649,9 @@ impl<'a> Parser<'a> {
             (Kind::Arrow, _) | (_, Role::Convert) => (10, Step::Convert),
             _ => {
                 let prev = self.get(self.pos.checked_sub(1)?)?;
+                if mixes(prev.1, t, self.get(self.pos + 1).map(|(_, r)| r)) {
+                    return Some((40, Step::Mix));
+                }
                 if !juxtaposes(prev, (t, role), self.bare) {
                     return None;
                 }
@@ -592,6 +679,11 @@ impl<'a> Parser<'a> {
                 let rhs = self.expr(41)?;
                 Ok(Expr { range: start..rhs.range.end, node: Node::Binary(Op::Mul, Box::new(lhs), Box::new(rhs)) })
             }
+            Step::Mix => {
+                // O número e a unidade dele (a multiplicação implícita, força 40).
+                let rhs = self.expr(40)?;
+                Ok(Expr { range: start..rhs.range.end, node: Node::Binary(Op::Add, Box::new(lhs), Box::new(rhs)) })
+            }
         }
     }
 
@@ -607,7 +699,7 @@ impl<'a> Parser<'a> {
         self.get(self.pos).is_some_and(|(t, role)| can_start(t, role))
     }
 
-    fn prefix(&mut self) -> Result<Expr, Fault> {
+    fn prefix(&mut self, min: u8) -> Result<Expr, Fault> {
         let at = self.pos;
         let Some((t, role)) = self.get(at) else {
             return Err(Fault::Stray(at));
@@ -629,21 +721,49 @@ impl<'a> Parser<'a> {
             (Kind::Name(name), Role::Func(f)) => self.call(*f, name, t),
             (_, Role::Unknown(_)) => Err(Fault::Unknown(at)),
             (_, Role::Conj) => Err(Fault::Conj(at)),
-            (Kind::Plus | Kind::Minus, _) => self.sign(t),
+            (Kind::Plus | Kind::Minus, _) => self.sign(t, min.clamp(40, 45)),
             (Kind::Open, _) => self.group(t),
             (Kind::Root(n), _) => self.root(*n, t),
             (Kind::Close, _) => Err(Fault::Unopened(at)),
+            (Kind::Money(Some(c)), _) => self.money(c, t),
+            // Letras coladas no "$" que não são de moeda nenhuma ("XX$ 100").
+            (Kind::Money(None), _) => Err(Fault::Unknown(at)),
+            // Unidade e moeda pelo nome só depois do número delas ("5 km").
+            (_, Role::Unit(u)) if self.joined(at) => {
+                self.pos += 1;
+                leaf(Node::Unit(*u))
+            }
+            (_, Role::Cur(c)) if self.joined(at) => {
+                self.pos += 1;
+                leaf(Node::Cur(c))
+            }
+            (_, Role::Unit(_) | Role::Cur(_)) => Err(Fault::NoNumberBefore(at)),
+            (_, Role::Prose) => Err(Fault::Stray(at)),
             (Kind::Times | Kind::Divide | Kind::Pow | Kind::Bang | Kind::Percent | Kind::Degree | Kind::Sup(_) | Kind::Arrow, _)
             | (_, Role::Times | Role::Mod | Role::Convert) => Err(Fault::NoNumberBefore(at)),
             _ => Err(Fault::Stray(at)),
         }
     }
 
-    /// Sinal na frente: "−2^2" é −(2²); "−2 × 3" é (−2) × 3.
-    fn sign(&mut self, t: &Token) -> Result<Expr, Fault> {
+    /// O token `at` se junta ao de antes, como na multiplicação implícita ("5 km").
+    fn joined(&self, at: usize) -> bool {
+        at.checked_sub(1).and_then(|p| self.get(p)).zip(self.get(at)).is_some_and(|(a, b)| juxtaposes(a, b, self.bare))
+    }
+
+    /// Símbolo da moeda antes do valor: "R$ 1.200", "US$ −5".
+    fn money(&mut self, c: &'static Currency, t: &Token) -> Result<Expr, Fault> {
         let at = self.pos;
         self.pos += 1;
         let inner = self.operand(45, at)?;
+        Ok(Expr { range: t.range.start..inner.range.end, node: Node::Money(c, Box::new(inner)) })
+    }
+
+    /// Sinal na frente, lendo o operando com força `min`: "−2^2" é −(2²); "−2 × 3" é
+    /// (−2) × 3; "−1 h 30 min" é −(1 h 30 min).
+    fn sign(&mut self, t: &Token, min: u8) -> Result<Expr, Fault> {
+        let at = self.pos;
+        self.pos += 1;
+        let inner = self.operand(min, at)?;
         let range = t.range.start..inner.range.end;
         Ok(match t.kind {
             Kind::Minus => Expr { range, node: Node::Neg(Box::new(inner)) },
@@ -735,11 +855,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Converte com "em", "para" ou "→": nesta etapa, só para "%".
+    /// Converte com "em", "para" ou "→": para "%", uma unidade ou uma moeda.
     fn convert(&mut self, lhs: Expr) -> Result<Expr, Fault> {
         let at = self.pos;
         self.converted = Some(at);
         self.pos += 1;
+        let target = match self.get(self.pos) {
+            Some((t, Role::Unit(u))) => Some((t, Target::Unit(*u))),
+            Some((t, Role::Cur(c))) => Some((t, Target::Money(c))),
+            Some((t, _)) if t.kind == Kind::Degree => Some((t, Target::Unit(AngleUnit::Degrees.id()))),
+            Some((t, _)) => match &t.kind {
+                Kind::Money(Some(c)) => Some((t, Target::Money(c))),
+                Kind::Money(None) => return Err(Fault::Unknown(self.pos)),
+                _ => None,
+            },
+            None => None,
+        };
+        if let Some((t, target)) = target {
+            self.pos += 1;
+            return Ok(Expr { range: lhs.range.start..t.range.end, node: Node::Convert(Box::new(lhs), target) });
+        }
         match self.get(self.pos) {
             Some((t, _)) if t.kind == Kind::Percent => {
                 self.pos += 1;
@@ -826,6 +961,11 @@ mod tests {
                 Node::Root(n, x) => format!("root{n}({})", show(x)),
                 Node::Call { func, args, .. } => format!("{func:?}({})", args.iter().map(show).collect::<Vec<_>>().join("; ")),
                 Node::ToPercent(x) => format!("{} em %", show(x)),
+                Node::Unit(u) => u.symbol().to_string(),
+                Node::Cur(c) => c.code.to_string(),
+                Node::Money(c, x) => format!("{}({})", c.code, show(x)),
+                Node::Convert(x, Target::Unit(u)) => format!("{} em {}", show(x), u.symbol()),
+                Node::Convert(x, Target::Money(c)) => format!("{} em {}", show(x), c.code),
             }
         }
         read(line).map_or_else(|f| format!("{f:?}"), |e| show(&e))
@@ -859,7 +999,7 @@ mod tests {
         assert_eq!(read("2 × itens"), Err(Fault::Unknown(2)));
         assert_eq!(read("× 2"), Err(Fault::NoNumberBefore(0)));
         assert_eq!(read("hipot(3)"), Err(Fault::Arity(0, 3, Func::Hypot)));
-        assert_eq!(read("2 em kg"), Err(Fault::NotUnit(1, Some(2))));
+        assert_eq!(read("2 em comida"), Err(Fault::NotUnit(1, Some(2))));
         assert_eq!(read("(2; 3)"), Err(Fault::Stray(2)));
         assert!(matches!(read(&"(".repeat(500)), Err(Fault::TooDeep(_))));
         assert!(matches!(read(&"-".repeat(500)), Err(Fault::TooDeep(_))));
@@ -877,6 +1017,38 @@ mod tests {
         // A conversão fica no fim.
         assert_eq!(read("30/150 em % + 1"), Err(Fault::AfterConvert(3, 1)));
         assert!(read("(30/150 em %) + 1").is_ok());
+    }
+
+    #[test]
+    fn unidades_e_moedas() {
+        assert_eq!(tree("5 km + 300 m"), "((5 Mul km) Add (300 Mul m))");
+        assert_eq!(tree("1 h 30 min em min"), "((1 Mul h) Add (30 Mul min)) em min");
+        assert_eq!(tree("1h30min"), "((1 Mul h) Add (30 Mul min))");
+        assert_eq!(tree("2 × 1 h 30 min"), "(2 Mul ((1 Mul h) Add (30 Mul min)))");
+        assert_eq!(tree("100 km / 2 h"), "((100 Mul km) Div (2 Mul h))");
+        assert_eq!(tree("60 km/h"), "(60 Mul km/h)");
+        assert_eq!(tree("R$ 1.200 + 300"), "(BRL(1200) Add 300)");
+        assert_eq!(tree("US$ 20 em reais"), "USD(20) em BRL");
+        assert_eq!(tree("20 dólares → €"), "(20 Mul USD) em EUR");
+        assert_eq!(tree("25 °C em °F"), "(25 Mul °C) em °F");
+        assert_eq!(tree("1 rad em °"), "(1 Mul rad) em °");
+        // O sinal pega a mistura inteira, mas não sai da potência.
+        assert_eq!(tree("−1 h 30 min"), "-((1 Mul h) Add (30 Mul min))");
+        assert_eq!(tree("2^−1 km"), "((2 Pow -1) Mul km)");
+        // Unidade depois de ")", π e pós-fixo.
+        assert_eq!(tree("(2 + 3) kg"), "((2 Add 3) Mul kg)");
+        assert_eq!(tree("2π rad em °"), "((2 Mul π) Mul rad) em °");
+        assert_eq!(tree("2³ m"), "(2Power(3) Mul m)");
+        assert_eq!(tree("CA$ 5 em R$"), "CAD(5) em BRL");
+        assert_eq!(read("XX$ 5"), Err(Fault::Unknown(0)));
+        // "min" é a função com "(" depois; sem número antes, é nome desconhecido.
+        assert_eq!(tree("2 min(3; 4)"), "(2 Mul Min(3; 4))");
+        assert_eq!(read("km × 2"), Err(Fault::Unknown(0)));
+        assert_eq!(read("R$"), Err(Fault::NoNumber(0)));
+        // A unidade sem o número dela, numa fatia que começa nela.
+        let toks = lex("5 km", 0);
+        let roles = roles(&toks, &Env::default(), true);
+        assert_eq!(parse(&toks[1..], &roles[1..]), Err(Fault::NoNumberBefore(0)));
     }
 
     #[test]

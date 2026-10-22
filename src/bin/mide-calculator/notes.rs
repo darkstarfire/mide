@@ -385,9 +385,24 @@ impl Session {
 #[derive(Clone, PartialEq)]
 struct CacheKey {
     id: String,
+    /// A data das cotações: quando chegam outras, as contas com moeda mudam.
+    rates: Option<chrono::NaiveDate>,
     version: u64,
     radians: bool,
     style: Style,
+}
+
+/// As opções da Calculadora que valem nas notas, com as cotações em uso.
+pub struct NotesCtx {
+    radians: bool,
+    style: Style,
+    rates: Option<std::rc::Rc<mide::calculator::currency::Rates>>,
+}
+
+impl NotesCtx {
+    fn get(&self) -> Context<'_> {
+        Context { radians: self.radians, style: self.style, rates: self.rates.as_deref() }
+    }
 }
 
 /// Estado do modo Notas no app.
@@ -531,7 +546,7 @@ impl Notes {
         let session = self.session();
         let id = session.current().to_string();
         let doc = session.doc();
-        let key = CacheKey { id, version: doc.version, radians: ctx.radians, style: ctx.style };
+        let key = CacheKey { id, rates: ctx.rates.map(|r| r.date), version: doc.version, radians: ctx.radians, style: ctx.style };
         let text = doc.text.clone();
         evaluate_cached(&mut self.cache, key, &text, ctx)
     }
@@ -549,8 +564,10 @@ impl Notes {
 }
 
 impl Calculator {
-    fn notes_context(&self) -> Context {
-        Context { radians: self.engine.radians, style: self.engine.style }
+    /// As opções das notas, com as cotações (um `Rc`: o contexto empresta deste valor,
+    /// não do `self`, que continua livre para mudar).
+    fn notes_context(&self) -> NotesCtx {
+        NotesCtx { radians: self.engine.radians, style: self.engine.style, rates: self.money.rates.clone() }
     }
 
     /// Lembra a nota aberta (abre nela da próxima vez).
@@ -660,7 +677,8 @@ impl Calculator {
         if busy && matches!(action, "nota-nova" | "nota-lixeira" | "nota-exportar" | "notas-lista" | "desfazer" | "refazer" | "cortar" | "copiar" | "selecionar-tudo" | "basica" | "cientifica" | "programador") {
             return true;
         }
-        let ctx = self.notes_context();
+        let owned = self.notes_context();
+        let ctx = owned.get();
         match action {
             "nota-nova" => {
                 self.notes_new();
@@ -721,7 +739,8 @@ impl Calculator {
 
     /// Menus da barra no modo Notas: Arquivo e Editar (o Visualizar é o de sempre).
     pub(super) fn notes_menus(&mut self) -> Vec<MenuGroup> {
-        let ctx = self.notes_context();
+        let owned = self.notes_context();
+        let ctx = owned.get();
         let doc = self.notes.session().doc();
         let (undo, redo) = (doc.can_undo(), doc.can_redo());
         let selection = doc.edit.selection().is_some_and(|(a, b)| a != b);
@@ -762,6 +781,10 @@ impl Calculator {
         if self.notes.session.is_none() || std::mem::take(&mut self.notes.refocus) {
             ui.focus_next_input();
         }
+        // Cotações que chegaram: as contas com moeda são refeitas (a data entra na cache).
+        if self.money.poll() {
+            ui.request_repaint();
+        }
         // Atalhos do modo (os de edição ficam com a área de texto); com o seletor do
         // Exportar ou um aviso aberto, as teclas são dele.
         if self.notes.export.is_none() && self.notes.export_error.is_none() && self.notes.close_error.is_none() {
@@ -789,7 +812,7 @@ impl Calculator {
             match chooser.show(ui) {
                 Some(Choice::Chosen(path)) => {
                     self.notes.export = None;
-                    let text = self.notes.with_results(&self.notes_context());
+                    let text = self.notes.with_results(&self.notes_context().get());
                     match mide::files::write_atomic(&path, text.as_bytes()) {
                         Ok(()) => {
                             tracing::debug!("calculadora: notas: exportada {}", path.display());
@@ -809,6 +832,13 @@ impl Calculator {
                 }
                 None => {}
             }
+        }
+        let was_open = self.money.is_open();
+        self.money_dialogs(ui);
+        // A janela das cotações fechou: a nota volta a receber as teclas.
+        if was_open && !self.money.is_open() {
+            self.notes.refocus = true;
+            ui.request_repaint();
         }
         self.notes_dialogs(ui);
     }
@@ -845,7 +875,8 @@ impl Calculator {
     /// A nota em si: barra de ferramentas, texto e linha de estado. `true` se a nota
     /// levou um número para a calculadora (o modo mudou).
     fn notes_page(&mut self, ui: &mut Ui, t: &Theme) -> bool {
-        let ctx = self.notes_context();
+        let owned = self.notes_context();
+        let ctx = owned.get();
         let (_, _, _, h) = ui.region();
         let title = self.notes.session().title();
         let mut clicked: Option<&str> = None;
@@ -885,7 +916,7 @@ impl Calculator {
         let session = session.as_mut().expect("notas abertas");
         let id = session.current().to_string();
         let mut decorate = |d: &TextDoc| {
-            let key = CacheKey { id: id.clone(), version: d.version, radians: ctx.radians, style: ctx.style };
+            let key = CacheKey { id: id.clone(), rates: ctx.rates.map(|r| r.date), version: d.version, radians: ctx.radians, style: ctx.style };
             decorations(&evaluate_cached(cache, key, &d.text, &ctx), t)
         };
         let look = TextAreaLook {
@@ -946,11 +977,22 @@ impl Calculator {
         let doc = self.notes.session().doc();
         let line = line_at(&doc.text, doc.edit.cursor);
         let read_only = self.notes.session().read_only();
-        let message = if read_only {
+        // Uma nota que converte moedas pede as cotações (a busca, ou a pergunta da
+        // primeira vez, como no conversor).
+        let needs_rates = notes::needs_rates(&lines);
+        if needs_rates {
+            let online = self.currency_online();
+            self.money.ensure(online, false, ui.waker());
+        }
+        let error = if read_only {
             Some("Esta nota não está em UTF-8: dá para ler, mas as mudanças não são gravadas.".to_string())
         } else {
             lines.get(line).and_then(|l| l.problems.first()).map(|p| p.message.clone())
         };
+        // Sem erro na linha do cursor, a fonte e a data das cotações em uso (em cinza).
+        let info = (error.is_none() && needs_rates).then(|| format!("Cotações: {}", self.money.band(self.currency_online())));
+        let message = error.clone().or(info);
+        let is_error = error.is_some();
         let mut toggle = false;
         let mut button = None;
         ui.row(|ui| {
@@ -969,7 +1011,7 @@ impl Calculator {
         if let (Some(message), Some((bx, by, _, bh))) = (message, button) {
             let (x, _, _, _) = ui.region();
             let size = t.font_small;
-            let color = t.danger;
+            let color = if is_error { t.danger } else { t.text_secondary };
             ui.paint_text(|pixmap, text, (ox, oy)| {
                 let shown = fit_end(text, &message, size, bx - x - 24.0);
                 text.draw(pixmap, &shown, ox + x + 12.0, oy + by + (bh - size * 1.25) / 2.0, size, FontWeight::Regular, color);
@@ -1219,9 +1261,9 @@ mod tests {
     #[test]
     fn cache_cores_e_log() {
         assert_eq!(mix([0, 0, 255, 255], [255, 255, 255, 255]), [127, 127, 255, 255]);
-        let ctx = Context { radians: false, style: Style::default() };
+        let ctx = Context { radians: false, style: Style::default(), rates: None };
         let text = "120 × 3 =\nx = 2\ny * 2 =";
-        let key = |version: u64, radians: bool| CacheKey { id: "a".into(), version, radians, style: Style::default() };
+        let key = |version: u64, radians: bool| CacheKey { id: "a".into(), rates: None, version, radians, style: Style::default() };
         let mut cache = None;
         let lines = evaluate_cached(&mut cache, key(1, false), text, &ctx);
         assert_eq!(log_text(&lines[0]), " = 360");

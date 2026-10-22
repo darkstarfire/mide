@@ -2,10 +2,16 @@
 //! trecho em bytes no texto inteiro (para colorir e sublinhar). Aqui só se decide onde
 //! o número termina; o valor sai do `format::parse`, a mesma regra da tela e do colar
 //! ("1.500" é mil e quinhentos; "1,5" e "1.5" são um e meio).
+//!
+//! Uma unidade escrita em vários pedaços ("km/h", "m²", "L/100 km") ou uma moeda de
+//! nome composto ("dólares canadenses") logo depois de um número ou de "em"/"para"/"→"
+//! vira uma palavra só.
 
 use std::ops::Range;
 
-use super::super::format;
+use super::super::currency::Currency;
+use super::super::{format, units};
+use super::words;
 
 /// Um pedaço da linha.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,8 +52,9 @@ pub enum Kind {
     Root(u8),
     /// "→" e "->".
     Arrow,
-    /// "R$", "US$", "$", "€", "£" e "¥", antes do valor.
-    Money(&'static str),
+    /// Símbolo de moeda antes do valor: "R$", "US$", "CA$", "CN¥", "$", "€", "£" e
+    /// "¥". `None`: letras coladas num "$" ou "¥" que não são de moeda nenhuma ("XX$").
+    Money(Option<&'static Currency>),
     /// Pontuação e o resto: prosa.
     Other(char),
 }
@@ -56,7 +63,90 @@ pub enum Kind {
 pub fn lex(line: &str, offset: usize) -> Vec<Token> {
     let mut lexer = Lexer { line, chars: line.char_indices().collect(), offset, i: 0, space: false, out: Vec::new() };
     lexer.run();
-    lexer.out
+    merge_units(line, offset, lexer.out)
+}
+
+/// Junta numa palavra só a unidade escrita em vários pedaços ("km/h", "m²", "L/100 km",
+/// "milhas por galão") e a moeda de nome composto ("dólares canadenses", "pesos
+/// argentinos"). Só logo depois de um número ou de "em", "para" e "→" (onde vem
+/// unidade), e só se a palavra continua colada ("km/h") ou com outra palavra
+/// ("metros quadrados"). Das duas, vale a mais longa.
+fn merge_units(line: &str, offset: usize, mut toks: Vec<Token>) -> Vec<Token> {
+    let mut out: Vec<Token> = Vec::with_capacity(toks.len());
+    let mut i = 0;
+    while i < toks.len() {
+        let t = &toks[i];
+        let place = unit_place(out.last());
+        let unit = if place { unit_end(line, offset, &toks, i) } else { None };
+        let money = if place { currency_end(&toks, i) } else { None };
+        match (unit, money) {
+            (Some(u), Some((m, word))) if m > u => {
+                out.push(Token { kind: Kind::Name(word), range: t.range.start..toks[m].range.end, space_before: t.space_before });
+                i = m + 1;
+            }
+            (Some(j), _) => {
+                let range = t.range.start..toks[j].range.end;
+                let word = line.get(range.start - offset..range.end - offset).unwrap_or("").to_string();
+                out.push(Token { kind: Kind::Name(word), range, space_before: t.space_before });
+                i = j + 1;
+            }
+            (None, Some((m, word))) => {
+                out.push(Token { kind: Kind::Name(word), range: t.range.start..toks[m].range.end, space_before: t.space_before });
+                i = m + 1;
+            }
+            (None, None) => {
+                // Os tokens já passados não são mais lidos: o token vai sem cópia.
+                let kind = std::mem::replace(&mut toks[i].kind, Kind::Plus);
+                out.push(Token { kind, range: toks[i].range.clone(), space_before: toks[i].space_before });
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Depois deste token vem unidade: número, "→", "em" ou "para".
+fn unit_place(prev: Option<&Token>) -> bool {
+    match prev.map(|p| &p.kind) {
+        Some(Kind::Num(_) | Kind::Arrow) => true,
+        Some(Kind::Name(w)) => w.eq_ignore_ascii_case("em") || w.eq_ignore_ascii_case("para"),
+        _ => false,
+    }
+}
+
+/// A moeda de nome com várias palavras que começa no token `i` ("dólares canadenses"):
+/// o último token e o nome, com um espaço entre as palavras. Um nome pela metade
+/// ("dólares de Hong", "dólares canadense") também vira uma palavra só, que a conta
+/// mostra como moeda desconhecida (e não como o dólar americano do "dólares").
+fn currency_end(toks: &[Token], i: usize) -> Option<(usize, String)> {
+    let Kind::Name(first) = &toks.get(i)?.kind else {
+        return None;
+    };
+    let next = |k: usize| match toks.get(i + 1 + k).map(|t| &t.kind) {
+        Some(Kind::Name(w)) => Some(w.as_str()),
+        _ => None,
+    };
+    let taken = words::currency_phrase(first, next)?;
+    let next: Vec<&str> = (0..taken).filter_map(next).collect();
+    let word = std::iter::once(first.as_str()).chain(next).collect::<Vec<_>>().join(" ");
+    Some((i + taken, word))
+}
+
+/// O último token (`j` > `i`) da unidade de vários pedaços que começa no token `i`.
+fn unit_end(line: &str, offset: usize, toks: &[Token], i: usize) -> Option<usize> {
+    let t = toks.get(i)?;
+    let next = toks.get(i + 1)?;
+    let continues = next.range.start == t.range.end || matches!(next.kind, Kind::Name(_));
+    if !matches!(t.kind, Kind::Name(_)) || !continues {
+        return None;
+    }
+    let (_, _, len) = units::longest_at(line.get(t.range.start - offset..)?, true)?;
+    let end = t.range.start + len;
+    if end <= t.range.end {
+        return None;
+    }
+    let j = (i + 1..toks.len()).find(|&j| toks[j].range.end >= end)?;
+    (toks[j].range.end == end).then_some(j)
 }
 
 struct Lexer<'a> {
@@ -154,10 +244,7 @@ impl<'a> Lexer<'a> {
             '√' => Kind::Root(2),
             '∛' => Kind::Root(3),
             '→' => Kind::Arrow,
-            '$' => Kind::Money("$"),
-            '€' => Kind::Money("€"),
-            '£' => Kind::Money("£"),
-            '¥' => Kind::Money("¥"),
+            '$' | '€' | '£' | '¥' => Kind::Money(words::currency(c.encode_utf8(&mut [0; 4]))),
             other => Kind::Other(other),
         }
     }
@@ -189,7 +276,9 @@ impl<'a> Lexer<'a> {
     }
 
     /// Uma palavra. Colada depois de um número, só letras: "47x96" é 47, x, 96 e
-    /// "1h30min" é 1, h, 30, min. "R$" e "US$" são moeda.
+    /// "1h30min" é 1, h, 30, min. Até três letras coladas num "$" ou "¥" são o símbolo
+    /// de uma moeda ("R$", "r$", "US$", "CA$", "CN¥"), ou de nenhuma ("XX$"): nunca o
+    /// "$" sozinho (o dólar americano) depois de uma palavra.
     fn word(&mut self) -> Kind {
         let after_number = !self.space && matches!(self.out.last(), Some(Token { kind: Kind::Num(_), .. }));
         let start = self.i;
@@ -201,9 +290,12 @@ impl<'a> Lexer<'a> {
             self.i += 1;
         }
         let word = self.slice(start, self.i);
-        if self.peek(0) == Some('$') && matches!(word, "R" | "US") {
+        if let Some(sign @ ('$' | '¥')) = self.peek(0)
+            && (1..=3).contains(&word.len())
+            && word.chars().all(|c| c.is_ascii_alphabetic())
+        {
             self.i += 1;
-            return Kind::Money(if word == "R" { "R$" } else { "US$" });
+            return Kind::Money(words::prefixed_symbol(word, sign));
         }
         Kind::Name(word.to_string())
     }
@@ -403,9 +495,19 @@ mod tests {
         assert_eq!(kinds("-> →"), vec![Kind::Arrow; 2]);
         assert_eq!(kinds("√ ∛ ³√"), vec![Kind::Root(2), Kind::Root(3), Kind::Root(3)]);
         assert_eq!(kinds("x⁻¹ 10³"), vec![name("x"), Kind::Sup(-1), Kind::Num(10.0), Kind::Sup(3)]);
-        assert_eq!(kinds("R$100"), vec![Kind::Money("R$"), Kind::Num(100.0)]);
-        assert_eq!(kinds("US$ 5"), vec![Kind::Money("US$"), Kind::Num(5.0)]);
-        assert_eq!(kinds("€2 £3 ¥4 $1"), [("€", 2.0), ("£", 3.0), ("¥", 4.0), ("$", 1.0)].iter().flat_map(|&(m, v)| [Kind::Money(m), Kind::Num(v)]).collect::<Vec<_>>());
+        let money = |code: &str| Kind::Money(super::super::super::currency::find(code));
+        assert_eq!(kinds("R$100"), vec![money("BRL"), Kind::Num(100.0)]);
+        assert_eq!(kinds("US$ 5"), vec![money("USD"), Kind::Num(5.0)]);
+        assert_eq!(kinds("€2 £3 ¥4 $1"), [("EUR", 2.0), ("GBP", 3.0), ("JPY", 4.0), ("USD", 1.0)].iter().flat_map(|&(m, v)| [money(m), Kind::Num(v)]).collect::<Vec<_>>());
+        // Letras coladas no "$" ou "¥": o símbolo da moeda, sem diferenciar maiúsculas;
+        // sem moeda, `None` (nunca o "$" sozinho do dólar americano).
+        assert_eq!(kinds("r$1"), vec![money("BRL"), Kind::Num(1.0)]);
+        assert_eq!(kinds("CA$ 1"), vec![money("CAD"), Kind::Num(1.0)]);
+        assert_eq!(kinds("ca$ 1"), vec![money("CAD"), Kind::Num(1.0)]);
+        assert_eq!(kinds("CN¥ 1"), vec![money("CNY"), Kind::Num(1.0)]);
+        assert_eq!(kinds("XX$ 1"), vec![Kind::Money(None), Kind::Num(1.0)]);
+        // Palavra comprida colada no "$" continua palavra (e o "$" é o dólar).
+        assert_eq!(kinds("custo$"), vec![name("custo"), money("USD")]);
         assert_eq!(kinds("25 °C"), vec![Kind::Num(25.0), name("°C")]);
         assert_eq!(kinds("30º"), vec![Kind::Num(30.0), Kind::Degree]);
         assert_eq!(kinds("30°"), vec![Kind::Num(30.0), Kind::Degree]);
@@ -430,6 +532,30 @@ mod tests {
             let r = t.range.start - 10..t.range.end - 10;
             assert!(line.get(r).is_some(), "fora de fronteira: {:?}", t.range);
         }
+    }
+
+    #[test]
+    fn unidades_de_varios_pedacos() {
+        assert_eq!(kinds("60 km/h"), vec![Kind::Num(60.0), name("km/h")]);
+        assert_eq!(kinds("3 m² + 1"), vec![Kind::Num(3.0), name("m²"), Kind::Plus, Kind::Num(1.0)]);
+        assert_eq!(kinds("8 L/100 km"), vec![Kind::Num(8.0), name("L/100 km")]);
+        assert_eq!(kinds("2 metros quadrados"), vec![Kind::Num(2.0), name("metros quadrados")]);
+        assert_eq!(kinds("10 km em m/s"), vec![Kind::Num(10.0), name("km"), name("em"), name("m/s")]);
+        assert_eq!(kinds("→ km/h"), vec![Kind::Arrow, name("km/h")]);
+        // Só onde vem unidade, e só pedaços inteiros.
+        assert_eq!(kinds("km/h"), vec![name("km"), Kind::Divide, name("h")]);
+        assert_eq!(kinds("100 km / 2 h"), vec![Kind::Num(100.0), name("km"), Kind::Divide, Kind::Num(2.0), name("h")]);
+        assert_eq!(kinds("1h30min"), vec![Kind::Num(1.0), name("h"), Kind::Num(30.0), name("min")]);
+        // Moedas de nome composto, com um espaço entre as palavras; pela metade também.
+        assert_eq!(kinds("100 dólares  canadenses"), vec![Kind::Num(100.0), name("dólares canadenses")]);
+        assert_eq!(kinds("em reais brasileiros"), vec![name("em"), name("reais brasileiros")]);
+        assert_eq!(kinds("2 dólares de Hong Kong"), vec![Kind::Num(2.0), name("dólares de Hong Kong")]);
+        assert_eq!(kinds("2 dólares canadense"), vec![Kind::Num(2.0), name("dólares canadense")]);
+        assert_eq!(kinds("2 dólares de lucro"), vec![Kind::Num(2.0), name("dólares"), name("de"), name("lucro")]);
+        assert_eq!(kinds("dólares canadenses"), vec![name("dólares"), name("canadenses")]);
+        let toks = lex("x 60 km/h", 4);
+        assert_eq!(toks[2].range, 9..13);
+        assert!(toks[2].space_before);
     }
 
     #[test]
