@@ -1287,6 +1287,72 @@ fi
 shot_test "captura: ⌘⇧3 com o launcher aberto" "400 combo ctrl+shift+space; 470 combo super+shift+3; 650 list" 1366x768
 shot_test "captura: ⌘⇧4 no estilo Mac (Alt+Shift+4)" "400 combo alt+shift+4; $AREA" 300x200 mac
 
+# Captura por tela (B22): `screenshot all` salva uma imagem de cada tela, em pixels, e
+# responde com a posição, o tamanho em pontos e a escala de cada uma.
+SA="$(mktemp -d)"
+MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=8 timeout 150 "$SCEN" "400 list" -- "sh -c 'sleep 3; mide-ctl screenshot all $SA/t > $SA/resposta.txt'" >/dev/null 2>&1
+if grep -qP '^HEADLESS-2\t1366\t0\t1920\t1080\t1\t-\t' "$SA/resposta.txt" 2>/dev/null && python3 -c "
+import sys
+from PIL import Image
+d = sys.argv[1]
+sys.exit(0 if Image.open(d + '/t-HEADLESS-1.png').size == (1366, 768) and Image.open(d + '/t-HEADLESS-2.png').size == (1920, 1080) else 1)" "$SA" 2>/dev/null; then
+    echo "ok    captura: screenshot all salva cada tela (1366x768 e 1920x1080)"; PASS=$((PASS + 1))
+else
+    echo "FALHA captura: screenshot all salva cada tela ($(head -c 300 "$SA/resposta.txt" 2>/dev/null))"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$SA"
+# Tela em 1,25 (1920x1080 pixels, 1536x864 pontos): a área (300, 200)–(700, 450) em
+# pontos sai com 500x313 pixels, do lugar certo da imagem (igual ao quadro sem a
+# Captura), e a tela escurece fora dela (antes, nem escurecia e o recorte saía do
+# lugar errado).
+SC="$(mktemp -d)"
+mkdir -p "$SC/cfg/mide"
+printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$SC/cfg/mide/config.toml"
+printf 'XDG_PICTURES_DIR="%s"\n' "$SC/pics" > "$SC/cfg/user-dirs.dirs"
+XDG_CONFIG_HOME="$SC/cfg" SCENARIO_OUT="$SC/antes" MIDE_HEADLESS_OUTPUTS=1920x1080 SCENARIO_WAIT=8 timeout 150 "$SCEN" "300 list" 300 >/dev/null 2>&1
+XDG_CONFIG_HOME="$SC/cfg" SCENARIO_OUT="$SC/durante" MIDE_HEADLESS_OUTPUTS=1920x1080 SCENARIO_WAIT=16 timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo ctrl+s; 720 list" 645 >/dev/null 2>&1
+if python3 -c "
+import sys, glob
+from PIL import Image, ImageChops
+d = sys.argv[1]
+files = glob.glob(d + '/pics/Capturas de tela/*.png')
+if not files: sys.exit('nada salvo')
+shot = Image.open(files[0]).convert('RGB')
+if shot.size != (500, 313): sys.exit('tamanho %dx%d' % shot.size)
+before = Image.open(d + '/antes/frame.png').convert('RGB')
+during = Image.open(d + '/durante/frame.png').convert('RGB')
+diff = ImageChops.difference(shot, before.crop((375, 250, 875, 563)))
+if sum(1 for p in diff.getdata() if max(p) > 40) > 500 * 313 // 100: sys.exit('recorte fora do lugar')
+a, b = before.getpixel((100, 100)), during.getpixel((100, 100))
+if not (sum(b) < sum(a) * 0.7): sys.exit('não escureceu: %s %s' % (a, b))
+" "$SC"; then
+    echo "ok    captura em escala 1,25: área de 500x313 no lugar certo, tela escurecida"; PASS=$((PASS + 1))
+else
+    echo "FALHA captura em escala 1,25"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$SC"
+# ⌘⇧3 em 1366x768 a 1,25: o compositor dá 1093x615 pontos (arredonda para cima), que
+# vezes 1,25 seriam 1366x769; o arquivo sai com 1366x768, sem linha preta no fim.
+SF="$(mktemp -d)"
+mkdir -p "$SF/cfg/mide"
+printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$SF/cfg/mide/config.toml"
+printf 'XDG_PICTURES_DIR="%s"\n' "$SF/pics" > "$SF/cfg/user-dirs.dirs"
+XDG_CONFIG_HOME="$SF/cfg" SCENARIO_OUT="$SF/scen" SCENARIO_WAIT=14 timeout 150 "$SCEN" "400 combo super+shift+3; 600 list" >/dev/null 2>&1
+if python3 -c "
+import sys, glob
+from PIL import Image
+files = glob.glob(sys.argv[1] + '/pics/Capturas de tela/*.png')
+if not files: sys.exit('nada salvo')
+img = Image.open(files[0]).convert('RGB')
+if img.size != (1366, 768): sys.exit('tamanho %dx%d' % img.size)
+if all(img.getpixel((x, 767)) == (0, 0, 0) for x in range(0, 1366, 50)): sys.exit('linha preta no fim')
+" "$SF"; then
+    echo "ok    captura: ⌘⇧3 em 1366x768 a 1,25 sai com 1366x768, sem linha preta"; PASS=$((PASS + 1))
+else
+    echo "FALHA captura: ⌘⇧3 em 1366x768 a 1,25"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$SF"
+
 # Gravar a tela (A21, ⌘⇧5), com um ffmpeg de teste (`MIDE_FFMPEG`) que grava os
 # argumentos e conta os bytes recebidos; Vídeos numa pasta de teste. Painel: "Gravar"
 # em (980, 710); botão de parar na barra em (1220, 14).

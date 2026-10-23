@@ -9,8 +9,15 @@
 //! amarelo ou azul). **Copiar** (Enter ou Ctrl+C) põe a imagem na área de
 //! transferência; **Salvar** (Ctrl+S) grava em Imagens/Capturas de tela; Esc cancela.
 //!
-//! A imagem vem do compositor (`screenshot`), sem o cursor; a cópia fica com o
-//! compositor (`copy-file`), então continua lá depois que a captura fecha.
+//! A imagem vem do compositor (`screenshot all`: uma por tela, em pixels, sem o
+//! cursor); a cópia fica com o compositor (`copy-file`), então continua lá depois que
+//! a captura fecha.
+//!
+//! Coordenadas: a seleção, as marcações e as janelas ficam em **pontos no espaço do
+//! desktop** (todas as telas). Cada tela guarda a imagem em pixels (`Shot::shot`, para
+//! o arquivo) e uma cópia no tamanho em pontos (`view`, `dimmed`, para mostrar na
+//! camada, que desenha em escala 1). O arquivo sai na maior escala entre as telas que
+//! a área toca (`compose`).
 
 use std::{error::Error, path::PathBuf, time::Duration};
 
@@ -18,7 +25,7 @@ use mide::{
     control_client::ask_compositor,
     kit::{run, App, Key, Ui, Window},
 };
-use tiny_skia::{Color, FillRule, LineCap, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
+use tiny_skia::{Color, FillRule, FilterQuality, LineCap, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -53,6 +60,9 @@ struct Shape {
     to: (f32, f32),
 }
 
+/// Retângulo (x, y, largura, altura).
+type RectF = (f32, f32, f32, f32);
+
 /// Retângulo (x, y, largura, altura) com largura e altura positivas.
 fn normalized(a: (f32, f32), b: (f32, f32)) -> (f32, f32, f32, f32) {
     (a.0.min(b.0), a.1.min(b.1), (a.0 - b.0).abs(), (a.1 - b.1).abs())
@@ -62,20 +72,158 @@ fn inside(r: (f32, f32, f32, f32), p: (f32, f32)) -> bool {
     p.0 >= r.0 && p.0 <= r.0 + r.2 && p.1 >= r.1 && p.1 <= r.1 + r.3
 }
 
-struct Capture {
+/// Uma tela, como o compositor respondeu ao `screenshot all`.
+#[derive(Debug, Clone, PartialEq)]
+struct ScreenLine {
+    name: String,
+    /// Posição e tamanho em pontos, no espaço do desktop.
+    rect: RectF,
+    scale: f32,
+    primary: bool,
+    path: PathBuf,
+}
+
+/// Lê a resposta do `screenshot all` (`NOME X Y LARGURA ALTURA ESCALA principal|-
+/// CAMINHO`, separados por tabulação). Linhas que não casam ficam de fora.
+fn parse_screens(reply: &[String]) -> Vec<ScreenLine> {
+    reply
+        .iter()
+        .filter_map(|line| {
+            let f: Vec<&str> = line.splitn(8, '\t').collect();
+            let num = |i: usize| f.get(i)?.parse::<f32>().ok();
+            Some(ScreenLine {
+                name: f.first()?.to_string(),
+                rect: (num(1)?, num(2)?, num(3)?.max(1.0), num(4)?.max(1.0)),
+                scale: num(5).filter(|s| *s > 0.0)?,
+                primary: *f.get(6)? == "principal",
+                path: PathBuf::from(f.get(7)?),
+            })
+        })
+        .collect()
+}
+
+/// Uma tela capturada.
+struct Shot {
+    name: String,
+    /// Onde a tela fica, em pontos no espaço do desktop.
+    rect: RectF,
+    scale: f32,
+    primary: bool,
+    /// A imagem em pixels da tela (o que vai para o arquivo).
     shot: Pixmap,
-    /// A captura já escurecida (fora da área escolhida), feita uma vez: cada quadro só
+    /// A imagem no tamanho em pontos (o que a camada mostra). Igual a `shot` em escala 1.
+    view: Pixmap,
+    /// A `view` já escurecida (fora da área escolhida), feita uma vez: cada quadro só
     /// copia bytes, sem misturar a tela inteira de novo.
     dimmed: Pixmap,
+}
+
+impl Shot {
+    fn new(name: &str, rect: RectF, scale: f32, primary: bool, shot: Pixmap) -> Self {
+        let (w, h) = (rect.2.round().max(1.0) as u32, rect.3.round().max(1.0) as u32);
+        let view = if (shot.width(), shot.height()) == (w, h) { shot.clone() } else { resized(&shot, w, h) };
+        let mut dimmed = view.clone();
+        for px in dimmed.data_mut().chunks_mut(4) {
+            for c in &mut px[..3] {
+                *c = (*c as u16 * 145 / 255) as u8;
+            }
+        }
+        Self { name: name.into(), rect, scale, primary, shot, view, dimmed }
+    }
+}
+
+/// `src` ampliada ou reduzida para `w`×`h` (filtro bilinear).
+fn resized(src: &Pixmap, w: u32, h: u32) -> Pixmap {
+    let Some(mut out) = Pixmap::new(w, h) else {
+        return src.clone();
+    };
+    let (kx, ky) = (w as f32 / src.width() as f32, h as f32 / src.height() as f32);
+    let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
+    out.draw_pixmap(0, 0, src.as_ref(), &paint, Transform::from_scale(kx, ky), None);
+    out
+}
+
+fn intersects(a: RectF, b: RectF) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+}
+
+/// Retângulo que contém todas as telas.
+fn bounds(screens: &[Shot]) -> RectF {
+    let Some(first) = screens.first() else {
+        return (0.0, 0.0, 1.0, 1.0);
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (first.rect.0, first.rect.1, first.rect.0 + first.rect.2, first.rect.1 + first.rect.3);
+    for s in &screens[1..] {
+        x0 = x0.min(s.rect.0);
+        y0 = y0.min(s.rect.1);
+        x1 = x1.max(s.rect.0 + s.rect.2);
+        y1 = y1.max(s.rect.1 + s.rect.3);
+    }
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
+/// Escala do arquivo de uma área: a maior entre as telas que ela toca (nenhum pedaço
+/// perde resolução; os de escala menor são ampliados).
+fn output_scale(sel: RectF, screens: &[Shot]) -> f32 {
+    let k = screens.iter().filter(|s| intersects(sel, s.rect)).map(|s| s.scale).fold(0.0, f32::max);
+    if k > 0.0 { k } else { 1.0 }
+}
+
+/// A área `sel` (pontos no desktop) com as marcações, em pixels: cada tela que ela toca
+/// entra na escala do arquivo (`output_scale`), e o que não é de nenhuma tela (o canto
+/// entre telas de alturas diferentes) sai preto.
+fn compose(screens: &[Shot], sel: RectF, shapes: &[Shape]) -> Option<Pixmap> {
+    let k = output_scale(sel, screens);
+    let (w, h) = output_size(screens, sel, k);
+    let mut out = Pixmap::new(w, h)?;
+    out.fill(Color::BLACK);
+    for s in screens.iter().filter(|s| intersects(sel, s.rect)) {
+        let f = k / s.scale;
+        let (tx, ty) = ((s.rect.0 - sel.0) * k, (s.rect.1 - sel.1) * k);
+        // Sem mudar de tamanho, cópia exata dos pixels; senão, filtro bilinear.
+        let (quality, tx, ty) = if (f - 1.0).abs() < 1e-6 { (FilterQuality::Nearest, tx.round(), ty.round()) } else { (FilterQuality::Bilinear, tx, ty) };
+        let paint = PixmapPaint { quality, ..Default::default() };
+        out.draw_pixmap(0, 0, s.shot.as_ref(), &paint, Transform::from_row(f, 0.0, 0.0, f, tx, ty), None);
+    }
+    let ts = Transform::from_row(k, 0.0, 0.0, k, -sel.0 * k, -sel.1 * k);
+    for shape in shapes {
+        draw_shape(&mut out, shape, ts);
+    }
+    Some(out)
+}
+
+/// Tamanho em pixels do arquivo da área `sel` na escala `k`. O compositor arredonda o
+/// tamanho da tela em pontos para cima (1366x768 em 1,25 vira 1093x615 pontos, que
+/// seriam 769 pixels de altura): a área não passa do fim das imagens das telas que ela
+/// toca, senão o arquivo ganha uma linha ou coluna preta.
+fn output_size(screens: &[Shot], sel: RectF, k: f32) -> (u32, u32) {
+    let (mut right, mut bottom) = (f32::MIN, f32::MIN);
+    for s in screens.iter().filter(|s| intersects(sel, s.rect)) {
+        let f = k / s.scale;
+        right = right.max((s.rect.0 - sel.0) * k + s.shot.width() as f32 * f);
+        bottom = bottom.max((s.rect.1 - sel.1) * k + s.shot.height() as f32 * f);
+    }
+    let mut w = (sel.2 * k).round();
+    let mut h = (sel.3 * k).round();
+    if right > f32::MIN {
+        w = w.min(right.round());
+        h = h.min(bottom.round());
+    }
+    (w.max(1.0) as u32, h.max(1.0) as u32)
+}
+
+struct Capture {
+    /// As telas capturadas; a principal (onde a camada fica) está entre elas.
+    screens: Vec<Shot>,
     mode: Mode,
     tool: Tool,
     color: usize,
-    /// Área escolhida (na tela).
+    /// Área escolhida (pontos no desktop).
     selection: Option<(f32, f32, f32, f32)>,
     /// Arrasto em andamento: começo e se é uma área nova (senão, uma marcação).
     drag: Option<((f32, f32), bool)>,
     shapes: Vec<Shape>,
-    /// Janelas à mostra (a de cima primeiro), para o modo Janela.
+    /// Janelas à mostra (a de cima primeiro, pontos no desktop), para o modo Janela.
     windows: Vec<(f32, f32, f32, f32)>,
     /// Retângulo das cores no painel (para o clique nelas).
     swatches: Vec<(f32, f32, f32, f32)>,
@@ -90,17 +238,10 @@ struct Capture {
 }
 
 impl Capture {
-    fn new(shot: Pixmap, windows: Vec<(f32, f32, f32, f32)>) -> Self {
-        let mut dimmed = shot.clone();
-        for px in dimmed.data_mut().chunks_mut(4) {
-            for c in &mut px[..3] {
-                *c = (*c as u16 * 145 / 255) as u8;
-            }
-        }
+    fn new(screens: Vec<Shot>, windows: Vec<(f32, f32, f32, f32)>) -> Self {
         let flag = |key: &str, default: bool| mide::settings_file::flag("record", key, default);
         Self {
-            shot,
-            dimmed,
+            screens,
             mode: Mode::Selection,
             tool: Tool::Arrow,
             color: 0,
@@ -116,16 +257,14 @@ impl Capture {
         }
     }
 
-    /// A área escolhida com as marcações, recortada da captura.
+    /// A tela onde a camada fica (a principal).
+    fn primary(&self) -> &Shot {
+        self.screens.iter().find(|s| s.primary).unwrap_or(&self.screens[0])
+    }
+
+    /// A área escolhida com as marcações, em pixels.
     fn result(&self) -> Option<Pixmap> {
-        let (x, y, w, h) = self.selection?;
-        let (w, h) = (w.round().max(1.0) as u32, h.round().max(1.0) as u32);
-        let mut out = Pixmap::new(w, h)?;
-        out.draw_pixmap(-(x.round() as i32), -(y.round() as i32), self.shot.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-        for shape in &self.shapes {
-            draw_shape(&mut out, shape, (-x.round(), -y.round()));
-        }
-        Some(out)
+        compose(&self.screens, self.selection?, &self.shapes)
     }
 
     fn copy(&self) -> bool {
@@ -182,7 +321,7 @@ impl Capture {
             Mode::Window => {
                 if input.released {
                     if let Some(rect) = self.windows.iter().find(|r| inside(**r, pos)) {
-                        self.selection = Some(clamp_rect(*rect, (self.shot.width() as f32, self.shot.height() as f32)));
+                        self.selection = Some(clamp_rect(*rect, bounds(&self.screens)));
                         self.mode = Mode::Selection;
                         self.shapes.clear();
                     }
@@ -215,19 +354,24 @@ impl Capture {
     }
 }
 
-fn clamp_rect(r: (f32, f32, f32, f32), screen: (f32, f32)) -> (f32, f32, f32, f32) {
-    let x = r.0.max(0.0);
-    let y = r.1.max(0.0);
-    let right = (r.0 + r.2).min(screen.0);
-    let bottom = (r.1 + r.3).min(screen.1);
+/// `r` recortado aos limites `b` (todas as telas).
+fn clamp_rect(r: RectF, b: RectF) -> RectF {
+    let x = r.0.max(b.0);
+    let y = r.1.max(b.1);
+    let right = (r.0 + r.2).min(b.0 + b.2);
+    let bottom = (r.1 + r.3).min(b.1 + b.3);
     (x, y, (right - x).max(1.0), (bottom - y).max(1.0))
 }
 
 impl App for Capture {
     fn view(&mut self, ui: &mut Ui) {
-        let (sw, sh) = (self.shot.width() as f32, self.shot.height() as f32);
+        // A camada cobre a tela principal: o ponteiro e o desenho são locais a ela, e o
+        // resto (seleção, marcações, janelas) é no desktop, deslocado pela origem dela.
+        let main = self.primary().rect;
+        let (ox, oy, sw, sh) = main;
+        let to_global = |p: (f32, f32)| (p.0 + ox, p.1 + oy);
         if self.mode == Mode::Full {
-            self.selection = Some((0.0, 0.0, sw, sh));
+            self.selection = Some(main);
         }
         // Teclado: Esc cancela, Enter e Ctrl+C copiam, Ctrl+S salva.
         let keys = ui.input().keys.clone();
@@ -248,31 +392,33 @@ impl App for Capture {
 
         // A captura congelada, escurecida fora da área escolhida.
         let selection = self.selection;
-        let hovered_window = (self.mode == Mode::Window)
-            .then(|| ui.input().pointer.and_then(|p| self.windows.iter().find(|r| inside(**r, p)).copied()))
-            .flatten();
-        let drawing = self.drag.filter(|(_, new_area)| !*new_area).and_then(|(start, _)| {
-            ui.input().pointer.map(|p| Shape { tool: self.tool, color: COLORS[self.color].1, from: start, to: p })
-        });
-        let (shot, dimmed) = (&self.shot, &self.dimmed);
+        let pointer = ui.input().pointer.map(to_global);
+        let hovered_window = (self.mode == Mode::Window).then(|| pointer.and_then(|p| self.windows.iter().find(|r| inside(**r, p)).copied())).flatten();
+        let drawing = self.drag.filter(|(_, new_area)| !*new_area).and_then(|(start, _)| pointer.map(|p| Shape { tool: self.tool, color: COLORS[self.color].1, from: start, to: p }));
+        let shot = self.primary();
         let shapes = &self.shapes;
         ui.paint(|canvas, _| {
             // Tela escurecida e, por cima, a área escolhida com as cores de verdade:
-            // só cópia de bytes (rápido mesmo numa tela grande).
-            if canvas.data().len() == dimmed.data().len() {
-                canvas.data_mut().copy_from_slice(dimmed.data());
+            // só cópia de bytes (rápido mesmo numa tela grande). A imagem já está no
+            // tamanho da camada (pontos); se não estiver (arredondamento), desenhada.
+            if canvas.data().len() == shot.dimmed.data().len() {
+                canvas.data_mut().copy_from_slice(shot.dimmed.data());
+            } else {
+                canvas.draw_pixmap(0, 0, shot.dimmed.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
             }
             if let Some((x, y, w, h)) = selection.or(hovered_window) {
-                copy_rect(canvas, shot, (x, y, w, h));
-                outline(canvas, (x, y, w, h));
+                let local = (x - ox, y - oy, w, h);
+                copy_rect(canvas, &shot.view, local);
+                outline(canvas, local);
             }
             for shape in shapes.iter().chain(drawing.iter()) {
-                draw_shape(canvas, shape, (0.0, 0.0));
+                draw_shape(canvas, shape, Transform::from_translate(-ox, -oy));
             }
         });
 
         // Tamanho da área escolhida, logo acima dela (ou dentro, se não couber).
         if let Some((x, y, w, h)) = self.selection.filter(|_| self.mode != Mode::Full) {
+            let (x, y) = (x - ox, y - oy);
             let text = format!("{} × {}", w.round() as i32, h.round() as i32);
             let ly = if y >= 44.0 { y - 40.0 } else { y + 6.0 };
             ui.glass_panel(x, ly, 120.0, 8.0, |ui| ui.label(&text));
@@ -280,7 +426,7 @@ impl App for Capture {
 
         // Modo rápido: só a seleção; ao soltar, salva e copia (como o ⌘⇧4 do Mac).
         if self.quick {
-            if let Some(pos) = ui.input().pointer {
+            if let Some(pos) = pointer {
                 let releasing = ui.input().released && self.drag.is_some();
                 self.pointer(ui, pos, false);
                 if releasing && self.selection.is_some() {
@@ -365,11 +511,11 @@ impl App for Capture {
                 }
             }
         });
-        let pointer = ui.input().pointer;
-        if let Some(pos) = pointer {
-            let over_panel = inside(rect, pos);
+        if let Some(local) = ui.input().pointer {
+            let pos = to_global(local);
+            let over_panel = inside(rect, local);
             if over_panel && ui.input().released {
-                if let Some(i) = self.swatches.iter().position(|s| inside(*s, pos)) {
+                if let Some(i) = self.swatches.iter().position(|s| inside(*s, local)) {
                     self.color = i;
                     tracing::info!("captura: cor {}", COLORS[i].0);
                 }
@@ -391,7 +537,7 @@ impl App for Capture {
 impl Capture {
     /// Painel do ⌘⇧5: o que gravar (tela inteira ou área), os sons e Gravar.
     fn record_view(&mut self, ui: &mut Ui) {
-        let (sw, sh) = (self.shot.width() as f32, self.shot.height() as f32);
+        let (ox, oy, sw, sh) = self.primary().rect;
         let panel_w = 740.0;
         let (px, py) = ((sw - panel_w) / 2.0, sh - 84.0);
         let mut start = ui.input().keys.contains(&Key::Enter);
@@ -424,10 +570,10 @@ impl Capture {
                 start |= ui.primary_button("Gravar").clicked();
             });
         });
-        if let Some(pos) = ui.input().pointer {
-            let over_panel = inside(rect, pos);
+        if let Some(local) = ui.input().pointer {
+            let over_panel = inside(rect, local);
             if self.mode == Mode::Selection {
-                self.pointer(ui, pos, over_panel);
+                self.pointer(ui, (local.0 + ox, local.1 + oy), over_panel);
             }
         }
         if self.drag.is_some() {
@@ -440,7 +586,8 @@ impl Capture {
         }
         if start {
             let area = match (self.mode, self.selection) {
-                (Mode::Selection, Some((x, y, w, h))) => format!("{} {} {} {}", x.round() as i32, y.round() as i32, w.round() as i32, h.round() as i32),
+                // A gravação recebe a área em pontos da própria tela.
+                (Mode::Selection, Some((x, y, w, h))) => format!("{} {} {} {}", (x - ox).round() as i32, (y - oy).round() as i32, w.round() as i32, h.round() as i32),
                 (Mode::Selection, None) => return,
                 _ => "full".into(),
             };
@@ -456,13 +603,12 @@ impl Capture {
     }
 }
 
-/// Copia o retângulo `r` de `src` para o mesmo lugar em `dst` (mesmo tamanho), linha
-/// a linha.
+/// Copia o retângulo `r` de `src` para o mesmo lugar em `dst`, linha a linha. Se os
+/// tamanhos diferem (um ponto a mais ou a menos num compositor antigo), copia só o que
+/// as duas têm em comum.
 fn copy_rect(dst: &mut Pixmap, src: &Pixmap, r: (f32, f32, f32, f32)) {
-    let (w, h) = (src.width() as i64, src.height() as i64);
-    if dst.width() as i64 != w || dst.height() as i64 != h {
-        return;
-    }
+    let w = src.width().min(dst.width()) as i64;
+    let h = src.height().min(dst.height()) as i64;
     let x0 = (r.0.floor() as i64).clamp(0, w);
     let x1 = ((r.0 + r.2).ceil() as i64).clamp(0, w);
     let y0 = (r.1.floor() as i64).clamp(0, h);
@@ -470,13 +616,13 @@ fn copy_rect(dst: &mut Pixmap, src: &Pixmap, r: (f32, f32, f32, f32)) {
     if x1 <= x0 {
         return;
     }
-    let stride = w as usize * 4;
+    let (src_stride, dst_stride) = (src.width() as usize * 4, dst.width() as usize * 4);
     let (a, b) = (x0 as usize * 4, x1 as usize * 4);
     let src = src.data();
     let dst = dst.data_mut();
     for y in y0 as usize..y1 as usize {
-        let row = y * stride;
-        dst[row + a..row + b].copy_from_slice(&src[row + a..row + b]);
+        let (s, d) = (y * src_stride, y * dst_stride);
+        dst[d + a..d + b].copy_from_slice(&src[s + a..s + b]);
     }
 }
 
@@ -490,10 +636,10 @@ fn outline(canvas: &mut Pixmap, (x, y, w, h): (f32, f32, f32, f32)) {
     }
 }
 
-/// Desenha a seta, o círculo ou o quadrado, deslocado por `offset`.
-fn draw_shape(canvas: &mut Pixmap, shape: &Shape, offset: (f32, f32)) {
-    let a = (shape.from.0 + offset.0, shape.from.1 + offset.1);
-    let b = (shape.to.0 + offset.0, shape.to.1 + offset.1);
+/// Desenha a seta, o círculo ou o quadrado. `ts` leva das coordenadas da marcação
+/// (pontos no desktop) ao canvas; numa ampliação, o traço engrossa junto.
+fn draw_shape(canvas: &mut Pixmap, shape: &Shape, ts: Transform) {
+    let (a, b) = (shape.from, shape.to);
     let [r, g, bl] = shape.color;
     let mut paint = Paint::default();
     paint.anti_alias = true;
@@ -511,7 +657,7 @@ fn draw_shape(canvas: &mut Pixmap, shape: &Shape, offset: (f32, f32)) {
             pb.move_to(a.0, a.1);
             pb.line_to(base.0, base.1);
             if let Some(path) = pb.finish() {
-                canvas.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                canvas.stroke_path(&path, &paint, &stroke, ts, None);
             }
             // Ponta: triângulo cheio.
             let (px, py) = (-uy, ux);
@@ -521,14 +667,14 @@ fn draw_shape(canvas: &mut Pixmap, shape: &Shape, offset: (f32, f32)) {
             pb.line_to(b.0 - ux * head - px * head * 0.55, b.1 - uy * head - py * head * 0.55);
             pb.close();
             if let Some(path) = pb.finish() {
-                canvas.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                canvas.fill_path(&path, &paint, FillRule::Winding, ts, None);
             }
         }
         Tool::Circle => {
             let (x, y, w, h) = normalized(a, b);
             if let Some(rect) = Rect::from_xywh(x, y, w.max(1.0), h.max(1.0)) {
                 if let Some(path) = PathBuilder::from_oval(rect) {
-                    canvas.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                    canvas.stroke_path(&path, &paint, &stroke, ts, None);
                 }
             }
         }
@@ -537,7 +683,7 @@ fn draw_shape(canvas: &mut Pixmap, shape: &Shape, offset: (f32, f32)) {
             if let Some(rect) = Rect::from_xywh(x, y, w.max(1.0), h.max(1.0)) {
                 let path = PathBuilder::from_rect(rect);
                 let stroke = Stroke { width: 4.0, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
-                canvas.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                canvas.stroke_path(&path, &paint, &stroke, ts, None);
             }
         }
     }
@@ -566,10 +712,11 @@ fn chrono_name() -> String {
     })
 }
 
-/// Pede a captura ao compositor e espera o arquivo (até 3 s). `wait_launcher`: aberta
-/// pelo launcher (o app Captura de Tela), espera ele fechar, senão a captura sai com
-/// o launcher por cima; pelos atalhos (⌘⇧3, ⌘⇧4), a tela sai como está.
-fn capture(wait_launcher: bool) -> Result<Pixmap, Box<dyn Error>> {
+/// Pede a captura de todas as telas ao compositor e espera os arquivos (até 3 s).
+/// `wait_launcher`: aberta pelo launcher (o app Captura de Tela), espera ele fechar,
+/// senão a captura sai com o launcher por cima; pelos atalhos (⌘⇧3, ⌘⇧4), a tela sai
+/// como está.
+fn capture(wait_launcher: bool) -> Result<Vec<Shot>, Box<dyn Error>> {
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
     while wait_launcher && ask_compositor("launcher state").is_some_and(|r| r.first().map(String::as_str) == Some("open")) {
         if std::time::Instant::now() > deadline {
@@ -579,18 +726,91 @@ fn capture(wait_launcher: bool) -> Result<Pixmap, Box<dyn Error>> {
     }
     // O último quadro do esmaecer e os menus que fecham junto.
     std::thread::sleep(Duration::from_millis(60));
-    let path = runtime_dir().join(format!("mide-tela-{}.png", std::process::id()));
-    let _ = std::fs::remove_file(&path);
-    ask_compositor(&format!("screenshot {}", path.display())).ok_or("o mide não respondeu")?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    while !path.exists() {
-        if std::time::Instant::now() > deadline {
-            return Err("a captura não chegou".into());
+    let prefix = runtime_dir().join(format!("mide-tela-{}", std::process::id()));
+    // Restos de uma captura anterior com o mesmo PID, apagados ANTES do pedido: depois
+    // dele o compositor já pode ter gravado a imagem nova (no DRM, em uns 40 ms).
+    remove_stale(&prefix);
+    let reply = ask_compositor(&format!("screenshot all {}", prefix.display())).ok_or("o mide não respondeu")?;
+    let mut lines = parse_screens(&reply);
+    if lines.is_empty() {
+        // Compositor de antes do `screenshot all` (atualizado sem `restart all`): ele
+        // responde `ok` e toma "all <prefixo>" por um caminho relativo, numa pasta "all "
+        // que não existe (só avisa no log). Pede do jeito antigo: só a tela principal,
+        // com a posição e a escala do comando `outputs`.
+        if let Some(err) = reply.first().and_then(|l| l.strip_prefix("erro: ")) {
+            return Err(err.to_string().into());
         }
+        let path = runtime_dir().join(format!("mide-tela-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        ask_compositor(&format!("screenshot {}", path.display())).ok_or("o mide não respondeu")?;
+        let (origin, scale) = ask_compositor("outputs").and_then(|r| primary_from_outputs(&r)).unwrap_or(((0.0, 0.0), 1.0));
+        lines.push(ScreenLine { name: String::new(), rect: (origin.0, origin.1, 0.0, 0.0), scale, primary: true, path });
+    }
+    // O compositor salva no próximo quadro de cada tela: espera todas.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while lines.iter().any(|l| !l.path.exists()) && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(15));
     }
-    let image = image::open(&path)?.to_rgba8();
-    let _ = std::fs::remove_file(&path);
+    let mut shots = Vec::new();
+    for line in &lines {
+        let image = match load_png(&line.path) {
+            Ok(image) => image,
+            // Sem a principal não há o que mostrar; outra tela que falhou fica de fora.
+            Err(err) if line.primary => return Err(format!("a captura não chegou: {err}").into()),
+            Err(err) => {
+                tracing::warn!("captura: a tela {} não chegou: {err}", line.name);
+                continue;
+            }
+        };
+        let _ = std::fs::remove_file(&line.path);
+        // Sem o tamanho em pontos (compositor antigo), ele vem da imagem e da escala,
+        // arredondado para cima como o compositor faz com a camada.
+        let mut rect = line.rect;
+        if rect.2 <= 0.0 {
+            (rect.2, rect.3) = points_size((image.width(), image.height()), line.scale);
+        }
+        shots.push(Shot::new(&line.name, rect, line.scale, line.primary, image));
+    }
+    if !shots.iter().any(|s| s.primary)
+        && let Some(first) = shots.first_mut()
+    {
+        first.primary = true;
+    }
+    Ok(shots)
+}
+
+/// Tamanho em pontos de uma tela de `px` pixels na escala `scale`, arredondado para cima
+/// como o Smithay faz (`to_i32_ceil`): 1366x768 em 1,25 dá 1093x615.
+fn points_size(px: (u32, u32), scale: f32) -> (f32, f32) {
+    ((px.0 as f32 / scale).ceil(), (px.1 as f32 / scale).ceil())
+}
+
+/// Apaga os arquivos `<prefixo>-*.png` que sobraram de uma captura anterior.
+fn remove_stale(prefix: &std::path::Path) {
+    let (Some(dir), Some(stem)) = (prefix.parent(), prefix.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    let start = format!("{stem}-");
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        if name.to_str().is_some_and(|n| n.starts_with(&start) && n.ends_with(".png")) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Posição e escala da tela principal na resposta do `outputs`
+/// (`nome descrição modo x,y escala ligada principal|- modos`).
+fn primary_from_outputs(reply: &[String]) -> Option<((f32, f32), f32)> {
+    let line = reply.iter().find(|l| l.split('\t').nth(6) == Some("principal"))?;
+    let f: Vec<&str> = line.split('\t').collect();
+    let (x, y) = f.get(3)?.split_once(',')?;
+    Some(((x.parse().ok()?, y.parse().ok()?), f.get(4)?.parse().ok().filter(|s: &f32| *s > 0.0)?))
+}
+
+/// Lê o PNG salvo pelo compositor.
+fn load_png(path: &std::path::Path) -> Result<Pixmap, Box<dyn Error>> {
+    let image = image::open(path)?.to_rgba8();
     let (w, h) = image.dimensions();
     // Opaca: o RGBA já serve como pré-multiplicado.
     Pixmap::from_vec(image.into_raw(), tiny_skia::IntSize::from_wh(w, h).ok_or("tamanho inválido")?).ok_or_else(|| "imagem inválida".into())
@@ -620,24 +840,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         ask_compositor("record stop");
         return Ok(());
     }
-    let shot = capture(mode.is_empty())?;
+    let screens = capture(mode.is_empty())?;
     if mode == "--full" {
-        let (w, h) = (shot.width() as f32, shot.height() as f32);
-        let mut full = Capture::new(shot, Vec::new());
-        full.selection = Some((0.0, 0.0, w, h));
-        tracing::info!("captura rápida da tela inteira ({w}x{h})");
+        // Por enquanto, a tela principal (várias telas no ⌘⇧3 ficam para a B22).
+        let mut full = Capture::new(screens, Vec::new());
+        let main = full.primary().rect;
+        full.selection = Some(main);
+        tracing::info!("captura rápida da tela inteira ({}x{} pontos)", main.2, main.3);
         let copied = full.copy();
         return if full.save().is_some() || copied { Ok(()) } else { Err("a captura não foi salva nem copiada".into()) };
     }
-    tracing::info!("captura de tela aberta ({}x{})", shot.width(), shot.height());
+    let names: Vec<String> = screens.iter().map(|s| format!("{} {}x{} em {:.2}", s.name, s.rect.2, s.rect.3, s.scale)).collect();
+    tracing::info!("captura de tela aberta ({} tela(s): {})", screens.len(), names.join(", "));
     let windows = window_rects();
-    let mut app = Capture::new(shot, windows);
+    let mut app = Capture::new(screens, windows);
     app.quick = mode == "--area";
     if mode == "--record" {
         app.record = true;
         app.mode = Mode::Full;
     }
-    // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1.
+    // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1, em pontos.
     run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot").fixed_scale(), app)
 }
 
@@ -645,11 +867,26 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
 
+    /// Tela de cor única, `w`×`h` pixels, com a posição e a escala dadas.
+    fn screen(name: &str, at: (f32, f32), px: (u32, u32), scale: f32, rgb: [u8; 3], primary: bool) -> Shot {
+        let mut shot = Pixmap::new(px.0, px.1).unwrap();
+        shot.fill(Color::from_rgba8(rgb[0], rgb[1], rgb[2], 255));
+        let size = points_size(px, scale);
+        let rect = (at.0, at.1, size.0, size.1);
+        Shot::new(name, rect, scale, primary, shot)
+    }
+
+    fn rgb(p: &Pixmap, x: u32, y: u32) -> [u8; 3] {
+        let c = p.pixel(x, y).unwrap();
+        [c.red(), c.green(), c.blue()]
+    }
+
+    const RED: [u8; 3] = [255, 0, 0];
+    const BLUE: [u8; 3] = [0, 0, 255];
+
     #[test]
     fn recorta_a_area_com_as_marcacoes() {
-        let mut shot = Pixmap::new(200, 100).unwrap();
-        shot.fill(Color::from_rgba8(255, 255, 255, 255));
-        let mut capture = Capture::new(shot, vec![(10.0, 10.0, 50.0, 40.0)]);
+        let mut capture = Capture::new(vec![screen("A", (0.0, 0.0), (200, 100), 1.0, [255, 255, 255], true)], vec![(10.0, 10.0, 50.0, 40.0)]);
         capture.selection = Some((20.0, 10.0, 100.0, 60.0));
         capture.shapes.push(Shape { tool: Tool::Square, color: [235, 52, 52], from: (30.0, 20.0), to: (60.0, 50.0) });
         let out = capture.result().unwrap();
@@ -663,6 +900,166 @@ mod tests {
 
     #[test]
     fn janela_fora_da_tela_e_recortada() {
-        assert_eq!(clamp_rect((-10.0, 20.0, 100.0, 50.0), (80.0, 60.0)), (0.0, 20.0, 80.0, 40.0));
+        assert_eq!(clamp_rect((-10.0, 20.0, 100.0, 50.0), (0.0, 0.0, 80.0, 60.0)), (0.0, 20.0, 80.0, 40.0));
+        // Limites de duas telas lado a lado: a janela na segunda não é cortada na primeira.
+        assert_eq!(clamp_rect((1400.0, 100.0, 300.0, 200.0), (0.0, 0.0, 3286.0, 1080.0)), (1400.0, 100.0, 300.0, 200.0));
+    }
+
+    #[test]
+    fn le_screenshot_all() {
+        let reply = vec![
+            "HEADLESS-1\t0\t0\t1366\t768\t1\tprincipal\t/run/t-HEADLESS-1.png".to_string(),
+            "HEADLESS-2\t1366\t0\t1536\t864\t1.25\t-\t/run/minha pasta/t-HEADLESS-2.png".to_string(),
+            "uso: screenshot".to_string(),
+        ];
+        let screens = parse_screens(&reply);
+        assert_eq!(screens.len(), 2);
+        assert_eq!(screens[0], ScreenLine { name: "HEADLESS-1".into(), rect: (0.0, 0.0, 1366.0, 768.0), scale: 1.0, primary: true, path: "/run/t-HEADLESS-1.png".into() });
+        assert_eq!((screens[1].rect, screens[1].scale, screens[1].primary), ((1366.0, 0.0, 1536.0, 864.0), 1.25, false));
+        assert_eq!(screens[1].path, PathBuf::from("/run/minha pasta/t-HEADLESS-2.png"));
+        // A resposta de uso de um compositor antigo não vira tela.
+        assert!(parse_screens(&["uso: screenshot <arquivo.png>".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn principal_pelo_comando_outputs() {
+        let reply = vec![
+            "HEADLESS-1\t-\t1366x768@60\t0,0\t1\tligada\t-\t1366x768@60".to_string(),
+            "HEADLESS-2\t-\t1920x1080@60\t1366,0\t1.25\tligada\tprincipal\t1920x1080@60".to_string(),
+        ];
+        assert_eq!(primary_from_outputs(&reply), Some(((1366.0, 0.0), 1.25)));
+    }
+
+    #[test]
+    fn imagem_em_pontos_para_mostrar() {
+        // 1920x1080 pixels em 1,25: a camada (escala 1) tem 1536x864 pontos, e a imagem
+        // mostrada e o escurecido têm esse tamanho (antes, o escurecido não cabia e a
+        // tela não escurecia).
+        let s = screen("A", (0.0, 0.0), (1920, 1080), 1.25, RED, true);
+        assert_eq!(s.rect, (0.0, 0.0, 1536.0, 864.0));
+        assert_eq!((s.view.width(), s.view.height()), (1536, 864));
+        assert_eq!((s.dimmed.width(), s.dimmed.height()), (1536, 864));
+        assert_eq!((s.shot.width(), s.shot.height()), (1920, 1080));
+        assert!(rgb(&s.dimmed, 700, 400)[0] < 160, "escurecido");
+    }
+
+    #[test]
+    fn output_scale_e_a_maior_tocada() {
+        let screens = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("B", (1366.0, 0.0), (2400, 1350), 1.25, BLUE, false)];
+        assert_eq!(output_scale((1266.0, 100.0, 200.0, 100.0), &screens), 1.25);
+        assert_eq!(output_scale((100.0, 100.0, 200.0, 100.0), &screens), 1.0);
+        assert_eq!(bounds(&screens), (0.0, 0.0, 3286.0, 1080.0));
+    }
+
+    #[test]
+    fn recorte_principal_125() {
+        // O bug de antes: a área em pontos recortada da imagem em pixels.
+        let mut shot = Pixmap::new(1920, 1080).unwrap();
+        shot.fill(Color::from_rgba8(255, 255, 255, 255));
+        // Um quadrado azul em (300, 200) pontos = (375, 250) pixels.
+        shot.fill_rect(Rect::from_xywh(375.0, 250.0, 20.0, 20.0).unwrap(), &Paint { shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(0, 0, 255, 255)), ..Default::default() }, Transform::identity(), None);
+        let screens = vec![Shot::new("A", (0.0, 0.0, 1536.0, 864.0), 1.25, true, shot)];
+        let out = compose(&screens, (300.0, 200.0, 400.0, 250.0), &[]).unwrap();
+        assert_eq!((out.width(), out.height()), (500, 313));
+        assert_eq!(rgb(&out, 5, 5), BLUE, "o canto da área é o quadrado azul");
+        assert_eq!(rgb(&out, 30, 30), [255, 255, 255]);
+    }
+
+    #[test]
+    fn compoe_atravessando() {
+        let screens = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("B", (1366.0, 0.0), (1920, 1080), 1.0, BLUE, false)];
+        let out = compose(&screens, (1266.0, 100.0, 200.0, 100.0), &[]).unwrap();
+        assert_eq!((out.width(), out.height()), (200, 100));
+        assert_eq!(rgb(&out, 50, 50), RED);
+        assert_eq!(rgb(&out, 150, 50), BLUE);
+    }
+
+    #[test]
+    fn compoe_na_maior_escala() {
+        let screens = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("B", (1366.0, 0.0), (2400, 1350), 1.25, BLUE, false)];
+        let out = compose(&screens, (1266.0, 100.0, 200.0, 100.0), &[]).unwrap();
+        assert_eq!((out.width(), out.height()), (250, 125));
+        assert_eq!(rgb(&out, 10, 50), RED);
+        assert_eq!(rgb(&out, 240, 50), BLUE);
+    }
+
+    #[test]
+    fn buraco_entre_telas() {
+        // A tem 768 de altura e B, 1080: abaixo de A, à esquerda de B, não há tela.
+        let screens = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("B", (1366.0, 0.0), (1920, 1080), 1.0, BLUE, false)];
+        let out = compose(&screens, (1300.0, 700.0, 200.0, 100.0), &[]).unwrap();
+        assert_eq!(rgb(&out, 30, 30), RED);
+        assert_eq!(rgb(&out, 30, 90), [0, 0, 0], "buraco preto");
+        assert_eq!(out.pixel(30, 90).unwrap().alpha(), 255, "opaco");
+        assert_eq!(rgb(&out, 150, 90), BLUE);
+    }
+
+    #[test]
+    fn marcacoes_seguem_a_escala() {
+        // Quadrado de (310, 210) a (340, 240) em pontos, numa tela a 2x: no arquivo, a
+        // borda vai para (20, 20) pixels a partir do canto da área (300, 200).
+        let screens = vec![screen("A", (0.0, 0.0), (2732, 1536), 2.0, [255, 255, 255], true)];
+        let shape = Shape { tool: Tool::Square, color: [235, 52, 52], from: (310.0, 210.0), to: (340.0, 240.0) };
+        let out = compose(&screens, (300.0, 200.0, 100.0, 100.0), &[shape]).unwrap();
+        assert_eq!((out.width(), out.height()), (200, 200));
+        assert!(rgb(&out, 20, 40)[1] < 100, "borda do quadrado ampliada");
+        // O traço de 4 pontos vira 8 pixels (de 16 a 24); sem escala, iria de 18 a 22.
+        assert!(rgb(&out, 17, 40)[1] < 100 && rgb(&out, 23, 40)[1] < 100, "traço engrossa com a escala");
+        assert_eq!(rgb(&out, 27, 40), [255, 255, 255]);
+        assert_eq!(rgb(&out, 60, 60), [255, 255, 255]);
+    }
+
+    #[test]
+    fn tela_inteira_em_125_sem_linha_preta() {
+        // 1366x768 em 1,25: o compositor dá 1093x615 pontos (para cima), que vezes 1,25
+        // seriam 1366x769. O arquivo tem o tamanho da imagem, sem a linha preta no fim.
+        assert_eq!(points_size((1366, 768), 1.25), (1093.0, 615.0));
+        let s = screen("A", (0.0, 0.0), (1366, 768), 1.25, RED, true);
+        let main = s.rect;
+        let screens = vec![s];
+        let out = compose(&screens, main, &[]).unwrap();
+        assert_eq!((out.width(), out.height()), (1366, 768));
+        assert_eq!(rgb(&out, 1365, 767), RED, "o canto de baixo não fica preto");
+        // Em 1,5: 911 pontos de largura seriam 1367 pixels (coluna preta à direita).
+        let s = screen("A", (0.0, 0.0), (1366, 768), 1.5, BLUE, true);
+        let main = s.rect;
+        let out = compose(&[s], main, &[]).unwrap();
+        assert_eq!((out.width(), out.height()), (1366, 768));
+        assert_eq!(rgb(&out, 1365, 767), BLUE);
+        // Uma janela recortada no fim da tela também para na imagem.
+        let window = clamp_rect((900.0, 500.0, 400.0, 300.0), bounds(&screens));
+        let out = compose(&screens, window, &[]).unwrap();
+        assert_eq!((out.width(), out.height()), (1366 - 1125, 768 - 625));
+        assert_eq!(rgb(&out, out.width() - 1, out.height() - 1), RED);
+    }
+
+    #[test]
+    fn copia_com_tamanhos_diferentes() {
+        // Camada com uma linha a mais que a imagem (compositor antigo): copia o que dá.
+        let mut dst = Pixmap::new(10, 11).unwrap();
+        let mut src = Pixmap::new(10, 10).unwrap();
+        src.fill(Color::from_rgba8(255, 0, 0, 255));
+        copy_rect(&mut dst, &src, (2.0, 2.0, 20.0, 20.0));
+        assert_eq!(rgb(&dst, 5, 5), RED);
+        assert_eq!(rgb(&dst, 9, 9), RED);
+        assert_eq!(dst.pixel(1, 1).unwrap().alpha(), 0, "fora da área não copia");
+        assert_eq!(dst.pixel(5, 10).unwrap().alpha(), 0, "linha que a imagem não tem");
+    }
+
+    #[test]
+    fn restos_apagados_pelo_prefixo() {
+        let dir = std::env::temp_dir().join(format!("mide-teste-restos-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["mide-tela-7-HEADLESS-1.png", "mide-tela-7-DP-1.png", "mide-tela-70-HEADLESS-1.png", "outro.png"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        remove_stale(&dir.join("mide-tela-7"));
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["mide-tela-70-HEADLESS-1.png", "outro.png"]);
+        for name in &left {
+            std::fs::remove_file(dir.join(name)).unwrap();
+        }
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

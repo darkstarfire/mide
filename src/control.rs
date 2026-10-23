@@ -197,19 +197,52 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 Err(err) => format!("erro: {err}\n"),
             }
         }
-        // `screenshot <arquivo.png>`: salva o próximo quadro da tela principal (sem o
-        // cursor). O arquivo aparece pronto (gravado com outro nome e renomeado).
+        // Captura de tela: o próximo quadro, sem o cursor, salvo em PNG nos pixels da
+        // tela. O arquivo aparece pronto (gravado com outro nome e renomeado).
+        // - `screenshot <arquivo.png>`: a tela principal;
+        // - `screenshot tela NOME <arquivo.png>`: uma tela;
+        // - `screenshot all <prefixo>`: todas, em `<prefixo>-NOME.png`, com uma linha
+        //   por tela na resposta (`screen_line`). Espelhando, só a principal.
         Some("screenshot") => {
-            let path: String = words.collect::<Vec<_>>().join(" ");
-            if path.is_empty() {
-                "uso: screenshot <arquivo.png>\n".into()
-            } else {
-                state.screenshot_request = Some(path.into());
-                state.wake();
-                "ok\n".into()
+            let args: Vec<&str> = words.collect();
+            let primary = state.primary_output();
+            match parse_screenshot(&args) {
+                Err(usage) => usage,
+                Ok(ScreenshotCmd::Primary(path)) => match primary {
+                    Some(output) => {
+                        state.screenshot_requests.push((output.name(), path));
+                        "ok\n".into()
+                    }
+                    None => "erro: nenhuma tela\n".into(),
+                },
+                Ok(ScreenshotCmd::One(name, path)) => {
+                    if state.space.outputs().any(|o| o.name() == name) {
+                        state.screenshot_requests.push((name, path));
+                        "ok\n".into()
+                    } else {
+                        "erro: tela não encontrada\n".into()
+                    }
+                }
+                Ok(ScreenshotCmd::All(prefix)) => {
+                    let mirror = state.config.monitors.mirror;
+                    let outputs: Vec<_> = state.space.outputs().filter(|o| !mirror || primary.as_ref() == Some(*o)).cloned().collect();
+                    let mut out = String::new();
+                    for output in outputs {
+                        let Some(geo) = state.space.output_geometry(&output) else {
+                            continue;
+                        };
+                        let name = output.name();
+                        let path = PathBuf::from(format!("{}-{name}.png", prefix.display()));
+                        let scale = output.current_scale().fractional_scale();
+                        out.push_str(&screen_line(&name, (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h), scale, primary.as_ref() == Some(&output), &path));
+                        state.screenshot_requests.push((name, path));
+                    }
+                    if out.is_empty() { "erro: nenhuma tela\n".into() } else { out }
+                }
             }
         }
-        // Janelas à mostra com a moldura (incluindo a barra), a de cima primeiro:
+        // Janelas à mostra com a moldura (incluindo a barra), a de cima primeiro, em
+        // pontos no espaço do desktop (todas as telas):
         // `id<TAB>x<TAB>y<TAB>largura<TAB>altura<TAB>título` (captura de tela → Janela).
         Some("window_rects") => {
             let mut out = String::new();
@@ -617,9 +650,44 @@ fn mods(state: &State) -> String {
     format!("{}\n", held.join(" "))
 }
 
+/// Pedido de captura de tela (`screenshot ...`).
+#[derive(Debug, PartialEq)]
+pub enum ScreenshotCmd {
+    /// `screenshot <arquivo>`: a tela principal.
+    Primary(PathBuf),
+    /// `screenshot tela NOME <arquivo>`: uma tela, pelo nome.
+    One(String, PathBuf),
+    /// `screenshot all <prefixo>`: todas as telas, cada uma em `<prefixo>-NOME.png`.
+    All(PathBuf),
+}
+
+/// Lê os argumentos do `screenshot` (sem a palavra do comando). Caminhos podem ter
+/// espaços: o resto da linha é o caminho. O erro é a resposta de uso.
+pub fn parse_screenshot(args: &[&str]) -> Result<ScreenshotCmd, String> {
+    const USAGE: &str = "uso: screenshot <arquivo.png> | screenshot tela NOME <arquivo.png> | screenshot all <prefixo>\n";
+    let rest = |from: usize| args.get(from..).map(|a| a.join(" ")).filter(|p| !p.is_empty());
+    match args.first().copied() {
+        None => Err(USAGE.into()),
+        Some("tela") => match (args.get(1), rest(2)) {
+            (Some(name), Some(path)) => Ok(ScreenshotCmd::One(name.to_string(), path.into())),
+            _ => Err(USAGE.into()),
+        },
+        Some("all") => rest(1).map(|p| ScreenshotCmd::All(p.into())).ok_or_else(|| USAGE.into()),
+        Some(_) => Ok(ScreenshotCmd::Primary(args.join(" ").into())),
+    }
+}
+
+/// Linha da resposta do `screenshot all`, uma por tela:
+/// `NOME<TAB>X<TAB>Y<TAB>LARGURA<TAB>ALTURA<TAB>ESCALA<TAB>principal|-<TAB>CAMINHO`, com a
+/// posição e o tamanho em pontos, no espaço do desktop (a imagem sai em pixels: o
+/// tamanho vezes a escala).
+pub fn screen_line(name: &str, (x, y, w, h): (i32, i32, i32, i32), scale: f64, primary: bool, path: &std::path::Path) -> String {
+    format!("{name}\t{x}\t{y}\t{w}\t{h}\t{scale}\t{}\t{}\n", if primary { "principal" } else { "-" }, path.display())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_glass, parse_icons};
+    use super::{parse_glass, parse_icons, parse_screenshot, screen_line, ScreenshotCmd};
 
     #[test]
     fn regioes_de_vidro_sao_interpretadas() {
@@ -641,5 +709,25 @@ mod tests {
         assert_eq!(icons[0].0, vec!["org.gnome.calculator".to_string(), "calculator".to_string()]);
         assert_eq!(icons[0].1.loc.x, 70);
         assert_eq!(icons[1].1.size.w, 48);
+    }
+
+    #[test]
+    fn pedidos_de_captura_sao_interpretados() {
+        assert_eq!(parse_screenshot(&["a.png"]), Ok(ScreenshotCmd::Primary("a.png".into())));
+        // Caminho com espaços (o resto da linha).
+        assert_eq!(parse_screenshot(&["/tmp/minha", "tela.png"]), Ok(ScreenshotCmd::Primary("/tmp/minha tela.png".into())));
+        assert_eq!(parse_screenshot(&["tela", "HEADLESS-2", "a.png"]), Ok(ScreenshotCmd::One("HEADLESS-2".into(), "a.png".into())));
+        assert_eq!(parse_screenshot(&["all", "/tmp/x"]), Ok(ScreenshotCmd::All("/tmp/x".into())));
+        assert!(parse_screenshot(&[]).unwrap_err().starts_with("uso:"));
+        assert!(parse_screenshot(&["tela", "HEADLESS-2"]).is_err(), "sem arquivo");
+        assert!(parse_screenshot(&["all"]).is_err(), "sem prefixo");
+    }
+
+    #[test]
+    fn linha_de_cada_tela_na_captura() {
+        let line = screen_line("HEADLESS-2", (1366, 0, 1536, 864), 1.25, false, std::path::Path::new("/tmp/t-HEADLESS-2.png"));
+        assert_eq!(line, "HEADLESS-2\t1366\t0\t1536\t864\t1.25\t-\t/tmp/t-HEADLESS-2.png\n");
+        let line = screen_line("HEADLESS-1", (0, 0, 1366, 768), 1.0, true, std::path::Path::new("/tmp/t-HEADLESS-1.png"));
+        assert_eq!(line, "HEADLESS-1\t0\t0\t1366\t768\t1\tprincipal\t/tmp/t-HEADLESS-1.png\n");
     }
 }

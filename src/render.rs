@@ -148,8 +148,8 @@ impl Scene {
         tracing::debug!("frame: {} janela(s) mapeada(s)", state.space.elements().count());
         // Da frente para trás: prévias das janelas, popups, camadas (barra, dock) e
         // depois as janelas.
-        // Captura de tela pedida: este quadro da tela principal sai sem o cursor.
-        let capturing = state.screenshot_request.is_some() && state.primary_output().is_some_and(|o| &o == output);
+        // Captura de tela pedida para esta tela: o quadro sai sem o cursor.
+        let capturing = state.screenshot_requests.iter().any(|(name, _)| *name == output_name);
         let mut custom: Vec<MideRenderElement> = match cursors {
             Some(cursors) if !capturing && *draw_cursor => cursors.elements(renderer, state, origin),
             _ => Vec::new(),
@@ -270,7 +270,9 @@ impl Scene {
             tracing::debug!("quadro na GPU: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
         }
         if capturing {
-            if let Some(path) = state.screenshot_request.take() {
+            let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut state.screenshot_requests).into_iter().partition(|(name, _)| *name == output_name);
+            state.screenshot_requests = others;
+            for (_, path) in mine {
                 if let Err(err) = save_screenshot(renderer, framebuffer, output, path) {
                     tracing::warn!("captura de tela: {err}");
                 }

@@ -229,9 +229,9 @@ pub struct State {
     /// Tela onde estão a barra, a dock e a área de trabalho (para reabri-los quando a
     /// tela principal muda).
     pub shell_output: Option<String>,
-    /// Captura de tela pedida (`screenshot <arquivo>`): o próximo quadro da tela
-    /// principal é salvo em PNG nesse arquivo, sem o cursor.
-    pub screenshot_request: Option<std::path::PathBuf>,
+    /// Capturas de tela pedidas (`screenshot`): o próximo quadro de cada tela listada
+    /// (pelo nome) é salvo em PNG no arquivo ao lado, sem o cursor.
+    pub screenshot_requests: Vec<(String, std::path::PathBuf)>,
     /// Menus que acabaram de aparecer (camadas de menu e popups), com o momento:
     /// entram esmaecendo (`[effects] menu_animation`).
     pub appearing: Vec<(WlSurface, Instant)>,
@@ -386,7 +386,7 @@ impl State {
             redraw: true,
             waker: None,
             outputs_info: Vec::new(),
-            screenshot_request: None,
+            screenshot_requests: Vec::new(),
             appearing: Vec::new(),
             outputs_waker: None,
             input_waker: None,
