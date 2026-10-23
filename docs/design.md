@@ -147,6 +147,16 @@ nem de cor própria.
 Itens de grade (ícones do Arquivos, da área de trabalho, do launcher): selecionado =
 vidro claro atrás do ícone e o nome numa pílula azul.
 
+**Área ajustável** (seleção que se arrasta e muda de tamanho, como a da Captura):
+contorno branco de 1,5 px e **bolinhas** nas 4 pontas e no meio dos 4 lados, de raio
+5 pt, cheias na **cor de destaque** do tema (`t.accent`) com um anel branco de 1,5 px
+(aparecem sobre qualquer fundo). O clique pega a bolinha até 10 pt do centro; as pontas
+vencem o meio dos lados. Arrastar uma bolinha muda o tamanho (o lado oposto fica
+parado, passar do outro lado vira a área); arrastar dentro da área muda o lugar. As
+bolinhas somem enquanto uma área nova é escolhida ou algo é desenhado, e não aparecem
+em modos rápidos que fecham ao soltar o mouse (⌘⇧4). As bolinhas ficam por cima de
+tudo da área (inclusive o rótulo do tamanho).
+
 ---
 
 ## 7. Componentes padrão (mide-ui)

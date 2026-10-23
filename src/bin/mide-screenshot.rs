@@ -1,13 +1,18 @@
-//! Captura de tela do mide (tecla Print): a tela congela e aparece por cima de tudo.
+//! Captura de tela do mide (tecla Print): as telas congelam e a Captura aparece por cima
+//! de tudo, em todas elas (`Window::on_every_output`: uma camada por tela).
 //!
-//! - **Seleção** (padrão): arraste para escolher a área.
+//! - **Seleção** (padrão): arraste para escolher a área, em qualquer tela ou
+//!   atravessando de uma para a outra.
 //! - **Janela**: clique numa janela.
 //! - **Tela inteira**: a tela toda.
 //!
-//! Depois de escolher a área, arrastar dentro dela desenha com a ferramenta escolhida
-//! (seta, círculo ou quadrado) na cor escolhida (vermelho, branco, preto, verde,
-//! amarelo ou azul). **Copiar** (Enter ou Ctrl+C) põe a imagem na área de
-//! transferência; **Salvar** (Ctrl+S) grava em Imagens/Capturas de tela; Esc cancela.
+//! Depois de escolher a área, ela se ajusta: com a ferramenta **Ajustar** (a padrão),
+//! arrastar dentro da área muda o lugar dela, e as bolinhas (nas pontas e no meio dos
+//! lados, na cor de destaque) mudam o tamanho. **Seta**, **Círculo** e **Quadrado**
+//! desenham dentro da área na cor escolhida (vermelho, branco, preto, verde, amarelo ou
+//! azul). **Copiar** (Enter ou Ctrl+C) põe a imagem na área de transferência;
+//! **Salvar** (Ctrl+S) grava em Imagens/Capturas de tela; Esc cancela. O ⌘⇧4 (`--area`)
+//! não tem bolinhas: ao soltar o mouse, salva e copia.
 //!
 //! A imagem vem do compositor (`screenshot all`: uma por tela, em pixels, sem o
 //! cursor); a cópia fica com o compositor (`copy-file`), então continua lá depois que
@@ -17,7 +22,9 @@
 //! desktop** (todas as telas). Cada tela guarda a imagem em pixels (`Shot::shot`, para
 //! o arquivo) e uma cópia no tamanho em pontos (`view`, `dimmed`, para mostrar na
 //! camada, que desenha em escala 1). O arquivo sai na maior escala entre as telas que
-//! a área toca (`compose`).
+//! a área toca (`compose`). O `view` roda uma vez por tela: o desenho vale para todas
+//! (cada uma mostra a sua parte, deslocada pela origem dela); teclas, ponteiro e
+//! painel só no passe da camada principal (`!ui.mirror()`).
 
 use std::{error::Error, path::PathBuf, time::Duration};
 
@@ -36,6 +43,8 @@ enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tool {
+    /// Arrastar dentro da área move a área (a padrão); as bolinhas mudam o tamanho.
+    Adjust,
     Arrow,
     Circle,
     Square,
@@ -62,6 +71,208 @@ struct Shape {
 
 /// Retângulo (x, y, largura, altura).
 type RectF = (f32, f32, f32, f32);
+
+/// Bolinha da área escolhida: as 4 pontas e o meio dos 4 lados.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Handle {
+    TopLeft,
+    TopRight,
+    BottomRight,
+    BottomLeft,
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+impl Handle {
+    /// As pontas antes dos meios dos lados: numa área pequena, onde as duas ficam a
+    /// menos de um raio, a ponta vence (muda largura e altura juntas).
+    const ALL: [Handle; 8] = [Handle::TopLeft, Handle::TopRight, Handle::BottomRight, Handle::BottomLeft, Handle::Top, Handle::Right, Handle::Bottom, Handle::Left];
+
+    /// Que lados a bolinha mexe: x (−1 esquerdo, 1 direito, 0 nenhum) e y (−1 de cima,
+    /// 1 de baixo, 0 nenhum).
+    fn sides(self) -> (i8, i8) {
+        match self {
+            Handle::TopLeft => (-1, -1),
+            Handle::TopRight => (1, -1),
+            Handle::BottomRight => (1, 1),
+            Handle::BottomLeft => (-1, 1),
+            Handle::Top => (0, -1),
+            Handle::Right => (1, 0),
+            Handle::Bottom => (0, 1),
+            Handle::Left => (-1, 0),
+        }
+    }
+}
+
+/// Raio da bolinha desenhada e da área onde o clique pega nela (pontos).
+const HANDLE_RADIUS: f32 = 5.0;
+const HANDLE_HIT: f32 = 10.0;
+
+/// Centro de cada bolinha da área `r`.
+fn handles(r: RectF) -> [(Handle, (f32, f32)); 8] {
+    Handle::ALL.map(|h| {
+        let (sx, sy) = h.sides();
+        let x = r.0 + r.2 * (sx as f32 + 1.0) / 2.0;
+        let y = r.1 + r.3 * (sy as f32 + 1.0) / 2.0;
+        (h, (x, y))
+    })
+}
+
+/// A bolinha sob o ponto `p` (até `HANDLE_HIT` do centro), se houver.
+fn handle_at(r: RectF, p: (f32, f32)) -> Option<Handle> {
+    handles(r).into_iter().find(|(_, c)| (p.0 - c.0).hypot(p.1 - c.1) <= HANDLE_HIT).map(|(h, _)| h)
+}
+
+/// A área `orig` com a bolinha `h` arrastada de `delta`: o lado oposto fica parado, o
+/// lado mexido não sai de `limits` (todas as telas), passar do outro lado vira a área
+/// (normaliza) e o tamanho mínimo é 2 pontos.
+fn resize_area(orig: RectF, h: Handle, delta: (f32, f32), limits: RectF) -> RectF {
+    let (lx0, ly0, lx1, ly1) = (limits.0, limits.1, limits.0 + limits.2, limits.1 + limits.3);
+    let (mut x0, mut y0, mut x1, mut y1) = (orig.0, orig.1, orig.0 + orig.2, orig.1 + orig.3);
+    let (sx, sy) = h.sides();
+    match sx {
+        -1 => x0 = (x0 + delta.0).clamp(lx0, lx1),
+        1 => x1 = (x1 + delta.0).clamp(lx0, lx1),
+        _ => {}
+    }
+    match sy {
+        -1 => y0 = (y0 + delta.1).clamp(ly0, ly1),
+        1 => y1 = (y1 + delta.1).clamp(ly0, ly1),
+        _ => {}
+    }
+    let fit = |a: f32, b: f32, lo: f32, hi: f32| {
+        let (start, len) = (a.min(b), (a - b).abs());
+        if len >= 2.0 { (start, len) } else { (start.min(hi - 2.0).max(lo), 2.0) }
+    };
+    let (x, w) = fit(x0, x1, lx0, lx1);
+    let (y, h) = fit(y0, y1, ly0, ly1);
+    (x, y, w, h)
+}
+
+/// A área `orig` arrastada de `delta`, sem sair de `limits` (o tamanho não muda).
+fn moved(orig: RectF, delta: (f32, f32), limits: RectF) -> RectF {
+    let x = (orig.0 + delta.0).min(limits.0 + limits.2 - orig.2).max(limits.0);
+    let y = (orig.1 + delta.1).min(limits.1 + limits.3 - orig.3).max(limits.1);
+    (x, y, orig.2, orig.3)
+}
+
+/// O ponto `p` preso dentro de `limits`.
+fn clamp_point(p: (f32, f32), limits: RectF) -> (f32, f32) {
+    (p.0.clamp(limits.0, limits.0 + limits.2), p.1.clamp(limits.1, limits.1 + limits.3))
+}
+
+/// Área `r` com todas as bolinhas numa tela (alcançáveis pelo ponteiro): nenhuma cai
+/// no buraco entre telas de tamanhos diferentes.
+fn handles_on_screens(r: RectF, screens: &[RectF]) -> bool {
+    handles(r).iter().all(|(_, c)| screens.iter().any(|s| inside(*s, *c)))
+}
+
+/// Quanto da área `r` fica em alguma tela (as telas não se sobrepõem).
+fn coverage(r: RectF, screens: &[RectF]) -> f32 {
+    screens
+        .iter()
+        .map(|s| {
+            let w = (r.0 + r.2).min(s.0 + s.2) - r.0.max(s.0);
+            let h = (r.1 + r.3).min(s.1 + s.3) - r.1.max(s.1);
+            w.max(0.0) * h.max(0.0)
+        })
+        .sum()
+}
+
+/// Das posições `cands`, a que tem as bolinhas nas telas e fica mais perto de `want`
+/// (onde o arrasto levaria sem limite); se nenhuma tem, a que deixa mais área nas telas.
+fn closest_valid(cands: &[RectF], want: RectF, screens: &[RectF]) -> RectF {
+    let dist = |r: &RectF| (r.0 - want.0).abs() + (r.1 - want.1).abs() + (r.2 - want.2).abs() + (r.3 - want.3).abs();
+    let valid = cands.iter().filter(|r| handles_on_screens(**r, screens)).min_by(|a, b| dist(a).total_cmp(&dist(b)));
+    valid.copied().unwrap_or_else(|| {
+        cands.iter().copied().max_by(|a, b| coverage(*a, screens).total_cmp(&coverage(*b, screens)).then(dist(b).total_cmp(&dist(a)))).unwrap_or(want)
+    })
+}
+
+/// Retângulo que contém as telas `screens` (sem telas, um ponto).
+fn bounds_of(screens: &[RectF]) -> RectF {
+    let Some(first) = screens.first() else {
+        return (0.0, 0.0, 1.0, 1.0);
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (first.0, first.1, first.0 + first.2, first.1 + first.3);
+    for s in &screens[1..] {
+        x0 = x0.min(s.0);
+        y0 = y0.min(s.1);
+        x1 = x1.max(s.0 + s.2);
+        y1 = y1.max(s.1 + s.3);
+    }
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
+/// Faixa comum às telas que `r` atravessa: na horizontal (`horizontal`), as telas que
+/// cruzam as colunas de `r` limitam a altura (o topo mais baixo e o fim mais alto); na
+/// vertical, o contrário. Como duas telas lado a lado com alturas diferentes. Volta o
+/// retângulo-limite, ou `None` se não há faixa comum.
+fn band_limits(r: RectF, screens: &[RectF], horizontal: bool) -> Option<RectF> {
+    let all = bounds_of(screens);
+    let over: Vec<&RectF> = screens.iter().filter(|s| if horizontal { r.0 < s.0 + s.2 && s.0 < r.0 + r.2 } else { r.1 < s.1 + s.3 && s.1 < r.1 + r.3 }).collect();
+    let lo = over.iter().map(|s| if horizontal { s.1 } else { s.0 }).fold(f32::MIN, f32::max);
+    let hi = over.iter().map(|s| if horizontal { s.1 + s.3 } else { s.0 + s.2 }).fold(f32::MAX, f32::min);
+    if over.is_empty() || hi <= lo {
+        return None;
+    }
+    Some(if horizontal { (all.0, lo, all.2, hi - lo) } else { (lo, all.1, hi - lo, all.3) })
+}
+
+/// `moved` limitado à união das telas, não ao retângulo que as envolve: a área não vai
+/// para o buraco entre telas de alturas (ou larguras) diferentes. Tenta onde o arrasto
+/// leva, deslizar só num eixo, caber numa tela só e caber na faixa comum às telas que
+/// ela atravessa; fica a posição válida mais perto.
+fn moved_in(orig: RectF, delta: (f32, f32), screens: &[RectF]) -> RectF {
+    let all = bounds_of(screens);
+    let want = moved(orig, delta, all);
+    let mut cands = vec![want, moved(orig, (delta.0, 0.0), all), moved(orig, (0.0, delta.1), all), orig];
+    for s in screens.iter().filter(|s| orig.2 <= s.2 && orig.3 <= s.3) {
+        cands.push(moved(orig, delta, *s));
+    }
+    for band in [band_limits(want, screens, true), band_limits(want, screens, false)].into_iter().flatten() {
+        cands.push(moved(want, (0.0, 0.0), band));
+    }
+    closest_valid(&cands, want, screens)
+}
+
+/// O ponto da união das telas mais perto de `p`.
+fn nearest_on_screens(p: (f32, f32), screens: &[RectF]) -> (f32, f32) {
+    screens.iter().map(|s| clamp_point(p, *s)).min_by(|a, b| (a.0 - p.0).hypot(a.1 - p.1).total_cmp(&(b.0 - p.0).hypot(b.1 - p.1))).unwrap_or(p)
+}
+
+/// `resize_area` limitado à união das telas: a bolinha arrastada vai para o ponto de
+/// tela mais perto do ponteiro e a área fica com todas as bolinhas alcançáveis (senão,
+/// desliza num eixo só, ou não muda).
+fn resize_in(orig: RectF, h: Handle, delta: (f32, f32), screens: &[RectF]) -> RectF {
+    let all = bounds_of(screens);
+    let want = resize_area(orig, h, delta, all);
+    let from = handles(orig).iter().find(|(k, _)| *k == h).map_or((orig.0, orig.1), |(_, c)| *c);
+    let to = nearest_on_screens((from.0 + delta.0, from.1 + delta.1), screens);
+    let d = (to.0 - from.0, to.1 - from.1);
+    let mut cands = vec![want, resize_area(orig, h, d, all), resize_area(orig, h, (d.0, 0.0), all), resize_area(orig, h, (0.0, d.1), all), orig];
+    // Presa a uma tela só ou à faixa comum das telas que a área atravessa.
+    let bands = [band_limits(want, screens, true), band_limits(want, screens, false)];
+    for limits in screens.iter().copied().map(Some).chain(bands).flatten() {
+        cands.push(resize_area(orig, h, delta, limits));
+    }
+    closest_valid(&cands, want, screens)
+}
+
+/// Arrasto em andamento (pontos no desktop).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Drag {
+    /// Escolhendo uma área nova, a partir de `start`.
+    NewArea { start: (f32, f32) },
+    /// Desenhando uma marcação (seta, círculo ou quadrado).
+    Draw { start: (f32, f32) },
+    /// Mudando o tamanho da área `orig` pela bolinha `handle`.
+    Resize { handle: Handle, orig: RectF, start: (f32, f32) },
+    /// Mudando a área `orig` de lugar.
+    Move { orig: RectF, start: (f32, f32) },
+}
 
 /// Retângulo (x, y, largura, altura) com largura e altura positivas.
 fn normalized(a: (f32, f32), b: (f32, f32)) -> (f32, f32, f32, f32) {
@@ -147,21 +358,6 @@ fn intersects(a: RectF, b: RectF) -> bool {
     a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
 }
 
-/// Retângulo que contém todas as telas.
-fn bounds(screens: &[Shot]) -> RectF {
-    let Some(first) = screens.first() else {
-        return (0.0, 0.0, 1.0, 1.0);
-    };
-    let (mut x0, mut y0, mut x1, mut y1) = (first.rect.0, first.rect.1, first.rect.0 + first.rect.2, first.rect.1 + first.rect.3);
-    for s in &screens[1..] {
-        x0 = x0.min(s.rect.0);
-        y0 = y0.min(s.rect.1);
-        x1 = x1.max(s.rect.0 + s.rect.2);
-        y1 = y1.max(s.rect.1 + s.rect.3);
-    }
-    (x0, y0, x1 - x0, y1 - y0)
-}
-
 /// Escala do arquivo de uma área: a maior entre as telas que ela toca (nenhum pedaço
 /// perde resolução; os de escala menor são ampliados).
 fn output_scale(sel: RectF, screens: &[Shot]) -> f32 {
@@ -220,8 +416,8 @@ struct Capture {
     color: usize,
     /// Área escolhida (pontos no desktop).
     selection: Option<(f32, f32, f32, f32)>,
-    /// Arrasto em andamento: começo e se é uma área nova (senão, uma marcação).
-    drag: Option<((f32, f32), bool)>,
+    /// Arrasto em andamento.
+    drag: Option<Drag>,
     shapes: Vec<Shape>,
     /// Janelas à mostra (a de cima primeiro, pontos no desktop), para o modo Janela.
     windows: Vec<(f32, f32, f32, f32)>,
@@ -235,6 +431,10 @@ struct Capture {
     record: bool,
     system_audio: bool,
     microphone: bool,
+    /// Altura do painel no último quadro (0 antes do primeiro) e a altura escolhida
+    /// para ele (`place_panel`), que fica parada durante um arrasto.
+    panel_h: f32,
+    panel_y: Option<f32>,
 }
 
 impl Capture {
@@ -243,7 +443,7 @@ impl Capture {
         Self {
             screens,
             mode: Mode::Selection,
-            tool: Tool::Arrow,
+            tool: Tool::Adjust,
             color: 0,
             selection: None,
             drag: None,
@@ -254,6 +454,8 @@ impl Capture {
             record: false,
             system_audio: flag("system_audio", true),
             microphone: flag("microphone", false),
+            panel_h: 0.0,
+            panel_y: None,
         }
     }
 
@@ -311,42 +513,89 @@ impl Capture {
         }
     }
 
-    /// Clique e arrasto na tela (fora do painel).
+    /// Retângulo que envolve as telas onde a área pode ficar (`areas`).
+    fn limits(&self) -> RectF {
+        bounds_of(&self.areas())
+    }
+
+    /// As telas onde a área pode ficar (a união delas, não o retângulo que as
+    /// envolve): todas; na gravação, só a principal.
+    fn areas(&self) -> Vec<RectF> {
+        if self.record { vec![self.primary().rect] } else { self.screens.iter().map(|s| s.rect).collect() }
+    }
+
+    /// As bolinhas aparecem (e pegam o clique) com uma área escolhida no modo Seleção,
+    /// fora do ⌘⇧4 e sem uma área nova ou uma marcação sendo arrastada.
+    fn handles_visible(&self) -> bool {
+        !self.quick && self.mode == Mode::Selection && self.selection.is_some() && !matches!(self.drag, Some(Drag::NewArea { .. } | Drag::Draw { .. }))
+    }
+
+    /// Registra a área escolhida (para a bateria e para quem lê o log).
+    fn log_area(&self) {
+        if let Some(sel) = self.selection {
+            let (pw, ph) = output_size(&self.screens, sel, output_scale(sel, &self.screens));
+            tracing::info!("captura: área {}x{} em ({}, {}) [{pw}x{ph} px]", sel.2.round() as i32, sel.3.round() as i32, sel.0.round() as i32, sel.1.round() as i32);
+        }
+    }
+
+    /// Clique e arrasto (`pos` em pontos no desktop, em qualquer tela; fora do painel).
     fn pointer(&mut self, ui: &Ui, pos: (f32, f32), over_panel: bool) {
         let input = ui.input();
-        if over_panel && self.drag.is_none() {
+        // Sobre o painel, o clique é dele; menos numa bolinha (o painel sai de cima
+        // delas, mas numa área que não deixa lugar livre a bolinha ainda vence).
+        let on_handle = self.selection.filter(|_| self.handles_visible()).and_then(|s| handle_at(s, pos)).is_some();
+        if over_panel && self.drag.is_none() && !on_handle {
             return;
         }
+        let limits = self.limits();
         match self.mode {
             Mode::Window => {
                 if input.released {
                     if let Some(rect) = self.windows.iter().find(|r| inside(**r, pos)) {
-                        self.selection = Some(clamp_rect(*rect, bounds(&self.screens)));
+                        self.selection = Some(clamp_rect(*rect, limits));
                         self.mode = Mode::Selection;
                         self.shapes.clear();
+                        self.log_area();
                     }
                 }
             }
             Mode::Full | Mode::Selection => {
                 if input.pressed {
-                    // Dentro da área escolhida: desenha. Fora: escolhe outra área.
-                    let new_area = self.selection.is_none_or(|s| !inside(s, pos));
-                    if new_area {
+                    // Na gravação não há ferramentas de desenho: dentro da área, move.
+                    let tool = if self.record { Tool::Adjust } else { self.tool };
+                    let handle = self.selection.filter(|_| self.handles_visible()).and_then(|s| handle_at(s, pos));
+                    let within = self.selection.filter(|s| inside(*s, pos));
+                    self.drag = match (handle, within) {
+                        _ if self.quick => None,
+                        (Some(handle), _) => self.selection.map(|orig| Drag::Resize { handle, orig, start: pos }),
+                        (None, Some(orig)) if tool == Tool::Adjust => (self.mode == Mode::Selection).then_some(Drag::Move { orig, start: pos }),
+                        (None, Some(_)) => Some(Drag::Draw { start: pos }),
+                        (None, None) => None,
+                    };
+                    if self.drag.is_none() && (self.quick || within.is_none()) {
+                        // Fora da área escolhida: outra área (as marcações saem).
                         self.shapes.clear();
                         self.mode = Mode::Selection;
+                        self.drag = Some(Drag::NewArea { start: clamp_point(pos, limits) });
                     }
-                    self.drag = Some((pos, new_area));
                 }
-                if let Some((start, new_area)) = self.drag {
-                    if new_area {
-                        let r = normalized(start, pos);
+                let delta = |start: (f32, f32)| (pos.0 - start.0, pos.1 - start.1);
+                match self.drag {
+                    Some(Drag::NewArea { start }) => {
+                        let r = normalized(start, clamp_point(pos, limits));
                         self.selection = (r.2 >= 2.0 && r.3 >= 2.0).then_some(r);
                     }
-                    if input.released {
-                        self.drag = None;
-                        if !new_area && (pos.0 - start.0).hypot(pos.1 - start.1) >= 4.0 {
+                    Some(Drag::Resize { handle, orig, start }) => self.selection = Some(resize_in(orig, handle, delta(start), &self.areas())),
+                    Some(Drag::Move { orig, start }) => self.selection = Some(moved_in(orig, delta(start), &self.areas())),
+                    Some(Drag::Draw { .. }) | None => {}
+                }
+                if input.released {
+                    match self.drag.take() {
+                        Some(Drag::Draw { start }) if (pos.0 - start.0).hypot(pos.1 - start.1) >= 4.0 => {
                             self.shapes.push(Shape { tool: self.tool, color: COLORS[self.color].1, from: start, to: pos });
                         }
+                        Some(Drag::NewArea { .. } | Drag::Resize { .. } | Drag::Move { .. }) => self.log_area(),
+                        _ => {}
                     }
                 }
             }
@@ -365,64 +614,55 @@ fn clamp_rect(r: RectF, b: RectF) -> RectF {
 
 impl App for Capture {
     fn view(&mut self, ui: &mut Ui) {
-        // A camada cobre a tela principal: o ponteiro e o desenho são locais a ela, e o
-        // resto (seleção, marcações, janelas) é no desktop, deslocado pela origem dela.
-        let main = self.primary().rect;
-        let (ox, oy, sw, sh) = main;
-        let to_global = |p: (f32, f32)| (p.0 + ox, p.1 + oy);
-        if self.mode == Mode::Full {
-            self.selection = Some(main);
-        }
-        // Teclado: Esc cancela, Enter e Ctrl+C copiam, Ctrl+S salva.
-        let keys = ui.input().keys.clone();
-        let shortcuts = ui.input().shortcuts.clone();
-        if keys.contains(&Key::Escape) {
-            tracing::info!("captura cancelada");
-            ui.close();
-            return;
-        }
-        if (keys.contains(&Key::Enter) || shortcuts.iter().any(|s| s == "c")) && self.copy() {
-            ui.close();
-            return;
-        }
-        if shortcuts.iter().any(|s| s == "s") && self.save().is_some() {
-            ui.close();
-            return;
+        // O `view` roda uma vez por tela (`on_every_output`): `scr` é a tela deste passe.
+        // O desenho vale para todas; o resto (teclas, ponteiro, painel) só no passe da
+        // camada principal, para o estado mudar uma vez por quadro.
+        let scr = ui.screen();
+        let mirror = ui.mirror();
+        if !mirror {
+            if self.mode == Mode::Full {
+                self.selection = Some(self.primary().rect);
+            }
+            // Teclado: Esc cancela, Enter e Ctrl+C copiam, Ctrl+S salva.
+            let keys = ui.input().keys.clone();
+            let shortcuts = ui.input().shortcuts.clone();
+            if keys.contains(&Key::Escape) {
+                tracing::info!("captura cancelada");
+                ui.close();
+                return;
+            }
+            if (keys.contains(&Key::Enter) || shortcuts.iter().any(|s| s == "c")) && self.copy() {
+                ui.close();
+                return;
+            }
+            if shortcuts.iter().any(|s| s == "s") && self.save().is_some() {
+                ui.close();
+                return;
+            }
         }
 
-        // A captura congelada, escurecida fora da área escolhida.
-        let selection = self.selection;
-        let pointer = ui.input().pointer.map(to_global);
-        let hovered_window = (self.mode == Mode::Window).then(|| pointer.and_then(|p| self.windows.iter().find(|r| inside(**r, p)).copied())).flatten();
-        let drawing = self.drag.filter(|(_, new_area)| !*new_area).and_then(|(start, _)| pointer.map(|p| Shape { tool: self.tool, color: COLORS[self.color].1, from: start, to: p }));
-        let shot = self.primary();
-        let shapes = &self.shapes;
-        ui.paint(|canvas, _| {
-            // Tela escurecida e, por cima, a área escolhida com as cores de verdade:
-            // só cópia de bytes (rápido mesmo numa tela grande). A imagem já está no
-            // tamanho da camada (pontos); se não estiver (arredondamento), desenhada.
-            if canvas.data().len() == shot.dimmed.data().len() {
-                canvas.data_mut().copy_from_slice(shot.dimmed.data());
-            } else {
-                canvas.draw_pixmap(0, 0, shot.dimmed.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-            }
-            if let Some((x, y, w, h)) = selection.or(hovered_window) {
-                let local = (x - ox, y - oy, w, h);
-                copy_rect(canvas, &shot.view, local);
-                outline(canvas, local);
-            }
-            for shape in shapes.iter().chain(drawing.iter()) {
-                draw_shape(canvas, shape, Transform::from_translate(-ox, -oy));
-            }
-        });
-
-        // Tamanho da área escolhida, logo acima dela (ou dentro, se não couber).
-        if let Some((x, y, w, h)) = self.selection.filter(|_| self.mode != Mode::Full) {
-            let (x, y) = (x - ox, y - oy);
-            let text = format!("{} × {}", w.round() as i32, h.round() as i32);
-            let ly = if y >= 44.0 { y - 40.0 } else { y + 6.0 };
-            ui.glass_panel(x, ly, 120.0, 8.0, |ui| ui.label(&text));
+        self.draw_screen(ui, &scr, mirror);
+        if !mirror {
+            self.primary_view(ui, &scr);
         }
+        // As bolinhas por último: por cima do rótulo do tamanho e do painel.
+        self.paint_handles(ui, &scr, mirror);
+    }
+}
+
+impl Capture {
+    /// O que só a camada principal faz: ponteiro, modo rápido, painel da gravação ou
+    /// da captura.
+    fn primary_view(&mut self, ui: &mut Ui, scr: &mide::kit::Screen) {
+        // Ponteiro em pontos no desktop (em qualquer tela), e o painel embaixo e no meio
+        // desta tela (ou fora do caminho das bolinhas). O desenho do `view` é do
+        // estado de antes deste clique: apertar ou soltar pede mais um quadro (senão a
+        // área que acabou de ser escolhida só aparece no próximo movimento do mouse).
+        let pointer = ui.pointer_global();
+        if ui.input().pressed || ui.input().released {
+            ui.request_repaint();
+        }
+        let (sw, sh) = scr.size;
 
         // Modo rápido: só a seleção; ao soltar, salva e copia (como o ⌘⇧4 do Mac).
         if self.quick {
@@ -444,13 +684,14 @@ impl App for Capture {
         }
 
         if self.record {
-            self.record_view(ui);
+            self.record_view(ui, scr.size);
             return;
         }
 
         // Painel: modo, ferramenta, cor e ações, embaixo e no meio.
         let panel_w = 720.0;
-        let (px, py) = ((sw - panel_w) / 2.0, sh - 128.0);
+        let px = (sw - panel_w) / 2.0;
+        let py = self.place_panel(scr.origin, (px, panel_w), sh - 128.0, 96.0);
         let mut action = None;
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
             ui.row(|ui| {
@@ -476,19 +717,22 @@ impl App for Capture {
                 }
             });
             ui.row(|ui| {
-                for (tool, label) in [(Tool::Arrow, "Seta"), (Tool::Circle, "Círculo"), (Tool::Square, "Quadrado")] {
+                for (tool, label) in [(Tool::Adjust, "Ajustar"), (Tool::Arrow, "Seta"), (Tool::Circle, "Círculo"), (Tool::Square, "Quadrado")] {
                     let r = if self.tool == tool { ui.primary_button(label) } else { ui.button(label) };
                     if r.clicked() {
                         self.tool = tool;
+                        tracing::info!("captura: ferramenta {label}");
                     }
                 }
             });
         });
+        self.panel_h = rect.3;
         // Cores: círculos à direita das ferramentas, na segunda linha do painel.
         let row_y = rect.1 + rect.3 - 30.0;
         self.swatches = (0..COLORS.len()).map(|i| (rect.0 + rect.2 - 14.0 - (COLORS.len() - i) as f32 * 30.0, row_y, 24.0, 24.0)).collect();
         let swatches = self.swatches.clone();
         let chosen = self.color;
+        let accent = ui.theme().accent;
         ui.paint(|canvas, _| {
             for (i, (x, y, w, _)) in swatches.iter().enumerate() {
                 let [r, g, b] = COLORS[i].1;
@@ -505,14 +749,14 @@ impl App for Capture {
                     if let Some(ring) = PathBuilder::from_circle(center.0, center.1, w / 2.0 + 1.5) {
                         let mut paint = Paint::default();
                         paint.anti_alias = true;
-                        paint.set_color(Color::from_rgba8(10, 132, 255, 255));
+                        paint.set_color(Color::from_rgba8(accent[0], accent[1], accent[2], 255));
                         canvas.stroke_path(&ring, &paint, &Stroke { width: 2.0, ..Default::default() }, Transform::identity(), None);
                     }
                 }
             }
         });
-        if let Some(local) = ui.input().pointer {
-            let pos = to_global(local);
+        if let (Some(local), Some(pos)) = (ui.input().pointer, pointer) {
+            // O painel é desta camada: o teste é no ponteiro local a ela.
             let over_panel = inside(rect, local);
             if over_panel && ui.input().released {
                 if let Some(i) = self.swatches.iter().position(|s| inside(*s, local)) {
@@ -535,11 +779,102 @@ impl App for Capture {
 }
 
 impl Capture {
+    /// Desenha a parte desta tela (`scr`): a captura congelada dela, escurecida fora da
+    /// área escolhida, com o contorno, as marcações e o tamanho da área (as bolinhas
+    /// vêm depois, em `paint_handles`).
+    /// Tudo em pontos no desktop, deslocado pela origem da tela.
+    fn draw_screen(&self, ui: &mut Ui, scr: &mide::kit::Screen, mirror: bool) {
+        let pointer = ui.pointer_global();
+        // A imagem desta tela; a camada principal sem nome (compositor antigo, uma tela
+        // só) mostra a principal.
+        let shot = self.screens.iter().find(|s| s.name == scr.name).or_else(|| (!mirror).then(|| self.primary()));
+        let (ox, oy) = shot.map_or(scr.origin, |s| (s.rect.0, s.rect.1));
+        let hovered_window = (self.mode == Mode::Window).then(|| pointer.and_then(|p| self.windows.iter().find(|r| inside(**r, p)).copied())).flatten();
+        let drawing = match self.drag {
+            Some(Drag::Draw { start }) => pointer.map(|p| Shape { tool: self.tool, color: COLORS[self.color].1, from: start, to: p }),
+            _ => None,
+        };
+        let selection = self.selection;
+        let shapes = &self.shapes;
+        ui.paint(|canvas, _| {
+            // Tela escurecida e, por cima, a área escolhida com as cores de verdade:
+            // só cópia de bytes (rápido mesmo numa tela grande). A imagem já está no
+            // tamanho da camada (pontos); se não estiver (arredondamento), desenhada.
+            let Some(shot) = shot else {
+                // Tela sem imagem (não chegou a tempo): escura, sem nada por cima.
+                canvas.fill(Color::from_rgba8(20, 20, 22, 255));
+                return;
+            };
+            if canvas.data().len() == shot.dimmed.data().len() {
+                canvas.data_mut().copy_from_slice(shot.dimmed.data());
+            } else {
+                canvas.draw_pixmap(0, 0, shot.dimmed.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+            }
+            if let Some((x, y, w, h)) = selection.or(hovered_window) {
+                let local = (x - ox, y - oy, w, h);
+                copy_rect(canvas, &shot.view, local);
+                outline(canvas, local);
+            }
+            for shape in shapes.iter().chain(drawing.iter()) {
+                draw_shape(canvas, shape, Transform::from_translate(-ox, -oy));
+            }
+        });
+
+        // Tamanho da área, logo acima dela (ou dentro, se não couber), na tela onde fica
+        // o canto de cima à esquerda (num buraco entre telas, na camada principal).
+        if let Some((x, y, w, h)) = self.selection.filter(|_| self.mode != Mode::Full) {
+            let screens = ui.screens();
+            let here = match mide::kit::screens::screen_at(&screens, (x, y)) {
+                Some(i) => screens[i].name == scr.name,
+                None => !mirror,
+            };
+            if here {
+                let (x, y) = (x - scr.origin.0, y - scr.origin.1);
+                let text = format!("{} × {}", w.round() as i32, h.round() as i32);
+                let ly = if y >= 44.0 { y - 40.0 } else { y + 6.0 };
+                ui.glass_panel(x, ly, 120.0, 8.0, |ui| ui.label(&text));
+            }
+        }
+    }
+
+    /// As bolinhas da área na parte desta tela (`scr`), por cima de tudo (rótulo do
+    /// tamanho e painel).
+    fn paint_handles(&self, ui: &mut Ui, scr: &mide::kit::Screen, mirror: bool) {
+        let shot = self.screens.iter().find(|s| s.name == scr.name).or_else(|| (!mirror).then(|| self.primary()));
+        let (Some(shot), Some((x, y, w, h))) = (shot, self.selection.filter(|_| self.handles_visible())) else {
+            return;
+        };
+        let (ox, oy) = (shot.rect.0, shot.rect.1);
+        let accent = ui.theme().accent;
+        ui.paint(|canvas, _| draw_handles(canvas, (x - ox, y - oy, w, h), accent));
+    }
+
+    /// Altura do painel (na tela principal, de origem `origin`) que não cobre as
+    /// bolinhas da área: embaixo (`default_y`) se der; senão em cima; senão o primeiro
+    /// lugar livre subindo de baixo. Durante um arrasto, fica onde estava (não pula a
+    /// cada movimento). `(px, pw)`: x e largura do painel; `est_h`: altura até o
+    /// primeiro quadro dizer a de verdade.
+    fn place_panel(&mut self, origin: (f32, f32), (px, pw): (f32, f32), default_y: f32, est_h: f32) -> f32 {
+        if let (Some(_), Some(y)) = (self.drag, self.panel_y) {
+            return y;
+        }
+        let h = if self.panel_h > 0.0 { self.panel_h } else { est_h };
+        let centers: Vec<(f32, f32)> = match self.selection.filter(|_| self.handles_visible()) {
+            Some(sel) => handles(sel).iter().map(|(_, c)| (c.0 - origin.0, c.1 - origin.1)).collect(),
+            None => Vec::new(),
+        };
+        let y = panel_spot(&centers, (px, pw, h), default_y);
+        self.panel_y = Some(y);
+        y
+    }
+
     /// Painel do ⌘⇧5: o que gravar (tela inteira ou área), os sons e Gravar.
-    fn record_view(&mut self, ui: &mut Ui) {
-        let (ox, oy, sw, sh) = self.primary().rect;
+    /// `size`: tamanho da tela da camada principal (o painel fica embaixo e no meio).
+    fn record_view(&mut self, ui: &mut Ui, (sw, sh): (f32, f32)) {
+        let (ox, oy, _, _) = self.primary().rect;
         let panel_w = 740.0;
-        let (px, py) = ((sw - panel_w) / 2.0, sh - 84.0);
+        let px = (sw - panel_w) / 2.0;
+        let py = self.place_panel((ox, oy), (px, panel_w), sh - 84.0, 56.0);
         let mut start = ui.input().keys.contains(&Key::Enter);
         let mut cancel = false;
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
@@ -570,10 +905,11 @@ impl Capture {
                 start |= ui.primary_button("Gravar").clicked();
             });
         });
-        if let Some(local) = ui.input().pointer {
+        self.panel_h = rect.3;
+        if let (Some(local), Some(pos)) = (ui.input().pointer, ui.pointer_global()) {
             let over_panel = inside(rect, local);
             if self.mode == Mode::Selection {
-                self.pointer(ui, (local.0 + ox, local.1 + oy), over_panel);
+                self.pointer(ui, pos, over_panel);
             }
         }
         if self.drag.is_some() {
@@ -636,6 +972,36 @@ fn outline(canvas: &mut Pixmap, (x, y, w, h): (f32, f32, f32, f32)) {
     }
 }
 
+/// Topo do painel (x `px`, largura `pw`, altura `ph`) sem nenhuma bolinha de `centers`
+/// (coordenadas da tela) embaixo dele nem na margem do clique: `default_y` (embaixo)
+/// se der; senão 44 (em cima, abaixo da barra); senão o primeiro lugar livre subindo
+/// de baixo; sem lugar livre, `default_y` (a bolinha vence o clique no painel).
+fn panel_spot(centers: &[(f32, f32)], (px, pw, ph): (f32, f32, f32), default_y: f32) -> f32 {
+    let m = HANDLE_HIT + 2.0;
+    let free = |y: f32| !centers.iter().any(|c| inside((px - m, y - m, pw + 2.0 * m, ph + 2.0 * m), *c));
+    let top = 44.0_f32.min(default_y);
+    let mut tries = vec![default_y, top];
+    let mut y = default_y - 8.0;
+    while y > top {
+        tries.push(y);
+        y -= 8.0;
+    }
+    tries.into_iter().find(|y| free(*y)).unwrap_or(default_y)
+}
+
+/// Bolinhas da área `r` (no canvas): círculo na cor de destaque com um anel branco.
+fn draw_handles(canvas: &mut Pixmap, r: RectF, accent: [u8; 4]) {
+    let solid = |c: Color| Paint { shader: tiny_skia::Shader::SolidColor(c), anti_alias: true, ..Default::default() };
+    let fill = solid(Color::from_rgba8(accent[0], accent[1], accent[2], 255));
+    let ring = solid(Color::WHITE);
+    for (_, (x, y)) in handles(r) {
+        if let Some(path) = PathBuilder::from_circle(x, y, HANDLE_RADIUS) {
+            canvas.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+            canvas.stroke_path(&path, &ring, &Stroke { width: 1.5, ..Default::default() }, Transform::identity(), None);
+        }
+    }
+}
+
 /// Desenha a seta, o círculo ou o quadrado. `ts` leva das coordenadas da marcação
 /// (pontos no desktop) ao canvas; numa ampliação, o traço engrossa junto.
 fn draw_shape(canvas: &mut Pixmap, shape: &Shape, ts: Transform) {
@@ -646,6 +1012,8 @@ fn draw_shape(canvas: &mut Pixmap, shape: &Shape, ts: Transform) {
     paint.set_color(Color::from_rgba8(r, g, bl, 255));
     let stroke = Stroke { width: 4.0, line_cap: LineCap::Round, ..Default::default() };
     match shape.tool {
+        // Ajustar não desenha (não vira marcação).
+        Tool::Adjust => {}
         Tool::Arrow => {
             let (dx, dy) = (b.0 - a.0, b.1 - a.1);
             let len = dx.hypot(dy).max(1.0);
@@ -859,8 +1227,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.record = true;
         app.mode = Mode::Full;
     }
-    // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1, em pontos.
-    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot").fixed_scale(), app)
+    // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1, em pontos. Uma
+    // camada em cada tela; só a principal recebe o teclado.
+    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot").on_every_output().fixed_scale(), app)
 }
 
 #[cfg(test)]
@@ -948,7 +1317,7 @@ mod tests {
         let screens = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("B", (1366.0, 0.0), (2400, 1350), 1.25, BLUE, false)];
         assert_eq!(output_scale((1266.0, 100.0, 200.0, 100.0), &screens), 1.25);
         assert_eq!(output_scale((100.0, 100.0, 200.0, 100.0), &screens), 1.0);
-        assert_eq!(bounds(&screens), (0.0, 0.0, 3286.0, 1080.0));
+        assert_eq!(bounds_of(&screens.iter().map(|s| s.rect).collect::<Vec<_>>()), (0.0, 0.0, 3286.0, 1080.0));
     }
 
     #[test]
@@ -1027,7 +1396,7 @@ mod tests {
         assert_eq!((out.width(), out.height()), (1366, 768));
         assert_eq!(rgb(&out, 1365, 767), BLUE);
         // Uma janela recortada no fim da tela também para na imagem.
-        let window = clamp_rect((900.0, 500.0, 400.0, 300.0), bounds(&screens));
+        let window = clamp_rect((900.0, 500.0, 400.0, 300.0), bounds_of(&[screens[0].rect]));
         let out = compose(&screens, window, &[]).unwrap();
         assert_eq!((out.width(), out.height()), (1366 - 1125, 768 - 625));
         assert_eq!(rgb(&out, out.width() - 1, out.height() - 1), RED);
@@ -1044,6 +1413,134 @@ mod tests {
         assert_eq!(rgb(&dst, 9, 9), RED);
         assert_eq!(dst.pixel(1, 1).unwrap().alpha(), 0, "fora da área não copia");
         assert_eq!(dst.pixel(5, 10).unwrap().alpha(), 0, "linha que a imagem não tem");
+    }
+
+    #[test]
+    fn alcas_nas_pontas_e_no_meio() {
+        let r = (100.0, 100.0, 200.0, 100.0);
+        let h = handles(r);
+        let at = |which: Handle| h.iter().find(|(k, _)| *k == which).unwrap().1;
+        assert_eq!(at(Handle::TopLeft), (100.0, 100.0));
+        assert_eq!(at(Handle::Top), (200.0, 100.0));
+        assert_eq!(at(Handle::Right), (300.0, 150.0));
+        assert_eq!(at(Handle::BottomRight), (300.0, 200.0));
+        assert_eq!(at(Handle::Bottom), (200.0, 200.0));
+        assert_eq!(at(Handle::Left), (100.0, 150.0));
+        // Pega até 10 pontos do centro; a 15, não.
+        assert_eq!(handle_at(r, (308.0, 152.0)), Some(Handle::Right));
+        assert_eq!(handle_at(r, (315.0, 150.0)), None);
+        assert_eq!(handle_at(r, (200.0, 150.0)), None, "o meio da área não é bolinha");
+        // Área pequena: a ponta vence o meio do lado.
+        assert_eq!(handle_at((100.0, 100.0, 8.0, 8.0), (104.0, 100.0)), Some(Handle::TopLeft));
+    }
+
+    #[test]
+    fn redimensionar() {
+        let all = (0.0, 0.0, 3286.0, 1080.0);
+        assert_eq!(resize_area((300.0, 200.0, 400.0, 250.0), Handle::BottomRight, (100.0, 50.0), all), (300.0, 200.0, 500.0, 300.0));
+        assert_eq!(resize_area((100.0, 100.0, 200.0, 100.0), Handle::TopLeft, (-50.0, -40.0), all), (50.0, 60.0, 250.0, 140.0));
+        // Meio do lado: só uma direção muda.
+        assert_eq!(resize_area((300.0, 200.0, 400.0, 250.0), Handle::Bottom, (90.0, 50.0), all), (300.0, 200.0, 400.0, 300.0));
+        // A bolinha da esquerda passa do lado direito: a área vira (normaliza).
+        assert_eq!(resize_area((300.0, 200.0, 400.0, 250.0), Handle::Left, (700.0, 0.0), all), (700.0, 200.0, 300.0, 250.0));
+        // Mínimo de 2 pontos.
+        assert_eq!(resize_area((300.0, 200.0, 400.0, 250.0), Handle::Right, (-399.5, 0.0), all), (300.0, 200.0, 2.0, 250.0));
+        // Não sai das telas.
+        assert_eq!(resize_area((3000.0, 900.0, 200.0, 100.0), Handle::BottomRight, (500.0, 500.0), all), (3000.0, 900.0, 286.0, 180.0));
+        assert_eq!(resize_area((10.0, 10.0, 100.0, 100.0), Handle::TopLeft, (-50.0, -50.0), all), (0.0, 0.0, 110.0, 110.0));
+        // Encostada na borda e menor que 2: cabe dentro.
+        assert_eq!(resize_area((3280.0, 0.0, 6.0, 10.0), Handle::Left, (10.0, 0.0), all), (3284.0, 0.0, 2.0, 10.0));
+    }
+
+    #[test]
+    fn mover_fica_dentro() {
+        let all = (0.0, 0.0, 3286.0, 1080.0);
+        assert_eq!(moved((3200.0, 100.0, 100.0, 100.0), (200.0, 0.0), all), (3186.0, 100.0, 100.0, 100.0));
+        assert_eq!(moved((300.0, 200.0, 400.0, 250.0), (100.0, 50.0), all), (400.0, 250.0, 400.0, 250.0));
+        assert_eq!(moved((50.0, 50.0, 100.0, 100.0), (-80.0, -90.0), all), (0.0, 0.0, 100.0, 100.0));
+        // De uma tela para a outra: atravessa sem problema.
+        assert_eq!(moved((1200.0, 200.0, 100.0, 100.0), (300.0, 0.0), all), (1500.0, 200.0, 100.0, 100.0));
+        // Limites de uma tela só (a gravação): fica nela.
+        assert_eq!(moved((1200.0, 200.0, 100.0, 100.0), (300.0, 0.0), (0.0, 0.0, 1366.0, 768.0)), (1266.0, 200.0, 100.0, 100.0));
+        assert_eq!(clamp_point((-5.0, 2000.0), all), (0.0, 1080.0));
+    }
+
+    /// A (1366x768) e, à direita, B (1920x1080): embaixo de A, à esquerda de B, não há
+    /// tela (o buraco).
+    const DUAS: [RectF; 2] = [(0.0, 0.0, 1366.0, 768.0), (1366.0, 0.0, 1920.0, 1080.0)];
+
+    #[test]
+    fn mover_nao_cai_no_buraco() {
+        // O caso do achado: área em B levada para o canto de baixo à esquerda. Antes
+        // ficava em (1080, 780), quase toda no buraco; agora fica em B, encostada.
+        let r = moved_in((1400.0, 600.0, 300.0, 300.0), (-320.0, 185.0), &DUAS);
+        assert!(handles_on_screens(r, &DUAS), "bolinhas alcançáveis: {r:?}");
+        assert_eq!(r, (1366.0, 780.0, 300.0, 300.0));
+        // Atravessando as duas telas e levada para baixo: desliza para B (o lugar
+        // válido mais perto), sem bolinha no buraco.
+        let r = moved_in((1300.0, 300.0, 200.0, 100.0), (0.0, 600.0), &DUAS);
+        assert_eq!(r, (1366.0, 900.0, 200.0, 100.0));
+        // Atravessando e um pouco para baixo: para no fim de A (faixa comum).
+        let r = moved_in((1300.0, 600.0, 200.0, 100.0), (0.0, 120.0), &DUAS);
+        assert_eq!(r, (1300.0, 668.0, 200.0, 100.0));
+        // Movimentos dentro da união não mudam.
+        assert_eq!(moved_in((300.0, 200.0, 400.0, 250.0), (100.0, 50.0), &DUAS), (400.0, 250.0, 400.0, 250.0));
+        assert_eq!(moved_in((1200.0, 200.0, 100.0, 100.0), (300.0, 0.0), &DUAS), (1500.0, 200.0, 100.0, 100.0));
+        // Uma tela só (a gravação) continua igual a `moved`.
+        let one = [DUAS[0]];
+        assert_eq!(moved_in((1200.0, 200.0, 100.0, 100.0), (300.0, 0.0), &one), (1266.0, 200.0, 100.0, 100.0));
+    }
+
+    #[test]
+    fn redimensionar_nao_cai_no_buraco() {
+        // Bolinha de baixo à esquerda de uma área em B arrastada para o buraco: a área
+        // cresce para a esquerda até onde as telas deixam (o fim de A embaixo), e todas
+        // as bolinhas ficam em tela.
+        let orig = (1400.0, 600.0, 300.0, 300.0);
+        let r = resize_in(orig, Handle::BottomLeft, (-200.0, 200.0), &DUAS);
+        assert!(handles_on_screens(r, &DUAS), "bolinhas alcançáveis: {r:?}");
+        assert_eq!(r, (1200.0, 600.0, 500.0, 168.0));
+        // Só para baixo, em B: vai até o fim de B (nada no buraco).
+        let r = resize_in(orig, Handle::BottomLeft, (0.0, 400.0), &DUAS);
+        assert_eq!(r, (1400.0, 600.0, 300.0, 480.0));
+        // Bolinha de baixo de uma área que atravessa as telas: para no fim de A.
+        let r = resize_in((1300.0, 300.0, 200.0, 100.0), Handle::Bottom, (0.0, 600.0), &DUAS);
+        assert_eq!(r, (1300.0, 300.0, 200.0, 468.0));
+        // Dentro da união, igual ao `resize_area`.
+        let all = bounds_of(&DUAS);
+        assert_eq!(resize_in((300.0, 200.0, 400.0, 250.0), Handle::BottomRight, (100.0, 50.0), &DUAS), resize_area((300.0, 200.0, 400.0, 250.0), Handle::BottomRight, (100.0, 50.0), all));
+    }
+
+    #[test]
+    fn painel_sai_de_cima_das_bolinhas() {
+        // Tela 1366x768, painel de 720x96 em x 323 e y 640 (o caso do achado: área de
+        // (300, 200) a (700, 700) tem a borda de baixo embaixo do painel).
+        let centers: Vec<(f32, f32)> = handles((300.0, 200.0, 400.0, 500.0)).iter().map(|(_, c)| *c).collect();
+        let y = panel_spot(&centers, (323.0, 720.0, 96.0), 640.0);
+        assert_eq!(y, 44.0, "vai para cima");
+        // Área sem bolinhas na faixa do painel: fica embaixo.
+        let centers: Vec<(f32, f32)> = handles((300.0, 200.0, 400.0, 300.0)).iter().map(|(_, c)| *c).collect();
+        assert_eq!(panel_spot(&centers, (323.0, 720.0, 96.0), 640.0), 640.0);
+        // Bolinhas embaixo e em cima: o primeiro lugar livre entre elas.
+        let centers: Vec<(f32, f32)> = handles((400.0, 60.0, 500.0, 640.0)).iter().map(|(_, c)| *c).collect();
+        let y = panel_spot(&centers, (323.0, 720.0, 96.0), 640.0);
+        assert!(y > 72.0 && y + 96.0 < 380.0 - 10.0 || y > 380.0 + 12.0 && y + 96.0 < 700.0 - 12.0, "lugar livre: {y}");
+    }
+
+    #[test]
+    fn bolinha_na_cor_de_destaque() {
+        let mut canvas = Pixmap::new(300, 200).unwrap();
+        canvas.fill(Color::from_rgba8(40, 40, 40, 255));
+        let accent = [10, 110, 235, 255];
+        draw_handles(&mut canvas, (50.0, 40.0, 200.0, 120.0), accent);
+        for (x, y) in [(50, 40), (150, 40), (250, 100), (150, 160), (50, 160)] {
+            assert_eq!(rgb(&canvas, x, y), [10, 110, 235], "centro da bolinha em ({x}, {y})");
+        }
+        // Anel branco em volta (raio 5).
+        let ring = rgb(&canvas, 55, 40);
+        assert!(ring[0] > 180 && ring[1] > 180, "anel branco: {ring:?}");
+        // No meio da área, nada.
+        assert_eq!(rgb(&canvas, 150, 100), [40, 40, 40]);
     }
 
     #[test]
