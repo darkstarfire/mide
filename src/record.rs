@@ -291,4 +291,15 @@ mod tests {
         assert!(!silent.iter().any(|a| a == "aac"));
         assert!(args.iter().any(|a| a == "-shortest"));
     }
+
+    #[test]
+    fn pedido_com_a_tela() {
+        // O que a Captura manda no ⌘⇧5 com várias telas (B22): a área em pontos da tela
+        // onde começou, o nome dela e os sons.
+        let words: Vec<&str> = "134 300 300 200 tela HEADLESS-2 sistema".split(' ').collect();
+        let r = parse_request(&words);
+        assert_eq!((r.output.as_deref(), r.area, r.system_audio, r.microphone), (Some("HEADLESS-2"), Some((134, 300, 300, 200)), true, false));
+        let r = parse_request(&["full", "tela", "DP-1", "microfone"]);
+        assert_eq!((r.output.as_deref(), r.area, r.microphone), (Some("DP-1"), None, true));
+    }
 }

@@ -157,6 +157,14 @@ bolinhas somem enquanto uma área nova é escolhida ou algo é desenhado, e não
 em modos rápidos que fecham ao soltar o mouse (⌘⇧4). As bolinhas ficam por cima de
 tudo da área (inclusive o rótulo do tamanho).
 
+**Escolher uma tela** (com mais de um monitor, como a "Tela inteira" da Captura e da
+gravação): todas as telas escurecidas; a tela sob o ponteiro fica clara, com um
+contorno de 4 px na **cor de destaque** em volta dela toda e, no meio, um rótulo em
+vidro (`glass_panel`) com o que o clique faz ("Clique para capturar esta tela") e, em
+nota, o nome e o tamanho em pixels. O clique escolhe; Esc volta para a Seleção (na gravação, que abre
+direto na escolha, Esc cancela). Com
+uma tela só, não se pergunta.
+
 ---
 
 ## 7. Componentes padrão (mide-ui)

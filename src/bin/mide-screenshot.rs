@@ -4,7 +4,8 @@
 //! - **Seleção** (padrão): arraste para escolher a área, em qualquer tela ou
 //!   atravessando de uma para a outra.
 //! - **Janela**: clique numa janela.
-//! - **Tela inteira**: a tela toda.
+//! - **Tela inteira**: a tela toda; com mais de uma, a tela sob o ponteiro fica clara
+//!   e o clique escolhe qual (Esc volta para a Seleção).
 //!
 //! Depois de escolher a área, ela se ajusta: com a ferramenta **Ajustar** (a padrão),
 //! arrastar dentro da área muda o lugar dela, e as bolinhas (nas pontas e no meio dos
@@ -12,7 +13,10 @@
 //! desenham dentro da área na cor escolhida (vermelho, branco, preto, verde, amarelo ou
 //! azul). **Copiar** (Enter ou Ctrl+C) põe a imagem na área de transferência;
 //! **Salvar** (Ctrl+S) grava em Imagens/Capturas de tela; Esc cancela. O ⌘⇧4 (`--area`)
-//! não tem bolinhas: ao soltar o mouse, salva e copia.
+//! não tem bolinhas: ao soltar o mouse, salva e copia. O ⌘⇧3 (`--full`) salva a tela
+//! inteira (com várias, um arquivo por tela) e copia a principal. O ⌘⇧5 (`--record`)
+//! grava uma tela: a inteira (escolhida pelo clique, com várias) ou uma área, presa à
+//! tela onde o arrasto começou.
 //!
 //! A imagem vem do compositor (`screenshot all`: uma por tela, em pixels, sem o
 //! cursor); a cópia fica com o compositor (`copy-file`), então continua lá depois que
@@ -38,7 +42,11 @@ use tiny_skia::{Color, FillRule, FilterQuality, LineCap, Paint, PathBuilder, Pix
 enum Mode {
     Selection,
     Window,
+    /// A tela inteira: a escolhida no `PickScreen` (com várias telas) ou a principal.
     Full,
+    /// Várias telas e "Tela inteira": a tela sob o ponteiro fica clara, com o rótulo em
+    /// vidro; o clique escolhe (vira `Full`), Esc volta para a Seleção.
+    PickScreen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,6 +197,32 @@ fn closest_valid(cands: &[RectF], want: RectF, screens: &[RectF]) -> RectF {
     valid.copied().unwrap_or_else(|| {
         cands.iter().copied().max_by(|a, b| coverage(*a, screens).total_cmp(&coverage(*b, screens)).then(dist(b).total_cmp(&dist(a)))).unwrap_or(want)
     })
+}
+
+/// `p` está na tela `r`, contando a borda de cima e a da esquerda, mas não a da direita
+/// nem a de baixo: numa borda comum entre telas (x = 1366 com A em 0..1366 e B começando
+/// em 1366), o ponto é da tela que começa ali. Só para escolher a tela; a seleção e as
+/// janelas usam `inside`.
+fn contains_half_open(r: RectF, p: (f32, f32)) -> bool {
+    p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3
+}
+
+/// A tela de `screens` que contém `p` (nas bordas comuns, a que começa ali).
+fn screen_index_at(screens: &[RectF], p: (f32, f32)) -> Option<usize> {
+    screens.iter().position(|s| contains_half_open(*s, p))
+}
+
+/// A tela de `screens` mais perto de `p` (a que contém, se houver; no buraco entre telas,
+/// a mais próxima). Sem telas, 0.
+fn screen_index_near(screens: &[RectF], p: (f32, f32)) -> usize {
+    if let Some(i) = screen_index_at(screens, p) {
+        return i;
+    }
+    let dist = |s: &RectF| {
+        let c = clamp_point(p, *s);
+        (c.0 - p.0).hypot(c.1 - p.1)
+    };
+    (0..screens.len()).min_by(|a, b| dist(&screens[*a]).total_cmp(&dist(&screens[*b]))).unwrap_or(0)
 }
 
 /// Retângulo que contém as telas `screens` (sem telas, um ponto).
@@ -408,6 +442,46 @@ fn output_size(screens: &[Shot], sel: RectF, k: f32) -> (u32, u32) {
     (w.max(1.0) as u32, h.max(1.0) as u32)
 }
 
+/// Onde gravar uma área escolhida no ⌘⇧5: a tela `screen` (onde o arrasto começou) e a
+/// área em pontos dessa tela (`record start x y w h tela NOME`), recortada a ela: a
+/// gravação é de uma tela só.
+fn record_target(screens: &[Shot], sel: RectF, screen: usize) -> (String, (i32, i32, i32, i32)) {
+    let Some(s) = screens.get(screen) else {
+        return (String::new(), (sel.0.round() as i32, sel.1.round() as i32, sel.2.round() as i32, sel.3.round() as i32));
+    };
+    let r = clamp_rect(sel, s.rect);
+    let local = ((r.0 - s.rect.0).round() as i32, (r.1 - s.rect.1).round() as i32, r.2.round() as i32, r.3.round() as i32);
+    (s.name.clone(), local)
+}
+
+/// O pedido ao compositor: `record start full|x y w h [tela NOME] [sistema] [microfone]`.
+/// Sem nome (uma tela só ou compositor antigo), sem `tela`: vale a principal.
+fn record_command(area: Option<(i32, i32, i32, i32)>, screen: Option<&str>, system_audio: bool, microphone: bool) -> String {
+    let mut cmd = match area {
+        Some((x, y, w, h)) => format!("record start {x} {y} {w} {h}"),
+        None => "record start full".to_string(),
+    };
+    if let Some(name) = screen.filter(|n| !n.is_empty()) {
+        cmd.push_str(&format!(" tela {name}"));
+    }
+    if system_audio {
+        cmd.push_str(" sistema");
+    }
+    if microphone {
+        cmd.push_str(" microfone");
+    }
+    cmd
+}
+
+/// Nome do arquivo de uma captura: `Captura de tela 2026-10-20 21-13-38.png`; com várias
+/// telas no ⌘⇧3, o nome da tela entre parênteses (`... 21-13-38 (HDMI-A-1).png`).
+fn shot_file_name(stamp: &str, screen: Option<&str>) -> String {
+    match screen.filter(|n| !n.is_empty()) {
+        Some(name) => format!("Captura de tela {stamp} ({name}).png"),
+        None => format!("Captura de tela {stamp}.png"),
+    }
+}
+
 struct Capture {
     /// As telas capturadas; a principal (onde a camada fica) está entre elas.
     screens: Vec<Shot>,
@@ -435,6 +509,11 @@ struct Capture {
     /// para ele (`place_panel`), que fica parada durante um arrasto.
     panel_h: f32,
     panel_y: Option<f32>,
+    /// A tela escolhida no `PickScreen` (índice em `screens`); sem ela, `Full` é a
+    /// principal.
+    full_screen: Option<usize>,
+    /// Na gravação, a tela onde a área começou (a área fica presa a ela).
+    record_screen: Option<usize>,
 }
 
 impl Capture {
@@ -456,12 +535,49 @@ impl Capture {
             microphone: flag("microphone", false),
             panel_h: 0.0,
             panel_y: None,
+            full_screen: None,
+            record_screen: None,
         }
     }
 
     /// A tela onde a camada fica (a principal).
     fn primary(&self) -> &Shot {
-        self.screens.iter().find(|s| s.primary).unwrap_or(&self.screens[0])
+        &self.screens[self.primary_index()]
+    }
+
+    fn primary_index(&self) -> usize {
+        self.screens.iter().position(|s| s.primary).unwrap_or(0)
+    }
+
+    /// Posição e tamanho de cada tela (pontos no desktop).
+    fn rects(&self) -> Vec<RectF> {
+        self.screens.iter().map(|s| s.rect).collect()
+    }
+
+    /// A tela inteira do modo `Full`: a escolhida ou a principal.
+    fn full_index(&self) -> usize {
+        self.full_screen.filter(|i| *i < self.screens.len()).unwrap_or_else(|| self.primary_index())
+    }
+
+    /// "Tela inteira": com uma tela, ela; com várias, escolher qual (`PickScreen`).
+    fn choose_full(&mut self) {
+        self.shapes.clear();
+        self.full_screen = None;
+        if self.screens.len() > 1 {
+            self.mode = Mode::PickScreen;
+            self.selection = None;
+        } else {
+            self.mode = Mode::Full;
+        }
+    }
+
+    /// Escolhe a tela `i` no `PickScreen`: a área vira a tela toda.
+    fn pick_screen(&mut self, i: usize) {
+        self.full_screen = Some(i);
+        self.mode = Mode::Full;
+        self.selection = Some(self.screens[i].rect);
+        self.shapes.clear();
+        tracing::info!("captura: tela {} escolhida", self.screens[i].name);
     }
 
     /// A área escolhida com as marcações, em pixels.
@@ -495,22 +611,25 @@ impl Capture {
     /// hora (`Captura de tela 2026-10-20 21-13-38.png`). Avisa onde ficou (ou o erro).
     fn save(&self) -> Option<PathBuf> {
         let image = self.result()?;
-        let dir = mide::places::pictures_dir().join("Capturas de tela");
-        let path = dir.join(format!("Captura de tela {}.png", chrono_name()));
-        let result = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| image.save_png(&path).map_err(|e| e.to_string()));
-        match result {
-            Ok(()) => {
-                tracing::info!("captura salva: {}", path.display());
-                shutter();
-                mide::notify::send_and_wait("Captura de tela", "Captura salva", &path.display().to_string());
-                Some(path)
-            }
-            Err(err) => {
-                tracing::warn!("captura não salva em {}: {err}", dir.display());
-                mide::notify::send_and_wait("Captura de tela", "A captura não foi salva", &format!("{}: {err}", dir.display()));
-                None
-            }
-        }
+        save_images(&[(&image, None)]).into_iter().next()
+    }
+
+    /// ⌘⇧3: a tela inteira, salva e copiada. Com várias telas, um arquivo por tela (com
+    /// o nome dela) e a principal na área de transferência. Verdadeiro se salvou ou
+    /// copiou alguma coisa.
+    fn save_full(&mut self) -> bool {
+        let main = self.primary().rect;
+        self.selection = Some(main);
+        tracing::info!("captura rápida da tela inteira ({} tela(s), principal {}x{} pontos)", self.screens.len(), main.2, main.3);
+        let copied = self.copy();
+        let saved = if self.screens.len() > 1 {
+            // A imagem de cada tela já é o arquivo (em pixels, sem marcações).
+            let images: Vec<(&Pixmap, Option<&str>)> = self.screens.iter().map(|s| (&s.shot, Some(s.name.as_str()))).collect();
+            !save_images(&images).is_empty()
+        } else {
+            self.save().is_some()
+        };
+        saved || copied
     }
 
     /// Retângulo que envolve as telas onde a área pode ficar (`areas`).
@@ -521,7 +640,12 @@ impl Capture {
     /// As telas onde a área pode ficar (a união delas, não o retângulo que as
     /// envolve): todas; na gravação, só a principal.
     fn areas(&self) -> Vec<RectF> {
-        if self.record { vec![self.primary().rect] } else { self.screens.iter().map(|s| s.rect).collect() }
+        if self.record {
+            let i = self.record_screen.filter(|i| *i < self.screens.len()).unwrap_or_else(|| self.primary_index());
+            vec![self.screens[i].rect]
+        } else {
+            self.rects()
+        }
     }
 
     /// As bolinhas aparecem (e pegam o clique) com uma área escolhida no modo Seleção,
@@ -547,8 +671,17 @@ impl Capture {
         if over_panel && self.drag.is_none() && !on_handle {
             return;
         }
-        let limits = self.limits();
+        let mut limits = self.limits();
         match self.mode {
+            Mode::PickScreen => {
+                // O clique (ao soltar) escolhe a tela sob o ponteiro (no buraco entre
+                // telas, nada).
+                if input.released
+                    && let Some(i) = screen_index_at(&self.rects(), pos)
+                {
+                    self.pick_screen(i);
+                }
+            }
             Mode::Window => {
                 if input.released {
                     if let Some(rect) = self.windows.iter().find(|r| inside(**r, pos)) {
@@ -576,6 +709,12 @@ impl Capture {
                         // Fora da área escolhida: outra área (as marcações saem).
                         self.shapes.clear();
                         self.mode = Mode::Selection;
+                        if self.record {
+                            // A gravação é de uma tela: a área fica presa à tela onde
+                            // começou.
+                            self.record_screen = Some(screen_index_near(&self.rects(), pos));
+                            limits = self.limits();
+                        }
                         self.drag = Some(Drag::NewArea { start: clamp_point(pos, limits) });
                     }
                 }
@@ -621,12 +760,17 @@ impl App for Capture {
         let mirror = ui.mirror();
         if !mirror {
             if self.mode == Mode::Full {
-                self.selection = Some(self.primary().rect);
+                self.selection = Some(self.screens[self.full_index()].rect);
             }
-            // Teclado: Esc cancela, Enter e Ctrl+C copiam, Ctrl+S salva.
+            // Teclado: Esc cancela (escolhendo a tela, volta para a Seleção), Enter e
+            // Ctrl+C copiam, Ctrl+S salva.
             let keys = ui.input().keys.clone();
             let shortcuts = ui.input().shortcuts.clone();
-            if keys.contains(&Key::Escape) {
+            if keys.contains(&Key::Escape) && self.mode == Mode::PickScreen && !self.record {
+                tracing::info!("captura: escolha da tela cancelada");
+                self.mode = Mode::Selection;
+                self.selection = None;
+            } else if keys.contains(&Key::Escape) {
                 tracing::info!("captura cancelada");
                 ui.close();
                 return;
@@ -696,13 +840,16 @@ impl Capture {
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
             ui.row(|ui| {
                 for (mode, label) in [(Mode::Selection, "Seleção"), (Mode::Window, "Janela"), (Mode::Full, "Tela inteira")] {
-                    let r = if self.mode == mode { ui.primary_button(label) } else { ui.button(label) };
+                    let current = self.mode == mode || (mode == Mode::Full && self.mode == Mode::PickScreen);
+                    let r = if current { ui.primary_button(label) } else { ui.button(label) };
                     if r.clicked() {
-                        self.mode = mode;
-                        if mode != Mode::Full {
+                        if mode == Mode::Full {
+                            self.choose_full();
+                        } else {
+                            self.mode = mode;
                             self.selection = None;
+                            self.shapes.clear();
                         }
-                        self.shapes.clear();
                     }
                 }
                 ui.push_right(268.0);
@@ -796,6 +943,10 @@ impl Capture {
         };
         let selection = self.selection;
         let shapes = &self.shapes;
+        // Escolhendo a tela: a que está sob o ponteiro fica clara, com o contorno na cor
+        // de destaque.
+        let picking = self.mode == Mode::PickScreen && shot.is_some_and(|s| pointer.is_some_and(|p| contains_half_open(s.rect, p)));
+        let accent = ui.theme().accent;
         ui.paint(|canvas, _| {
             // Tela escurecida e, por cima, a área escolhida com as cores de verdade:
             // só cópia de bytes (rápido mesmo numa tela grande). A imagem já está no
@@ -805,10 +956,15 @@ impl Capture {
                 canvas.fill(Color::from_rgba8(20, 20, 22, 255));
                 return;
             };
-            if canvas.data().len() == shot.dimmed.data().len() {
-                canvas.data_mut().copy_from_slice(shot.dimmed.data());
+            let base = if picking { &shot.view } else { &shot.dimmed };
+            if canvas.data().len() == base.data().len() {
+                canvas.data_mut().copy_from_slice(base.data());
             } else {
-                canvas.draw_pixmap(0, 0, shot.dimmed.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                canvas.draw_pixmap(0, 0, base.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+            }
+            if picking && let Some(rect) = Rect::from_xywh(2.0, 2.0, (shot.rect.2 - 4.0).max(1.0), (shot.rect.3 - 4.0).max(1.0)) {
+                let paint = Paint { shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(accent[0], accent[1], accent[2], 255)), anti_alias: true, ..Default::default() };
+                canvas.stroke_path(&PathBuilder::from_rect(rect), &paint, &Stroke { width: 4.0, ..Default::default() }, Transform::identity(), None);
             }
             if let Some((x, y, w, h)) = selection.or(hovered_window) {
                 let local = (x - ox, y - oy, w, h);
@@ -819,6 +975,19 @@ impl Capture {
                 draw_shape(canvas, shape, Transform::from_translate(-ox, -oy));
             }
         });
+
+        // O rótulo em vidro no meio da tela que vai ser escolhida: o que o clique faz, o
+        // nome e o tamanho em pixels.
+        if picking && let Some(shot) = shot {
+            let (w, h) = (360.0, shot.rect.3);
+            let (x, y) = (((shot.rect.2 - w) / 2.0).max(0.0), (h / 2.0 - 40.0).max(0.0));
+            let what = if self.record { "Clique para gravar esta tela" } else { "Clique para capturar esta tela" };
+            let detail = format!("{} · {} × {}", shot.name, shot.shot.width(), shot.shot.height());
+            ui.glass_panel(x, y, w, 14.0, |ui| {
+                ui.label(what);
+                ui.note(&detail);
+            });
+        }
 
         // Tamanho da área, logo acima dela (ou dentro, se não couber), na tela onde fica
         // o canto de cima à esquerda (num buraco entre telas, na camada principal).
@@ -872,6 +1041,7 @@ impl Capture {
     /// `size`: tamanho da tela da camada principal (o painel fica embaixo e no meio).
     fn record_view(&mut self, ui: &mut Ui, (sw, sh): (f32, f32)) {
         let (ox, oy, _, _) = self.primary().rect;
+        let mut picked = false;
         let panel_w = 740.0;
         let px = (sw - panel_w) / 2.0;
         let py = self.place_panel((ox, oy), (px, panel_w), sh - 84.0, 56.0);
@@ -880,11 +1050,15 @@ impl Capture {
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
             ui.row(|ui| {
                 for (mode, label) in [(Mode::Full, "Tela inteira"), (Mode::Selection, "Área")] {
-                    let r = if self.mode == mode { ui.primary_button(label) } else { ui.button(label) };
+                    let current = self.mode == mode || (mode == Mode::Full && self.mode == Mode::PickScreen);
+                    let r = if current { ui.primary_button(label) } else { ui.button(label) };
                     if r.clicked() {
-                        self.mode = mode;
-                        if mode == Mode::Selection {
+                        if mode == Mode::Full {
+                            self.choose_full();
+                        } else {
+                            self.mode = mode;
                             self.selection = None;
+                            self.record_screen = None;
                         }
                     }
                 }
@@ -908,10 +1082,20 @@ impl Capture {
         self.panel_h = rect.3;
         if let (Some(local), Some(pos)) = (ui.input().pointer, ui.pointer_global()) {
             let over_panel = inside(rect, local);
-            if self.mode == Mode::Selection {
-                self.pointer(ui, pos, over_panel);
+            match self.mode {
+                Mode::Selection => self.pointer(ui, pos, over_panel),
+                // Com várias telas, o clique numa tela começa a gravar ela inteira (como
+                // no Mac).
+                Mode::PickScreen if !over_panel && ui.input().released => {
+                    if let Some(i) = screen_index_at(&self.rects(), pos) {
+                        self.pick_screen(i);
+                        picked = true;
+                    }
+                }
+                _ => {}
             }
         }
+        start |= picked;
         if self.drag.is_some() {
             ui.request_repaint();
         }
@@ -921,14 +1105,20 @@ impl Capture {
             return;
         }
         if start {
-            let area = match (self.mode, self.selection) {
-                // A gravação recebe a área em pontos da própria tela.
-                (Mode::Selection, Some((x, y, w, h))) => format!("{} {} {} {}", (x - ox).round() as i32, (y - oy).round() as i32, w.round() as i32, h.round() as i32),
+            // A gravação é de uma tela: a área vai em pontos dela, com o nome (`tela
+            // NOME`) quando há mais de uma.
+            let (screen, area) = match (self.mode, self.selection) {
+                (Mode::Selection, Some(sel)) => {
+                    let i = self.record_screen.unwrap_or_else(|| screen_index_near(&self.rects(), (sel.0, sel.1)));
+                    let (name, area) = record_target(&self.screens, sel, i);
+                    (name, Some(area))
+                }
                 (Mode::Selection, None) => return,
-                _ => "full".into(),
+                _ => (self.screens[self.full_index()].name.clone(), None),
             };
-            let sounds = format!("{}{}", if self.system_audio { " sistema" } else { "" }, if self.microphone { " microfone" } else { "" });
-            let reply = ask_compositor(&format!("record start {area}{sounds}")).and_then(|r| r.into_iter().next()).unwrap_or_default();
+            let screen = (self.screens.len() > 1).then_some(screen.as_str());
+            let command = record_command(area, screen, self.system_audio, self.microphone);
+            let reply = ask_compositor(&command).and_then(|r| r.into_iter().next()).unwrap_or_default();
             if let Some(err) = reply.strip_prefix("erro: ") {
                 mide::notify::send_and_wait("Gravação de tela", "A gravação não começou", err);
             } else {
@@ -937,6 +1127,38 @@ impl Capture {
             ui.close();
         }
     }
+}
+
+/// Grava as imagens em Imagens/Capturas de tela (`shot_file_name`, com o nome da tela
+/// quando dado) e avisa uma vez onde ficaram (ou o erro). Devolve os arquivos gravados.
+fn save_images(images: &[(&Pixmap, Option<&str>)]) -> Vec<PathBuf> {
+    let dir = mide::places::pictures_dir().join("Capturas de tela");
+    let stamp = chrono_name();
+    let mut saved = Vec::new();
+    let mut error = None;
+    for (image, screen) in images {
+        let path = dir.join(shot_file_name(&stamp, *screen));
+        match std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| image.save_png(&path).map_err(|e| e.to_string())) {
+            Ok(()) => {
+                tracing::info!("captura salva: {}", path.display());
+                saved.push(path);
+            }
+            Err(err) => {
+                tracing::warn!("captura não salva em {}: {err}", dir.display());
+                error = Some(err);
+            }
+        }
+    }
+    if !saved.is_empty() {
+        shutter();
+    }
+    match (saved.as_slice(), error) {
+        (_, Some(err)) => mide::notify::send_and_wait("Captura de tela", "A captura não foi salva", &format!("{}: {err}", dir.display())),
+        ([one], None) => mide::notify::send_and_wait("Captura de tela", "Captura salva", &one.display().to_string()),
+        (many, None) if !many.is_empty() => mide::notify::send_and_wait("Captura de tela", "Capturas salvas", &format!("{} telas em {}", many.len(), dir.display())),
+        _ => {}
+    }
+    saved
 }
 
 /// Copia o retângulo `r` de `src` para o mesmo lugar em `dst`, linha a linha. Se os
@@ -1210,13 +1432,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let screens = capture(mode.is_empty())?;
     if mode == "--full" {
-        // Por enquanto, a tela principal (várias telas no ⌘⇧3 ficam para a B22).
+        // A tela inteira (com várias telas, um arquivo de cada; a principal é copiada).
         let mut full = Capture::new(screens, Vec::new());
-        let main = full.primary().rect;
-        full.selection = Some(main);
-        tracing::info!("captura rápida da tela inteira ({}x{} pontos)", main.2, main.3);
-        let copied = full.copy();
-        return if full.save().is_some() || copied { Ok(()) } else { Err("a captura não foi salva nem copiada".into()) };
+        return if full.save_full() { Ok(()) } else { Err("a captura não foi salva nem copiada".into()) };
     }
     let names: Vec<String> = screens.iter().map(|s| format!("{} {}x{} em {:.2}", s.name, s.rect.2, s.rect.3, s.scale)).collect();
     tracing::info!("captura de tela aberta ({} tela(s): {})", screens.len(), names.join(", "));
@@ -1225,7 +1443,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     app.quick = mode == "--area";
     if mode == "--record" {
         app.record = true;
-        app.mode = Mode::Full;
+        // Tela inteira; com várias telas, escolher qual (o clique começa a gravar).
+        app.choose_full();
     }
     // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1, em pontos. Uma
     // camada em cada tela; só a principal recebe o teclado.
@@ -1541,6 +1760,77 @@ mod tests {
         assert!(ring[0] > 180 && ring[1] > 180, "anel branco: {ring:?}");
         // No meio da área, nada.
         assert_eq!(rgb(&canvas, 150, 100), [40, 40, 40]);
+    }
+
+    #[test]
+    fn gravacao_presa_a_tela() {
+        let screens = vec![screen("HEADLESS-1", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("HEADLESS-2", (1366.0, 0.0), (1920, 1080), 1.0, BLUE, false)];
+        // Área na segunda tela: pontos locais dela.
+        let (name, area) = record_target(&screens, (1500.0, 300.0, 300.0, 200.0), 1);
+        assert_eq!((name.as_str(), area), ("HEADLESS-2", (134, 300, 300, 200)));
+        assert_eq!(record_command(Some(area), Some(&name), true, false), "record start 134 300 300 200 tela HEADLESS-2 sistema");
+        // Começou na principal e passou para a outra: fica recortada à principal.
+        let (name, area) = record_target(&screens, (1200.0, 200.0, 366.0, 250.0), 0);
+        assert_eq!((name.as_str(), area), ("HEADLESS-1", (1200, 200, 166, 250)));
+        // Tela inteira, os dois sons; uma tela só (sem nome): o comando de antes.
+        assert_eq!(record_command(None, Some("HEADLESS-2"), true, true), "record start full tela HEADLESS-2 sistema microfone");
+        assert_eq!(record_command(Some((100, 100, 400, 300)), None, false, true), "record start 100 100 400 300 microfone");
+        assert_eq!(record_command(None, Some(""), false, false), "record start full");
+    }
+
+    #[test]
+    fn tela_sob_o_ponteiro() {
+        assert_eq!(screen_index_at(&DUAS, (2000.0, 500.0)), Some(1));
+        assert_eq!(screen_index_at(&DUAS, (100.0, 100.0)), Some(0));
+        assert_eq!(screen_index_at(&DUAS, (1000.0, 900.0)), None, "buraco entre as telas");
+        // A mais perto: (1000, 900) fica a 132 pontos de A e a 366 de B.
+        assert_eq!(screen_index_near(&DUAS, (1000.0, 900.0)), 0);
+        assert_eq!(screen_index_near(&DUAS, (1360.0, 1000.0)), 1);
+        assert_eq!(screen_index_near(&[], (5.0, 5.0)), 0);
+    }
+
+    #[test]
+    fn borda_comum_e_da_tela_que_comeca_nela() {
+        // x = 1366 é a primeira coluna de B, não a última de A.
+        assert_eq!(screen_index_at(&DUAS, (1366.0, 100.0)), Some(1));
+        assert_eq!(screen_index_near(&DUAS, (1366.0, 100.0)), 1);
+        assert_eq!(screen_index_at(&DUAS, (1365.9, 100.0)), Some(0));
+        assert!(contains_half_open(DUAS[1], (1366.0, 0.0)));
+        assert!(!contains_half_open(DUAS[0], (1366.0, 0.0)));
+        // Empilhadas: y = 768 é a primeira linha da de baixo.
+        let pilha: [RectF; 2] = [(0.0, 0.0, 1366.0, 768.0), (0.0, 768.0, 1366.0, 768.0)];
+        assert_eq!(screen_index_at(&pilha, (10.0, 768.0)), Some(1));
+        assert_eq!(screen_index_near(&pilha, (10.0, 768.0)), 1);
+        // Fora de tudo, à direita da última coluna de B: a mais perto continua sendo B.
+        assert_eq!(screen_index_at(&DUAS, (3286.0, 100.0)), None);
+        assert_eq!(screen_index_near(&DUAS, (3286.0, 100.0)), 1);
+    }
+
+    #[test]
+    fn tela_inteira_com_varias_telas_pergunta_qual() {
+        let one = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true)];
+        let mut c = Capture::new(one, Vec::new());
+        c.choose_full();
+        assert_eq!(c.mode, Mode::Full, "uma tela: como antes");
+        let two = vec![screen("A", (0.0, 0.0), (1366, 768), 1.0, RED, true), screen("B", (1366.0, 0.0), (2400, 1350), 1.25, BLUE, false)];
+        let mut c = Capture::new(two, Vec::new());
+        c.selection = Some((10.0, 10.0, 50.0, 50.0));
+        c.choose_full();
+        assert_eq!((c.mode, c.selection), (Mode::PickScreen, None));
+        assert_eq!(c.full_index(), 0, "antes de escolher, a principal");
+        c.pick_screen(1);
+        assert_eq!((c.mode, c.selection, c.full_index()), (Mode::Full, Some((1366.0, 0.0, 1920.0, 1080.0)), 1));
+        // O arquivo sai em pixels da tela escolhida.
+        let out = c.result().unwrap();
+        assert_eq!((out.width(), out.height()), (2400, 1350));
+        assert_eq!(rgb(&out, 5, 5), BLUE);
+    }
+
+    #[test]
+    fn nome_do_arquivo_com_a_tela() {
+        assert_eq!(shot_file_name("2026-10-23 10-00-00", None), "Captura de tela 2026-10-23 10-00-00.png");
+        assert_eq!(shot_file_name("2026-10-23 10-00-00", Some("HDMI-A-1")), "Captura de tela 2026-10-23 10-00-00 (HDMI-A-1).png");
+        assert_eq!(shot_file_name("x", Some("")), "Captura de tela x.png");
     }
 
     #[test]
