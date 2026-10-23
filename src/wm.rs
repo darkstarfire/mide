@@ -424,9 +424,9 @@ impl State {
         tracing::info!("janela restaurada");
     }
 
-    /// Seletor de arquivos dos apps (`mide-chooser`, B25): no primeiro quadro com
-    /// conteúdo, vai para o meio da área útil da tela, como um diálogo (ele ainda não
-    /// se liga à janela do app que pediu).
+    /// Seletor de arquivos dos apps (`mide-chooser`, B25) e pedido de senha de
+    /// administrador (`mide-auth`, C7): no primeiro quadro com conteúdo, vão para o meio
+    /// da área útil da tela, como um diálogo (ainda não se ligam à janela de quem pediu).
     pub(crate) fn center_dialog_once(&mut self, window: &Window) {
         if window.geometry().size.w <= 0 {
             return;
@@ -440,7 +440,7 @@ impl State {
                 .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
         })
         .unwrap_or_default();
-        if app_id != "mide-chooser" {
+        if app_id != "mide-chooser" && app_id != "mide-auth" {
             return;
         }
         if !with_states(toplevel.wl_surface(), |s| s.data_map.insert_if_missing_threadsafe(|| CenterChecked)) {
@@ -453,7 +453,7 @@ impl State {
         let x = area.loc.x + (area.size.w - size.w).max(0) / 2;
         let y = area.loc.y + bar_height_for(window) + (area.size.h - size.h - bar_height_for(window)).max(0) / 2;
         self.space.map_element(window.clone(), (x, y), true);
-        tracing::info!("seletor de arquivos no meio da tela em ({x}, {y})");
+        tracing::info!("diálogo {app_id} no meio da tela em ({x}, {y})");
     }
 
     /// Primeira janela com conteúdo de um app aberto pela dock: sai do ícone dele com o

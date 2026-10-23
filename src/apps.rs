@@ -238,11 +238,24 @@ pub fn open_with(app: &App, path: &std::path::Path) -> std::io::Result<()> {
         tracing::info!("abrir com (teste): {command}");
         return Ok(());
     }
-    let mut child = Command::new("sh").arg("-c").arg(&command).spawn()?;
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(&command);
+    launch_env(&mut cmd, &app.name, app.icon.as_deref());
+    let mut child = cmd.spawn()?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     Ok(())
+}
+
+/// Nome e ícone do app aberto pelo launcher, pela busca ou pela dock, no ambiente dele:
+/// o `mide-sudo` num `Exec` mostra quem pede a senha (C7).
+pub fn launch_env(cmd: &mut Command, name: &str, icon: Option<&str>) {
+    cmd.env("MIDE_APP_NAME", name);
+    match icon {
+        Some(icon) if !icon.is_empty() => cmd.env("MIDE_APP_ICON", icon),
+        _ => cmd.env_remove("MIDE_APP_ICON"),
+    };
 }
 
 /// Abre o app num processo separado. Apps de terminal abrem no Terminal do mide.

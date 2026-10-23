@@ -1,0 +1,16 @@
+#!/bin/sh
+# xhost FALSO dos testes do C7 (mide-sudo): nunca mexe numa tela X11 de verdade. Guarda
+# se o root está liberado no arquivo FAKE_XHOST_STATE e registra cada mudança em
+# FAKE_XHOST_LOG ("+root" ou "-root").
+state="${FAKE_XHOST_STATE:?}"
+log="${FAKE_XHOST_LOG:-/dev/null}"
+case "${1:-}" in
+    "")
+        echo "access control enabled, only authorized clients can connect"
+        [ -e "$state" ] && echo "SI:localuser:root"
+        ;;
+    +si:localuser:root) : >"$state"; echo "+root" >>"$log" ;;
+    -si:localuser:root) rm -f "$state"; echo "-root" >>"$log" ;;
+    *) exit 1 ;;
+esac
+exit 0

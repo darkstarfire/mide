@@ -9,6 +9,8 @@ chrono = "0.4"
 cosmic-text = "0.19"
 freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
+# Sinais no mide-sudo (desfazer a liberação da tela X11 ao ser encerrado).
+libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 resvg = { version = "0.45", default-features = false }
 rustix = { version = "1", features = ["pty", "process", "termios", "fs", "time"] }

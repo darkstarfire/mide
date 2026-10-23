@@ -208,6 +208,16 @@ não fica só no app.
   confirma. Nada acontece antes da ação principal.
 - Mudança que pode deixar a tela inutilizável (monitores) pede confirmação com
   contagem regressiva e volta sozinha (15 s).
+- **Senha de administrador** (`mide-askpass`, para o `mide-sudo` e o polkit): janela
+  própria de 480x262, no meio da tela, por cima e com o foco. Cadeado na cor de destaque
+  à esquerda (com o ícone do app que pede no canto, quando há); título "Digite sua
+  senha"; "<App> quer fazer alterações no sistema."; "Digite a senha de <usuário> para
+  permitir." e o comando em texto pequeno e cinza; campo de senha (`ui.password_field`,
+  bolinhas, sem copiar) e **Cancelar** / **OK** (`ui.dialog_buttons`). Enter confirma,
+  Esc ou fechar a janela cancelam. Senha recusada: "Senha incorreta. Tente de novo." em
+  vermelho (`ui.error_note`), borda do campo vermelha e o conteúdo balança (450 ms, como
+  na tela de bloqueio). Até 3 tentativas; enquanto o polkit confere, o campo diz
+  "Conferindo…".
 
 ### Nomes e textos
 

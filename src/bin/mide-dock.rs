@@ -982,7 +982,10 @@ impl Dock {
             tracing::warn!("{} sem comando Exec", app.name);
             return;
         }
-        match Command::new("sh").arg("-c").arg(&command).spawn() {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(&command);
+        mide::apps::launch_env(&mut cmd, &app.name, None);
+        match cmd.spawn() {
             Ok(mut child) => {
                 std::thread::spawn(move || {
                     let _ = child.wait();

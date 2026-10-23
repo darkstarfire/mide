@@ -10,6 +10,7 @@ pub mod calendar;
 pub mod control_client;
 pub mod default_apps;
 pub mod displays;
+pub mod elevate;
 pub mod files;
 pub mod files_view;
 pub mod gmenu;

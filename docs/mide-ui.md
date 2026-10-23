@@ -302,6 +302,14 @@ if self.confirmar {
 Numa janela estreita (a Calculadora básica, 250 pt), os botões do aviso encolhem para
 caber; estreitos demais, ficam um embaixo do outro, com o principal em cima.
 
+Para montar um diálogo próprio: `ui.dialog_buttons(&["Cancelar", "OK"])` põe os botões à
+direita, cada um do tamanho do rótulo, com o último em azul (devolve o clicado);
+`ui.error_note("Senha incorreta")` escreve um erro pequeno em vermelho;
+`ui.password_field(&mut senha, "Senha", erro)` é o campo de senha com a cara dos campos
+do tema (bolinhas, sempre com o teclado, sem copiar; Enter responde `submitted`, Esc e
+Ctrl+U apagam; `erro` pinta a borda de vermelho). O `ui.password_input` é o da tela de
+bloqueio, claro sobre o papel de parede. O `mide-askpass` usa os três.
+
 Para escolher numa lista longa, em grupos e com busca (as 140 unidades da Calculadora,
 em 15 categorias), há o seletor de lista (`ListPicker`): sem busca, mostra o grupo do item
 atual, com "‹ Todos os grupos" no topo; com busca (sem acento nem maiúscula, todas as

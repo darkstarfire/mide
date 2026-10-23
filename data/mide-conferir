@@ -117,6 +117,39 @@ else
     printf '  (fora da sessão do mide: quem atende o "Mostrar na pasta" e o seletor só é conferido dentro dela)\n'
 fi
 
+echo "== senha de administrador (mide-sudo e polkit, C7)"
+for prog in mide-sudo mide-askpass mide-polkit-agent; do
+    [ -x "target/release/$prog" ] || falta "target/release/$prog: rode data/mide-atualizar"
+done
+if command -v sudo >/dev/null; then
+    if id -nG | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin'; then
+        ok "sudo instalado e $(id -un) nos administradores (mide-sudo funciona)"
+    else
+        aviso "$(id -un) fora dos grupos sudo/wheel: o mide-sudo vai dizer que não tem permissão"
+    fi
+else
+    falta "sudo não instalado (o mide-sudo depende dele)"
+fi
+helper=""
+for h in /usr/lib/polkit-1/polkit-agent-helper-1 /usr/libexec/polkit-agent-helper-1 /usr/lib/policykit-1/polkit-agent-helper-1 /usr/libexec/polkit-1/polkit-agent-helper-1; do
+    if [ -u "$h" ] && [ "$(stat -Lc %u "$h" 2>/dev/null)" = 0 ]; then helper="$h"; break; fi
+done
+if [ -n "$helper" ]; then
+    ok "helper do polkit com setuid de root ($helper)"
+else
+    falta "polkit-agent-helper-1 com setuid não encontrado: sudo apt install polkitd (o pkexec não terá a janela do mide)"
+fi
+command -v xhost >/dev/null || aviso "xhost: sudo apt install x11-xserver-utils (apps abertos com o mide-sudo podem não achar a tela X11)"
+if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
+    if pgrep -u "$(id -u)" -x mide-polkit-agen >/dev/null; then
+        ok "agente do polkit do mide rodando"
+    else
+        aviso "agente do polkit do mide não está rodando (veja \"agente do polkit\" no log da sessão)"
+    fi
+else
+    printf '  (fora da sessão do mide: o agente do polkit só é conferido dentro dela)\n'
+fi
+
 echo "== cotações de moedas (Calculadora)"
 if command -v curl >/dev/null; then
     ok "curl instalado (cotações do Banco Central)"

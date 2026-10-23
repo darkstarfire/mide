@@ -907,18 +907,7 @@ impl<'a> Ui<'a> {
                 }
                 return;
             }
-            ui.row(|ui| {
-                ui.push_right(row_w);
-                for (i, label) in buttons.iter().enumerate() {
-                    let primary = i + 1 == buttons.len();
-                    ui.sized(widths[i], |ui| {
-                        let r = if primary { ui.primary_button(label) } else { ui.button(label) };
-                        if r.clicked() {
-                            chosen = Some(i);
-                        }
-                    });
-                }
-            });
+            chosen = ui.dialog_buttons(buttons);
         });
         if chosen.is_none() && !buttons.is_empty() {
             if self.input().key(super::input::Key::Escape) {
@@ -927,6 +916,29 @@ impl<'a> Ui<'a> {
                 chosen = Some(buttons.len() - 1);
             }
         }
+        chosen
+    }
+
+    /// Linha de botões de diálogo alinhada à direita, cada um do tamanho do rótulo: o
+    /// último é o principal (azul), como "Cancelar" e "OK". Devolve o botão clicado.
+    pub fn dialog_buttons(&mut self, buttons: &[&str]) -> Option<usize> {
+        let font = self.ctx.theme.font;
+        let n = buttons.len().max(1) as f32;
+        let widths: Vec<f32> = buttons.iter().map(|b| self.measure(b, font, FontWeight::Semibold) + 32.0).collect();
+        let row_w = widths.iter().sum::<f32>() + (n - 1.0) * 8.0;
+        let mut chosen = None;
+        self.row(|ui| {
+            ui.push_right(row_w);
+            for (i, label) in buttons.iter().enumerate() {
+                let primary = i + 1 == buttons.len();
+                ui.sized(widths[i], |ui| {
+                    let r = if primary { ui.primary_button(label) } else { ui.button(label) };
+                    if r.clicked() {
+                        chosen = Some(i);
+                    }
+                });
+            }
+        });
         chosen
     }
 
@@ -1845,8 +1857,7 @@ impl<'a> Ui<'a> {
         fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
         let border = if focused { t.accent } else { t.shade(40) };
         if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, t.control_radius) {
-            let mut paint = Paint::default();
-            paint.anti_alias = true;
+            let mut paint = Paint { anti_alias: true, ..Default::default() };
             paint.set_color(color(border));
             let width = if focused { 2.0 } else { 1.0 };
             self.canvas.stroke_path(&path, &paint, &Stroke { width, ..Default::default() }, crate::ui::draw::tf(), None);
@@ -1918,6 +1929,63 @@ impl<'a> Ui<'a> {
     pub fn password_input(&mut self, value: &mut String, placeholder: &str) -> Response {
         let t = self.ctx.theme.clone();
         let rect = self.alloc(None, t.row + 6.0);
+        let r = self.password_edit(value, rect);
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, rect.3 / 2.0, color([255, 255, 255, 120]));
+        let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
+        let x = rect.0 + 16.0;
+        if value.is_empty() {
+            self.draw_text(placeholder, x, ty, t.font, FontWeight::Regular, [40, 40, 48, 170]);
+        } else {
+            let dots = "•".repeat(value.chars().count().min(40));
+            let w = self.measure(&dots, t.font + 2.0, FontWeight::Regular);
+            self.draw_text(&dots, x, ty - 1.0, t.font + 2.0, FontWeight::Regular, [24, 24, 28, 255]);
+            fill_rounded(self.canvas, x + w + 2.0, rect.1 + 8.0, 1.5, rect.3 - 16.0, 0.5, color([24, 24, 28, 255]));
+        }
+        r
+    }
+
+    /// Campo de senha com a cara dos campos de texto do tema (diálogos de senha, como o
+    /// pedido de senha de administrador): bolinhas, sempre com o teclado, sem copiar.
+    /// `error` pinta a borda de vermelho (senha recusada). Mesmas teclas do
+    /// `password_input`.
+    pub fn password_field(&mut self, value: &mut String, placeholder: &str, error: bool) -> Response {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, t.row);
+        let r = self.password_edit(value, rect);
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
+        let border = if error { t.danger } else { t.accent };
+        if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, t.control_radius) {
+            let mut paint = Paint { anti_alias: true, ..Default::default() };
+            paint.set_color(color(border));
+            self.canvas.stroke_path(&path, &paint, &Stroke { width: 2.0, ..Default::default() }, crate::ui::draw::tf(), None);
+        }
+        let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
+        let x = rect.0 + 10.0;
+        if value.is_empty() {
+            self.draw_text(placeholder, x, ty, t.font, FontWeight::Regular, t.text_secondary);
+            fill_rounded(self.canvas, x - 1.0, rect.1 + 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
+        } else {
+            let room = rect.2 - 24.0;
+            let mut dots = "•".repeat(value.chars().count().min(60));
+            while dots.chars().count() > 1 && self.measure(&dots, t.font + 2.0, FontWeight::Regular) > room {
+                dots.pop();
+            }
+            let w = self.measure(&dots, t.font + 2.0, FontWeight::Regular);
+            self.draw_text(&dots, x, ty - 1.0, t.font + 2.0, FontWeight::Regular, t.text);
+            fill_rounded(self.canvas, x + w + 2.0, rect.1 + 7.0, 1.5, rect.3 - 14.0, 0.5, color(t.text));
+        }
+        r
+    }
+
+    /// Texto pequeno em vermelho (a cor de perigo do tema): erros, como "Senha incorreta".
+    pub fn error_note(&mut self, s: &str) {
+        let t = self.ctx.theme.clone();
+        self.paragraph(s, t.font_small, t.danger);
+    }
+
+    /// Teclas de um campo de senha: texto, colar, Backspace (com Ctrl apaga tudo), Esc e
+    /// Ctrl+U apagam tudo, Enter responde `submitted`.
+    fn password_edit(&mut self, value: &mut String, rect: (f32, f32, f32, f32)) -> Response {
         let id = self.ctx.id();
         let mut r = Response { rect, id, ..Default::default() };
         let input = self.ctx.input.clone();
@@ -1947,17 +2015,6 @@ impl<'a> Ui<'a> {
         r.changed = value.len() != before;
         if r.changed || r.submitted {
             self.ctx.repaint = true;
-        }
-        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, rect.3 / 2.0, color([255, 255, 255, 120]));
-        let ty = rect.1 + (rect.3 - t.font * 1.25) / 2.0;
-        let x = rect.0 + 16.0;
-        if value.is_empty() {
-            self.draw_text(placeholder, x, ty, t.font, FontWeight::Regular, [40, 40, 48, 170]);
-        } else {
-            let dots = "•".repeat(value.chars().count().min(40));
-            let w = self.measure(&dots, t.font + 2.0, FontWeight::Regular);
-            self.draw_text(&dots, x, ty - 1.0, t.font + 2.0, FontWeight::Regular, [24, 24, 28, 255]);
-            fill_rounded(self.canvas, x + w + 2.0, rect.1 + 8.0, 1.5, rect.3 - 16.0, 0.5, color([24, 24, 28, 255]));
         }
         r
     }

@@ -1,0 +1,85 @@
+#!/bin/sh
+# sudo FALSO dos testes do C7 (mide-sudo). Nunca vira root e nunca chama o sudo de
+# verdade: confere a senha com MIDE_TEST_SUDO_PASSWORD e roda o comando como o próprio
+# usuário, com o ambiente limpo (como o env_reset do sudo). Usado pelo mide-sudo só
+# em compilação de desenvolvimento (MIDE_SUDO_BIN).
+#
+# Imita o sudo 1.9: -A chama "$SUDO_ASKPASS" "<pergunta>" até 3 vezes (a senha vem na
+# saída dele); sem -A, lê a senha da entrada (o terminal). --preserve-env=LISTA mantém
+# as variáveis da lista. Mensagens em inglês, como o sudo com LANGUAGE=en.
+#
+# FAKE_SUDO_LOG: arquivo onde grava "tentativas=N" e "modo=..." (nunca a senha).
+# FAKE_SUDO_NO_ENV=1: recusa o /usr/bin/env (regra do sudoers só para o programa).
+# FAKE_SUDO_CACHE: arquivo que imita a credencial guardada do sudo (timestamp): depois
+# de uma senha certa, a chamada seguinte não pede a senha.
+askpass=0
+preserve=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -A) askpass=1; shift ;;
+        --preserve-env=*) preserve="${1#*=}"; shift ;;
+        --) shift; break ;;
+        -*) shift ;;
+        *) break ;;
+    esac
+done
+log="${FAKE_SUDO_LOG:-/dev/null}"
+[ -n "${MIDE_TEST_SUDO_PASSWORD:-}" ] || { echo "sudo falso: sem MIDE_TEST_SUDO_PASSWORD" >&2; exit 1; }
+
+tries=0
+ok=0
+if [ -n "${FAKE_SUDO_CACHE:-}" ] && [ -e "$FAKE_SUDO_CACHE" ]; then
+    ok=1
+    tries=3
+fi
+while [ "$ok" = 0 ] && [ "$tries" -lt 3 ]; do
+    tries=$((tries + 1))
+    if [ "$askpass" = 1 ]; then
+        if [ -z "${SUDO_ASKPASS:-}" ]; then
+            echo "sudo: no askpass program specified, try setting SUDO_ASKPASS" >&2
+            exit 1
+        fi
+        if ! pass="$("$SUDO_ASKPASS" "[sudo] password for $USER: ")"; then
+            echo "sudo: no password was provided" >&2
+            echo "sudo: a password is required" >&2
+            echo "tentativas=$tries cancelado" >>"$log"
+            exit 1
+        fi
+    else
+        printf '[sudo] password for %s: ' "$USER" >&2
+        IFS= read -r pass || exit 1
+        echo >&2
+    fi
+    if [ "$pass" = "$MIDE_TEST_SUDO_PASSWORD" ]; then
+        ok=1
+        [ -n "${FAKE_SUDO_CACHE:-}" ] && : >"$FAKE_SUDO_CACHE"
+        break
+    fi
+    echo "Sorry, try again." >&2
+done
+pass=""
+if [ "$ok" != 1 ]; then
+    echo "tentativas=$tries recusado" >>"$log"
+    echo "sudo: 3 incorrect password attempts" >&2
+    exit 1
+fi
+if [ "${FAKE_SUDO_NO_ENV:-0}" = 1 ] && [ "$1" = /usr/bin/env ]; then
+    echo "Sorry, user $USER is not allowed to execute '$*' as root on teste." >&2
+    echo "tentativas=$tries env-recusado" >>"$log"
+    exit 1
+fi
+if [ -n "$preserve" ]; then modo=preserve-env; else modo=env; fi
+echo "tentativas=$tries modo=$modo askpass=$askpass" >>"$log"
+# Ambiente limpo (env_reset), mais as variáveis do --preserve-env.
+keep=""
+if [ -n "$preserve" ]; then
+    old_ifs="$IFS"
+    IFS=,
+    for name in $preserve; do
+        eval "value=\${$name-}"
+        [ -n "$value" ] && keep="$keep $name=$value"
+    done
+    IFS="$old_ifs"
+fi
+# shellcheck disable=SC2086
+exec env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME="$HOME" SUDO_USER="$USER" $keep "$@"

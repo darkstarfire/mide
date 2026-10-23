@@ -176,6 +176,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     if wants_portal() {
         spawn_client("mide-portal");
     }
+    if wants_polkit_agent() {
+        spawn_client("mide-polkit-agent");
+    }
 
     tracing::info!("pronto. Teste com: WAYLAND_DISPLAY={} <app-wayland>", socket_name());
 
@@ -218,6 +221,19 @@ fn wants_portal() -> bool {
     session::active() || std::env::var("MIDE_PORTAL_FORCE").is_ok_and(|v| v == "1")
 }
 
+/// O agente do polkit (C7, senha de administrador dos apps) só roda na sessão do mide:
+/// num mide em janela dentro de outro desktop, o agente de lá continua (e o registro
+/// falharia). Os testes ligam com `MIDE_POLKIT_AGENT_FORCE=1`, sempre com um barramento
+/// de teste em `MIDE_POLKIT_BUS` (nunca o polkit de verdade), e só em compilação de
+/// desenvolvimento: na de distribuição o agente ignora o `MIDE_POLKIT_BUS` e se
+/// registraria no polkit de verdade, por baixo do agente do outro desktop.
+fn wants_polkit_agent() -> bool {
+    session::active()
+        || (cfg!(debug_assertions)
+            && std::env::var("MIDE_POLKIT_AGENT_FORCE").is_ok_and(|v| v == "1")
+            && std::env::var("MIDE_POLKIT_BUS").is_ok_and(|v| !v.is_empty()))
+}
+
 /// Encerra os programas do DE abertos pelo mide e espera eles saírem (até 2 s), para
 /// os novos não brigarem com os antigos (o nome das notificações no D-Bus, por exemplo).
 fn stop_shell() {
@@ -243,6 +259,9 @@ pub fn restart_shell() {
     }
     if wants_portal() {
         spawn_client("mide-portal");
+    }
+    if wants_polkit_agent() {
+        spawn_client("mide-polkit-agent");
     }
 }
 

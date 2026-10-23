@@ -1450,6 +1450,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "freedesktop-icons",
  "image",
+ "libc",
  "resvg",
  "rustix 1.1.5",
  "serde",
