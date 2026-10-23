@@ -42,6 +42,9 @@ mod stable {
         frame: u64,
         /// Opacidade dos próximos elementos (a da janela sendo desenhada; 1 fora dela).
         alpha: f32,
+        /// Grupo dos próximos elementos (somado ao programa na identidade): o que
+        /// aparece e some sozinho (o aviso de volume) não desloca a contagem do resto.
+        group: u8,
     }
 
     /// Elemento guardado, os uniformes dele, a opacidade e o quadro em que foi usado.
@@ -61,7 +64,15 @@ mod stable {
             let frame = c.frame;
             c.elements.retain(|_, (_, _, _, used)| frame - *used < 8);
             c.alpha = 1.0;
+            c.group = 0;
         });
+    }
+
+    /// Elementos criados daqui em diante têm contagem própria (`GROUP_OSD`); `0` volta
+    /// ao normal. Assim, quando o aviso aparece ou some, as molduras das janelas e da
+    /// dock continuam com a mesma identidade e o rastreador de dano não as redesenha.
+    pub fn set_group(group: u8) {
+        CACHE.with_borrow_mut(|c| c.group = group);
     }
 
     /// Opacidade dos elementos criados daqui em diante (a moldura de uma janela
@@ -72,6 +83,7 @@ mod stable {
 
     pub fn pixel(program: &GlesPixelProgram, tag: u8, area: Rect, uniforms: Vec<Uniform<'static>>) -> PixelShaderElement {
         CACHE.with_borrow_mut(|c| {
+            let tag = tag | c.group;
             let n = c.counts.entry(tag).or_default();
             let key = (c.output.clone(), tag, *n);
             *n += 1;
@@ -101,7 +113,10 @@ mod stable {
     }
 }
 
-pub use stable::{begin_frame, set_alpha};
+pub use stable::{begin_frame, set_alpha, set_group};
+
+/// Grupo dos elementos do aviso de volume e brilho (`crate::osd`).
+pub const GROUP_OSD: u8 = 0x80;
 use stable::pixel;
 
 /// Altura da barra de título em pixels.
@@ -608,6 +623,17 @@ pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool) -> PixelSh
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, alpha]),
         ])
+}
+
+/// Traço de 1 px na cor pedida em volta de um painel do compositor (o aviso de
+/// volume), com o raio dos cantos dele.
+pub fn stroke_element(shaders: &Shaders, frame: Rect, radius: i32, color: [f32; 4]) -> PixelShaderElement {
+    pixel(&shaders.outline, 1, frame, vec![
+        Uniform::new("half_size", (frame.size.w as f32 / 2.0, frame.size.h as f32 / 2.0)),
+        Uniform::new("radius", radius as f32),
+        Uniform::new("width", 1.0f32),
+        Uniform::new("fill", color),
+    ])
 }
 
 /// Largura, em pixels, da faixa da borda que aciona o redimensionamento.

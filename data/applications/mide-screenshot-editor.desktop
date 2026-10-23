@@ -8,6 +8,4 @@ Icon=mide-screenshot
 Categories=Graphics;
 MimeType=image/png;image/jpeg;
 StartupWMClass=mide-screenshot-editor
-# Fora do launcher (abre pela miniatura da captura e pelo "Abrir com" do Arquivos).
-NoDisplay=true
 OnlyShowIn=mide;

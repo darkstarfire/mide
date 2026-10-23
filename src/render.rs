@@ -67,6 +67,8 @@ pub struct Scene {
     /// Desenhar o cursor na cena (o DRM desliga quando o cursor está no plano de
     /// cursor da placa).
     pub draw_cursor: bool,
+    /// Ícones do aviso de volume e brilho.
+    osd_icons: crate::osd::Icons,
 }
 
 impl Scene {
@@ -81,7 +83,7 @@ impl Scene {
         // Compila o shader do papel de parede já aqui, para o erro aparecer na partida.
         crate::wallpaper::Wallpaper::new(renderer, None).map_err(|e| format!("falha ao compilar o shader do papel de parede: {e}"))?;
         let _ = state;
-        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true })
+        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true, osd_icons: Default::default() })
     }
 
     /// A cena desenha o cursor (backends sem anfitrião).
@@ -105,6 +107,7 @@ impl Scene {
             || !state.appearing.is_empty()
             || state.preview.as_ref().is_some_and(|p| p.appearing())
             || self.genie.glass_since.borrow().values().any(|t| t.elapsed() < crate::genie::GLASS_FADE)
+            || state.osd.as_ref().is_some_and(|o| o.moving(state.config.effects.transitions))
     }
 
     /// Desenha um quadro no alvo `framebuffer`: prévias, popups, camadas, janelas,
@@ -123,7 +126,7 @@ impl Scene {
         state: &mut State,
         age: usize,
     ) -> Result<(smithay::backend::renderer::sync::SyncPoint, Option<Vec<Rectangle<i32, Physical>>>), Box<dyn Error>> {
-        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor } = self;
+        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor, osd_icons } = self;
         // Cada tela tem o seu papel de parede (textura no tamanho dela).
         let output_name = output.name();
         if !wallpapers.contains_key(&output_name) {
@@ -160,6 +163,17 @@ impl Scene {
             let result = damage_tracker.render_output(renderer, framebuffer, age, &Vec::<MideRenderElement>::new(), [0.0, 0.0, 0.0, 1.0])?;
             dump_frame_if_requested(renderer, framebuffer, output)?;
             return Ok((result.sync, result.damage.cloned()));
+        }
+        // Aviso de volume e brilho: na frente de tudo (menos do cursor), também com a
+        // tela bloqueada. Fica fora das capturas de tela (como o cursor); nas gravações
+        // e nas capturas pedidas pelos apps (screencopy) aparece, como o cursor.
+        let osd = if capturing { None } else { crate::osd::elements(renderer, state, output, shaders, titles, osd_icons) };
+        let mut osd_glass = None;
+        if let Some((elements, panel, alpha)) = osd {
+            custom.extend(elements);
+            if state.config.effects.panel_glass {
+                osd_glass = Some(GlassRegion { at: custom.len(), rect: panel, radius: 14.0, name: "osd".into(), alpha });
+            }
         }
         // Tela bloqueada: só a tela de bloqueio desta saída (sem ela, tudo escuro).
         // Nada do que está por trás aparece, nem num quadro.
@@ -202,6 +216,7 @@ impl Scene {
             region.at += before_windows;
             region
         }));
+        glass.extend(osd_glass);
         // Vidro (dock, barra, menus): o que está atrás de cada região (tudo depois dela
         // na lista) é desenhado numa textura, desfocado e posto logo atrás da camada.
         // De trás para a frente: o vidro de um menu vê a dock já com o vidro dela.

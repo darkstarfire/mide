@@ -238,6 +238,7 @@ não fica só no app.
 | Pasta abrindo na lista do Arquivos | 180 ms (+25 ms por linha) | as linhas de dentro esmaecem de cima para baixo |
 | Troca entre ícones e lista (Arquivos) | 200 ms | o conteúdo novo esmaece |
 | Prévias da dock e alternador (Alt+Tab) | 160 ms | esmaecem e sobem 8 px |
+| Aviso de volume e brilho (OSD) | 160 ms entrando, 1,5 s parado, 200 ms saindo | esmaece e sobe 8 px; apertos seguidos só trocam o valor |
 | Miniatura da captura entrando / saindo | 160 / 120 ms | esmaece e desliza 8 px a partir da borda direita (fica 5 s) |
 | Fechar janela | 180 ms | encolhe 6% e esmaece |
 | Dock aparecendo/escondendo | 200 ms | desliza (espera 450 ms antes de esconder) |
@@ -282,7 +283,7 @@ inventa efeito novo para um caso que já está na tabela.
 | **S1** | Janela de app | Arquivos, Configurações, Editor de Texto, apps GTK/Qt |
 | **S2** | Painel fixo do sistema | barra superior, dock |
 | **S3** | Menu (lista ancorada num item) | menus da barra, da dock e de contexto; menus nativos dos apps (popups) |
-| **S4** | Painel flutuante passageiro | prévias das janelas, notificações, central de controle, Downloads e Lixeira da dock, miniatura da captura |
+| **S4** | Painel flutuante passageiro | prévias das janelas, notificações, central de controle, Downloads e Lixeira da dock, miniatura da captura, aviso de volume e brilho |
 | **S5** | Sobreposição de tela cheia | launcher, captura de tela, alternador de janelas (Alt+Tab) |
 | **S6** | Diálogo modal (dentro de uma janela) | renomear, nova pasta, confirmar monitores |
 | **S7** | Controle dentro de uma superfície | botão, interruptor, linha de lista, ícone da grade, item da barra lateral |
@@ -311,7 +312,7 @@ Materiais (não são movimento, mas também são efeitos com interruptor):
 | Material | Onde |
 |---|---|
 | **Vidro líquido** (desfoque + refração na borda + reflexo) | dock; pastas do launcher (ícone e painel aberto) |
-| **Vidro de painel** (desfoque + véu claro) | barra superior, menus, notificações, central de controle, prévias, barra lateral do Arquivos |
+| **Vidro de painel** (desfoque + véu claro) | barra superior, menus, notificações, central de controle, prévias, barra lateral do Arquivos, aviso de volume |
 | **Desfoque de fundo** (leve, o papel de parede continua reconhecível) | atrás do launcher |
 | **Sombra** e **cantos arredondados** | janelas |
 

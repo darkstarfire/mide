@@ -293,6 +293,15 @@ pub struct State {
     pub quit_requested: bool,
     /// Reiniciar o compositor com o programa novo (`restart all`), sem sair da sessão.
     pub reexec_requested: bool,
+    /// Aviso flutuante das teclas de volume e brilho (`crate::osd`).
+    pub osd: Option<crate::osd::Osd>,
+    /// Fila da thread das teclas multimídia (aplica em ordem e lê o nível).
+    pub osd_sender: Option<std::sync::mpsc::Sender<crate::osd::Job>>,
+    /// Número do último aperto e do último mostrado (respostas velhas são ignoradas).
+    pub osd_seq: u64,
+    pub osd_shown_seq: u64,
+    /// Laço de eventos (relógios do compositor, como o que tira o aviso de volume).
+    pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, State>,
     pub seat: Seat<Self>,
 }
 
@@ -340,7 +349,8 @@ impl State {
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
         let session_lock_state = smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&display_handle, |_| true);
-        let idle_notifier_state = smithay::wayland::idle_notify::IdleNotifierState::new(&display_handle, loop_handle);
+        let idle_notifier_state = smithay::wayland::idle_notify::IdleNotifierState::new(&display_handle, loop_handle.clone());
+        let osd_sender = crate::osd::init(&loop_handle);
         let idle_inhibit_state = smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(&display_handle);
         let decoration_state = XdgDecorationState::new::<Self>(&display_handle);
 
@@ -424,6 +434,11 @@ impl State {
             config,
             quit_requested: false,
             reexec_requested: false,
+            osd: None,
+            osd_sender,
+            osd_seq: 0,
+            osd_shown_seq: 0,
+            loop_handle,
             seat,
         })
     }
@@ -1299,6 +1314,7 @@ impl State {
         self.close_requests.retain(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(2));
         self.ghosts.retain(|(_, _, at)| now.duration_since(*at) < CLOSE_FADE);
         self.appearing.retain(|(s, at)| s.is_alive() && now.duration_since(*at) < MENU_APPEAR);
+        crate::osd::finish(self, now);
         match self.launcher_anim {
             Some((start, true)) if now.duration_since(start) >= LAUNCHER_OPEN => self.launcher_anim = None,
             Some((start, false)) if now.duration_since(start) >= LAUNCHER_CLOSE => {

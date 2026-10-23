@@ -205,24 +205,114 @@ pub fn set_volume(value: f32) {
     run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &value]);
 }
 
-/// Teclas de volume do teclado: 5% a mais ou a menos (no máximo 100%).
+/// Roda um comando e espera ele terminar (ou só registra, nos testes). Para quem
+/// precisa ler o resultado logo depois (o aviso das teclas multimídia, numa thread).
+fn run_wait(program: &str, args: &[&str]) {
+    let shown = format!("{program} {}", args.join(" "));
+    if dry_run() {
+        tracing::info!("sistema (teste): {shown}");
+        return;
+    }
+    tracing::info!("sistema: {shown}");
+    if let Err(err) = Command::new(program).args(args).status() {
+        tracing::warn!("falha ao executar {shown}: {err}");
+    }
+}
+
+/// Níveis simulados dos testes (`MIDE_SYSTEM_DRY_RUN`): as teclas multimídia mudam
+/// estes valores no lugar do som e do brilho de verdade.
+struct FakeLevels {
+    volume: f32,
+    muted: bool,
+    mic_muted: bool,
+    brightness: f32,
+}
+
+static FAKE: std::sync::Mutex<FakeLevels> = std::sync::Mutex::new(FakeLevels { volume: 0.5, muted: false, mic_muted: false, brightness: 0.7 });
+
+/// Demora simulada do `wpctl`/`brightnessctl` nos testes
+/// (`MIDE_SYSTEM_DRY_RUN_DELAY_MS`): o primeiro comando espera o tempo inteiro, o
+/// segundo a metade e assim por diante, para um aperto seguinte poder terminar antes
+/// do anterior se os dois rodarem ao mesmo tempo.
+fn fake_latency() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    let Some(ms) = std::env::var("MIDE_SYSTEM_DRY_RUN_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) else {
+        return;
+    };
+    let n = CALLS.fetch_add(1, Ordering::Relaxed);
+    std::thread::sleep(std::time::Duration::from_millis(ms / (n + 1)));
+}
+
+fn fake<T>(f: impl FnOnce(&mut FakeLevels) -> T) -> T {
+    f(&mut FAKE.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// Passo de 5% sem erro de arredondamento acumulado (0,55 e não 0,5499...).
+fn step5(value: f32, up: bool, min: f32) -> f32 {
+    let steps = (value * 20.0).round() + if up { 1.0 } else { -1.0 };
+    (steps / 20.0).clamp(min, 1.0)
+}
+
+/// Teclas de volume do teclado: 5% a mais ou a menos (no máximo 100%). Espera o
+/// comando terminar (chame fora da thread do compositor).
 pub fn volume_step(up: bool) {
-    run("wpctl", &["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", if up { "5%+" } else { "5%-" }]);
+    if dry_run() {
+        fake_latency();
+        fake(|f| f.volume = step5(f.volume, up, 0.0));
+    }
+    run_wait("wpctl", &["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", if up { "5%+" } else { "5%-" }]);
 }
 
-/// Tecla de mudo: liga ou desliga o som.
+/// Tecla de mudo: liga ou desliga o som (espera o comando).
 pub fn toggle_mute() {
-    run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
+    if dry_run() {
+        fake_latency();
+        fake(|f| f.muted = !f.muted);
+    }
+    run_wait("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
 }
 
-/// Tecla de microfone mudo.
+/// Tecla de microfone mudo (espera o comando).
 pub fn toggle_mic_mute() {
-    run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"]);
+    if dry_run() {
+        fake_latency();
+        fake(|f| f.mic_muted = !f.mic_muted);
+    }
+    run_wait("wpctl", &["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"]);
 }
 
-/// Teclas de brilho: 5% a mais ou a menos (sem chegar a apagar a tela).
+/// Teclas de brilho: 5% a mais ou a menos (sem chegar a apagar a tela; espera o comando).
 pub fn brightness_step(up: bool) {
-    run("brightnessctl", &["-c", "backlight", "-n", "1%", "set", if up { "5%+" } else { "5%-" }]);
+    if dry_run() {
+        fake_latency();
+        fake(|f| f.brightness = step5(f.brightness, up, 0.01));
+    }
+    run_wait("brightnessctl", &["-c", "backlight", "-n", "1%", "set", if up { "5%+" } else { "5%-" }]);
+}
+
+/// Volume (0 a 1) e mudo da saída de som padrão, agora. `None` sem áudio.
+pub fn read_volume() -> Option<(f32, bool)> {
+    if dry_run() {
+        return Some(fake(|f| (f.volume, f.muted)));
+    }
+    output("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).and_then(|t| parse_volume(&t))
+}
+
+/// O microfone padrão está mudo? `None` sem microfone.
+pub fn read_mic_muted() -> Option<bool> {
+    if dry_run() {
+        return Some(fake(|f| f.mic_muted));
+    }
+    output("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"]).and_then(|t| parse_volume(&t)).map(|(_, muted)| muted)
+}
+
+/// Brilho da tela (0 a 1), agora. `None` sem luz de fundo controlável.
+pub fn read_brightness() -> Option<f32> {
+    if dry_run() {
+        return Some(fake(|f| f.brightness));
+    }
+    output("brightnessctl", &["-m", "-c", "backlight"]).and_then(|t| parse_brightness(&t))
 }
 
 /// Teclas de mídia (tocar/pausar, próxima, anterior, parar): pelo MPRIS no D-Bus da
@@ -368,6 +458,14 @@ mod tests {
         assert_eq!(parse_brightness("intel_backlight,backlight,750,75%,1000\n"), Some(0.75));
         assert_eq!(parse_brightness(""), None);
         assert_eq!(parse_brightness("lixo"), None);
+    }
+
+    #[test]
+    fn passo_de_cinco_por_cento() {
+        assert_eq!(step5(0.5, true, 0.0), 0.55);
+        assert_eq!(step5(0.98, true, 0.0), 1.0);
+        assert_eq!(step5(0.02, false, 0.0), 0.0);
+        assert_eq!(step5(0.05, false, 0.01), 0.01);
     }
 
     #[test]

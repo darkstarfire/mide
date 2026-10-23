@@ -18,6 +18,7 @@ mod dmabuf;
 mod genie;
 mod input;
 mod lock;
+mod osd;
 mod outputs;
 mod record;
 mod screencopy;

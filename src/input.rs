@@ -122,6 +122,7 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "previoussong" => 165,
         "brightnessdown" => 224,
         "brightnessup" => 225,
+        "micmute" => 248,
         "backspace" => 14,
         "delete" => 111,
         "." => 52,
@@ -449,13 +450,12 @@ fn run_action(state: &mut State, action: Action) {
             use mide::system;
             tracing::info!("tecla multimídia: {media:?}");
             match media {
+                // Aplicados numa thread, que lê o nível e mostra o aviso (`crate::osd`).
                 Media::VolumeUp | Media::VolumeDown => {
-                    system::volume_step(media == Media::VolumeUp);
+                    crate::osd::media_key(state, media);
                     mide::sounds::play("audio-volume-change");
                 }
-                Media::Mute => system::toggle_mute(),
-                Media::MicMute => system::toggle_mic_mute(),
-                Media::BrightnessUp | Media::BrightnessDown => system::brightness_step(media == Media::BrightnessUp),
+                Media::Mute | Media::MicMute | Media::BrightnessUp | Media::BrightnessDown => crate::osd::media_key(state, media),
                 Media::PlayPause => system::media_player("PlayPause"),
                 Media::Pause => system::media_player("Pause"),
                 Media::Stop => system::media_player("Stop"),

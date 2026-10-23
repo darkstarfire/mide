@@ -8,6 +8,11 @@ use std::time::Duration;
 pub const MENU_APPEAR: Duration = Duration::from_millis(120);
 /// Prévias da dock e alternador (Alt+Tab): esmaecem e sobem 8 px.
 pub const PREVIEW_APPEAR: Duration = Duration::from_millis(160);
+/// Aviso das teclas de volume e brilho (OSD): entra esmaecendo e subindo 8 px, fica
+/// `OSD_HOLD` depois da última tecla e sai esmaecendo.
+pub const OSD_APPEAR: Duration = Duration::from_millis(160);
+pub const OSD_HOLD: Duration = Duration::from_millis(1500);
+pub const OSD_FADE: Duration = Duration::from_millis(200);
 /// Fechar janela: encolhe 6% e esmaece.
 pub const CLOSE_FADE: Duration = Duration::from_millis(180);
 /// Dock aparecendo/escondendo (desliza) e a espera antes de esconder.
