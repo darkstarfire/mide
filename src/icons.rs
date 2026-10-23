@@ -75,6 +75,11 @@ fn load_icon_hicolor(name: &str, size: u32) -> Option<Pixmap> {
 /// Ícone de um arquivo (PNG, JPEG ou SVG), ajustado a `size`. Aceita `file://`.
 pub fn load_icon_file(path: &str, size: u32) -> Option<Pixmap> {
     let path = Path::new(path.strip_prefix("file://").unwrap_or(path));
+    // Só arquivos comuns e de tamanho razoável (o `Icon=` de um atalho pode apontar
+    // para um FIFO, que travaria a janela, ou para um arquivo enorme).
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= 32 << 20) {
+        return None;
+    }
     match path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
         Some("svg") | Some("svgz") => icon_from_svg(path, size),
         Some(_) => icon_from_png(path, size),
@@ -112,6 +117,10 @@ fn user_themes() -> &'static [String] {
 /// tema do usuário: esses ícones não ficam no tema padrão `hicolor`. Tenta cada
 /// nome em ordem e devolve o primeiro que existir.
 pub fn load_themed_icon(names: &[&str], size: u32) -> Option<Pixmap> {
+    // Caminho de arquivo (ícone de um atalho `.desktop`, E8): o próprio arquivo.
+    if let Some(file) = names.first().filter(|n| n.starts_with('/')) {
+        return load_icon_file(file, size).or_else(|| load_themed_icon(&names[1..], size));
+    }
     themed(names, size).or_else(|| names.iter().find_map(|n| load_icon_hicolor(n, size)))
 }
 

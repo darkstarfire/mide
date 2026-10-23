@@ -77,6 +77,10 @@ const SEARCH_H: f32 = 32.0;
 const SEARCH_Y: f32 = 46.0;
 const BTN_LEFT: u32 = 0x110;
 const BTN_MIDDLE: u32 = 0x112;
+const BTN_RIGHT: u32 = 0x111;
+/// Menu de contexto de um app instalado pelo mide (E9): largura e altura do item.
+const MENU_W: f32 = 196.0;
+const MENU_ITEM_H: f32 = 30.0;
 /// Rolagem acumulada (em pixels) para trocar de página.
 const SCROLL_STEP: f64 = 40.0;
 /// Colunas e linhas máximas dentro do painel de uma pasta.
@@ -163,6 +167,15 @@ struct Drag {
     pos: (f64, f64),
     /// Passou do limiar: é arrasto, não clique.
     active: bool,
+}
+
+/// Menu de contexto aberto (clique direito num AppImage instalado pelo mide): o app
+/// (índice em `apps`), o retângulo do menu e se o ponteiro está no item.
+#[derive(Debug, Clone, Copy)]
+struct AppMenu {
+    app: usize,
+    rect: (f32, f32, f32, f32),
+    hover: bool,
 }
 
 /// Durações das animações.
@@ -313,6 +326,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         pop: None,
         opened: started,
         dirty: false,
+        menu: None,
     };
 
     launcher.rebuild();
@@ -487,6 +501,8 @@ struct Launcher {
     pop: Option<(usize, std::time::Instant)>,
     opened: std::time::Instant,
     dirty: bool,
+    /// Menu de contexto de um AppImage instalado (Mover para a Lixeira).
+    menu: Option<AppMenu>,
 }
 
 impl Launcher {
@@ -760,6 +776,14 @@ impl Launcher {
     }
 
     fn query_changed(&mut self) {
+        if !self.query.trim().is_empty() {
+            let found = self.entries();
+            let first = match found.first() {
+                Some(Entry::App(i)) => self.apps[*i].name.clone(),
+                _ => String::new(),
+            };
+            tracing::info!("resultados da busca: {} (primeiro: {first})", found.len());
+        }
         self.open_folder = None;
         self.folder_page = 0;
         self.page = 0;
@@ -817,6 +841,47 @@ impl Launcher {
                 self.exit = true;
             }
         }
+    }
+
+    /// Clique direito num item: AppImages instalados pelo mide ganham o menu com "Mover
+    /// para a Lixeira" (os outros apps vêm do sistema e não são removidos por aqui).
+    fn open_menu(&mut self, index: usize, x: f64, y: f64) {
+        self.menu = None;
+        let Some(Entry::App(i)) = self.entries().get(index).copied() else {
+            return;
+        };
+        if !self.apps[i].id.starts_with(mide::appimage::DESKTOP_PREFIX) {
+            return;
+        }
+        let h = MENU_ITEM_H + 12.0;
+        let mx = (x as f32).min(self.width as f32 - MENU_W - 8.0).max(8.0);
+        let my = (y as f32).min(self.height as f32 - h - 8.0).max(8.0);
+        tracing::info!("menu do app {} ({})", self.apps[i].name, self.apps[i].id);
+        self.menu = Some(AppMenu { app: i, rect: (mx, my, MENU_W, h), hover: false });
+        self.redraw();
+    }
+
+    /// Retângulo do item do menu.
+    fn menu_item_rect(menu: &AppMenu) -> (f32, f32, f32, f32) {
+        let (x, y, w, _) = menu.rect;
+        (x + 6.0, y + 6.0, w - 12.0, MENU_ITEM_H)
+    }
+
+    /// "Mover para a Lixeira": o instalador do mide pergunta e remove; o launcher fecha.
+    fn move_to_trash(&mut self, app: usize) {
+        let app = self.apps[app].clone();
+        let desktop = mide::places::data_home().join("applications").join(format!("{}.desktop", app.id));
+        tracing::info!("mover para a Lixeira: {} ({})", app.name, desktop.display());
+        let program = mide::places::mide_program("mide-install");
+        match std::process::Command::new(&program).arg("--remove").arg(&desktop).stdin(std::process::Stdio::null()).spawn() {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => tracing::warn!("não deu para abrir o instalador: {err}"),
+        }
+        self.close();
     }
 
     /// Move a seleção das setas e acompanha a página.
@@ -1202,7 +1267,28 @@ impl Launcher {
                 None => {}
             }
         }
+        if let Some(menu) = self.menu.filter(|_| interactive) {
+            self.draw_menu(&mut pixmap, &menu);
+        }
         pixmap
+    }
+
+    /// Menu de contexto: painel escuro com o item "Mover para a Lixeira" em vermelho.
+    fn draw_menu(&mut self, pixmap: &mut Pixmap, menu: &AppMenu) {
+        let (x, y, w, h) = menu.rect;
+        mide::ui::draw::soft_shadow(pixmap, x, y, w, h, 10.0, 12.0, 4.0, 90);
+        fill_rounded(pixmap, x, y, w, h, 10.0, rgba(36, 36, 44, 240));
+        if let Some(path) = rounded_rect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, 9.5) {
+            let mut border = Paint::default();
+            border.set_color(rgba(255, 255, 255, 46));
+            border.anti_alias = true;
+            pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        }
+        let (ix, iy, iw, ih) = Self::menu_item_rect(menu);
+        if menu.hover {
+            fill_rounded(pixmap, ix, iy, iw, ih, 7.0, rgba(255, 255, 255, 34));
+        }
+        self.text.draw(pixmap, "Mover para a Lixeira", ix + 10.0, iy + (ih - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, [255, 110, 100, 255]);
     }
 
     /// Desenha uma página de itens na grade. `interactive` liga o destaque de seleção
@@ -1524,6 +1610,13 @@ impl Launcher {
             self.redraw();
             return;
         }
+        if self.menu.is_some() {
+            if event.keysym == Keysym::Escape {
+                self.menu = None;
+                self.redraw();
+            }
+            return;
+        }
         let (grid, page) = self.active_grid_page();
         let cols = grid.cols as isize;
         match event.keysym {
@@ -1586,6 +1679,33 @@ impl PointerHandler for Launcher {
             }
             let (x, y) = event.position;
             match event.kind {
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } if self.menu.is_some() => {
+                    if let Some(menu) = self.menu.as_mut() {
+                        let (ix, iy, iw, ih) = Self::menu_item_rect(menu);
+                        let hover = x >= ix as f64 && x <= (ix + iw) as f64 && y >= iy as f64 && y <= (iy + ih) as f64;
+                        if hover != menu.hover {
+                            menu.hover = hover;
+                            self.redraw();
+                        }
+                    }
+                }
+                // Com o menu aberto, o clique é dele: no item, age; fora, fecha o menu.
+                PointerEventKind::Press { button, .. } if self.menu.is_some() => {
+                    let Some(menu) = self.menu.take() else { continue };
+                    let (ix, iy, iw, ih) = Self::menu_item_rect(&menu);
+                    let on_item = x >= ix as f64 && x <= (ix + iw) as f64 && y >= iy as f64 && y <= (iy + ih) as f64;
+                    if on_item && button == BTN_LEFT {
+                        self.move_to_trash(menu.app);
+                    }
+                    self.press = None;
+                    self.redraw();
+                }
+                PointerEventKind::Release { .. } if self.menu.is_some() => {}
+                PointerEventKind::Press { button, .. } if button == BTN_RIGHT => {
+                    if let Target::Entry(index) = self.target_at(x, y) {
+                        self.open_menu(index, x, y);
+                    }
+                }
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     if let Some(drag) = self.drag.as_mut() {
                         drag.pos = (x, y);

@@ -219,6 +219,15 @@ não fica só no app.
   na tela de bloqueio). Até 3 tentativas; enquanto o polkit confere, o campo diz
   "Conferindo…".
 
+- **Instalador** (`mide-install`, AppImage no E9; .deb/.rpm no E6): janela de 560x372
+  com o título "Instalar <app>" e, em nota, versão · tipo · tamanho; um palco (cartão do
+  tema) com o ícone do app (96 pt) à esquerda, uma seta na cor secundária e a pasta
+  Aplicativos à direita, os nomes embaixo. Arrastar o ícone: ele segue o ponteiro, o
+  lugar dele fica apagado (30%) e a pasta acende com a cor de destaque quando o ícone
+  está em cima; soltar fora não faz nada. Embaixo, a instrução e **Cancelar** /
+  **Instalar** (ou **Substituir**, se já instalado), o progresso numa barra fina na cor
+  de destaque e, no fim, **Fechar** / **Abrir**.
+
 ### Nomes e textos
 
 - Português, frases curtas, sem jargão ("Mover para a Lixeira", não "Excluir").

@@ -8,6 +8,10 @@
 //! parede. Teclado (depois de clicar na área de trabalho): Enter abre, Delete manda
 //! para a Lixeira, Ctrl+R renomeia.
 //!
+//! Programas (E8): atalhos `.desktop` aparecem com o nome e o ícone do app; atalhos,
+//! AppImages, executáveis e scripts rodam com duplo clique (ou perguntam antes, como
+//! no Arquivos: `mide::programs`).
+//!
 //! `MIDE_DESKTOP_DIR` troca a pasta (os testes usam uma pasta temporária).
 
 use std::{error::Error, path::PathBuf, time::Duration};
@@ -16,6 +20,7 @@ use mide::{
     files::{self, Entry},
     kit::{run, App, Key, Theme, Tile, Ui, Window},
     places,
+    programs::{self, Answer, Labels, Opened, Prompt},
 };
 
 /// Ícones de 56 px; cada ladrilho ocupa 100 x 102.
@@ -33,6 +38,10 @@ struct Desktop {
     /// Área útil da tela (sem a barra e a dock), perguntada ao compositor.
     workarea: Option<(f32, f32, f32, f32)>,
     asked_at: Option<std::time::Instant>,
+    /// Confirmação antes de rodar um programa (E8).
+    prompt: Option<Prompt>,
+    /// Nome e ícone dos atalhos `.desktop`, no lugar do nome do arquivo.
+    labels: Labels,
 }
 
 /// Diálogo de criar ou renomear (o mesmo jeito do Arquivos).
@@ -65,7 +74,7 @@ enum Action {
 
 impl Desktop {
     fn new() -> Self {
-        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, dialog: None, focus_dialog: false, workarea: None, asked_at: None };
+        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, dialog: None, focus_dialog: false, workarea: None, asked_at: None, prompt: None, labels: Labels::default() };
         app.reload();
         app
     }
@@ -135,7 +144,13 @@ impl Desktop {
     fn act(&mut self, action: Action, entry: Option<Entry>) {
         let dir = self.dir.clone();
         match (action, entry) {
-            (Action::Open, Some(e)) => places::open(&e.path.to_string_lossy()),
+            (Action::Open, Some(e)) if e.is_dir => places::open(&e.path.to_string_lossy()),
+            // Programas (.desktop, AppImage, executáveis, scripts) rodam ou perguntam antes.
+            (Action::Open, Some(e)) => match programs::open(&e.path) {
+                Opened::Done => {}
+                Opened::Ask(prompt) => self.prompt = Some(prompt),
+                Opened::Failed(err) => tracing::warn!("{err}"),
+            },
             (Action::Rename, Some(e)) => self.open_dialog(DialogKind::Rename(e.path.clone()), e.name.clone()),
             (Action::Duplicate, Some(e)) => {
                 if let Ok(copy) = files::duplicate(&e.path) {
@@ -177,7 +192,7 @@ impl Desktop {
     }
 
     fn keys(&mut self, ui: &mut Ui) {
-        if ui.typing() || self.dialog.is_some() {
+        if ui.typing() || self.dialog.is_some() || self.prompt.is_some() {
             return;
         }
         let input = ui.input();
@@ -263,8 +278,9 @@ impl App for Desktop {
             let (x, y) = Self::place(i, area);
             let selected = self.selected.as_ref() == Some(&entry.path);
             let mut response = None;
+            let (name, icon) = self.labels.get(&entry.path, entry.modified).unwrap_or_else(|| (entry.name.clone(), entry.icon_name().to_string()));
             ui.at(x, y, CELL.0, |ui| {
-                response = Some(ui.tile(Tile::Icon(entry.icon_name()), &entry.name, selected, ICON));
+                response = Some(ui.tile(Tile::Icon(&icon), &name, selected, ICON));
             });
             let Some(r) = response else {
                 continue;
@@ -341,6 +357,14 @@ impl App for Desktop {
             ui.request_repaint();
         }
         self.dialog_view(ui);
+        if let Some(answer) = self.prompt.as_mut().and_then(|p| p.view(ui)) {
+            self.prompt = None;
+            match answer {
+                Answer::Done => self.labels.clear(),
+                Answer::Cancelled => {}
+                Answer::Failed(err) => tracing::warn!("{err}"),
+            }
+        }
     }
 }
 

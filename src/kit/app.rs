@@ -1263,6 +1263,7 @@ impl KeyboardHandler for Runner {
     }
 
     fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
+        self.ctx.input.repeat = true;
         self.key(event);
     }
 

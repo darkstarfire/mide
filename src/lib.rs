@@ -2,6 +2,7 @@
 //! próprias como "Sobre este computador").
 
 pub mod apps;
+pub mod appimage;
 pub mod appearance;
 pub mod appmenu;
 pub mod backdrop;
@@ -23,6 +24,7 @@ pub mod motion;
 pub mod notify;
 pub mod places;
 pub mod portal;
+pub mod programs;
 pub mod search;
 pub mod settings_file;
 pub mod sounds;

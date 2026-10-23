@@ -69,6 +69,8 @@ pub struct Input {
     pub menu: Vec<String>,
     /// A janela está com o foco do teclado.
     pub focused: bool,
+    /// Alguma tecla deste quadro veio da repetição de uma tecla segurada.
+    pub repeat: bool,
 }
 
 impl Input {
@@ -86,6 +88,7 @@ impl Input {
         self.presses.clear();
         self.menu.clear();
         self.paste = None;
+        self.repeat = false;
     }
 
     /// Teclas deste quadro com o Ctrl e o Shift de quando cada uma foi apertada.

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Instalador
+Name[en]=Installer
+Comment=Instale AppImages na pasta Aplicativos
+Exec=mide-install %f
+Icon=system-software-install
+Categories=System;
+MimeType=application/vnd.appimage;application/x-iso9660-appimage;
+NoDisplay=true
+StartupWMClass=mide-install
+OnlyShowIn=mide;

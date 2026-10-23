@@ -497,6 +497,12 @@ pub fn open_terminal(dir: &Path) {
     }
 }
 
+/// Um programa do mide: o da mesma pasta do programa atual (o build em uso), senão o
+/// do `PATH`.
+pub fn mide_program(name: &str) -> PathBuf {
+    std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(name))).filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from(name))
+}
+
 /// Abre um arquivo, pasta ou endereço (como `trash:///`) com o app padrão.
 /// Com `MIDE_OPEN_DRY_RUN` definido (testes), só registra no log.
 pub fn open(target: &str) {

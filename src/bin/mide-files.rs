@@ -9,6 +9,11 @@
 //! setas → e ←), linhas alternadas, colunas Modificado, Tamanho (das pastas também,
 //! calculado em segundo plano) e Tipo, e o cabeçalho ordena.
 //!
+//! Programas (E8): um atalho `.desktop` aparece com o nome e o ícone do app e abre o
+//! app; AppImages, executáveis e scripts rodam na pasta deles. O que veio da internet
+//! ou não está marcado como executável pergunta antes (`mide::programs`); scripts
+//! perguntam Executar ou Abrir no editor.
+//!
 //! Teclado: Enter abre, Delete manda para a Lixeira, Backspace sobe uma pasta, setas
 //! mudam a seleção, Ctrl+N cria uma pasta, Ctrl+H mostra os ocultos, Ctrl+F busca,
 //! Ctrl+R renomeia, Ctrl+C copia, Ctrl+V cola e Ctrl+D duplica.
@@ -33,6 +38,7 @@ use mide::{
     files_view::{self, ViewMemory},
     kit::{run, App, Key, Tile, Ui, Window},
     places,
+    programs::{self, Answer, Labels, Opened, Prompt},
 };
 use tiny_skia::Pixmap;
 
@@ -101,6 +107,11 @@ struct Files {
     reveal: Option<PathBuf>,
     /// "Obter informações": o item e as linhas (rótulo, valor).
     info: Option<(PathBuf, Vec<(&'static str, String)>)>,
+    /// Confirmação antes de rodar um programa (E8): vindo da internet, sem permissão
+    /// de execução, ou script (Executar ou Abrir no editor).
+    prompt: Option<Prompt>,
+    /// Nome e ícone dos atalhos `.desktop`, mostrados no lugar do nome do arquivo.
+    labels: Labels,
 }
 
 impl Files {
@@ -156,6 +167,8 @@ impl Files {
             busy: 0,
             reveal: None,
             info: None,
+            prompt: None,
+            labels: Labels::default(),
             back: Vec::new(),
             forward: Vec::new(),
             entries: Vec::new(),
@@ -514,8 +527,48 @@ impl Files {
         if entry.is_dir {
             self.go(Place::Dir(entry.path.clone()));
         } else {
-            places::open(&entry.path.to_string_lossy());
+            self.open_file(&entry.path);
         }
+    }
+
+    /// Abre um arquivo: documentos no app padrão; programas (.desktop, AppImage,
+    /// executáveis, scripts) rodam ou pedem confirmação antes (E8).
+    fn open_file(&mut self, path: &Path) {
+        match programs::open(path) {
+            Opened::Done => {}
+            Opened::Ask(prompt) => {
+                // Um diálogo de cada vez: abrindo vários, só o primeiro pergunta.
+                if self.prompt.is_none() {
+                    self.prompt = Some(prompt);
+                }
+            }
+            Opened::Failed(err) => self.message = Some(err),
+        }
+    }
+
+    /// Diálogo de confirmação de um programa, por cima de tudo.
+    fn prompt_view(&mut self, ui: &mut Ui) {
+        let Some(prompt) = self.prompt.as_mut() else {
+            return;
+        };
+        let Some(answer) = prompt.view(ui) else {
+            return;
+        };
+        self.prompt = None;
+        match answer {
+            Answer::Cancelled => {}
+            Answer::Done => {
+                self.message = None;
+                // Um atalho confiado agora passa a mostrar o nome do app.
+                self.labels.clear();
+            }
+            Answer::Failed(err) => self.message = Some(err),
+        }
+    }
+
+    /// Nome e ícone mostrados para um item: os do app num atalho `.desktop`.
+    fn label(&mut self, entry: &Entry) -> (String, String) {
+        self.labels.get(&entry.path, entry.modified).unwrap_or_else(|| (entry.name.clone(), entry.icon_name().to_string()))
     }
 
     fn move_to_trash(&mut self, path: &Path) {
@@ -635,7 +688,7 @@ impl Files {
             self.new_folder();
             ui.request_repaint();
         }
-        if ui.typing() || self.dialog.is_some() || self.open_with.is_some() || self.info.is_some() {
+        if ui.typing() || self.dialog.is_some() || self.open_with.is_some() || self.info.is_some() || self.prompt.is_some() {
             return;
         }
         if info {
@@ -954,6 +1007,18 @@ impl Files {
         let rows = if in_list { self.rows(&shown) } else { Vec::new() };
         let row_entries: Vec<Entry> = rows.iter().map(|(_, e)| e.clone()).collect();
         self.keys(ui, if in_list { &row_entries } else { &shown }, columns, in_list);
+        // Rótulos (nome e ícone) do que está à vista: os atalhos mostram o app. Só os
+        // `.desktop` entram (os outros usam o nome e o ícone da própria entrada, sem
+        // copiar textos a cada quadro numa pasta grande).
+        let mut labels: HashMap<PathBuf, (String, String)> = HashMap::new();
+        for entry in shown.iter().chain(rows.iter().map(|(_, e)| e)) {
+            let shortcut = entry.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("desktop"));
+            if shortcut && !labels.contains_key(&entry.path) {
+                let label = self.label(entry);
+                labels.insert(entry.path.clone(), label);
+            }
+        }
+        let label_of = |entry: &Entry| labels.get(&entry.path).cloned().unwrap_or_else(|| (entry.name.clone(), entry.icon_name().to_string()));
         let mut sizes: HashMap<PathBuf, String> = HashMap::new();
         if in_list {
             for (_, entry) in &rows {
@@ -1145,7 +1210,8 @@ impl Files {
                     let open = self.expanded.contains(&entry.path) && !closing;
                     let expandable = entry.is_dir && !in_trash;
                     let cols = [(date.as_str(), widths[0].1), (size.as_str(), widths[1].1), (kind.as_str(), widths[2].1)];
-                    let (r, toggled) = ui.tree_row(*depth, expandable, open, entry.icon_name(), &entry.name, &cols, selected, i % 2 == 1);
+                    let (name, icon) = label_of(entry);
+                    let (r, toggled) = ui.tree_row(*depth, expandable, open, &icon, &name, &cols, selected, i % 2 == 1);
                     // Itens da pasta que acabou de abrir: aparecem esmaecendo, de cima
                     // para baixo (cada linha começa um pouco depois da anterior).
                     if let Some((folder, at, true)) = &self.expanding {
@@ -1166,11 +1232,12 @@ impl Files {
                 ui.wrap(|ui| {
                     for (entry, thumb) in shown.iter().zip(&thumbs) {
                         let selected = selection.contains(&entry.path);
+                        let (name, icon) = label_of(entry);
                         let image = match thumb {
                             Some(pix) => Tile::Image(pix),
-                            None => Tile::Icon(entry.icon_name()),
+                            None => Tile::Icon(&icon),
                         };
-                        let r = ui.tile(image, &entry.name, selected, TILE);
+                        let r = ui.tile(image, &name, selected, TILE);
                         item(ui, entry, r);
                     }
                 });
@@ -1305,7 +1372,7 @@ impl Files {
                 // Vários: arquivos abrem cada um no app padrão; com pastas, entra na primeira.
                 let targets = self.targets(&entry);
                 for path in targets.iter().filter(|p| !p.is_dir()) {
-                    places::open(&path.to_string_lossy());
+                    self.open_file(path);
                 }
                 if let Some(dir) = targets.into_iter().find(|p| p.is_dir()) {
                     self.go(Place::Dir(dir));
@@ -1447,6 +1514,7 @@ impl App for Files {
         self.dialog_view(ui);
         self.open_with_view(ui);
         self.info_view(ui);
+        self.prompt_view(ui);
         if chosen != current {
             let place = if chosen == favorites + 3 {
                 Place::Trash

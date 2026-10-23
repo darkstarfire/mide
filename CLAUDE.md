@@ -10,6 +10,9 @@ As anotações têm as lições já aprendidas: leia antes de mexer numa área.
 ## Regras do usuário (valem em qualquer PC)
 
 - **Português do Brasil** nas respostas, no código (comentários) e nos commits.
+- **Nada preso ao português no produto** (2026-10-23): binários, pastas que o mide cria,
+  arquivos de configuração, chaves e `app_id`s em inglês; pastas do usuário pelo
+  `xdg-user-dirs`; textos da interface com inglês como base e pt-BR como tradução (I1).
 - **Nada copiado da Apple/macOS:** o macOS é só inspiração (sem código, imagens, ícones
   ou fontes deles).
 - **"Nativo" é do zero:** componentes do mide marcados como nativos (terminal,

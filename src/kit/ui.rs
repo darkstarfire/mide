@@ -891,7 +891,7 @@ impl<'a> Ui<'a> {
         // cima).
         let font = self.ctx.theme.font;
         let widths: Vec<f32> = buttons.iter().map(|b| self.measure(b, font, FontWeight::Semibold) + 32.0).collect();
-        let row_w = widths.iter().sum::<f32>() + (n - 1.0) * 8.0;
+        let row_w = widths.iter().sum::<f32>() + (n - 1.0) * self.ctx.theme.spacing;
         let stacked = row_w > width - 20.0;
         self.modal(width, |ui| {
             ui.strong(title);
@@ -925,7 +925,7 @@ impl<'a> Ui<'a> {
         let font = self.ctx.theme.font;
         let n = buttons.len().max(1) as f32;
         let widths: Vec<f32> = buttons.iter().map(|b| self.measure(b, font, FontWeight::Semibold) + 32.0).collect();
-        let row_w = widths.iter().sum::<f32>() + (n - 1.0) * 8.0;
+        let row_w = widths.iter().sum::<f32>() + (n - 1.0) * self.ctx.theme.spacing;
         let mut chosen = None;
         self.row(|ui| {
             ui.push_right(row_w);
