@@ -74,6 +74,13 @@ if [ -z "${XDG_DATA_HOME:-}" ]; then
     mkdir -p "$XDG_DATA_HOME"
 fi
 export MIDE_OPEN_DRY_RUN=1
+# Estado dos apps (visualização do Arquivos, sessão do Terminal...) também numa pasta do
+# teste, limpa a cada cenário; quem quer guardar entre cenários passa XDG_STATE_HOME.
+if [ -z "${XDG_STATE_HOME:-}" ]; then
+    export XDG_STATE_HOME="$OUT/state"
+    rm -rf "$XDG_STATE_HOME"
+    mkdir -p "$XDG_STATE_HOME"
+fi
 # Área de trabalho de teste (vazia, a menos que o teste ponha arquivos): os cliques
 # dos testes nunca chegam aos arquivos da área de trabalho de verdade.
 if [ -z "${MIDE_DESKTOP_DIR:-}" ]; then

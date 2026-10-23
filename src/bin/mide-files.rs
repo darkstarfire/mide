@@ -25,6 +25,7 @@ use std::{
 
 use mide::{
     files::{self, Entry},
+    files_view::{self, ViewMemory},
     kit::{run, App, Key, Tile, Ui, Window},
     places,
 };
@@ -160,8 +161,41 @@ impl Files {
             to_loader,
             from_loader,
         };
+        app.apply_saved_view();
         app.reload();
         app
+    }
+
+    /// Chave da pasta atual na memória das visualizações.
+    fn view_key(&self) -> String {
+        match &self.place {
+            Place::Dir(dir) => files_view::key_for_path(dir),
+            Place::Trash => files_view::TRASH_KEY.to_string(),
+        }
+    }
+
+    /// Visualização lembrada da pasta atual (B21): a dela ou o padrão (a última
+    /// escolha). Lê o disco a cada pasta: outra janela pode ter mudado algo.
+    fn apply_saved_view(&mut self) {
+        let key = self.view_key();
+        let view = ViewMemory::load().view_for(&key);
+        if self.place != Place::Trash {
+            self.list_view = view.list;
+        }
+        self.sort = (view.sort_column, view.ascending);
+        self.view_switched = None;
+        tracing::info!("visualização de {key}: {}", view_text(self.list_view || self.place == Place::Trash, self.sort));
+    }
+
+    /// Guarda a visualização da pasta atual (e, fora da Lixeira, como padrão).
+    fn save_view(&self) {
+        let key = self.view_key();
+        let in_trash = self.place == Place::Trash;
+        let view = files_view::View { list: self.list_view || in_trash, sort_column: self.sort.0, ascending: self.sort.1 };
+        match ViewMemory::record(&key, view, !in_trash) {
+            Ok(_) => tracing::info!("visualização guardada para {key}: {}", view_text(view.list, self.sort)),
+            Err(err) => tracing::warn!("não foi possível guardar a visualização: {err}"),
+        }
     }
 
     fn trash() -> PathBuf {
@@ -407,6 +441,7 @@ impl Files {
         self.searching = false;
         self.dialog = None;
         self.message = None;
+        self.apply_saved_view();
         self.reload();
         match &self.place {
             Place::Dir(dir) => tracing::info!("pasta aberta: {}", dir.display()),
@@ -705,7 +740,11 @@ impl Files {
             if list != self.list_view && mide::settings_file::effect("transitions") {
                 self.view_switched = Some(std::time::Instant::now());
             }
+            let changed = list != self.list_view;
             self.list_view = list;
+            if changed {
+                self.save_view();
+            }
         }
         if empty_trash {
             match places::empty_trash(&Self::trash()) {
@@ -1184,6 +1223,7 @@ impl Files {
             // Clicar na coluna já ordenada inverte a ordem.
             self.sort = if self.sort.0 == column { (column, !self.sort.1) } else { (column, true) };
             self.sort_entries();
+            self.save_view();
             ui.request_repaint();
         }
         if let Some((action, entry)) = action {
@@ -1359,6 +1399,12 @@ fn sort_list(list: &mut [Entry], (column, ascending): (usize, bool)) {
     });
 }
 
+/// Texto do log: "lista, ordem modificado decrescente".
+fn view_text(list: bool, (column, ascending): (usize, bool)) -> String {
+    let column = ["nome", "modificado", "tamanho", "tipo"].get(column).copied().unwrap_or("nome");
+    format!("{}, ordem {column} {}", if list { "lista" } else { "ícones" }, if ascending { "crescente" } else { "decrescente" })
+}
+
 /// Nome curto para os menus ("Comprimir "um nome muito…"").
 fn short(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
@@ -1378,7 +1424,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(arg) => {
             let path = PathBuf::from(arg.strip_prefix("file://").unwrap_or(&arg));
             if path.is_dir() {
-                Place::Dir(path)
+                // Sem barra no fim nem `.`: a mesma pasta tem uma chave só (B21).
+                Place::Dir(files_view::normalize(&path))
             } else {
                 Place::Dir(places::home_dir())
             }

@@ -11,6 +11,7 @@ pub mod control_client;
 pub mod default_apps;
 pub mod displays;
 pub mod files;
+pub mod files_view;
 pub mod gmenu;
 pub mod icons;
 pub mod kit;
