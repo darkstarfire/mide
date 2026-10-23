@@ -1336,6 +1336,8 @@ O usuário mandou fotos do nvim (Neo-tree e lualine) e do prompt do bash com qua
 - **Fonte padrão do sistema:** sem fonte escolhida, o cosmic-text procurava sempre a "Noto Sans Mono". Agora vale a do fontconfig (`fc-match monospace`, DejaVu Sans Mono aqui), ou uma das conhecidas, ou a primeira de largura fixa (também no editor de texto, que usa a mesma fonte de largura fixa).
 - **Nerd Fonts na lista das Preferências:** as que não se declaram de largura fixa (a "Cousine Nerd Font": os ícones largos tiram o aviso do arquivo) entram se "i", "M", "W" e "." tiverem a mesma largura; antes, escolhida no arquivo, era ignorada sem aviso.
 - Testes: `boxdraw` (8), `ui::text` (5 novos), `width` (1), `mide-terminal` (1) e a seção nova do `tests/ui.sh` com o conferidor de pixels (`tests/data/terminal/`). Fica `[~]` até o usuário conferir com o nvim dele (Neo-tree e lualine) e o prompt do bash.
+- **Confirmado pelo usuário (2026-10-23):** com Nerd Font, o terminal desenha certo (mide em janela no Debian com Cinnamon/X11).
+
 ## Apps na GPU e captura por dmabuf (A25, bug urgente)
 
 O problema (diagnóstico na sessão do usuário): o compositor não oferecia o protocolo `zwp_linux_dmabuf_v1`, o jeito de um app Wayland entregar ao compositor uma imagem que já está na placa de vídeo. Sem ele, o Mesa não tem como usar a GPU e todo app com OpenGL/Vulkan desenhava no processador (llvmpipe): o OBS gastava ~27% de CPU parado e mostrava a captura preta, e o mesmo valia para Chrome/Electron, jogos e o XWayland.
