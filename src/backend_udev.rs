@@ -63,6 +63,8 @@ struct Head {
     crtc: crtc::Handle,
     surface: Surface,
     output: Output,
+    /// O global `wl_output` desta tela (removido quando ela é desligada).
+    global: smithay::reexports::wayland_server::backend::GlobalId,
     damage_tracker: OutputDamageTracker,
     /// Um quadro foi entregue e espera o vblank: o próximo só depois dele.
     pending: bool,
@@ -427,13 +429,19 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) {
         .collect();
 
     // Telas que sumiram ou foram desligadas.
+    crate::outputs::sweep_globals(state);
+    let mut retired = Vec::new();
     gpu.heads.retain(|head| {
         let stays = keep.contains(&head.connector);
         if !stays {
             tracing::info!("tela {} desligada", head.output.name());
+            retired.push(head.global.clone());
         }
         stays
     });
+    for id in retired {
+        crate::outputs::retire_global(state, id);
+    }
 
     for c in found.iter().filter(|c| keep.contains(&c.handle)) {
         let mode = choose_mode(c, state);
@@ -527,12 +535,12 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
             model: c.name.clone(),
         },
     );
-    output.create_global::<State>(&state.display_handle);
+    let global = output.create_global::<State>(&state.display_handle);
     set_output_mode(&output, mode, scale);
     let damage_tracker = OutputDamageTracker::from_output(&output);
     // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
     let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
-    Ok(Head { connector: c.handle, crtc, surface, output, damage_tracker, pending: false, internal, cursor: HwCursor::default() })
+    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, internal, cursor: HwCursor::default() })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).

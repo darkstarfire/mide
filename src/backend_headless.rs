@@ -46,6 +46,8 @@ struct Head {
     /// Modo de quando o mide abriu (o "preferido").
     native: (i32, i32),
     output: Option<Output>,
+    /// O global `wl_output` da tela ligada (removido ao desligar).
+    global: Option<smithay::reexports::wayland_server::backend::GlobalId>,
     target: Option<GlesTexture>,
     damage_tracker: Option<OutputDamageTracker>,
     /// O alvo já tem um quadro (é sempre o mesmo: o conteúdo é o do quadro anterior,
@@ -84,7 +86,7 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
     let heads = sizes
         .iter()
         .enumerate()
-        .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, target: None, damage_tracker: None, drawn: false })
+        .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, global: None, target: None, damage_tracker: None, drawn: false })
         .collect();
     let scene = Scene::new(&mut renderer, state)?;
     let gpu = Rc::new(RefCell::new(Gpu { renderer, scene, heads }));
@@ -148,12 +150,16 @@ fn parse_size(text: &str) -> Option<(i32, i32)> {
 fn refresh_heads(gpu: &mut Gpu, state: &mut State) -> Result<(), Box<dyn Error>> {
     let monitors = state.config.monitors.clone();
     let any_enabled = gpu.heads.iter().any(|h| monitors.outputs.get(&h.name).is_none_or(|m| m.enabled));
+    crate::outputs::sweep_globals(state);
     for (i, head) in gpu.heads.iter_mut().enumerate() {
         let config = monitors.outputs.get(&head.name);
         let enabled = config.is_none_or(|m| m.enabled) || (!any_enabled && i == 0);
         if !enabled {
             if head.output.take().is_some() {
                 tracing::info!("tela {} desligada", head.name);
+            }
+            if let Some(id) = head.global.take() {
+                crate::outputs::retire_global(state, id);
             }
             head.target = None;
             head.damage_tracker = None;
@@ -164,12 +170,13 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) -> Result<(), Box<dyn Error>>
             .map(|(w, h, _)| (w as i32, h as i32))
             .filter(|s| *s == head.native || MODES.iter().any(|(w, h, _)| (*w, *h) == *s))
             .unwrap_or(head.native);
+        let global = &mut head.global;
         let output = head.output.get_or_insert_with(|| {
             let output = Output::new(
                 head.name.clone(),
                 PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "mide".into(), model: "headless".into() },
             );
-            output.create_global::<State>(&state.display_handle);
+            *global = Some(output.create_global::<State>(&state.display_handle));
             output
         });
         let mode = Mode { size: size.into(), refresh: 60_000 };

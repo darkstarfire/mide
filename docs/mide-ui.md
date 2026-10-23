@@ -181,6 +181,35 @@ ui.glass_panel((w - 600.0) / 2.0, h * 0.2, 600.0, 18.0, |ui| {
 instante e o ícone surge assim que fica pronto. Para já ter os ícones na primeira
 vez, carregue numa thread e entregue com `ui.provide_icon(nome, tamanho, imagem)`.
 
+### Uma camada em cada tela
+
+Com `.on_every_output()` (junto com `.overlay`), a camada cobre todas as telas, e não
+só a principal (a captura de tela, que escurece todas):
+
+```rust
+run(Window::new("Telas").overlay("minhas-telas").on_every_output().fixed_scale(), App::default())
+```
+
+O mesmo `view` é chamado uma vez por tela em cada quadro:
+
+- `ui.screen()` é a tela deste passe (`Screen`: nome, origem no desktop, tamanho em
+  pontos, escala e se é a principal); `ui.screens()` lista todas, primeiro a da
+  superfície principal do app (a tela principal de quando o app abriu: trocar a
+  principal com o app aberto não muda a camada de lugar).
+- `ui.mirror()` é `true` nos passes das outras telas. **Estado só no passe com
+  `!ui.mirror()`**: teclas, cliques e mudanças do app ficam lá; os outros passes só
+  desenham (o que eles pedem — fechar, vidro, título — é descartado).
+- `ui.pointer_global()` dá o ponteiro em coordenadas do desktop, em qualquer tela; um
+  arrasto que começa numa tela e termina na outra continua chegando ao app.
+- Só a camada da principal recebe o teclado. As outras desenham em escala 1 (o
+  compositor amplia nas telas com escala) e se chamam `<namespace>@<TELA>`.
+- Monitores que entram e saem ganham e perdem a camada com o app aberto. Se sai (ou é desligada)
+  a tela da superfície principal, o app fecha: a camada dela ficaria invisível com o
+  teclado.
+
+As funções de geometria (`screen_at`, `union`, `to_main`...) ficam em
+`mide::kit::screens`. O exemplo `examples/kit-telas.rs` mostra tudo isso.
+
 ## Área de texto (várias linhas)
 
 `ui.text_area(&mut doc, altura)` é o editor do Editor de Texto: números de linha, fonte

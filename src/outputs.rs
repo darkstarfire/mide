@@ -59,6 +59,22 @@ pub fn logical_size(mode: (i32, i32), scale: f64) -> (i32, i32) {
     ((mode.0 as f64 / scale).round() as i32, (mode.1 as f64 / scale).round() as i32)
 }
 
+/// Tela desligada ou desconectada: o `wl_output` dela some para os apps (sem isso o
+/// global ficava anunciado e, ao religar, os apps viam duas saídas com o mesmo nome).
+/// Primeiro só escondido (um app que ainda vai ligar-se a ele não recebe erro); a
+/// remoção de vez fica para a próxima mudança de telas (`sweep_globals`).
+pub fn retire_global(state: &mut crate::state::State, id: smithay::reexports::wayland_server::backend::GlobalId) {
+    state.display_handle.disable_global::<crate::state::State>(id.clone());
+    state.retired_output_globals.push(id);
+}
+
+/// Remove de vez os globais escondidos numa mudança de telas anterior.
+pub fn sweep_globals(state: &mut crate::state::State) {
+    for id in std::mem::take(&mut state.retired_output_globals) {
+        state.display_handle.remove_global::<crate::state::State>(id);
+    }
+}
+
 /// Aplica o arranjo às telas ligadas (`live`): posição de cada uma no espaço, telas
 /// que sumiram fora, janelas perdidas (numa tela que saiu) trazidas para a principal
 /// e, se a principal mudou, barra e dock reabertas nela.

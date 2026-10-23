@@ -224,6 +224,9 @@ pub struct State {
     pub outputs_info: Vec<OutputInfo>,
     /// Pede ao backend para refazer as telas pela configuração (`outputs apply`).
     pub outputs_waker: Option<smithay::reexports::calloop::ping::Ping>,
+    /// Globais `wl_output` de telas desligadas: já escondidos dos apps, removidos de vez
+    /// na próxima mudança de telas (`outputs::retire_global`).
+    pub retired_output_globals: Vec<smithay::reexports::wayland_server::backend::GlobalId>,
     /// Pede ao backend para reaplicar o mouse e o trackpad (`[input]`, depois do `reload`).
     pub input_waker: Option<smithay::reexports::calloop::ping::Ping>,
     /// Tela onde estão a barra, a dock e a área de trabalho (para reabri-los quando a
@@ -389,6 +392,7 @@ impl State {
             screenshot_requests: Vec::new(),
             appearing: Vec::new(),
             outputs_waker: None,
+            retired_output_globals: Vec::new(),
             input_waker: None,
             shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),

@@ -103,6 +103,8 @@ pub struct Window {
     /// Desenha na resolução real da tela (escala 1,25, 1,5, 2...): nítido. Apps que
     /// pintam pixels por conta própria (`ui.paint`) desligam com `Window::fixed_scale`.
     pub native_scale: bool,
+    /// Uma camada em cada tela (`Window::on_every_output`).
+    pub every_output: bool,
 }
 
 impl Window {
@@ -120,7 +122,21 @@ impl Window {
             dropdown: false,
             lock: false,
             native_scale: true,
+            every_output: false,
         }
+    }
+
+    /// Junto com [`Window::overlay`]: uma camada em cada tela, e não só na principal
+    /// (a captura de tela, que escurece todas). O mesmo `view` desenha cada tela:
+    /// [`Ui::screen`](super::Ui::screen) diz qual é, e [`Ui::mirror`](super::Ui::mirror)
+    /// é `true` nas que não são a principal; a lógica do app (cliques, teclas) roda só
+    /// no passe da principal, com o ponteiro de qualquer tela em
+    /// [`Ui::pointer_global`](super::Ui::pointer_global). Só a principal recebe o
+    /// teclado. As outras telas desenham em escala 1 (o compositor amplia). Monitores
+    /// que entram e saem ganham e perdem a camada com o app aberto.
+    pub fn on_every_output(mut self) -> Self {
+        self.every_output = true;
+        self
     }
 
     /// Desenha em escala 1 e deixa o compositor ampliar em telas com escala (menos
@@ -216,6 +232,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
 
     let surface = compositor.create_surface(&qh);
     let output_state = OutputState::new(&globals, &qh);
+    // Guardado só para criar as camadas das outras telas (`Window::on_every_output`).
+    let mut layer_shell_kept = None;
     let shell = if window.lock {
         use smithay_client_toolkit::session_lock::SessionLockState;
         let lock_state = SessionLockState::new(&globals, &qh);
@@ -254,6 +272,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
                 layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
             }
             layer.commit();
+            layer_shell_kept = window.every_output.then_some(layer_shell);
             Shell::Layer(layer, namespace.clone())
         }
         None => {
@@ -328,6 +347,13 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         hidden: false,
         others_drawn: None,
         test_hide: std::env::var_os("MIDE_KIT_TEST_HIDE").map(|_| None),
+        every_output: window.every_output && layer_shell_kept.is_some() && !window.desktop && !window.dropdown,
+        layer_shell: layer_shell_kept,
+        outputs_changed: true,
+        main_origin: (0.0, 0.0),
+        main_output: None,
+        extras: Vec::new(),
+        pointer_on: None,
     };
 
     // Vidro de verdade só nas camadas de cima (o compositor desfoca atrás delas).
@@ -479,6 +505,32 @@ struct Runner {
     others_drawn: Option<(std::time::Instant, Vec<(u32, u32)>)>,
     /// Teste de esconder e mostrar (`MIDE_KIT_TEST_HIDE`): quando a janela apareceu.
     test_hide: Option<Option<std::time::Instant>>,
+    /// Uma camada em cada tela (`Window::on_every_output`); o `layer_shell` para criar
+    /// as das outras telas; as telas mudaram (refazer a lista e as camadas); onde a
+    /// superfície principal começa no desktop; as camadas das outras telas; e a
+    /// superfície onde o ponteiro está.
+    every_output: bool,
+    layer_shell: Option<LayerShell>,
+    outputs_changed: bool,
+    main_origin: (f32, f32),
+    /// Nome da saída onde a camada principal está de fato. O compositor escolhe a
+    /// saída só quando a camada é criada (a principal daquele momento): trocar a
+    /// principal depois não muda a camada de lugar. Gravada no primeiro
+    /// `ensure_extras` (ou pelo `surface_enter`, se chegar) e não relida a cada mudança.
+    main_output: Option<String>,
+    extras: Vec<Extra>,
+    pointer_on: Option<wl_surface::WlSurface>,
+}
+
+/// Camada de outra tela de um app em todas as telas: a tela (saída e nome), onde ela
+/// começa no desktop, o tamanho dado pelo compositor e o último quadro enviado.
+struct Extra {
+    layer: LayerSurface,
+    output: wl_output::WlOutput,
+    name: String,
+    origin: (f32, f32),
+    size: Option<(u32, u32)>,
+    last_frame: Option<Pixmap>,
 }
 
 impl Runner {
@@ -502,6 +554,10 @@ impl Runner {
     fn frame(&mut self) {
         let start = std::time::Instant::now();
         self.dirty = false;
+        if self.every_output {
+            self.ensure_extras();
+            self.ctx.screen = 0;
+        }
         // Cliques nos menus da barra: os da "Janela" são da janela; o resto, do app.
         if let Some(menus) = &self.menus {
             while let Ok(action) = menus.clicks.try_recv() {
@@ -631,6 +687,9 @@ impl Runner {
         if self.exit {
             return;
         }
+        // Outras telas (`Window::on_every_output`): antes de sair por quadro igual (a
+        // principal pode não mudar quando o ponteiro anda na outra tela).
+        self.draw_extra_layers();
         // Painéis de vidro (`ui.glass_panel`): o compositor desenha o vidro atrás.
         if let (Shell::Layer(_, namespace), true) = (&self.shell, self.ctx.layer) {
             let rects = if crate::control_client::panel_glass() { self.ctx.glass.clone() } else { Vec::new() };
@@ -741,6 +800,160 @@ impl Runner {
     }
 }
 
+impl Runner {
+    /// Telas do app em todas as telas: quando as saídas mudam, refaz a lista (escala e
+    /// telas ligadas pelo comando `outputs` do compositor, casadas pelo nome), cria a
+    /// camada das telas novas e tira a das que sumiram. A tela da camada principal é a
+    /// gravada em `main_output` (na primeira vez, a principal do compositor, onde ele
+    /// pôs a camada); as camadas extras vão para as outras. Se essa tela sai ou é
+    /// desligada, o app fecha: o compositor não fecha a camada de uma saída que some, e
+    /// ela ficaria invisível segurando o teclado (`Exclusive`). Telas sem posição ainda
+    /// (o xdg-output chega depois) esperam o próximo `update_output`.
+    fn ensure_extras(&mut self) {
+        if !std::mem::take(&mut self.outputs_changed) {
+            return;
+        }
+        let reply = crate::control_client::ask_compositor("outputs").unwrap_or_default();
+        let known = super::screens::parse_outputs(&reply);
+        let mut found: Vec<(super::Screen, wl_output::WlOutput)> = Vec::new();
+        // Telas anunciadas e ligadas, mesmo as que ainda não têm posição.
+        let mut present: Vec<String> = Vec::new();
+        for output in self.output_state.outputs() {
+            let Some(info) = self.output_state.info(&output) else {
+                continue;
+            };
+            let Some(name) = info.name.clone() else {
+                continue;
+            };
+            // Tela desligada pelo compositor (ainda anunciada): fica de fora.
+            if !known.is_empty() && !known.iter().any(|(n, ..)| *n == name) {
+                continue;
+            }
+            present.push(name.clone());
+            let int_scale = info.scale_factor.max(1);
+            let origin = info.logical_position.unwrap_or(info.location);
+            let size = info.logical_size.or_else(|| {
+                info.modes.iter().find(|m| m.current).map(|m| (m.dimensions.0 / int_scale, m.dimensions.1 / int_scale))
+            });
+            let Some(size) = size.filter(|s| s.0 > 0 && s.1 > 0) else {
+                continue;
+            };
+            let (scale, primary) = known.iter().find(|(n, ..)| *n == name).map_or((int_scale as f32, false), |(_, s, p)| (*s, *p));
+            let screen = super::Screen { name, origin: (origin.0 as f32, origin.1 as f32), size: (size.0 as f32, size.1 as f32), scale, primary };
+            found.push((screen, output));
+        }
+        let all: Vec<super::Screen> = found.iter().map(|(s, _)| s.clone()).collect();
+        let main = match &self.main_output {
+            Some(name) => name.clone(),
+            None => {
+                let Some(first) = super::screens::primary_first(super::screens::dedupe_mirror(all.clone())).into_iter().next() else {
+                    return;
+                };
+                tracing::info!("camada principal na tela {}", first.name);
+                self.main_output = Some(first.name.clone());
+                first.name
+            }
+        };
+        if !present.contains(&main) {
+            tracing::warn!("a tela {main} da camada principal saiu ou foi desligada: o app fecha");
+            self.exit = true;
+            return;
+        }
+        // Anunciada mas sem posição ainda: espera o próximo `update_output`.
+        let Some(screens) = super::screens::main_first(all, &main) else {
+            return;
+        };
+        tracing::info!(
+            "telas do app: {}",
+            screens.iter().map(|s| format!("{} em ({}, {}) {}x{}{}", s.name, s.origin.0, s.origin.1, s.size.0, s.size.1, if s.primary { " principal" } else { "" })).collect::<Vec<_>>().join(", ")
+        );
+        self.main_origin = screens.first().map_or((0.0, 0.0), |s| s.origin);
+        // Camadas de telas que sumiram (ou são cópia de outra).
+        let extras_names: Vec<&str> = screens.iter().skip(1).map(|s| s.name.as_str()).collect();
+        self.extras.retain(|e| {
+            let keep = extras_names.contains(&e.name.as_str());
+            if !keep {
+                tracing::info!("tela {} saiu: camada fechada", e.name);
+            }
+            keep
+        });
+        for screen in screens.iter().skip(1) {
+            if let Some(extra) = self.extras.iter_mut().find(|e| e.name == screen.name) {
+                extra.origin = screen.origin;
+                continue;
+            }
+            let (Some(layer_shell), Shell::Layer(_, namespace)) = (&self.layer_shell, &self.shell) else {
+                break;
+            };
+            // Duas saídas com o mesmo nome (compositor que não tira a antiga): a mais nova.
+            let Some(output) = found.iter().rfind(|(s, _)| s.name == screen.name).map(|(_, o)| o.clone()) else {
+                continue;
+            };
+            let namespace = format!("{namespace}@{}", screen.name);
+            let layer = layer_shell.create_layer_surface(&self.qh, self.compositor.create_surface(&self.qh), Layer::Overlay, Some(namespace.clone()), Some(&output));
+            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+            layer.set_exclusive_zone(-1);
+            // O teclado é só da principal: duas camadas `Exclusive` disputariam o foco.
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.commit();
+            tracing::info!("camada {namespace} criada");
+            self.extras.push(Extra { layer, output, name: screen.name.clone(), origin: screen.origin, size: None, last_frame: None });
+        }
+        self.ctx.screens = screens;
+    }
+
+    /// Desenha as outras telas: o mesmo `view`, em escala 1, com o ponteiro levado
+    /// para as coordenadas de cada uma e sem mexer no estado da principal (vidro,
+    /// entrada, botão apertado, fechar). Manda só as telas cujo quadro mudou.
+    fn draw_extra_layers(&mut self) {
+        if self.extras.is_empty() {
+            return;
+        }
+        let main_origin = self.main_origin;
+        let global = self.ctx.input.pointer.map(|p| (p.0 + main_origin.0, p.1 + main_origin.1));
+        crate::ui::draw::set_scale(1.0);
+        for i in 0..self.extras.len() {
+            let (Some((w, h)), origin) = (self.extras[i].size, self.extras[i].origin) else {
+                continue;
+            };
+            let Some(index) = self.ctx.screens.iter().position(|s| s.name == self.extras[i].name) else {
+                continue;
+            };
+            let Some(mut canvas) = Pixmap::new(w, h) else {
+                continue;
+            };
+            let saved = self.ctx.begin_mirror(index, global.map(|g| (g.0 - origin.0, g.1 - origin.1)));
+            self.ctx.begin_frame();
+            {
+                let mut ui = Ui::root(&mut canvas, &mut self.ctx);
+                self.app.view(&mut ui);
+            }
+            let _ = self.ctx.take_overlay();
+            self.ctx.end_frame();
+            self.ctx.end_mirror(saved);
+            let extra = &mut self.extras[i];
+            let damage = match &extra.last_frame {
+                Some(last) if last.width() == w && last.height() == h => match changed_area(last, &canvas) {
+                    Some(area) => area,
+                    None => continue,
+                },
+                _ => (0, 0, w, h),
+            };
+            let Ok((buffer, data)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+                continue;
+            };
+            to_argb8888(&canvas, data);
+            let surface = extra.layer.wl_surface();
+            surface.damage_buffer(damage.0 as i32, damage.1 as i32, damage.2 as i32, damage.3 as i32);
+            if buffer.attach_to(surface).is_ok() {
+                extra.layer.commit();
+            }
+            extra.last_frame = Some(canvas);
+        }
+        crate::ui::draw::set_scale(self.scale);
+    }
+}
+
 impl CompositorHandler for Runner {
     /// Escala inteira da tela (compositores sem a escala fracionária).
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, factor: i32) {
@@ -750,7 +963,21 @@ impl CompositorHandler for Runner {
     }
     fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    /// A camada principal entrou numa tela: é onde ela está de fato (mais certo que a
+    /// principal do compositor quando o app abriu).
+    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, output: &wl_output::WlOutput) {
+        if !self.every_output || surface != self.shell.wl_surface() {
+            return;
+        }
+        let Some(name) = self.output_state.info(output).and_then(|i| i.name) else {
+            return;
+        };
+        if self.main_output.as_deref() != Some(name.as_str()) {
+            tracing::info!("camada principal entrou na tela {name}");
+            self.main_output = Some(name);
+            self.outputs_touched();
+        }
+    }
     fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
 }
 
@@ -758,9 +985,35 @@ impl OutputHandler for Runner {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
-    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    // Telas que entram, mudam ou saem: o app em todas as telas refaz as camadas.
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {
+        self.outputs_touched();
+    }
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {
+        self.outputs_touched();
+    }
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        // A camada extra daquela tela não serve mais (o compositor não manda `closed`
+        // às camadas de uma saída que some). Se for a tela da camada principal, o
+        // `ensure_extras` do próximo quadro fecha o app.
+        self.extras.retain(|e| {
+            let gone = e.output == output;
+            if gone {
+                tracing::info!("tela {} saiu: camada fechada", e.name);
+            }
+            !gone
+        });
+        self.outputs_touched();
+    }
+}
+
+impl Runner {
+    fn outputs_touched(&mut self) {
+        if self.every_output {
+            self.outputs_changed = true;
+            self.dirty = true;
+        }
+    }
 }
 
 impl WindowHandler for Runner {
@@ -846,12 +1099,30 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for Runner {
 }
 
 impl LayerShellHandler for Runner {
-    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
+    /// Só a camada principal fechada encerra o app; a de outra tela (monitor
+    /// desligado) só sai da lista.
+    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if let Some(i) = self.extras.iter().position(|e| e.layer.wl_surface() == layer.wl_surface()) {
+            let extra = self.extras.remove(i);
+            tracing::info!("camada da tela {} fechada pelo compositor", extra.name);
+            self.dirty = true;
+            return;
+        }
         self.exit = true;
     }
 
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface, configure: LayerSurfaceConfigure, _: u32) {
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface, configure: LayerSurfaceConfigure, _: u32) {
         let (w, h) = configure.new_size;
+        if let Some(extra) = self.extras.iter_mut().find(|e| e.layer.wl_surface() == layer.wl_surface()) {
+            let size = if w > 0 && h > 0 { (w, h) } else { (1, 1) };
+            tracing::debug!("camada da tela {} configurada: {}x{}", extra.name, size.0, size.1);
+            if extra.size != Some(size) {
+                extra.last_frame = None;
+            }
+            extra.size = Some(size);
+            self.dirty = true;
+            return;
+        }
         if w > 0 && h > 0 {
             self.size = (w, h);
         }
@@ -895,14 +1166,33 @@ impl PointerHandler for Runner {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
         const BTN_LEFT: u32 = 0x110;
         for event in events {
-            if &event.surface != self.shell.wl_surface() {
+            // Onde a superfície do evento começa no desktop: a principal ou a camada de
+            // outra tela (`Window::on_every_output`); outra superfície fica de fora.
+            let origin = if &event.surface == self.shell.wl_surface() {
+                self.main_origin
+            } else if let Some(extra) = self.extras.iter().find(|e| e.layer.wl_surface() == &event.surface) {
+                extra.origin
+            } else {
                 continue;
-            }
-            let pos = (event.position.0 as f32, event.position.1 as f32);
+            };
+            // Tudo nas coordenadas da principal (pode cair fora dela).
+            let local = (event.position.0 as f32, event.position.1 as f32);
+            let pos = super::screens::to_main(local, origin, self.main_origin);
             let input = &mut self.ctx.input;
             match event.kind {
-                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => input.pointer = Some(pos),
-                PointerEventKind::Leave { .. } => input.pointer = None,
+                PointerEventKind::Enter { .. } => {
+                    input.pointer = Some(pos);
+                    self.pointer_on = Some(event.surface.clone());
+                }
+                PointerEventKind::Motion { .. } => input.pointer = Some(pos),
+                // Saindo de uma tela para outra do app, o `Enter` da outra pode chegar
+                // antes: só apaga o ponteiro se ele estava nesta.
+                PointerEventKind::Leave { .. } => {
+                    if !self.every_output || self.pointer_on.as_ref() == Some(&event.surface) {
+                        input.pointer = None;
+                        self.pointer_on = None;
+                    }
+                }
                 PointerEventKind::Press { button, serial, .. } if button == BTN_LEFT => {
                     self.serial = serial;
                     input.pointer = Some(pos);

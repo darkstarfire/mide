@@ -334,7 +334,7 @@ struct ArrangeDrag {
 
 
 /// O que dura entre quadros: componente apertado, foco do teclado e rolagens.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Memory {
     /// Componente onde o botão foi apertado (o clique vale se soltar nele).
     pub active: Option<u64>,
@@ -418,8 +418,35 @@ pub struct Ctx {
     pub hide_request: Option<bool>,
     /// Tela de bloqueio: a senha foi aceita (`Ui::unlock`).
     pub unlock_request: bool,
-    /// Desenhando a cópia da tela de bloqueio de outro monitor (`Ui::mirror`).
+    /// Desenhando a cópia da tela de bloqueio de outro monitor, ou outra tela de um app
+    /// em todas as telas (`Ui::mirror`).
     pub mirror: bool,
+    /// Telas do app em todas as telas (`Window::on_every_output`), a principal primeiro;
+    /// vazio sem a opção. E o índice da tela deste passe.
+    pub screens: Vec<super::Screen>,
+    pub screen: usize,
+}
+
+/// O que o passe da tela principal deixou no `Ctx` e que um passe de outra tela não
+/// pode mexer nem apagar (`Ctx::begin_mirror`/`end_mirror`). O `begin_frame` do passe
+/// extra limparia o vidro e o `end_frame` soltaria o botão apertado na principal.
+pub struct MainPass {
+    input: Input,
+    memory: Memory,
+    glass: Vec<(f32, f32, f32, f32, f32)>,
+    glass_capable: bool,
+    input_region: Option<(f32, f32, f32, f32)>,
+    close_requested: bool,
+    unlock_request: bool,
+    size_request: Option<((u32, u32), (u32, u32))>,
+    title: Option<String>,
+    hide_request: Option<bool>,
+    clipboard_out: Option<String>,
+    paste_requested: bool,
+    repaint: bool,
+    ticking: bool,
+    window: (u32, u32),
+    screen: usize,
 }
 
 impl Ctx {
@@ -454,7 +481,60 @@ impl Ctx {
             hide_request: None,
             unlock_request: false,
             mirror: false,
+            screens: Vec::new(),
+            screen: 0,
         }
+    }
+
+    /// Começo do passe de outra tela (`screen`, índice em `screens`): guarda o estado
+    /// da principal e entrega uma entrada só com o ponteiro (nas coordenadas da tela).
+    pub fn begin_mirror(&mut self, screen: usize, pointer: Option<(f32, f32)>) -> MainPass {
+        let saved = MainPass {
+            input: std::mem::take(&mut self.input),
+            memory: self.memory.clone(),
+            glass: std::mem::take(&mut self.glass),
+            glass_capable: self.glass_capable,
+            input_region: self.input_region.take(),
+            close_requested: self.close_requested,
+            unlock_request: self.unlock_request,
+            size_request: self.size_request.take(),
+            title: self.title.take(),
+            hide_request: self.hide_request.take(),
+            clipboard_out: self.clipboard_out.take(),
+            paste_requested: self.paste_requested,
+            repaint: self.repaint,
+            ticking: self.ticking,
+            window: self.window,
+            screen: self.screen,
+        };
+        self.input.pointer = pointer;
+        self.mirror = true;
+        self.screen = screen;
+        saved
+    }
+
+    /// Fim do passe de outra tela: tudo volta a ser da principal. Animação pedida no
+    /// passe extra continua valendo (`ticking`); o resto que ele pediu é descartado.
+    pub fn end_mirror(&mut self, saved: MainPass) {
+        let ticking = self.ticking;
+        self.input = saved.input;
+        self.memory = saved.memory;
+        self.glass = saved.glass;
+        self.glass_capable = saved.glass_capable;
+        self.input_region = saved.input_region;
+        self.close_requested = saved.close_requested;
+        self.unlock_request = saved.unlock_request;
+        self.size_request = saved.size_request;
+        self.title = saved.title;
+        self.hide_request = saved.hide_request;
+        self.clipboard_out = saved.clipboard_out;
+        self.paste_requested = saved.paste_requested;
+        self.repaint = saved.repaint;
+        self.ticking = saved.ticking || ticking;
+        self.window = saved.window;
+        self.screen = saved.screen;
+        self.overlay = None;
+        self.mirror = false;
     }
 
     /// Ícone pelo nome (ou o primeiro que existir de `names`), no tamanho pedido. Se
@@ -1401,10 +1481,40 @@ impl<'a> Ui<'a> {
         self.ctx.input_region = Some(rect);
     }
 
-    /// Este `view` desenha a cópia da tela de bloqueio de outro monitor: sem teclas
-    /// e sem consumir nada do estado (a resposta da senha é da tela principal).
+    /// Este `view` desenha a cópia da tela de bloqueio de outro monitor, ou outra tela
+    /// de um app em todas as telas (`Window::on_every_output`): sem teclas e sem
+    /// consumir nada do estado (a lógica do app roda só no passe com `!ui.mirror()`).
     pub fn mirror(&self) -> bool {
         self.ctx.mirror
+    }
+
+    /// A tela deste passe, em pontos. Sem `Window::on_every_output`: origem (0, 0), o
+    /// tamanho da janela e a escala atual, marcada como principal.
+    pub fn screen(&self) -> super::Screen {
+        match self.ctx.screens.get(self.ctx.screen) {
+            Some(screen) => screen.clone(),
+            None => super::Screen {
+                name: String::new(),
+                origin: (0.0, 0.0),
+                size: (self.ctx.window.0 as f32, self.ctx.window.1 as f32),
+                scale: crate::ui::draw::scale(),
+                primary: true,
+            },
+        }
+    }
+
+    /// Todas as telas do app, a da superfície principal primeiro (a tela principal de
+    /// quando o app abriu). Sem `Window::on_every_output`, só a de [`Ui::screen`].
+    pub fn screens(&self) -> Vec<super::Screen> {
+        if self.ctx.screens.is_empty() { vec![self.screen()] } else { self.ctx.screens.clone() }
+    }
+
+    /// Ponteiro em coordenadas globais (do desktop), em qualquer tela do app; `None`
+    /// fora das superfícies dele. Sem `Window::on_every_output`, igual ao ponteiro na
+    /// janela.
+    pub fn pointer_global(&self) -> Option<(f32, f32)> {
+        let origin = self.ctx.screens.get(self.ctx.screen).map_or((0.0, 0.0), |s| s.origin);
+        self.ctx.input.pointer.map(|p| (p.0 + origin.0, p.1 + origin.1))
     }
 
     /// Tela de bloqueio (`Window::lock`): desbloqueia a sessão e fecha o app.
