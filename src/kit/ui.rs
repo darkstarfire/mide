@@ -1130,6 +1130,22 @@ impl<'a> Ui<'a> {
         self.menu_impl(response, response.secondary_clicked, build);
     }
 
+    /// Há um menu de contexto aberto (e o retângulo dele no último quadro, na janela,
+    /// se já foi desenhado)? Para um painel pequeno aumentar a área que recebe cliques
+    /// enquanto o menu aparece (`input_area`).
+    pub fn menu_open(&self) -> Option<Option<(f32, f32, f32, f32)>> {
+        self.ctx.memory.menu.map(|_| self.ctx.memory.menu_rect)
+    }
+
+    /// Fecha o menu de contexto aberto (o ponteiro saiu de uma camada pequena, onde o
+    /// clique fora não chega ao app).
+    pub fn close_menu(&mut self) {
+        if self.ctx.memory.menu.take().is_some() {
+            self.ctx.memory.menu_rect = None;
+            self.ctx.repaint = true;
+        }
+    }
+
     /// Menu que abre com `open` (clique direito no menu de contexto, clique comum na
     /// lista de escolha) e fica aberto até escolher ou clicar fora.
     fn menu_impl(&mut self, response: &Response, open: bool, build: impl FnOnce(&mut Menu)) {

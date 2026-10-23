@@ -178,11 +178,22 @@ pub fn clean_exec(exec: &str) -> String {
 /// Apps instalados que devem aparecer (sem `NoDisplay`, `Hidden` nem restrição de
 /// desktop que exclua o mide), sem repetir id, em ordem alfabética.
 pub fn load() -> Vec<App> {
+    load_entries(false)
+}
+
+/// Os apps que abrem arquivos, para o "Abrir com" e os apps padrão: os de `load` mais
+/// os que não aparecem nos menus (`NoDisplay`), que pela especificação continuam
+/// abrindo os tipos de arquivo deles (o Editor de Capturas).
+pub fn load_handlers() -> Vec<App> {
+    load_entries(true)
+}
+
+fn load_entries(with_no_display: bool) -> Vec<App> {
     let locales = freedesktop_desktop_entry::get_languages_from_env();
     let mut seen = HashSet::new();
     let mut apps: Vec<App> = freedesktop_desktop_entry::desktop_entries(&locales)
         .into_iter()
-        .filter(|e| !e.no_display() && !e.hidden())
+        .filter(|e| (with_no_display || !e.no_display()) && !e.hidden())
         .filter(|e| e.only_show_in().is_none_or(|list| list.iter().any(|d| d.eq_ignore_ascii_case("mide"))))
         .filter_map(|e| {
             let command = clean_exec(e.exec()?);

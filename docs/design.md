@@ -238,6 +238,7 @@ não fica só no app.
 | Pasta abrindo na lista do Arquivos | 180 ms (+25 ms por linha) | as linhas de dentro esmaecem de cima para baixo |
 | Troca entre ícones e lista (Arquivos) | 200 ms | o conteúdo novo esmaece |
 | Prévias da dock e alternador (Alt+Tab) | 160 ms | esmaecem e sobem 8 px |
+| Miniatura da captura entrando / saindo | 160 / 120 ms | esmaece e desliza 8 px a partir da borda direita (fica 5 s) |
 | Fechar janela | 180 ms | encolhe 6% e esmaece |
 | Dock aparecendo/escondendo | 200 ms | desliza (espera 450 ms antes de esconder) |
 | Vidro de uma janela depois de animar | 220 ms | esmaece |
@@ -281,7 +282,7 @@ inventa efeito novo para um caso que já está na tabela.
 | **S1** | Janela de app | Arquivos, Configurações, Editor de Texto, apps GTK/Qt |
 | **S2** | Painel fixo do sistema | barra superior, dock |
 | **S3** | Menu (lista ancorada num item) | menus da barra, da dock e de contexto; menus nativos dos apps (popups) |
-| **S4** | Painel flutuante passageiro | prévias das janelas, notificações, central de controle, Downloads e Lixeira da dock |
+| **S4** | Painel flutuante passageiro | prévias das janelas, notificações, central de controle, Downloads e Lixeira da dock, miniatura da captura |
 | **S5** | Sobreposição de tela cheia | launcher, captura de tela, alternador de janelas (Alt+Tab) |
 | **S6** | Diálogo modal (dentro de uma janela) | renomear, nova pasta, confirmar monitores |
 | **S7** | Controle dentro de uma superfície | botão, interruptor, linha de lista, ícone da grade, item da barra lateral |
@@ -343,6 +344,7 @@ Materiais (não são movimento, mas também são efeitos com interruptor):
 | A3 | S3 menus da barra e da dock | Surgir, 120 ms, desce 6 px | Animação dos menus |
 | A3 | S3 menus dos apps (popups) | Surgir, 120 ms | Animação dos menus |
 | A3 | S4 prévias da dock | Surgir, 160 ms, sobe 8 px | Transições suaves |
+| A14 | S4 miniatura da captura (canto de baixo à direita) | Surgir, 160 ms entrando e 120 ms saindo, desliza 8 px da borda direita; arrastada para a direita, segue o ponteiro e some | Transições suaves |
 | A4 | S5 alternador (Alt+Tab) | Surgir, 160 ms (é passageiro e some ao soltar as teclas) | Transições suaves |
 | A4 | S5 launcher | Zoom de cena, 260 / 170 ms | Animações |
 | A5 | S5 pasta do launcher | Expandir da origem, 240 ms | Transições suaves |

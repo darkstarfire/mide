@@ -37,7 +37,7 @@ pub fn generic_name(name: &str) -> Option<&'static str> {
         "mide-text" => "accessories-text-editor",
         "mide-files" => "system-file-manager",
         "mide-settings" => "preferences-system",
-        "mide-screenshot" => "applets-screenshooter",
+        "mide-screenshot" | "mide-screenshot-editor" => "applets-screenshooter",
         "mide-calculator" => "accessories-calculator",
         "mide-about" => "computer",
         _ => return None,

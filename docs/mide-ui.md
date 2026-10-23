@@ -182,6 +182,23 @@ ui.glass_panel((w - 600.0) / 2.0, h * 0.2, 600.0, 18.0, |ui| {
 instante e o ícone surge assim que fica pronto. Para já ter os ícones na primeira
 vez, carregue numa thread e entregue com `ui.provide_icon(nome, tamanho, imagem)`.
 
+### Camada no canto (avisos que somem sozinhos)
+
+Com `.corner("nome")`, o app é uma camada pequena, do tamanho de `.size(l, a)`, no canto
+de baixo à direita da tela principal, acima da dock, e **sem o teclado** (não tira o
+foco de quem está digitando). É a miniatura que aparece depois de uma captura de tela.
+O app diz onde recebe cliques com `ui.input_area(retângulo)` a cada quadro; o resto da
+camada deixa os cliques passarem.
+
+```rust
+run(Window::new("Aviso").corner("meu-aviso").size(280, 300), MeuAviso::default())
+```
+
+Um menu de contexto numa camada pequena precisa de duas ajudas: `ui.menu_open()` diz se
+há um menu aberto (e o retângulo dele), para a área de cliques crescer enquanto ele
+aparece, e `ui.close_menu()` fecha o menu (o clique fora da camada não chega ao app;
+feche quando o ponteiro sai dela).
+
 ### Uma camada em cada tela
 
 Com `.on_every_output()` (junto com `.overlay`), a camada cobre todas as telas, e não

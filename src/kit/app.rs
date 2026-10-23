@@ -105,6 +105,8 @@ pub struct Window {
     pub native_scale: bool,
     /// Uma camada em cada tela (`Window::on_every_output`).
     pub every_output: bool,
+    /// Camada pequena no canto de baixo à direita da tela principal (`Window::corner`).
+    pub corner: bool,
 }
 
 impl Window {
@@ -123,6 +125,7 @@ impl Window {
             lock: false,
             native_scale: true,
             every_output: false,
+            corner: false,
         }
     }
 
@@ -184,6 +187,16 @@ impl Window {
     /// (também usado para o vidro). O app desenha o que quiser e fecha com `ui.close()`.
     pub fn overlay(mut self, namespace: &str) -> Self {
         self.overlay = Some(namespace.into());
+        self
+    }
+
+    /// Camada pequena (do tamanho de `Window::size`) por cima das janelas, no canto de
+    /// baixo à direita da tela principal, acima da dock (respeita as zonas exclusivas),
+    /// sem pegar o teclado: avisos que ficam um pouco e somem (a miniatura da captura).
+    /// O app diz onde recebe cliques (`Ui::input_area`); o resto deixa passar.
+    pub fn corner(mut self, namespace: &str) -> Self {
+        self.overlay = Some(namespace.into());
+        self.corner = true;
         self
     }
 
@@ -258,8 +271,18 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
                 Layer::Overlay
             };
             let layer = layer_shell.create_layer_surface(&qh, surface, kind, Some(namespace.clone()), None);
-            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-            if window.desktop {
+            if window.corner {
+                layer.set_anchor(Anchor::BOTTOM | Anchor::RIGHT);
+                layer.set_size(window.size.0, window.size.1);
+            } else {
+                layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+            }
+            if window.corner {
+                // Na área útil (acima da dock), sem o teclado: não tira o foco de quem
+                // está digitando.
+                layer.set_exclusive_zone(0);
+                layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            } else if window.desktop {
                 // Fica na área útil (abaixo da barra, acima da dock) e só pega o teclado
                 // quando clicada.
                 layer.set_exclusive_zone(0);
@@ -347,7 +370,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         hidden: false,
         others_drawn: None,
         test_hide: std::env::var_os("MIDE_KIT_TEST_HIDE").map(|_| None),
-        every_output: window.every_output && layer_shell_kept.is_some() && !window.desktop && !window.dropdown,
+        every_output: window.every_output && layer_shell_kept.is_some() && !window.desktop && !window.dropdown && !window.corner,
         layer_shell: layer_shell_kept,
         outputs_changed: true,
         main_origin: (0.0, 0.0),

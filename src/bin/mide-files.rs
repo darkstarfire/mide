@@ -144,7 +144,7 @@ impl Files {
             apps_rx: Some({
                 let (tx, rx) = channel();
                 std::thread::spawn(move || {
-                    let _ = tx.send(mide::apps::load());
+                    let _ = tx.send(mide::apps::load_handlers());
                 });
                 rx
             }),
