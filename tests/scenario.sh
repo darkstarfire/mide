@@ -130,7 +130,21 @@ for app in "$@"; do
     sleep 2
 done
 
-sleep "${SCENARIO_WAIT:-16}"
+# Espera: com SCENARIO_WAIT, um tempo fixo (cenários que esperam algo depois do roteiro,
+# como a gravação automática); sem ele, até o compositor avisar que o roteiro acabou (e o
+# quadro pedido ter sido salvo), mais SCENARIO_GRACE segundos para os apps registrarem.
+if [ -n "${SCENARIO_WAIT:-}" ] || [ -z "$SCRIPT" ]; then
+    sleep "${SCENARIO_WAIT:-10}"
+else
+    for _ in $(seq 1 $((${SCENARIO_MAX:-60} * 10))); do
+        if grep -aq "autoteste: roteiro concluído" "$OUT/mide.log" 2>/dev/null \
+            && { [ -z "$DUMP" ] || ls "$OUT"/frame.*.rgba >/dev/null 2>&1; }; then
+            break
+        fi
+        sleep 0.1
+    done
+    sleep "${SCENARIO_GRACE:-1.5}"
+fi
 
 if [ -n "$DUMP" ] && ls "$OUT"/frame.*.rgba >/dev/null 2>&1; then
     python3 - "$OUT" <<'PY'

@@ -156,6 +156,7 @@ impl Scene {
         };
         // Tela apagada (no DRM o monitor desliga; aqui, preto).
         if state.blanked {
+            state.screencopy.fail_outputs(|o| o == output);
             let result = damage_tracker.render_output(renderer, framebuffer, age, &Vec::<MideRenderElement>::new(), [0.0, 0.0, 0.0, 1.0])?;
             dump_frame_if_requested(renderer, framebuffer, output)?;
             return Ok((result.sync, result.damage.cloned()));

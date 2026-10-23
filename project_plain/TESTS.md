@@ -220,11 +220,22 @@ WAYLAND_DISPLAY=mide-0 GDK_BACKEND=wayland gnome-calculator
 ## Bateria automática de interface
 
 ```bash
-cargo build
-tests/ui.sh        # 20 cenários de janelas, controles, popups e dock
-tests/smoke.sh     # protocolo, digitação no buscador, ausência de panics
-cargo test         # 22 testes unitários
+cargo build --bins --examples
+tests/ui.sh               # todas as seções, 6 ao mesmo tempo (uns 400 cenários)
+tests/ui.sh captura dock  # só as seções com "captura" ou "dock" no nome
+tests/ui.sh -l            # lista as seções (tests/ui/NN-*.sh)
+tests/smoke.sh            # protocolo, digitação no buscador, ausência de panics
+cargo test
 ```
+
+Bateria em seções (2026-10-23, pedido do usuário: testes mais rápidos e objetivos):
+cada seção é um arquivo `tests/ui/NN-nome.sh` com as funções de `tests/ui/comum.sh`, e
+roda num processo próprio, com socket (`mide-ui-NN-nome`), saída e configuração
+próprios; as seções rodam em paralelo (`-j N`). O cenário termina quando o compositor
+registra `autoteste: roteiro concluído` (mais 1,5 s, `SCENARIO_GRACE`), em vez de esperar
+10 s fixos; `SCENARIO_WAIT` fixa a espera nos cenários que esperam algo depois do
+roteiro. Em cada passo, rodar só as seções afetadas; a bateria inteira antes de juntar
+trabalhos grandes no master.
 
 Para um roteiro próprio: `tests/scenario.sh "400 list; 410 click 103 33; 450 list" -- foot`.
 
@@ -792,6 +803,7 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
    - Launcher: rolar as páginas dentro de uma pasta, painel com uma moldura só.
    - Bloqueio: Super+L (no estilo Mac, Ctrl+⌘+Q; Ctrl+L e ⌘L não bloqueiam), digitar rápido, senha certa desbloqueia com um e com dois monitores, a tela apaga sozinha e acende com uma tecla.
    - Captura de tela (Print): Salvar e Copiar pelos botões, por Ctrl+S/Ctrl+C e por ⌘S/⌘C no estilo Mac; aparece o aviso; o arquivo fica em Imagens/Capturas de tela.
+   - Apps na GPU (A25): `data/mide-conferir` dentro da sessão diz "apps Wayland na GPU"; OBS com "Captura de tela (PipeWire)" mostrando o monitor e sem `llvmpipe` no log; `chrome://gpu` acelerado.
    - Desempenho (A17): mexer o mouse e usar o VS Code; uso de CPU do mide no `htop` (antes ~3,7% de um núcleo). Cursor de hardware: troca de forma (texto, redimensionar), passa de um monitor para o outro, volta depois de apagar a tela e de trocar de VT.
 6. Se algo der errado: log em `~/.local/state/mide/sessao.log` (o anterior em `sessao.log.anterior`). Para voltar ao comportamento antigo do A17: `MIDE_SW_CURSOR=1` (cursor desenhado) e `MIDE_FULL_DAMAGE=1` (tela inteira a cada quadro), exportados no `mide-session` antes do `exec`.
 - `tests/ui.sh`: "botão de ligar pergunta antes de desligar" (`key power` abre a confirmação da barra) e "botão de ligar com a tela bloqueada não abre a confirmação".
@@ -857,3 +869,12 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - E1b (terminal: grade, quadros, powerline e Nerd Fonts): `cargo test --lib terminal::boxdraw` (8 testes, em células de 6x12 a 15x31: todos os caracteres de U+2500–U+259F e U+E0B0–U+E0BF desenhados; a linha que sai pela direita de ─ ┌ └ ├ ┬ ┴ ┼ ╶ ╭ ╰ entra pela esquerda do vizinho nos mesmos pixels (fina, grossa e dupla), e o mesmo de cima para baixo; ─ e │ sem falha de borda a borda, ┼ fechado, ╬ com o meio vazio; ═ com duas linhas e a fresta; arcos saindo nas colunas e linhas do │ e do ─; tracejados com o número certo de traços; █ cheio, ▀+▄, ▌+▐ e os quadrantes complementares sem sobra nem fresta, oitavos crescendo da base, ▒ translúcido; setas do powerline com a coluna da borda inteira e a ponta no meio da outra borda, meios-círculos e cantos), `cargo test --lib ui::text` (monoespaçada do sistema; negrito e itálico sempre da família escolhida, com avanço igual à célula, nas fontes instaladas: "j", "P", "o", "M"; a Cousine Nerd Font aparece na lista de fontes e as proporcionais não; letras dentro da célula e na mesma linha de base, em 10, 13, 17 e 24 pontos; ícones da Nerd Font (pasta, Vim, Git, Rust, Ubuntu, um da faixa F0000) dentro de uma célula ou de duas, sem passar da altura da linha), `cargo test --lib terminal::width` (quadros, blocos, powerline e ícones contam uma célula, como no wcwidth) e `cargo test --bin mide-terminal` (`espaco_de_cada_celula`: largo e ícone com espaço depois têm duas células; ícone com letra depois, no fim da linha ou antes de um largo, uma). `tests/ui.sh`, seção `== terminal: grade, quadros, powerline e ícones (E1b)` (4 verificações, uns 2 minutos): o Terminal roda `tests/data/terminal/amostra-grade.sh` e `tests/data/terminal/conferir-grade.py` confere o quadro (grade achada pelos 10 blocos vermelhos; blocos sem nenhum pixel de fresta; uma linha de pixels azul de ponta a ponta do ──────────; uma coluna verde contínua em │├│; nenhum pixel do fundo entre o verde, a seta e o azul do powerline, a coluna da esquerda da seta toda verde e a ponta na borda direita; o centro da tinta de cada "i" em negrito a ±1 pixel do normal; o ícone seguido de espaço dentro das duas células, o seguido de letra dentro da sua, os dois dentro da altura da linha), com a fonte padrão em 13 e 17 e com a Cousine Nerd Font e a CodeNewRoman Nerd Font Mono em 15 (puladas se não instaladas; sem nenhuma Nerd Font, os ícones não são conferidos). Com o código anterior, o mesmo conferidor acusava blocos com frestas, │ sem se encontrar, 132 a 608 pixels do fundo no powerline, seta sem encostar, negrito fora da grade (CodeNewRoman: "i" em negrito de outra fonte) e ícones fora da célula. Rodar só a seção: o cabeçalho do `tests/ui.sh` (até antes de `== barra superior`) mais a seção, com um `MIDE_TEST_SOCKET` próprio.
 - Visual (E1b): `nvim --clean -u <arquivo>` com `vsplit`, uma `statusline` com setas do powerline (`nr2char(0xe0b0)`) e linhas com quadros arredondados e ícones (`nr2char(0xe5ff)` etc.), no Terminal com a fonte padrão e com a Cousine Nerd Font (pelo `terminal.toml` num `XDG_CONFIG_HOME` de teste): divisor vertical contínuo, setas encostando nas cores vizinhas, ícones da Nerd Font (e não de outra fonte com algo na área privada, como a Material Icons) com espaço antes do nome.
 - Manual (sessão de verdade, E1b): o `nvim` do usuário com Neo-tree e lualine e o prompt do bash com powerline, com a fonte padrão e com uma Nerd Font escolhida nas Preferências do Terminal (agora também as Nerd Fonts sem "Mono" no nome): linhas do Neo-tree e bordas de janelas flutuantes contínuas, setas da lualine encostadas, nomes sem espaços no meio (também os em negrito), ícones inteiros.
+
+## Apps na GPU e captura por dmabuf (A25)
+
+- `cargo test`: `screencopy::tests` (buffer dmabuf do tamanho e formato certos; retângulos do blit com e sem a inversão do winit).
+- `tests/ui.sh` (pulado sem render node ou com `MIDE_TEST_BACKEND=winit`): "app Wayland com OpenGL na GPU pelo linux-dmabuf" (`eglinfo -B -p wayland` sem llvmpipe e "linux-dmabuf anunciado" no log); "captura por dmabuf (linear, modificador da placa e região) igual ao grim" (exemplo `mide-screencopy-dmabuf` com `--linear`, sem ele e com `--region 40,40,300,420`, comparados ao `grim` tirado antes e depois); o mesmo em escala 1,25 (região em pixels, 375x525; o `grim` arredonda a altura da tela para 767); "MIDE_NO_DMABUF=1 desliga o linux-dmabuf e o grim continua"; "app X11 com OpenGL na GPU pelo XWayland" (`glxinfo -B`).
+- Manual (máquina do trabalho, sem portal nem OBS): `WAYLAND_DEBUG=1 es2gears_wayland` mostra `zwp_linux_buffer_params_v1.create_immed`; `glxgears` pelo `DISPLAY` do XWayland a ~58 quadros/s; exemplo com cada modificador da tabela (`--modifiers`: linear, X-tiled, Y-tiled e os comprimidos CCS da Intel) igual ao `grim`.
+- winit sem abrir janela na tela: um mide em winit aberto **dentro** de um mide de teste sem tela (`MIDE_BACKEND=winit MIDE_SOCKET=mide-test-a25-in mide` com `WAYLAND_DISPLAY` do mide de teste). A captura por dmabuf do mide de dentro saiu igual ao recorte da janela dele no quadro do mide de fora (a verdade), também depois de um `grim`; sem a correção, o primeiro `grim` derrubava o desenho do winit ("context lost"). O `grim` no winit aninhado sai de cabeça para baixo, igual antes do A25 (ver ANNOTATIONS).
+- Manual (sessão de verdade, depois do `data/mide-atualizar`): `data/mide-conferir` dentro da sessão diz "apps Wayland na GPU"; o log da sessão tem "linux-dmabuf anunciado: placa renderD128"; OBS (Flatpak) → log sem `llvmpipe` nem `Unable to open DRM render node`, uso de CPU parado bem abaixo dos ~27% de antes, e "Captura de tela (PipeWire)" mostrando o monitor (também gravando); Chrome/Brave no Wayland → `chrome://gpu` com aceleração; `vkcube` se houver; gravação ⌘⇧5 e `grim` como antes; um app X11 (glxgears) pelo XWayland. Se algo der errado com o driver: `MIDE_NO_DMABUF=1` exportado antes do mide volta ao comportamento antigo.
+

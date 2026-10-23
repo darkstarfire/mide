@@ -121,6 +121,8 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
     let (drm, drm_notifier) = open_drm(&fd)?;
     let gbm = GbmDevice::new(fd.clone())?;
+    // Render node da placa (anunciado aos apps no linux-dmabuf).
+    let node = crate::dmabuf::render_node(&fd);
 
     // GPU: EGL sobre o GBM e o renderizador GLES (o mesmo tipo do winit, então a cena é igual).
     // SAFETY: o display EGL guarda uma cópia do dispositivo GBM, que fica vivo com ele.
@@ -135,6 +137,18 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     let scene = Scene::new(&mut renderer, state)?.with_cursor();
     let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64) }));
     state.session = Some(session.clone());
+    // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador. Só a
+    // tranche principal; a de scanout por superfície fica para o scanout direto (A18).
+    {
+        let node = node.or_else(|| crate::dmabuf::render_node_of_egl(gpu.borrow().renderer.egl_context().display()));
+        let importer = gpu.clone();
+        crate::dmabuf::setup(
+            state,
+            &gpu.borrow().renderer,
+            node,
+            crate::dmabuf::access(importer, |g: &mut Gpu| &mut g.renderer),
+        );
+    }
 
     {
         use smithay::reexports::drm::{Device as _, DriverCapability};

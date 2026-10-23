@@ -96,8 +96,19 @@ if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
     else
         aviso "apps GTK com o tema $tema: saia e entre de novo na sessão do mide"
     fi
+    # Apps na GPU (A25): sem o linux-dmabuf do compositor, caem no llvmpipe.
+    if command -v eglinfo >/dev/null; then
+        placa="$(eglinfo -B -p wayland 2>/dev/null | grep -m1 'OpenGL ES profile renderer' | sed 's/.*renderer: //')"
+        case "$placa" in
+            "") aviso "eglinfo não respondeu (apps na GPU não conferidos)" ;;
+            *llvmpipe*|*softpipe*) falta "apps Wayland sem a GPU ($placa): veja \"linux-dmabuf\" no log da sessão" ;;
+            *) ok "apps Wayland na GPU ($placa)" ;;
+        esac
+    else
+        aviso "eglinfo: sudo apt install mesa-utils (para conferir se os apps usam a GPU)"
+    fi
 else
-    printf '  (fora da sessão do mide: o tema dos apps GTK só é conferido dentro dela)\n'
+    printf '  (fora da sessão do mide: o tema dos apps GTK e a GPU dos apps só são conferidos dentro dela)\n'
 fi
 
 echo "== log da sessão"

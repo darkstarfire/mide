@@ -24,15 +24,25 @@ As anotações têm as lições já aprendidas: leia antes de mexer numa área.
 - **O usuário é desenvolvedor Go aprendendo Rust:** ao explicar código ou erros,
   compare com Go (trait ≈ interface, `?` ≈ `if err != nil`, `Option` ≈ nil, canais) e
   explique posse/empréstimo (ownership) quando aparecer.
-- **Commit e push depois de cada passo terminado**, só com a bateria passando.
+- **Commit e push depois de cada passo terminado**, com os testes do passo passando.
+- **Foco em implementar; testes objetivos** (pedido do usuário em 2026-10-23: "estamos
+  evoluindo muito lentamente"): em cada passo, `cargo test`, `clippy` e só as seções
+  da bateria que o passo afeta (`tests/ui.sh captura dock`), mais os cenários novos do
+  passo. A bateria inteira (paralela, minutos) só antes de juntar trabalhos grandes no
+  master ou quando a mudança mexe em algo comum a tudo (compositor, mide-ui).
 
 ## Testes
 
-- `cargo test`, `cargo clippy --all-targets` e a bateria `tests/ui.sh` (uns 200
-  cenários, perto de uma hora). Rodar a bateria **sozinha**: nada de `cargo build` nem
-  de editar `tests/ui.sh` enquanto ela roda (o bash lê o script aos poucos e os
-  cenários usam os binários de `target/debug`). Cenários em paralelo só com
-  `MIDE_TEST_SOCKET` e `SCENARIO_OUT` próprios.
+- `cargo test`, `cargo clippy --all-targets` e a bateria `tests/ui.sh`: seções em
+  `tests/ui/NN-*.sh` rodando em paralelo (`-j 6` por padrão), cada uma com socket,
+  saída e configuração próprios; `tests/ui.sh -l` lista, `tests/ui.sh dock` roda só as
+  seções com "dock" no nome. Seção nova para uma área nova; seções grandes divididas
+  (a mais longa define o tempo total). O cenário acaba quando o compositor registra
+  "autoteste: roteiro concluído" (mais `SCENARIO_GRACE`, 1,5 s); `SCENARIO_WAIT` só
+  em cenário que espera algo depois do roteiro.
+- Enquanto a bateria roda: nada de `cargo build` nem de editar `tests/ui.sh` ou
+  `tests/ui/*.sh` (o bash lê os scripts aos poucos e os cenários usam os binários de
+  `target/debug`).
 - Não rodar o nvim com a configuração do usuário nos testes (`nvim --clean -u ...`).
 - Não tocar na configuração real (`~/.config/mide`); a bateria confere isso no fim.
 - `pkill -f "texto"` casa com o próprio comando que contém o texto: use

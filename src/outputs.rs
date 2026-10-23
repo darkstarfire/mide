@@ -80,6 +80,7 @@ pub fn sweep_globals(state: &mut crate::state::State) {
 /// e, se a principal mudou, barra e dock reabertas nela.
 pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) {
     use smithay::desktop::layer_map_for_output;
+    state.screencopy.fail_outputs(|o| !live.contains(o));
     for output in state.space.outputs().cloned().collect::<Vec<_>>() {
         if !live.contains(&output) {
             tracing::info!("tela {} saiu", output.name());

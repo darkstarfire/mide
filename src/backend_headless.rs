@@ -69,6 +69,8 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
         .open(&path)
         .map_err(|e| format!("sem acesso a {path}: {e}"))?;
     let fd = DrmDeviceFd::new(DeviceFd::from(std::os::fd::OwnedFd::from(file)));
+    // O fd já é um render node: é a placa anunciada aos apps no linux-dmabuf.
+    let node = crate::dmabuf::render_node(&fd);
     let gbm = GbmDevice::new(fd)?;
     // SAFETY: o display EGL guarda uma cópia do dispositivo GBM, que fica vivo com ele.
     let egl = unsafe { EGLDisplay::new(gbm)? };
@@ -90,6 +92,16 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
         .collect();
     let scene = Scene::new(&mut renderer, state)?;
     let gpu = Rc::new(RefCell::new(Gpu { renderer, scene, heads }));
+    // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador.
+    {
+        let importer = gpu.clone();
+        crate::dmabuf::setup(
+            state,
+            &gpu.borrow().renderer,
+            node,
+            crate::dmabuf::access(importer, |g: &mut Gpu| &mut g.renderer),
+        );
+    }
     refresh_heads(&mut gpu.borrow_mut(), state)?;
     tracing::info!("saída sem tela criada ({} tela(s), {path})", sizes.len());
 

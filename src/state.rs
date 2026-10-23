@@ -276,6 +276,8 @@ pub struct State {
     pub bar_request: Option<&'static str>,
     /// Capturas de tela pedidas pelos apps (`wlr-screencopy`).
     pub screencopy: crate::screencopy::Screencopy,
+    /// Buffers dos apps na GPU (`linux-dmabuf`, A25): anunciado pelo backend.
+    pub dmabuf: crate::dmabuf::Dmabufs,
     /// Pedidos dos apps para trazer uma janela para a frente (`xdg-activation`).
     pub xdg_activation_state: smithay::wayland::xdg_activation::XdgActivationState,
     /// Estado da decoração de servidor (barra de título). Guardado para manter o global vivo.
@@ -414,6 +416,7 @@ impl State {
             resumed: false,
             bar_request: None,
             screencopy: Default::default(),
+            dmabuf: Default::default(),
             xdg_activation_state,
             decoration_state,
             title_press: false,

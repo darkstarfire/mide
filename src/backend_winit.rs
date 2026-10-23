@@ -105,6 +105,19 @@ pub fn init(
     let continuous = selftest.borrow().is_some();
     // A janela do anfitrião é usada também pelo relógio de reserva (pedir quadros).
     let backend = std::rc::Rc::new(std::cell::RefCell::new(backend));
+    // Buffers dos apps na GPU (linux-dmabuf), se o EGL do desktop de baixo disser qual
+    // é a placa (sem isso, o mide em janela fica sem o protocolo: é só desenvolvimento).
+    {
+        let mut host = backend.borrow_mut();
+        let node = crate::dmabuf::render_node_of_egl(host.renderer().egl_context().display());
+        let importer = backend.clone();
+        crate::dmabuf::setup(
+            state,
+            host.renderer(),
+            node,
+            crate::dmabuf::access(importer, |b: &mut winit::WinitGraphicsBackend<GlesRenderer>| b.renderer()),
+        );
+    }
     {
         let (ping, source) = smithay::reexports::calloop::ping::make_ping()?;
         let host = backend.clone();
@@ -226,10 +239,16 @@ fn render(
     if sim_drm() {
         render_sim_drm(backend, output, damage_tracker, state, scene)?;
     } else {
+        let size = backend.window_size();
         let (renderer, mut framebuffer) = backend.bind()?;
         // O `submit` do winit troca os buffers depois do desenho terminar (como antes da
         // cena ter saído daqui): o ponto de sincronização fica sem uso.
         let _sync = scene.render(renderer, &mut framebuffer, output, damage_tracker, state, 0)?;
+        // As capturas atendidas no quadro (leitura dos pixels, cópia para dmabuf, gravação)
+        // deixam o contexto do EGL sem a janela: sem religar, a troca de buffers falha.
+        if state.screencopy.served_this_frame() || state.recording.is_some() {
+            crate::screencopy::reattach_window(renderer, &mut framebuffer, size);
+        }
     }
     // Apresenta o quadro inteiro. Com dano parcial, o buffer de trás pode ter pixels
     // de quadros antigos, e a diferença aparece como padrão pontilhado nas sombras.

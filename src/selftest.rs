@@ -80,6 +80,11 @@ impl SelfTest {
         for step in due {
             run(state, step, frame);
         }
+        // O tests/scenario.sh espera esta linha para encerrar o cenário logo depois do
+        // último passo, em vez de esperar um tempo fixo.
+        if self.steps.iter().map(|(f, _)| *f).max() == Some(frame) {
+            tracing::info!("autoteste: roteiro concluído");
+        }
     }
 }
 
