@@ -10,10 +10,12 @@
 //! - [`session`]: abas e painéis guardados para reabrir a janela como estava;
 //! - [`integration`]: scripts do bash e do zsh que marcam prompts e comandos;
 //! - [`graphics`]: imagens Sixel e do kitty;
+//! - [`boxdraw`]: linhas de quadro, blocos e powerline desenhados na célula;
 //! - [`tmux`]: o protocolo do modo de controle do tmux (`tmux -CC`).
 //!
 //! A janela (`mide-terminal`) junta as partes e desenha as células com o mide-ui.
 
+pub mod boxdraw;
 pub mod graphics;
 pub mod integration;
 pub mod keys;

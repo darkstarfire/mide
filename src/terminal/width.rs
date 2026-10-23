@@ -185,6 +185,16 @@ mod tests {
     }
 
     #[test]
+    fn quadros_blocos_powerline_e_icones_ocupam_uma_celula() {
+        // Como no wcwidth (e no Neovim, no bash e no tmux): ícones da Nerd Font (área
+        // privada) contam uma célula; o desenho é que pode se estender sobre o espaço
+        // seguinte. Contar dois desalinharia a tela com o programa.
+        for c in ['─', '│', '╭', '╬', '▀', '█', '░', '\u{E0B0}', '\u{E0B6}', '\u{E5FF}', '\u{F115}', '\u{F0219}'] {
+            assert_eq!(char_width(c), 1, "{c:?}");
+        }
+    }
+
+    #[test]
     fn tabelas_em_ordem() {
         for table in [ZERO, WIDE] {
             assert!(table.windows(2).all(|w| w[0].1 < w[1].0));

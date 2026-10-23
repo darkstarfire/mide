@@ -36,6 +36,7 @@ use mide::{
     },
     ui::text::{FontWeight, Text},
 };
+use mide::terminal::boxdraw;
 use tiny_skia::{Paint, Pixmap, Rect as SkRect, Transform};
 
 /// Margem em volta do texto de cada painel.
@@ -1917,7 +1918,9 @@ fn draw_pane(
     // Duas passadas: primeiro todos os fundos, depois todas as letras. Letras em
     // itálico ou negrito passam um pouco da célula (para o lado e para baixo); se o
     // fundo da célula seguinte viesse depois, ele apagaria esse pedaço ("d" virava "a").
-    let mut glyphs: Vec<(f32, f32, f32, (u64, usize), &mide::terminal::screen::Cell, Rgb, bool)> = Vec::new();
+    // (x, y, largura, posição, célula, cor, cursor aqui, espaço para o desenho)
+    type Glyph<'a> = (f32, f32, f32, (u64, usize), &'a mide::terminal::screen::Cell, Rgb, bool, f32);
+    let mut glyphs: Vec<Glyph> = Vec::new();
     for y in 0..term.rows() {
         let row = term.visible_row(y, scroll);
         let abs = term.visible_abs(y, scroll);
@@ -1966,16 +1969,26 @@ fn draw_pane(
             if bg != background {
                 fill(pixmap, px, py, width, cell.1, bg);
             }
-            glyphs.push((px, py, width, at, c, fg, at_cursor));
+            // O cursor de bloco inverte as cores de uma célula só: o ícone na célula
+            // do cursor, ou logo antes dela, fica na própria célula para não ter
+            // metade invisível (cor do fundo sobre o fundo) ou pintada sobre o bloco.
+            let block_cursor = show_cursor && term.cursor_shape == CursorShape::Block && y == cursor_row;
+            let near_cursor = block_cursor && (x == cursor_col || x + 1 == cursor_col);
+            let room = glyph_room(c, row.cells.get(x + 1), cell.0, near_cursor);
+            glyphs.push((px, py, width, at, c, fg, at_cursor, room));
         }
     }
-    for (px, py, width, at, c, fg, at_cursor) in glyphs {
+    for (px, py, width, at, c, fg, at_cursor, room) in glyphs {
         if c.c != ' ' && c.pen.attr & attr::HIDDEN == 0 {
             let rgba = [fg[0], fg[1], fg[2], 255];
             let (bold, italic) = (c.pen.attr & attr::BOLD != 0, c.pen.attr & attr::ITALIC != 0);
-            let mut buf = [0u8; 4];
-            let s = if c.combining.is_some() { c.text() } else { c.c.encode_utf8(&mut buf).to_string() };
-            text.draw_mono_styled(pixmap, &s, px, py + 1.0, font, rgba, bold, italic);
+            // Quadros, blocos e powerline: desenhados na célula, sem a fonte.
+            let drawn = c.combining.is_none() && boxdraw::mask(c.c, cell.0 as u32, cell.1 as u32).map(|m| paint_mask(pixmap, &m, (px, py), fg)).is_some();
+            if !drawn {
+                let mut buf = [0u8; 4];
+                let s = if c.combining.is_some() { c.text() } else { c.c.encode_utf8(&mut buf).to_string() };
+                text.draw_cell(pixmap, &s, (px, py), cell, room, font, rgba, bold, italic);
+            }
         }
         if at_cursor {
             let color = term.cursor_color();
@@ -2007,6 +2020,47 @@ fn draw_pane(
         let bar = (term.rows() as f32 / total * track).max(24.0);
         let top = (history - scroll) as f32 / (total - term.rows() as f32) * (track - bar);
         fill(pixmap, x0 + w - 7.0, y0 + 4.0 + top, 4.0, bar, [150, 150, 158]);
+    }
+}
+
+/// Largura disponível para o desenho de uma célula: duas células para os caracteres
+/// largos e para os ícones da Nerd Font seguidos de uma célula livre (o ícone que não
+/// cabe numa célula se estende sobre o espaço, como fazem os outros terminais; com a
+/// seguinte ocupada, ele é reduzido à célula). Com `near_cursor` (o cursor de bloco
+/// está na célula ou na seguinte), o ícone também fica numa célula só, porque o bloco
+/// inverte as cores de uma célula e o ícone esticado ficaria metade de cada jeito.
+fn glyph_room(c: &mide::terminal::screen::Cell, next: Option<&mide::terminal::screen::Cell>, cell_w: f32, near_cursor: bool) -> f32 {
+    let free = |n: &mide::terminal::screen::Cell| n.c == ' ' && n.wide == Wide::No && n.combining.is_none();
+    if c.wide == Wide::Lead || (!near_cursor && mide::ui::text::is_icon(c.c) && next.is_some_and(free)) {
+        2.0 * cell_w
+    } else {
+        cell_w
+    }
+}
+
+/// Pinta a cor `fg` com a cobertura da máscara (desenho de `boxdraw`) na célula com
+/// o canto em `(x, y)`.
+fn paint_mask(pixmap: &mut Pixmap, mask: &boxdraw::Mask, (x, y): (f32, f32), fg: Rgb) {
+    let (x0, y0) = (mide::ui::draw::px(x), mide::ui::draw::px(y));
+    let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+    let data = pixmap.data_mut();
+    for my in 0..mask.h as i32 {
+        let ty = y0 + my;
+        if ty < 0 || ty >= ph {
+            continue;
+        }
+        for mx in 0..mask.w as i32 {
+            let tx = x0 + mx;
+            let a = mask.data[(my * mask.w as i32 + mx) as usize] as u32;
+            if a == 0 || tx < 0 || tx >= pw {
+                continue;
+            }
+            let o = ((ty * pw + tx) * 4) as usize;
+            for k in 0..3 {
+                data[o + k] = ((fg[k] as u32 * a + data[o + k] as u32 * (255 - a)) / 255) as u8;
+            }
+            data[o + 3] = (a + data[o + 3] as u32 * (255 - a) / 255).min(255) as u8;
+        }
     }
 }
 
@@ -2421,13 +2475,12 @@ fn mac_style() -> bool {
     matches!(mide::settings_file::get("keyboard", "mac_style"), Some(mide::settings_file::Value::Bool(true)))
 }
 
-/// Tamanho de uma célula na fonte de largura fixa (largura média de 10 letras,
-/// arredondada para as colunas caírem em pixels inteiros).
+/// Tamanho de uma célula na fonte de largura fixa (o avanço da fonte e a altura da
+/// linha, arredondados para as colunas e linhas caírem em pixels inteiros).
 fn cell_size(font: f32, family: &str) -> (f32, f32) {
     let text = &mut Text::new();
     text.set_mono_family(Some(family));
-    let width = text.measure_mono("MMMMMMMMMM", font) / 10.0;
-    (width.max(1.0).round(), (font * 1.3).round())
+    text.mono_cell(font)
 }
 
 // ---- Preferências ----
@@ -2819,5 +2872,26 @@ mod tests {
     fn milhar() {
         assert_eq!(group(1000), "1.000");
         assert_eq!(group(100000), "100.000");
+    }
+
+    #[test]
+    fn espaco_de_cada_celula() {
+        use mide::terminal::screen::Cell;
+        let cell = |c: char| Cell { c, ..Cell::default() };
+        let wide = Cell { c: '漢', wide: Wide::Lead, ..Cell::default() };
+        // Largos: duas células; ícone da Nerd Font com espaço depois: até duas.
+        assert_eq!(glyph_room(&wide, Some(&Cell { wide: Wide::Spacer, ..Cell::default() }), 9.0, false), 18.0);
+        assert_eq!(glyph_room(&cell('\u{e5ff}'), Some(&cell(' ')), 9.0, false), 18.0);
+        // Ícone com letra depois, no fim da linha ou antes de um largo: uma só.
+        assert_eq!(glyph_room(&cell('\u{e5ff}'), Some(&cell('x')), 9.0, false), 9.0);
+        assert_eq!(glyph_room(&cell('\u{e5ff}'), None, 9.0, false), 9.0);
+        assert_eq!(glyph_room(&cell('\u{f0219}'), Some(&wide), 9.0, false), 9.0);
+        // Letras e símbolos comuns: uma.
+        assert_eq!(glyph_room(&cell('a'), Some(&cell(' ')), 9.0, false), 9.0);
+        assert_eq!(glyph_room(&cell('─'), Some(&cell(' ')), 9.0, false), 9.0);
+        // Cursor de bloco no ícone ou no espaço seguinte: o ícone fica numa célula,
+        // mas o caractere largo continua com as duas (o bloco cobre as duas).
+        assert_eq!(glyph_room(&cell('\u{e5ff}'), Some(&cell(' ')), 9.0, true), 9.0);
+        assert_eq!(glyph_room(&wide, Some(&Cell { wide: Wide::Spacer, ..Cell::default() }), 9.0, true), 18.0);
     }
 }
