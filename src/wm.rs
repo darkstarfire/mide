@@ -32,6 +32,9 @@ pub fn cascade_position(index: usize) -> Point<i32, Logical> {
 /// Marca de janela já conferida para o efeito lâmpada de abrir.
 struct OpenChecked;
 
+/// Marca do seletor de arquivos já posto no meio da tela.
+struct CenterChecked;
+
 impl State {
     /// Janela nova (pedido `xdg_toplevel`): configure inicial, número fixo, posição em
     /// cascata e foco.
@@ -419,6 +422,38 @@ impl State {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         crate::input::focus_window(self, &window, serial);
         tracing::info!("janela restaurada");
+    }
+
+    /// Seletor de arquivos dos apps (`mide-chooser`, B25): no primeiro quadro com
+    /// conteúdo, vai para o meio da área útil da tela, como um diálogo (ele ainda não
+    /// se liga à janela do app que pediu).
+    pub(crate) fn center_dialog_once(&mut self, window: &Window) {
+        if window.geometry().size.w <= 0 {
+            return;
+        }
+        let Some(toplevel) = window.toplevel().cloned() else {
+            return;
+        };
+        let app_id = with_states(toplevel.wl_surface(), |s| {
+            s.data_map
+                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
+        })
+        .unwrap_or_default();
+        if app_id != "mide-chooser" {
+            return;
+        }
+        if !with_states(toplevel.wl_surface(), |s| s.data_map.insert_if_missing_threadsafe(|| CenterChecked)) {
+            return;
+        }
+        let Some(area) = self.area_for(window) else {
+            return;
+        };
+        let size = window.geometry().size;
+        let x = area.loc.x + (area.size.w - size.w).max(0) / 2;
+        let y = area.loc.y + bar_height_for(window) + (area.size.h - size.h - bar_height_for(window)).max(0) / 2;
+        self.space.map_element(window.clone(), (x, y), true);
+        tracing::info!("seletor de arquivos no meio da tela em ({x}, {y})");
     }
 
     /// Primeira janela com conteúdo de um app aberto pela dock: sai do ícone dele com o

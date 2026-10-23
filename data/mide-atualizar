@@ -45,6 +45,17 @@ mkdir -p "$(dirname "$portal_wlr")"
 printf '[screencast]\nchooser_type=simple\nchooser_cmd=%s\n' "$PWD/target/release/mide-screencast-picker" > "$portal_wlr"
 command -v xdg-desktop-portal-wlr >/dev/null || [ -x /usr/libexec/xdg-desktop-portal-wlr ] ||
     echo "aviso: para gravar a tela (OBS), instale o xdg-desktop-portal-wlr (sudo apt install xdg-desktop-portal-wlr)"
+# Seletor de arquivos do mide nos apps (portal FileChooser, B25): ativação pelo D-Bus
+# do backend, se o portal pedir antes de o compositor iniciar o mide-portal. Seguro em
+# outras sessões: o xdg-desktop-portal só chama este nome com XDG_CURRENT_DESKTOP=mide
+# (mide-portals.conf). O FileManager1 ("Mostrar na pasta") não tem arquivo de ativação
+# de propósito: só o compositor do mide pede o nome, e só na sessão do mide.
+servicos="${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services"
+mkdir -p "$servicos"
+printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.mide\nExec=%s --portal-only\n' "$PWD/target/release/mide-portal" \
+    > "$servicos/org.freedesktop.impl.portal.desktop.mide.service"
+[ -f /usr/share/xdg-desktop-portal/portals/mide.portal ] ||
+    echo "nota: o seletor de arquivos do mide vale ao entrar de novo na sessão (ou com $0 --tudo); para não depender da pasta de portais montada pela sessão: sudo install -m644 data/xdg-desktop-portal/portals/mide.portal /usr/share/xdg-desktop-portal/portals/"
 command -v ffmpeg >/dev/null ||
     echo "aviso: para gravar a tela em vídeo pelo mide, instale o ffmpeg (sudo apt install ffmpeg)"
 if [ "${1:-}" = "--tudo" ]; then

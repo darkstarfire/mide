@@ -71,6 +71,52 @@ else
     falta "configuração do portal wlr: rode data/mide-atualizar"
 fi
 
+echo "== apps do mide como padrão (B25)"
+mimes="${XDG_CONFIG_HOME:-$HOME/.config}/mide-mimeapps.list"
+if [ -f "$mimes" ]; then
+    ok "escolhas do mide em $mimes (só valem na sessão do mide)"
+else
+    aviso "$mimes ainda não existe (a sessão do mide cria ao entrar)"
+fi
+for tipo in inode/directory text/plain; do
+    app="$(env PATH="$PWD/target/release:$PATH" XDG_CURRENT_DESKTOP=mide XDG_DATA_DIRS="$PWD/data:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" \
+        gio mime "$tipo" 2>/dev/null | head -n 1 | sed 's/.*: //')"
+    case "$app" in
+        mide-*) ok "$tipo abre no $app na sessão do mide" ;;
+        "") aviso "$tipo sem app padrão na sessão do mide" ;;
+        *) aviso "$tipo abre no $app na sessão do mide (escolhido em Configurações → Apps padrão?)" ;;
+    esac
+done
+if [ -f /usr/share/xdg-desktop-portal/portals/mide.portal ]; then
+    ok "mide.portal instalado em /usr/share/xdg-desktop-portal/portals"
+else
+    aviso "mide.portal fora de /usr/share/xdg-desktop-portal/portals: a sessão monta uma pasta própria (XDG_DESKTOP_PORTAL_DIR)"
+fi
+[ -f "${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/org.freedesktop.impl.portal.desktop.mide.service" ] ||
+    falta "ativação do seletor de arquivos do mide: rode data/mide-atualizar"
+dono() {
+    pid="$(gdbus call --session -d org.freedesktop.DBus -o /org/freedesktop/DBus -m org.freedesktop.DBus.GetConnectionUnixProcessID "$1" 2>/dev/null | sed -n 's/.*uint32 \([0-9]*\).*/\1/p')"
+    [ -n "$pid" ] && cat "/proc/$pid/comm" 2>/dev/null
+}
+if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
+    gerenciador="$(dono org.freedesktop.FileManager1)"
+    case "$gerenciador" in
+        mide-portal) ok "\"Mostrar na pasta\" abre o Arquivos do mide (FileManager1 é do mide-portal)" ;;
+        "") falta "ninguém atende o FileManager1 (o mide-portal não iniciou? veja o log)" ;;
+        *) aviso "FileManager1 é do $gerenciador: o \"Mostrar na pasta\" abre nele (o mide-portal assume quando ele sair)" ;;
+    esac
+    pasta="$(systemctl --user show-environment 2>/dev/null | sed -n 's/^XDG_DESKTOP_PORTAL_DIR=//p')"
+    if [ -f /usr/share/xdg-desktop-portal/portals/mide.portal ] || [ -e "$pasta/mide.portal" ]; then
+        ok "o portal acha o seletor do mide"
+    else
+        falta "o portal não acha o mide.portal: saia e entre de novo na sessão (ou data/mide-atualizar --tudo)"
+    fi
+    [ -n "$(dono org.freedesktop.impl.portal.desktop.mide)" ] && ok "seletor de arquivos do mide no barramento" ||
+        aviso "seletor de arquivos do mide fora do barramento (inicia no primeiro pedido)"
+else
+    printf '  (fora da sessão do mide: quem atende o "Mostrar na pasta" e o seletor só é conferido dentro dela)\n'
+fi
+
 echo "== cotações de moedas (Calculadora)"
 if command -v curl >/dev/null; then
     ok "curl instalado (cotações do Banco Central)"

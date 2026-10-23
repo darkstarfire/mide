@@ -55,6 +55,13 @@ pub fn start(socket: &str) {
         mide::sounds::ensure_theme();
         mide::sounds::play("desktop-login");
     });
+    // Apps do mide como padrão da sessão (B25): pastas no Arquivos e textos no Editor,
+    // no `mide-mimeapps.list`, que só vale com XDG_CURRENT_DESKTOP=mide.
+    match mide::default_apps::ensure_session_defaults() {
+        Ok(written) if !written.is_empty() => tracing::info!("sessão: apps do mide como padrão de {}", written.join(", ")),
+        Ok(_) => {}
+        Err(err) => tracing::warn!("sessão: apps padrão do mide não gravados: {err}"),
+    }
     publish_environment(socket);
     hold_power_button();
     // Reiniciado pelo `restart all`: os apps automáticos que continuam vivos (os que
@@ -140,6 +147,13 @@ fn publish_environment(socket: &str) {
     if let Some(dirs) = crate::data_dirs() {
         vars.push(format!("XDG_DATA_DIRS={dirs}"));
     }
+    // Seletor de arquivos do mide no portal (B25): o `xdg-desktop-portal` só lê os
+    // `.portal` de /usr/share/xdg-desktop-portal/portals ou de XDG_DESKTOP_PORTAL_DIR.
+    // Sem o `mide.portal` instalado lá, a sessão monta uma pasta com links para os do
+    // sistema mais o do mide e publica a variável (tirada de novo ao sair: `stop`).
+    if let Some(dir) = portal_dir() {
+        vars.push(format!("XDG_DESKTOP_PORTAL_DIR={}", dir.display()));
+    }
     // Perfil do dconf da sessão (tema de ícones do mide, definido pelo `mide-session`) e
     // o tema do Qt: os serviços ativados (portais) também precisam deles.
     // O idioma (Configurações → Idioma e região, exportado pelo `mide-session`) também.
@@ -164,6 +178,55 @@ fn publish_environment(socket: &str) {
         Err(err) => tracing::warn!("sessão: systemctl indisponível: {err}"),
     }
 }
+
+/// Pasta de portais com o `mide.portal` (ver `mide::portal::portal_dir`), quando ele não
+/// está instalado no sistema.
+fn portal_dir() -> Option<PathBuf> {
+    let ours = crate::mide_data_dir()?.join("xdg-desktop-portal/portals/mide.portal");
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
+    let target = data_home.join("mide/xdg-desktop-portal/portals");
+    match mide::portal::portal_dir(Path::new("/usr/share/xdg-desktop-portal/portals"), &ours, &target) {
+        Ok(dir) => dir,
+        Err(err) => {
+            tracing::warn!("sessão: pasta de portais do mide não montada: {err}");
+            None
+        }
+    }
+}
+
+/// Fim da sessão: tira do systemd do usuário o que só vale no mide e que nenhum outro
+/// desktop redefine ao entrar (a pasta de portais) e para os portais que estão de pé
+/// com a configuração do mide: o `xdg-desktop-portal` reiniciado no `start` guarda no
+/// próprio ambiente `XDG_CURRENT_DESKTOP=mide` e a pasta de portais, e continuaria
+/// mandando o "Abrir…" do Cinnamon para o seletor do mide (que não abre sem Wayland).
+/// Parados, eles voltam por ativação do D-Bus com o ambiente da sessão seguinte. O
+/// `mide-session` repete isso depois que o mide sai, mesmo se ele cair.
+pub fn stop() {
+    if !active() {
+        return;
+    }
+    for args in cleanup_commands() {
+        let _ = Command::new(args[0]).args(&args[1..]).status();
+    }
+}
+
+/// Comandos do fim da sessão (ver `stop`), na ordem: primeiro a variável sai do systemd,
+/// depois os portais param (sem esperar: o systemd termina o serviço mesmo com o mide
+/// já fora) e o `mide-portal --portal-only` ativado pelo portal é encerrado.
+fn cleanup_commands() -> Vec<Vec<&'static str>> {
+    vec![
+        vec!["systemctl", "--user", "unset-environment", "XDG_DESKTOP_PORTAL_DIR"],
+        vec!["systemctl", "--user", "--no-block", "stop", "xdg-desktop-portal.service", "xdg-desktop-portal-gtk.service"],
+        // Colchetes no padrão: não casa com a linha de comando de quem chama o pkill.
+        vec!["pkill", "-TERM", "-u", USER_ID.as_str(), "-f", "[m]ide-portal --portal-only"],
+    ]
+}
+
+/// Usuário atual (para o `pkill` não mexer nos processos de outros usuários).
+static USER_ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| rustix::process::getuid().as_raw().to_string());
 
 /// Pastas de autostart, da mais importante para a menos: a do usuário e depois as do
 /// sistema (`XDG_CONFIG_DIRS`, padrão `/etc/xdg`).
@@ -258,6 +321,23 @@ fn program_exists(program: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fim_da_sessao_para_os_portais() {
+        let cmds = cleanup_commands();
+        assert_eq!(cmds[0], ["systemctl", "--user", "unset-environment", "XDG_DESKTOP_PORTAL_DIR"]);
+        // Parar sem esperar (`--no-block`), o portal e o do GTK (reiniciados no `start`).
+        assert!(cmds[1].starts_with(&["systemctl", "--user", "--no-block", "stop"]));
+        assert!(cmds[1].contains(&"xdg-desktop-portal.service"));
+        // O seletor ativado pelo D-Bus, só do usuário atual.
+        let pkill = &cmds[2];
+        assert_eq!(pkill[0], "pkill");
+        assert!(pkill.contains(&"-u"));
+        let pattern = pkill.last().unwrap();
+        // `[m]` casa com "m" no programa, mas não com a linha do próprio pkill.
+        assert_eq!(pattern.replace("[m]", "m"), "mide-portal --portal-only");
+        assert!(!pattern.contains("mide-portal"), "o padrão não pode casar com o próprio pkill");
+    }
 
     fn write(dir: &Path, name: &str, body: &str) {
         std::fs::create_dir_all(dir).unwrap();

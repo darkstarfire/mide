@@ -596,6 +596,7 @@ impl CompositorHandler for State {
         self.follow_toplevel_mapping(surface);
         if let Some(window) = self.window_for(surface) {
             window.on_commit();
+            self.center_dialog_once(&window);
             self.open_animation_if_launched(&window);
             self.offer_clipboard_on_first_frame(surface);
         }

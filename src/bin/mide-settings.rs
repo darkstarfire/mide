@@ -1163,7 +1163,7 @@ impl Settings {
         ui.note("Sem uso: o computador não suspende enquanto um app pede para a tela ficar acesa (vídeo). Apagar e bloquear a tela ficam em Bloqueio de tela.");
     }
 
-    /// App que abre cada tipo de arquivo (`~/.config/mimeapps.list`).
+    /// App que abre cada tipo de arquivo (`~/.config/mide-mimeapps.list`, só na sessão do mide).
     fn default_apps(&mut self, ui: &mut Ui) {
         ui.title("Apps padrão");
         // Por categoria: os apps que abrem o tipo (ids sem ".desktop"), os nomes e o
@@ -1212,7 +1212,7 @@ impl Settings {
         if rows.is_empty() {
             ui.note("Nenhum app instalado abre esses tipos de arquivo.");
         }
-        ui.note("Vale para o mide e para os outros apps (o mesmo mimeapps.list do GNOME e do Cinnamon).");
+        ui.note("Vale só na sessão do mide: outros desktops instalados (Cinnamon, GNOME) continuam com as escolhas deles.");
     }
 
     /// Avisa o compositor e relê os atalhos em uso.

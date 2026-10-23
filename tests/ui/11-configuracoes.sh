@@ -115,17 +115,20 @@ else
     echo "pulo  Idioma e região (os idiomas da lista não estão todos instalados)"
 fi
 # Apps padrão: só os apps de teste (XDG_DATA_DIRS próprio); "Navegador" em (783, 162),
-# com "Nenhum", "Navegador A" e "Navegador B" (y=253). Grava no mimeapps.list.
+# com "Nenhum", "Navegador A" e "Navegador B" (y=253). Grava no mide-mimeapps.list (B25: só
+# vale na sessão do mide); o mimeapps.list geral (Cinnamon, GNOME) fica como estava.
 APPS_DIR="$SCFG/apps-teste"
+printf '[Default Applications]\nx-scheme-handler/http=outro.desktop\n' >"$SCFG/mimeapps.list"
 mkdir -p "$APPS_DIR/applications"
 for n in A B; do printf '[Desktop Entry]\nType=Application\nName=Navegador %s\nExec=true\nMimeType=x-scheme-handler/http;text/html;\n' "$n" > "$APPS_DIR/applications/navegador-$(echo "$n" | tr AB ab).desktop"; done
 timeout 150 "$SCEN" "300 move 783 162; 310 press 783 162; 320 release 783 162; 370 click 700 253; 420 list" -- "XDG_DATA_DIRS='$APPS_DIR' XDG_DATA_HOME='$APPS_DIR' $SETTINGS default-apps" >/dev/null 2>&1
-if grep -q '^x-scheme-handler/http=navegador-b.desktop' "$SCFG/mimeapps.list" 2>/dev/null; then
-    echo "ok    Apps padrão: escolher o navegador grava no mimeapps.list"; PASS=$((PASS + 1))
+if grep -q '^x-scheme-handler/http=navegador-b.desktop' "$SCFG/mide-mimeapps.list" 2>/dev/null \
+    && [ "$(cat "$SCFG/mimeapps.list")" = "$(printf '[Default Applications]\nx-scheme-handler/http=outro.desktop')" ]; then
+    echo "ok    Apps padrão: escolher o navegador grava no mide-mimeapps.list (o geral fica igual)"; PASS=$((PASS + 1))
 else
-    echo "FALHA Apps padrão: escolher o navegador grava no mimeapps.list"; FAIL=$((FAIL + 1))
+    echo "FALHA Apps padrão: escolher o navegador grava no mide-mimeapps.list (o geral fica igual)"; FAIL=$((FAIL + 1))
 fi
-rm -rf "$APPS_DIR" "$SCFG/mimeapps.list"
+rm -rf "$APPS_DIR" "$SCFG/mimeapps.list" "$SCFG/mide-mimeapps.list"
 # "Vidro líquido" em (807, 505): grava no config.toml e a dock troca para o vidro clássico.
 check "Efeitos → Vidro líquido desligado: a dock volta ao vidro clássico" "vidro líquido na dock: desligado" "400 click 807 505; 480 list" "$SETTINGS effects"
 if grep -q "liquid_glass = false" "$SCFG/mide/config.toml"; then

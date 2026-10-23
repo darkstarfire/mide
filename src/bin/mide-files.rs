@@ -13,11 +13,16 @@
 //! mudam a seleção, Ctrl+N cria uma pasta, Ctrl+H mostra os ocultos, Ctrl+F busca,
 //! Ctrl+R renomeia, Ctrl+C copia, Ctrl+V cola e Ctrl+D duplica.
 //!
-//! Uso: `mide-files [pasta]` (ou `mide-files trash:///` para abrir a Lixeira).
+//! Uso: `mide-files [pasta]` (ou `mide-files trash:///` para abrir a Lixeira). Um
+//! arquivo abre a pasta dele com o arquivo escolhido. `mide-files --select a b ...`
+//! abre a pasta dos itens com eles escolhidos e `mide-files --info item` mostra as
+//! informações do item (o serviço `org.freedesktop.FileManager1` do `mide-portal`
+//! usa as duas: "Mostrar na pasta" dos navegadores). Aceita caminhos e `file://`.
 
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     sync::mpsc::{channel, Receiver, Sender},
     time::SystemTime,
@@ -34,7 +39,7 @@ use tiny_skia::Pixmap;
 /// Lado das miniaturas e dos ícones da grade.
 const TILE: u32 = 64;
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Place {
     Dir(PathBuf),
     Trash,
@@ -91,6 +96,11 @@ struct Files {
     jobs_tx: Sender<Result<PathBuf, String>>,
     jobs_rx: Receiver<Result<PathBuf, String>>,
     busy: usize,
+    /// Item que a lista ou a grade deve rolar até mostrar (aberto com `--select`, ou
+    /// escolhido pelo teclado).
+    reveal: Option<PathBuf>,
+    /// "Obter informações": o item e as linhas (rótulo, valor).
+    info: Option<(PathBuf, Vec<(&'static str, String)>)>,
 }
 
 impl Files {
@@ -144,6 +154,8 @@ impl Files {
             jobs_tx,
             jobs_rx,
             busy: 0,
+            reveal: None,
+            info: None,
             back: Vec::new(),
             forward: Vec::new(),
             entries: Vec::new(),
@@ -609,6 +621,7 @@ impl Files {
         let step: isize = moves.iter().filter(|(k, _)| input.key(*k)).map(|(_, d)| *d).sum();
         let (new, hidden, find, rename) = (input.shortcut("n"), input.shortcut("h"), input.shortcut("f"), input.shortcut("r"));
         let (copy, paste, dup, select_all) = (input.shortcut("c"), input.shortcut("v"), input.shortcut("d"), input.shortcut("a"));
+        let info = input.shortcut("i");
         if hidden {
             self.hidden = !self.hidden;
             self.reload();
@@ -622,8 +635,14 @@ impl Files {
             self.new_folder();
             ui.request_repaint();
         }
-        if ui.typing() || self.dialog.is_some() || self.open_with.is_some() {
+        if ui.typing() || self.dialog.is_some() || self.open_with.is_some() || self.info.is_some() {
             return;
+        }
+        if info {
+            if let Some(path) = self.primary().cloned() {
+                self.show_info(&path);
+                ui.request_repaint();
+            }
         }
         let current = self.primary().and_then(|s| shown.iter().position(|e| &e.path == s));
         if step != 0 && !shown.is_empty() {
@@ -632,6 +651,7 @@ impl Files {
                 None => 0,
             };
             self.select_one(shown[next].path.clone());
+            self.reveal = Some(shown[next].path.clone());
             ui.request_repaint();
         }
         // Ctrl+A: tudo o que está à mostra.
@@ -744,6 +764,8 @@ impl Files {
             self.list_view = list;
             if changed {
                 self.save_view();
+                // O item escolhido continua à vista na outra visualização.
+                self.reveal = self.primary().cloned();
             }
         }
         if empty_trash {
@@ -794,6 +816,45 @@ impl Files {
             ui.request_repaint();
         } else if cancel {
             self.open_with = None;
+            ui.request_repaint();
+        }
+    }
+
+    /// Abre a janela de informações do item (lida agora do disco).
+    fn show_info(&mut self, path: &Path) {
+        match files::info_lines(path) {
+            Ok(lines) => {
+                tracing::info!("informações de {}", path.display());
+                self.info = Some((path.to_path_buf(), lines));
+            }
+            Err(err) => self.message = Some(format!("Não foi possível ler \"{}\": {err}", path.display())),
+        }
+    }
+
+    /// Informações do item: nome, tipo, tamanho, local, data e permissões.
+    fn info_view(&mut self, ui: &mut Ui) {
+        let Some((path, lines)) = &self.info else {
+            return;
+        };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
+        let mut close = ui.input().key(Key::Escape) || ui.input().key(Key::Enter);
+        ui.modal(440.0, |ui| {
+            ui.strong(&format!("Informações de \"{}\"", short(&name)));
+            ui.card(|ui| {
+                for (label, value) in lines {
+                    ui.row(|ui| {
+                        ui.sized(110.0, |ui| ui.note(label));
+                        ui.label(value);
+                    });
+                }
+            });
+            ui.row(|ui| {
+                ui.push_right(110.0);
+                ui.sized(110.0, |ui| close |= ui.primary_button("OK").clicked());
+            });
+        });
+        if close {
+            self.info = None;
             ui.request_repaint();
         }
     }
@@ -932,7 +993,13 @@ impl Files {
                 shown.iter().map(|e| if e.is_image() { self.thumb_clone(&e.path) } else { None }).collect()
             };
             let mut select = None;
+            let reveal = self.reveal.clone();
+            let mut revealed = false;
             let mut item = |ui: &mut Ui, entry: &Entry, r: mide::kit::Response| {
+                if reveal.as_ref() == Some(&entry.path) {
+                    ui.reveal(r.rect);
+                    revealed = true;
+                }
                 if dragging.is_none() {
                     if r.clicked() {
                         select = Some((entry.path.clone(), false));
@@ -1021,6 +1088,9 @@ impl Files {
                         if !multi && m.item("Copiar caminho") {
                             chosen = Some(Action::CopyPath);
                         }
+                        if !multi && m.item("Obter informações") {
+                            chosen = Some(Action::Info);
+                        }
                         m.separator();
                         if m.danger(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
                             chosen = Some(Action::Trash);
@@ -1104,6 +1174,9 @@ impl Files {
                         item(ui, entry, r);
                     }
                 });
+            }
+            if revealed {
+                self.reveal = None;
             }
             if let Some((path, secondary)) = select {
                 if secondary {
@@ -1242,6 +1315,7 @@ impl Files {
             Action::OpenWith => self.open_with = Some(entry.path.clone()),
                 Action::Rename => self.start_rename(entry.path.clone()),
                 Action::CopyPath => places::copy_text(&entry.path.to_string_lossy()),
+                Action::Info => self.show_info(&entry.path),
                 Action::Terminal => places::open_terminal(&entry.path),
                 Action::Duplicate => {
                     for path in self.targets(&entry) {
@@ -1341,6 +1415,8 @@ enum Action {
     Paste,
     NewFile,
     CopyPath,
+    /// Obter informações (Ctrl+I).
+    Info,
     Trash,
     Restore,
     Delete,
@@ -1370,6 +1446,7 @@ impl App for Files {
         // Diálogo por cima de tudo (a janela inteira escurece atrás).
         self.dialog_view(ui);
         self.open_with_view(ui);
+        self.info_view(ui);
         if chosen != current {
             let place = if chosen == favorites + 3 {
                 Place::Trash
@@ -1419,21 +1496,83 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_files=info".into()))
         .init();
-    let start = match std::env::args().nth(1) {
-        Some(arg) if arg.starts_with("trash:") => Place::Trash,
-        Some(arg) => {
-            let path = PathBuf::from(arg.strip_prefix("file://").unwrap_or(&arg));
-            if path.is_dir() {
-                // Sem barra no fim nem `.`: a mesma pasta tem uma chave só (B21).
-                Place::Dir(files_view::normalize(&path))
-            } else {
-                Place::Dir(places::home_dir())
+    // `args_os`: nomes que não são UTF-8 (ex.: Latin-1 vindo do "Mostrar na pasta") chegam
+    // com os bytes originais; `args()` entraria em pânico com eles.
+    let start = parse_args(std::env::args_os().skip(1).collect());
+    let mut app = Files::new(start.place);
+    if !start.select.is_empty() {
+        // Itens ocultos pedidos: os ocultos aparecem.
+        if start.select.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'))) {
+            app.hidden = true;
+            app.reload();
+        }
+        for path in &start.select {
+            tracing::info!("selecionado {}", path.display());
+        }
+        app.reveal = start.select.first().cloned();
+        app.selection = start.select;
+    }
+    if let Some(path) = start.info {
+        app.show_info(&path);
+    }
+    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360);
+    run(window, app)
+}
+
+/// Como o Arquivos abre: a pasta, os itens escolhidos e o item das informações.
+#[derive(Debug, PartialEq)]
+struct Start {
+    place: Place,
+    select: Vec<PathBuf>,
+    info: Option<PathBuf>,
+}
+
+/// Lê os argumentos: `[pasta|arquivo|trash:///]`, `--select itens...` e `--info item`.
+/// Itens que não existem ficam de fora; sem nada que exista, a pasta pessoal.
+fn parse_args(args: Vec<OsString>) -> Start {
+    let to_path = |arg: &OsStr| -> Option<PathBuf> {
+        let path = match arg.to_str() {
+            Some(text) => places::path_from_uri(text).or_else(|| (!text.contains("://")).then(|| PathBuf::from(text)))?,
+            // Não é UTF-8: só pode ser um caminho (os endereços chegam codificados).
+            None => PathBuf::from(arg),
+        };
+        let path = if path.is_relative() { std::env::current_dir().ok()?.join(path) } else { path };
+        // Sem barra no fim nem `.`: a mesma pasta tem uma chave só (B21).
+        let path = files_view::normalize(&path);
+        path.symlink_metadata().is_ok().then_some(path)
+    };
+    let mut place = None;
+    let mut select = Vec::new();
+    let mut info = None;
+    let mut args = args.into_iter();
+    let mut selecting = false;
+    while let Some(arg) = args.next() {
+        if arg == "--select" {
+            selecting = true;
+        } else if arg == "--info" {
+            info = args.next().and_then(|a| to_path(&a));
+        } else if arg.to_str().is_some_and(|a| a.starts_with("trash:")) && place.is_none() && select.is_empty() {
+            place = Some(Place::Trash);
+        } else if let Some(path) = to_path(&arg) {
+            if !selecting && place.is_none() && path.is_dir() {
+                place = Some(Place::Dir(path));
+            } else if selecting || place.is_none() {
+                select.push(path);
             }
         }
-        None => Place::Dir(places::home_dir()),
-    };
-    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360);
-    run(window, Files::new(start))
+    }
+    // Itens escolhidos (ou o das informações): a pasta é a do primeiro; os de outras
+    // pastas ficam de fora (o serviço abre uma janela por pasta).
+    let anchor = select.first().cloned().or_else(|| if place.is_none() { info.clone() } else { None });
+    if let Some(first) = anchor {
+        let parent = first.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"));
+        select.retain(|p| p.parent() == Some(parent.as_path()));
+        if select.is_empty() {
+            select.push(first);
+        }
+        place = Some(Place::Dir(parent));
+    }
+    Start { place: place.unwrap_or_else(|| Place::Dir(places::home_dir())), select, info }
 }
 
 /// Véu da cor do fundo sobre `rect` (área atual), com opacidade `k` (0 a 1): o que
@@ -1450,4 +1589,48 @@ fn veil(ui: &mut Ui, rect: (f32, f32, f32, f32), k: f32) {
             canvas.fill_rect(r, &paint, mide::ui::draw::tf(), None);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn argumentos_de_abrir() {
+        let dir = std::env::temp_dir().join(format!("mide-files-args-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub pasta")).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.join("b.txt"), "b").unwrap();
+        std::fs::write(dir.join("sub pasta/c.txt"), "c").unwrap();
+        let s = |v: &[&str]| parse_args(v.iter().map(OsString::from).collect());
+        let d = dir.display().to_string();
+        // Pasta (também como file:// com %20).
+        assert_eq!(s(&[&d]).place, Place::Dir(dir.clone()));
+        let uri = places::file_uri(&dir.join("sub pasta"));
+        assert_eq!(s(&[&uri]), Start { place: Place::Dir(dir.join("sub pasta")), select: vec![], info: None });
+        // Arquivo: abre a pasta dele com ele escolhido.
+        assert_eq!(s(&[&format!("{d}/a.txt")]), Start { place: Place::Dir(dir.clone()), select: vec![dir.join("a.txt")], info: None });
+        // --select com vários da mesma pasta; um de outra pasta fica de fora.
+        let got = s(&["--select", &format!("{d}/a.txt"), &format!("{d}/b.txt"), &format!("{d}/sub pasta/c.txt")]);
+        assert_eq!(got.place, Place::Dir(dir.clone()));
+        assert_eq!(got.select, vec![dir.join("a.txt"), dir.join("b.txt")]);
+        // --select de uma pasta: a de cima, com a pasta escolhida (não entra nela).
+        assert_eq!(s(&["--select", &format!("{d}/sub pasta/")]).select, vec![dir.join("sub pasta")]);
+        // --info: pasta do item, com ele escolhido.
+        let got = s(&["--info", &format!("{d}/b.txt")]);
+        assert_eq!((got.place, got.info), (Place::Dir(dir.clone()), Some(dir.join("b.txt"))));
+        // Nada que exista: pasta pessoal.
+        assert_eq!(s(&["--select", "/nao/existe"]).place, Place::Dir(places::home_dir()));
+        assert_eq!(s(&["trash:///"]).place, Place::Trash);
+        // Nome que não é UTF-8 (Latin-1, "é.txt"): abre a pasta com ele escolhido.
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let latin1 = dir.join(OsStr::from_bytes(b"\xe9.txt"));
+            std::fs::write(&latin1, "x").unwrap();
+            let got = parse_args(vec![OsString::from("--select"), latin1.clone().into_os_string()]);
+            assert_eq!((got.place, got.select), (Place::Dir(dir.clone()), vec![latin1]));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -315,21 +315,58 @@ pub struct TrashItem {
 
 /// Desfaz a codificação `%XX` do campo `Path=` do `.trashinfo`.
 fn decode_path(value: &str) -> String {
+    String::from_utf8_lossy(&percent_decode(value)).into_owned()
+}
+
+/// Bytes de um texto com `%XX` (como numa URL) já decodificados.
+fn percent_decode(value: &str) -> Vec<u8> {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&value[i + 1..i + 3], 16) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
+        let hex = if bytes[i] == b'%' { value.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok()) } else { None };
+        if let Some(byte) = hex {
+            out.push(byte);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    out
+}
+
+/// Endereço `file://` de um caminho, com `%XX` nos bytes fora do conjunto seguro
+/// (espaços, acentos, `#`, `?`), byte a byte: nomes que não são UTF-8 também voltam iguais.
+pub fn file_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::from("file://");
+    for byte in path.as_os_str().as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' | b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@' => {
+                out.push(*byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Caminho de um endereço `file://` (com ou sem `localhost`) ou de um caminho comum
+/// (começando com `/`). Outros endereços (`trash:`, `http:`, `sftp:`) dão `None`.
+pub fn path_from_uri(uri: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    if uri.starts_with('/') {
+        return Some(PathBuf::from(uri));
+    }
+    let rest = uri.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    // Sem a parte `?...` e `#...` (não fazem parte do caminho num endereço de arquivo).
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&percent_decode(rest))))
 }
 
 /// Lê um `.trashinfo`: caminho original e data em que foi apagado.
@@ -514,6 +551,23 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn enderecos_de_arquivo() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new("/home/ana/Área de trabalho/nota #1.txt");
+        let uri = file_uri(path);
+        assert_eq!(uri, "file:///home/ana/%C3%81rea%20de%20trabalho/nota%20%231.txt");
+        assert_eq!(path_from_uri(&uri).as_deref(), Some(path));
+        assert_eq!(path_from_uri("file://localhost/tmp/a%20b").as_deref(), Some(Path::new("/tmp/a b")));
+        assert_eq!(path_from_uri("/tmp/x").as_deref(), Some(Path::new("/tmp/x")));
+        assert_eq!(path_from_uri("trash:///a"), None);
+        assert_eq!(path_from_uri("https://x/a"), None);
+        // %XX no fim do texto também decodifica; nome que não é UTF-8 volta igual.
+        assert_eq!(path_from_uri("file:///tmp/a%41").as_deref(), Some(Path::new("/tmp/aA")));
+        let odd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/\xff.txt"));
+        assert_eq!(path_from_uri(&file_uri(&odd)), Some(odd));
     }
 
     #[test]

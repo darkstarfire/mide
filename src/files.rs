@@ -302,6 +302,48 @@ pub fn kind_text(entry: &Entry) -> String {
     kind.into()
 }
 
+/// Permissões no formato do `ls -l` ("rwxr-xr-x") e em octal ("755").
+pub fn permissions_text(mode: u32) -> String {
+    let mut out = String::new();
+    for shift in [6, 3, 0] {
+        let bits = (mode >> shift) & 7;
+        out.push(if bits & 4 != 0 { 'r' } else { '-' });
+        out.push(if bits & 2 != 0 { 'w' } else { '-' });
+        out.push(if bits & 1 != 0 { 'x' } else { '-' });
+    }
+    format!("{out} ({:o})", mode & 0o777)
+}
+
+/// Informações de um item (Obter informações / `ShowItemProperties`): pares de
+/// rótulo e valor, na ordem da janela.
+pub fn info_lines(path: &Path) -> std::io::Result<Vec<(&'static str, String)>> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = fs::metadata(path)?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
+    let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let entry = Entry { name: name.clone(), path: path.to_path_buf(), is_dir: meta.is_dir(), size: meta.len(), modified };
+    let mut kind = kind_text(&entry);
+    if let Some(mime) = crate::default_apps::mime_for(path) {
+        kind = format!("{kind} ({mime})");
+    }
+    let size = if meta.is_dir() {
+        let count = fs::read_dir(path).map(|r| r.count()).unwrap_or(0);
+        if count == 1 { "1 item".to_string() } else { format!("{count} itens") }
+    } else {
+        format!("{} ({} bytes)", size_text(meta.len()), meta.len())
+    };
+    let place = path.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/".into());
+    let date = chrono::DateTime::<chrono::Local>::from(modified).format("%d/%m/%Y %H:%M").to_string();
+    Ok(vec![
+        ("Nome", name),
+        ("Tipo", kind),
+        ("Tamanho", size),
+        ("Local", place),
+        ("Modificado", date),
+        ("Permissões", permissions_text(meta.permissions().mode())),
+    ])
+}
+
 /// Nome livre em `dir` a partir de `stem` e da extensão `ext` (pode ser vazia):
 /// "nome.txt", "nome 2.txt", "nome 3.txt"...
 pub fn unique_name(dir: &Path, stem: &str, ext: &str) -> String {
@@ -554,6 +596,24 @@ pub fn is_text(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn informacoes_do_item() {
+        assert_eq!(permissions_text(0o100644), "rw-r--r-- (644)");
+        assert_eq!(permissions_text(0o40755), "rwxr-xr-x (755)");
+        let dir = std::env::temp_dir().join(format!("mide-info-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pasta")).unwrap();
+        fs::write(dir.join("pasta/a.txt"), "olá").unwrap();
+        let lines = info_lines(&dir.join("pasta/a.txt")).unwrap();
+        assert_eq!(lines[0], ("Nome", "a.txt".to_string()));
+        assert!(lines[1].1.starts_with("Texto"));
+        assert!(lines[2].1.ends_with("(4 bytes)"));
+        assert_eq!(lines[3].1, dir.join("pasta").display().to_string());
+        assert_eq!(info_lines(&dir.join("pasta")).unwrap()[2].1, "1 item");
+        assert!(info_lines(&dir.join("nao-existe")).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn reconhece_arquivos_de_texto() {

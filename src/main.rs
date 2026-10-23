@@ -172,6 +172,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     spawn_client("mide-dock");
     spawn_client("mide-bar");
     spawn_client("mide-notifications");
+    if wants_portal() {
+        spawn_client("mide-portal");
+    }
 
     tracing::info!("pronto. Teste com: WAYLAND_DISPLAY={} <app-wayland>", socket_name());
 
@@ -196,6 +199,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if reexec {
         reexec_self();
     }
+    session::stop();
     Ok(())
 }
 
@@ -204,6 +208,14 @@ static SHELL: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::
 
 /// Programas do DE que ficam sempre abertos (o launcher e o buscador abrem sob demanda).
 const SHELL_CLIENTS: [&str; 4] = ["mide-desktop", "mide-dock", "mide-bar", "mide-notifications"];
+
+/// O `mide-portal` (Arquivos como `FileManager1` e o seletor de arquivos do portal, B25)
+/// só roda na sessão do mide: num mide em janela (desenvolvimento, dentro do Cinnamon)
+/// ele tiraria o "Mostrar na pasta" do gerenciador de arquivos de lá. Os testes ligam
+/// com `MIDE_PORTAL_FORCE=1`, num barramento D-Bus próprio (`tests/scenario-dbus.sh`).
+fn wants_portal() -> bool {
+    session::active() || std::env::var("MIDE_PORTAL_FORCE").is_ok_and(|v| v == "1")
+}
 
 /// Encerra os programas do DE abertos pelo mide e espera eles saírem (até 2 s), para
 /// os novos não brigarem com os antigos (o nome das notificações no D-Bus, por exemplo).
@@ -227,6 +239,9 @@ pub fn restart_shell() {
     stop_shell();
     for name in SHELL_CLIENTS {
         spawn_client(name);
+    }
+    if wants_portal() {
+        spawn_client("mide-portal");
     }
 }
 
@@ -281,16 +296,22 @@ pub fn child_env(command: &mut std::process::Command) {
 /// `XDG_DATA_DIRS` com a pasta de dados do mide na frente (os `.desktop` dele e a
 /// configuração dos portais). Em desenvolvimento, `data/` no projeto.
 pub fn data_dirs() -> Option<String> {
+    let data_dir = mide_data_dir()?;
+    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    Some(format!("{}:{dirs}", data_dir.display()))
+}
+
+/// Pasta de dados do mide (`.desktop`, portais): `MIDE_DATA_DIR`, `data/` do projeto
+/// (desenvolvimento) ou `share/mide` da instalação.
+pub fn mide_data_dir() -> Option<std::path::PathBuf> {
     let bin_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let data_dir = std::env::var_os("MIDE_DATA_DIR")
+    std::env::var_os("MIDE_DATA_DIR")
         .map(std::path::PathBuf::from)
         .into_iter()
         .chain([bin_dir.join("../../data"), bin_dir.join("../share/mide")])
         .find(|d| d.join("applications").is_dir())?
         .canonicalize()
-        .ok()?;
-    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    Some(format!("{}:{dirs}", data_dir.display()))
+        .ok()
 }
 
 pub fn spawn_client(name: &str) {

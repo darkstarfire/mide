@@ -13,6 +13,11 @@
 //!     }
 //! }
 //! ```
+//!
+//! Também é o seletor dos outros apps (portal `FileChooser`, B25): o `mide-chooser`
+//! mostra o seletor ocupando a janela inteira (`embedded`), com vários arquivos
+//! (`multiple`), filtros com nome (por padrão de nome ou tipo MIME), opções extras
+//! (`choices`) e "salvar vários" (`save_files`).
 
 use std::path::{Path, PathBuf};
 
@@ -27,6 +32,59 @@ pub enum Mode {
     Save,
     /// Uma pasta.
     Folder,
+    /// Uma pasta onde salvar vários arquivos com nomes já dados (`save_files`).
+    SaveFiles,
+}
+
+/// Um padrão de um filtro: de nome (`*.png`, sem diferenciar maiúsculas) ou de tipo
+/// MIME (`image/png`, `image/*`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pattern {
+    Glob(String),
+    Mime(String),
+}
+
+/// Filtro com nome ("Imagens"): um arquivo passa se casar com algum padrão.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Filter {
+    pub name: String,
+    pub patterns: Vec<Pattern>,
+}
+
+impl Filter {
+    /// O arquivo passa no filtro? Pastas sempre passam (para navegar).
+    pub fn accepts(&self, path: &Path, is_dir: bool) -> bool {
+        if is_dir || self.patterns.is_empty() {
+            return true;
+        }
+        let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let mut mime: Option<Option<String>> = None;
+        self.patterns.iter().any(|p| match p {
+            Pattern::Glob(glob) => crate::default_apps::glob_matches(&glob.to_lowercase(), &name),
+            Pattern::Mime(want) => {
+                let got = mime.get_or_insert_with(|| crate::default_apps::mime_for(path));
+                let want = want.to_lowercase();
+                match (got, want.strip_suffix("/*")) {
+                    (_, None) if want == "*" || want == "*/*" || want == "application/octet-stream" => true,
+                    (Some(got), Some(major)) => got.split('/').next() == Some(major),
+                    (Some(got), None) => *got == want,
+                    (None, _) => false,
+                }
+            }
+        })
+    }
+}
+
+/// Opção extra pedida pelo app (portal: `choices`): sem `options`, uma caixa de
+/// marcar ("true"/"false"); com elas, uma lista.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtraChoice {
+    pub id: String,
+    pub label: String,
+    /// (id, nome) de cada opção da lista.
+    pub options: Vec<(String, String)>,
+    /// O que está escolhido agora (id da opção, ou "true"/"false").
+    pub value: String,
 }
 
 /// Resultado do seletor.
@@ -50,10 +108,23 @@ pub struct FileChooser {
     dir: PathBuf,
     entries: Vec<Entry>,
     selected: Option<usize>,
+    /// Mais itens escolhidos com Ctrl/Shift (`multiple`), além de `selected`.
+    picked: Vec<usize>,
+    multiple: bool,
     /// Nome do arquivo (modo Salvar).
     name: String,
-    /// Extensões aceitas no modo Abrir (vazio: todas).
-    extensions: Vec<String>,
+    /// Filtros com nome (vazio: todos os arquivos) e o escolhido.
+    filters: Vec<Filter>,
+    filter: usize,
+    choices: Vec<ExtraChoice>,
+    /// Texto do botão principal (vazio: "Abrir", "Salvar", "Escolher").
+    accept_label: String,
+    /// Ocupa a janela inteira (o `mide-chooser`), em vez de um diálogo por cima do app.
+    embedded: bool,
+    /// Nomes dos arquivos do modo SaveFiles.
+    save_names: Vec<String>,
+    /// Caminhos escolhidos (todos), depois de `Choice::Chosen`.
+    result: Vec<PathBuf>,
     show_hidden: bool,
     message: Option<String>,
     /// Pede o foco no campo do nome no primeiro quadro (modo Salvar).
@@ -80,9 +151,70 @@ impl FileChooser {
 
     /// Só mostra (e aceita) arquivos com essas extensões, sem o ponto (`["txt", "md"]`).
     pub fn extensions(mut self, extensions: &[&str]) -> Self {
-        self.extensions = extensions.iter().map(|e| e.to_lowercase()).collect();
+        let patterns = extensions.iter().map(|e| Pattern::Glob(format!("*.{}", e.to_lowercase()))).collect();
+        self.filters = vec![Filter { name: String::new(), patterns }];
+        self.filter = 0;
         self.reload();
         self
+    }
+
+    /// Salvar vários arquivos: escolhe a pasta, e cada nome vira `pasta/nome`.
+    pub fn save_files(title: &str, dir: Option<&Path>, names: &[String]) -> Self {
+        let mut chooser = Self::new(Mode::SaveFiles, title, dir, "");
+        chooser.save_names = names.to_vec();
+        chooser
+    }
+
+    /// Escolher vários arquivos de uma vez (Ctrl+clique e Shift+clique), no modo Abrir.
+    pub fn multiple(mut self, multiple: bool) -> Self {
+        self.multiple = multiple;
+        self
+    }
+
+    /// Filtros com nome; `current` é o que começa escolhido.
+    pub fn filters(mut self, filters: Vec<Filter>, current: usize) -> Self {
+        self.filter = current.min(filters.len().saturating_sub(1));
+        self.filters = filters;
+        self.reload();
+        self
+    }
+
+    /// Opções extras (caixas de marcar e listas) embaixo da lista.
+    pub fn choices(mut self, choices: Vec<ExtraChoice>) -> Self {
+        self.choices = choices;
+        self
+    }
+
+    /// Texto do botão principal.
+    pub fn accept_label(mut self, label: &str) -> Self {
+        self.accept_label = label.replace('_', "");
+        self
+    }
+
+    /// Ocupa a janela inteira, sem o fundo escurecido do diálogo.
+    pub fn embedded(mut self, embedded: bool) -> Self {
+        self.embedded = embedded;
+        self
+    }
+
+    /// Todos os caminhos escolhidos (depois de `Choice::Chosen`, que traz o primeiro).
+    pub fn chosen(&self) -> &[PathBuf] {
+        &self.result
+    }
+
+    /// Filtro escolhido agora (índice em `filters`), se houver filtros.
+    pub fn current_filter(&self) -> Option<usize> {
+        (!self.filters.is_empty()).then_some(self.filter)
+    }
+
+    /// Valores das opções extras, como estão agora.
+    pub fn choice_values(&self) -> Vec<(String, String)> {
+        self.choices.iter().map(|c| (c.id.clone(), c.value.clone())).collect()
+    }
+
+    /// Modo do seletor.
+    pub fn mode(&self) -> Mode {
+        self.mode
     }
 
     fn new(mode: Mode, title: &str, dir: Option<&Path>, name: &str) -> Self {
@@ -93,8 +225,16 @@ impl FileChooser {
             dir,
             entries: Vec::new(),
             selected: None,
+            picked: Vec::new(),
+            multiple: false,
             name: name.into(),
-            extensions: Vec::new(),
+            filters: Vec::new(),
+            filter: 0,
+            choices: Vec::new(),
+            accept_label: String::new(),
+            embedded: false,
+            save_names: Vec::new(),
+            result: Vec::new(),
             show_hidden: false,
             message: None,
             focus: mode == Mode::Save,
@@ -121,8 +261,16 @@ impl FileChooser {
 
     fn reload(&mut self) {
         self.selected = None;
+        self.picked.clear();
         self.message = None;
-        self.entries = list(&self.dir, self.mode, &self.extensions, self.show_hidden);
+        self.entries = list(&self.dir, self.mode, self.filters.get(self.filter), self.show_hidden);
+    }
+
+    /// Índices escolhidos (o principal por último).
+    fn picked_all(&self) -> Vec<usize> {
+        let mut all = self.picked.clone();
+        all.extend(self.selected.filter(|s| !all.contains(s)));
+        all
     }
 
     /// Desenha o diálogo; `Some` quando o usuário escolheu ou cancelou.
@@ -134,9 +282,19 @@ impl FileChooser {
             // O aviso não tem campo: o Enter e o Esc são dele (o nome perde o foco).
             ui.blur();
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let message = "Já existe um arquivo com esse nome nesta pasta. Substituir troca o conteúdo dele.";
-            return match ui.alert(&format!("Substituir \"{name}\"?"), message, &["Cancelar", "Substituir"]) {
-                Some(1) => Some(Choice::Chosen(path)),
+            let taken = if self.mode == Mode::SaveFiles { self.result.iter().filter(|p| p.exists()).count() } else { 1 };
+            let (title, message) = if taken > 1 {
+                (format!("Substituir {taken} arquivos?"), "Já existem arquivos com esses nomes nesta pasta. Substituir troca o conteúdo deles.".to_string())
+            } else {
+                (format!("Substituir \"{name}\"?"), "Já existe um arquivo com esse nome nesta pasta. Substituir troca o conteúdo dele.".to_string())
+            };
+            return match ui.alert(&title, &message, &["Cancelar", "Substituir"]) {
+                Some(1) => {
+                    if self.mode != Mode::SaveFiles {
+                        self.result = vec![path.clone()];
+                    }
+                    Some(Choice::Chosen(self.result.first().cloned().unwrap_or(path)))
+                }
                 Some(_) => {
                     // De volta ao nome, para corrigir.
                     self.replace = None;
@@ -148,11 +306,22 @@ impl FileChooser {
         }
         let mut action: Option<Action> = None;
         let (ww, wh) = ui.window_size();
-        let width = (ww - 48.0).clamp(360.0, 720.0);
-        let list_h = (wh * 0.62 - if self.mode == Mode::Save { 150.0 } else { 110.0 }).clamp(120.0, 380.0);
+        let width = if self.embedded { ww } else { (ww - 48.0).clamp(360.0, 720.0) };
+        let row = ui.theme().row + ui.theme().spacing;
+        // Linhas embaixo da lista: nome, filtros, opções, aviso e botões.
+        let extra = (self.mode == Mode::Save) as usize as f32 * row
+            + (self.filters.len() > 1) as usize as f32 * row
+            + self.choices.len() as f32 * row
+            + (self.mode == Mode::SaveFiles) as usize as f32 * 24.0
+            + self.message.is_some() as usize as f32 * 24.0;
+        let list_h = (wh * 0.62 - 110.0 - extra).clamp(120.0, 380.0);
         let title = self.title.clone();
-        ui.modal(width, |ui| {
-            ui.strong(&title);
+        let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
+        let embedded = self.embedded;
+        let body = |ui: &mut Ui| {
+            if !embedded {
+                ui.strong(&title);
+            }
             // Voltar para a pasta de cima, o caminho e os lugares.
             ui.row(|ui| {
                 let up = self.dir.parent().map(Path::to_path_buf);
@@ -175,16 +344,19 @@ impl FileChooser {
                     }
                 }
             });
-            let selected = self.selected;
+            // Janela própria: a lista ocupa o que sobra até as linhas de baixo.
+            let list_h = if embedded { (ui.remaining_height() - extra - row - ui.theme().padding - 4.0).max(120.0) } else { list_h };
+            let picked = self.picked_all();
             let entries = &self.entries;
+            let folders_only = matches!(self.mode, Mode::Folder | Mode::SaveFiles);
             ui.scroll_area(list_h, |ui| {
                 if entries.is_empty() {
-                    ui.note(if self.mode == Mode::Folder { "Nenhuma pasta aqui." } else { "Pasta vazia." });
+                    ui.note(if folders_only { "Nenhuma pasta aqui." } else { "Pasta vazia." });
                 }
                 for (i, entry) in entries.iter().enumerate() {
                     let size = entry.size.map(crate::files::size_text).unwrap_or_default();
                     let icon = if entry.is_dir { "folder" } else { file_icon(&entry.path) };
-                    let r = ui.list_row(icon, &entry.name, &[(&size, 90.0)], selected == Some(i));
+                    let r = ui.list_row(icon, &entry.name, &[(&size, 90.0)], picked.contains(&i));
                     if r.double_clicked() {
                         action = Some(if entry.is_dir { Action::Go(entry.path.clone()) } else { Action::Pick(entry.path.clone()) });
                     } else if r.clicked() {
@@ -192,6 +364,31 @@ impl FileChooser {
                     }
                 }
             });
+            if self.mode == Mode::SaveFiles {
+                let n = self.save_names.len();
+                ui.note(&if n == 1 { "1 arquivo será salvo na pasta escolhida.".to_string() } else { format!("{n} arquivos serão salvos na pasta escolhida.") });
+            }
+            if self.filters.len() > 1 {
+                let names: Vec<String> = self.filters.iter().map(|f| f.name.clone()).collect();
+                let mut current = self.filter;
+                if ui.dropdown("Mostrar", &names, &mut current).changed() {
+                    action = Some(Action::Filter(current));
+                }
+            }
+            for choice in &mut self.choices {
+                if choice.options.is_empty() {
+                    let mut on = choice.value == "true";
+                    if ui.switch(&choice.label, &mut on).changed() {
+                        choice.value = on.to_string();
+                    }
+                } else {
+                    let names: Vec<String> = choice.options.iter().map(|(_, n)| n.clone()).collect();
+                    let mut current = choice.options.iter().position(|(id, _)| *id == choice.value).unwrap_or(0);
+                    if ui.dropdown(&choice.label, &names, &mut current).changed() {
+                        choice.value = choice.options[current].0.clone();
+                    }
+                }
+            }
             if self.mode == Mode::Save {
                 if std::mem::take(&mut self.focus) {
                     ui.focus_next_input();
@@ -205,8 +402,9 @@ impl FileChooser {
             }
             ui.row(|ui| {
                 let label = match self.mode {
+                    _ if !self.accept_label.is_empty() => self.accept_label.as_str(),
                     Mode::Open => "Abrir",
-                    Mode::Save => "Salvar",
+                    Mode::Save | Mode::SaveFiles => "Salvar",
                     Mode::Folder => "Escolher",
                 };
                 ui.push_right(2.0 * 110.0 + 8.0);
@@ -221,7 +419,12 @@ impl FileChooser {
                     }
                 });
             });
-        });
+        };
+        if embedded {
+            ui.page(body);
+        } else {
+            ui.modal(width, body);
+        }
         if action.is_none() {
             if esc {
                 action = Some(Action::Cancel);
@@ -235,7 +438,33 @@ impl FileChooser {
                 self.go(dir);
                 None
             }
+            Action::Filter(i) => {
+                self.filter = i;
+                let dir = self.dir.clone();
+                self.go(dir);
+                None
+            }
             Action::Select(i) => {
+                // Vários (Abrir com `multiple`): Ctrl junta ou tira; Shift pega do
+                // principal até o clicado.
+                if self.multiple && self.mode == Mode::Open && (ctrl || shift) {
+                    if shift {
+                        let from = self.selected.unwrap_or(i);
+                        let (a, b) = (from.min(i), from.max(i));
+                        self.picked = (a..=b).filter(|j| *j != i).collect();
+                    } else if let Some(k) = self.picked_all().iter().position(|j| *j == i) {
+                        let mut all = self.picked_all();
+                        all.remove(k);
+                        self.selected = all.pop();
+                        self.picked = all;
+                        ui.request_repaint();
+                        return None;
+                    } else {
+                        self.picked = self.picked_all();
+                    }
+                } else {
+                    self.picked.clear();
+                }
                 self.selected = Some(i);
                 // Salvar: clicar num arquivo usa o nome dele.
                 if let (Mode::Save, Some(entry)) = (self.mode, self.entries.get(i)) {
@@ -255,12 +484,15 @@ impl FileChooser {
     /// Duplo clique num arquivo.
     fn pick(&mut self, path: PathBuf) -> Option<Choice> {
         match self.mode {
-            Mode::Open => Some(Choice::Chosen(path)),
+            Mode::Open => {
+                self.result = vec![path.clone()];
+                Some(Choice::Chosen(path))
+            }
             Mode::Save => {
                 self.name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 self.confirm()
             }
-            Mode::Folder => None,
+            Mode::Folder | Mode::SaveFiles => None,
         }
     }
 
@@ -268,18 +500,41 @@ impl FileChooser {
     fn confirm(&mut self) -> Option<Choice> {
         let selected = self.selected.and_then(|i| self.entries.get(i)).cloned();
         match self.mode {
-            Mode::Open => match selected {
-                Some(entry) if entry.is_dir => {
-                    self.go(entry.path);
-                    None
+            Mode::Open => {
+                // Vários: os arquivos escolhidos, na ordem da lista; só pastas: entra
+                // na principal.
+                let mut all = self.picked_all();
+                all.sort_unstable();
+                let files: Vec<PathBuf> = all.iter().filter_map(|i| self.entries.get(*i)).filter(|e| !e.is_dir).map(|e| e.path.clone()).collect();
+                match (files.first().cloned(), selected) {
+                    (Some(first), _) => {
+                        self.result = files;
+                        Some(Choice::Chosen(first))
+                    }
+                    (None, Some(entry)) if entry.is_dir => {
+                        self.go(entry.path);
+                        None
+                    }
+                    _ => {
+                        self.message = Some("Escolha um arquivo.".into());
+                        None
+                    }
                 }
-                Some(entry) => Some(Choice::Chosen(entry.path)),
-                None => {
-                    self.message = Some("Escolha um arquivo.".into());
-                    None
+            }
+            Mode::Folder => {
+                let dir = selected.filter(|e| e.is_dir).map(|e| e.path).unwrap_or_else(|| self.dir.clone());
+                self.result = vec![dir.clone()];
+                Some(Choice::Chosen(dir))
+            }
+            Mode::SaveFiles => {
+                let dir = selected.filter(|e| e.is_dir).map(|e| e.path).unwrap_or_else(|| self.dir.clone());
+                self.result = self.save_names.iter().map(|n| dir.join(n)).collect();
+                if let Some(taken) = self.result.iter().find(|p| p.exists()).cloned() {
+                    self.replace = Some(taken);
+                    return None;
                 }
-            },
-            Mode::Folder => Some(Choice::Chosen(selected.filter(|e| e.is_dir).map(|e| e.path).unwrap_or_else(|| self.dir.clone()))),
+                Some(Choice::Chosen(self.result.first().cloned().unwrap_or(dir)))
+            }
             Mode::Save => {
                 let name = self.name.trim();
                 if name.is_empty() || name.contains('/') || name == "." || name == ".." {
@@ -295,6 +550,7 @@ impl FileChooser {
                     self.replace = Some(path);
                     return None;
                 }
+                self.result = vec![path.clone()];
                 Some(Choice::Chosen(path))
             }
         }
@@ -302,6 +558,7 @@ impl FileChooser {
 }
 
 enum Action {
+    Filter(usize),
     Go(PathBuf),
     Select(usize),
     Pick(PathBuf),
@@ -310,8 +567,8 @@ enum Action {
 }
 
 /// Itens da pasta: pastas primeiro, depois arquivos, por nome (sem diferenciar
-/// maiúsculas). No modo Pasta, só pastas; com extensões, só os arquivos delas.
-fn list(dir: &Path, mode: Mode, extensions: &[String], hidden: bool) -> Vec<Entry> {
+/// maiúsculas). Nos modos de pasta, só pastas; com um filtro, só os arquivos dele.
+fn list(dir: &Path, mode: Mode, filter: Option<&Filter>, hidden: bool) -> Vec<Entry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -325,14 +582,11 @@ fn list(dir: &Path, mode: Mode, extensions: &[String], hidden: bool) -> Vec<Entr
             let path = e.path();
             let meta = std::fs::metadata(&path).ok()?;
             let is_dir = meta.is_dir();
-            if !is_dir && mode == Mode::Folder {
+            if !is_dir && matches!(mode, Mode::Folder | Mode::SaveFiles) {
                 return None;
             }
-            if !is_dir && !extensions.is_empty() {
-                let ext = path.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
-                if !extensions.contains(&ext) {
-                    return None;
-                }
+            if filter.is_some_and(|f| !f.accepts(&path, is_dir)) {
+                return None;
             }
             Some(Entry { name, path, is_dir, size: (!is_dir).then(|| meta.len()) })
         })
@@ -394,9 +648,16 @@ mod tests {
         std::fs::write(dir.join("A.md"), "x").unwrap();
         std::fs::write(dir.join(".oculto"), "x").unwrap();
         let names = |entries: Vec<Entry>| entries.into_iter().map(|e| e.name).collect::<Vec<_>>();
-        assert_eq!(names(list(&dir, Mode::Open, &[], false)), ["Zeta", "A.md", "b.txt"]);
-        assert_eq!(names(list(&dir, Mode::Open, &["txt".into()], false)), ["Zeta", "b.txt"]);
-        assert_eq!(names(list(&dir, Mode::Folder, &[], false)), ["Zeta"]);
+        assert_eq!(names(list(&dir, Mode::Open, None, false)), ["Zeta", "A.md", "b.txt"]);
+        let txt = Filter { name: "Textos".into(), patterns: vec![Pattern::Glob("*.TXT".into())] };
+        assert_eq!(names(list(&dir, Mode::Open, Some(&txt), false)), ["Zeta", "b.txt"]);
+        assert_eq!(names(list(&dir, Mode::Folder, None, false)), ["Zeta"]);
+        let markdown = Filter { name: "Markdown".into(), patterns: vec![Pattern::Mime("text/markdown".into())] };
+        assert_eq!(names(list(&dir, Mode::Open, Some(&markdown), false)), ["Zeta", "A.md"]);
+        let any_text = Filter { name: "Textos".into(), patterns: vec![Pattern::Mime("text/*".into())] };
+        assert_eq!(names(list(&dir, Mode::Open, Some(&any_text), false)), ["Zeta", "A.md", "b.txt"]);
+        let images = Filter { name: "Imagens".into(), patterns: vec![Pattern::Mime("image/*".into()), Pattern::Glob("*.xcf".into())] };
+        assert_eq!(names(list(&dir, Mode::Open, Some(&images), false)), ["Zeta"]);
         let mut save = FileChooser::save("Salvar", Some(&dir), "b.txt");
         // Nome que já existe: pede para substituir em vez de escolher.
         assert_eq!(save.confirm(), None);
@@ -404,6 +665,20 @@ mod tests {
         save.replace = None;
         save.name = "novo.txt".into();
         assert_eq!(save.confirm(), Some(Choice::Chosen(dir.join("novo.txt"))));
+        assert_eq!(save.chosen(), [dir.join("novo.txt")]);
+        // Vários para abrir: os arquivos escolhidos, sem as pastas, na ordem da lista.
+        let mut open = FileChooser::open("Abrir", Some(&dir)).multiple(true);
+        open.selected = Some(2);
+        open.picked = vec![0, 1];
+        assert_eq!(open.confirm(), Some(Choice::Chosen(dir.join("A.md"))));
+        assert_eq!(open.chosen(), [dir.join("A.md"), dir.join("b.txt")]);
+        // Salvar vários: cada nome na pasta; um que já existe pede para substituir.
+        let mut many = FileChooser::save_files("Salvar", Some(&dir), &["c.txt".into(), "d.txt".into()]);
+        assert_eq!(many.confirm(), Some(Choice::Chosen(dir.join("c.txt"))));
+        assert_eq!(many.chosen(), [dir.join("c.txt"), dir.join("d.txt")]);
+        let mut many = FileChooser::save_files("Salvar", Some(&dir), &["b.txt".into()]);
+        assert_eq!(many.confirm(), None);
+        assert_eq!(many.replace, Some(dir.join("b.txt")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

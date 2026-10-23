@@ -425,6 +425,9 @@ pub struct Ctx {
     /// vazio sem a opção. E o índice da tela deste passe.
     pub screens: Vec<super::Screen>,
     pub screen: usize,
+    /// Faixa (topo e base, na janela) que a área que rola em volta deve mostrar
+    /// (`Ui::reveal`): a mais próxima que termina depois do pedido rola até ela.
+    reveal: Option<(f32, f32)>,
 }
 
 /// O que o passe da tela principal deixou no `Ctx` e que um passe de outra tela não
@@ -483,6 +486,7 @@ impl Ctx {
             mirror: false,
             screens: Vec::new(),
             screen: 0,
+            reveal: None,
         }
     }
 
@@ -601,6 +605,7 @@ impl Ctx {
     /// Começo de um quadro: os ids voltam a contar do início.
     pub fn begin_frame(&mut self) {
         self.next_id = 1;
+        self.reveal = None;
         self.repaint = false;
         self.hover_claimed = false;
         self.ticking = false;
@@ -932,6 +937,15 @@ impl<'a> Ui<'a> {
         let icon = icon.map(std::rc::Rc::new);
         self.ctx.icons.insert(format!("app:{name}@{size}"), icon.clone());
         self.ctx.icons.insert(format!("{name}@{size}"), icon);
+    }
+
+    /// Pede que a área que rola em volta mostre `rect` (um item escolhido de fora,
+    /// como o arquivo pedido ao abrir o Arquivos). Chamado uma vez; a área rola no
+    /// quadro seguinte.
+    pub fn reveal(&mut self, rect: (f32, f32, f32, f32)) {
+        // Na janela (os retângulos dos componentes são da área onde estão).
+        let top = self.offset.1 + rect.1;
+        self.ctx.reveal = Some((top, top + rect.3));
     }
 
     /// Fecha o app (por exemplo, o buscador depois de abrir um resultado).
@@ -2755,6 +2769,20 @@ impl<'a> Ui<'a> {
         let (inner, used) = self.sub_area_from(x + pad, y0, w - 2.0 * pad, h, y0 + pad - scroll, true, add);
         let content_h = used + 2.0 * pad;
         let max_scroll = (content_h - h).max(0.0);
+        // Um item lá dentro pediu para aparecer (`Ui::reveal`): rola o mínimo e redesenha.
+        if let Some((top, bottom)) = self.ctx.reveal.take() {
+            let before = scroll;
+            let (view_top, view_bottom) = (self.offset.1 + y0, self.offset.1 + y0 + h);
+            if top < view_top {
+                scroll -= view_top - top + pad;
+            } else if bottom > view_bottom {
+                scroll += bottom - view_bottom + pad;
+            }
+            if (scroll - before).abs() > 0.5 {
+                tracing::debug!("rolagem até o item pedido: {before:.0} → {:.0}", scroll.clamp(0.0, max_scroll));
+                self.ctx.repaint = true;
+            }
+        }
         // Roda do mouse sobre a área.
         let over = self.over((x, y0, w, h));
         if over && self.ctx.input.scroll != 0.0 {

@@ -1,0 +1,9 @@
+# Apps padrão da sessão do mide (B25), com a prioridade mais baixa: só é lido com
+# XDG_CURRENT_DESKTOP=mide, e esta pasta só entra no XDG_DATA_DIRS da sessão do mide.
+# A escolha do usuário (Configurações → Apps padrão) fica em
+# ~/.config/mide-mimeapps.list e vence esta.
+[Default Applications]
+inode/directory=mide-files.desktop
+text/plain=mide-text.desktop
+text/markdown=mide-text.desktop
+text/x-log=mide-text.desktop

@@ -81,6 +81,7 @@ novo.
 
 | `ui.scroll_area(240.0, \|ui\| ...)` | Área de altura fixa que rola (listas dentro de diálogos) | — |
 | `ui.scroll_area_showing(240.0, Some((topo, base)), \|ui\| ...)` | A mesma, rolando o mínimo para a faixa (do topo do conteúdo) ficar à vista: o item marcado pelo teclado | — |
+| `ui.reveal(resposta.rect)` | Pede que a área que rola em volta (página ou `scroll_area`) role o mínimo para o item ficar à vista (chamar uma vez: o arquivo pedido ao abrir o Arquivos) | — |
 | `ui.dropdown("Texto", &opções, &mut índice)` | Linha com o valor escolhido; o clique abre a lista | `.changed()` |
 
 Todas as respostas também trazem `.hovered()`, `.double_clicked()`,
@@ -323,6 +324,18 @@ if let Some(seletor) = self.abrir.as_mut() {
     }
 }
 ```
+
+Mais opções (as do portal `FileChooser`, usadas pelo `mide-chooser`, que é o seletor dos
+outros apps na sessão do mide): `.multiple(true)` deixa escolher vários com Ctrl+clique
+e Shift+clique (todos em `seletor.chosen()`, depois do `Chosen` com o primeiro);
+`.filters(vec![Filter { nome, padrões }], atual)` mostra a lista "Mostrar" com filtros
+por nome (`Pattern::Glob("*.png")`, sem diferenciar maiúsculas) ou por tipo
+(`Pattern::Mime("image/*")`), e `seletor.current_filter()` diz o escolhido;
+`.choices(vec![ExtraChoice { .. }])` põe caixas de marcar ou listas embaixo
+(`seletor.choice_values()`); `.accept_label("Enviar")` troca o texto do botão;
+`FileChooser::save_files(título, pasta, &nomes)` escolhe a pasta onde salvar vários
+arquivos (pergunta antes de substituir); `.embedded(true)` ocupa a janela inteira em vez
+de abrir por cima.
 
 ## Tema
 

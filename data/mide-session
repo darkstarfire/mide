@@ -2,6 +2,12 @@
 # Sessão do mide: é o que a tela de login (LightDM, GDM, greetd) executa ao escolher
 # "mide". Define o ambiente de uma sessão Wayland e inicia o compositor direto na tela.
 
+# Sem barramento de sessão (algumas telas de login não abrem um), roda o próprio script
+# dentro de um: assim a espera pelo mide e a limpeza do fim (abaixo) valem também aí.
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null; then
+    exec dbus-run-session -- "$(readlink -f "$0")" "$@"
+fi
+
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=mide
 export XDG_SESSION_DESKTOP=mide
@@ -13,6 +19,9 @@ export QT_QPA_PLATFORM="wayland;xcb"
 export ELECTRON_OZONE_PLATFORM_HINT=auto
 export SDL_VIDEODRIVER="wayland,x11"
 export _JAVA_AWT_WM_NONREPARENTING=1
+# Apps GTK 3 (e o Firefox fora do flatpak) usam o seletor de arquivos do portal, que na
+# sessão do mide é o do mide (B25). Só nesta sessão: não vai para o systemd do usuário.
+export GTK_USE_PORTAL=1
 
 # Ícones e tema (claro/escuro) do mide nos apps GTK e Qt, só nesta sessão: um perfil
 # próprio do dconf põe, por cima da configuração do usuário (que continua valendo e é
@@ -67,8 +76,30 @@ log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/sessao.log"
 mkdir -p "$(dirname "$log")"
 [ -f "$log" ] && mv -f "$log" "$log.anterior"
 
-# Sem barramento de sessão (algumas telas de login não abrem um), abre um próprio.
-if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null; then
-    exec dbus-run-session -- "$mide" >"$log" 2>&1
-fi
-exec "$mide" >"$log" 2>&1
+# Fim da sessão (também se o mide cair ou a tela de login encerrar a sessão): a pasta
+# de portais do mide sai do ambiente do systemd do usuário e os portais que estão de pé
+# com a configuração do mide param (voltam por ativação com o ambiente da próxima
+# sessão), para o "Abrir…" de uma sessão do Cinnamon ou do GNOME aberta depois com o
+# mesmo systemd não cair no seletor do mide. O mesmo que `session::stop` no mide.
+fim_da_sessao() {
+    if command -v systemctl >/dev/null; then
+        systemctl --user unset-environment XDG_DESKTOP_PORTAL_DIR 2>/dev/null
+        systemctl --user --no-block stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service 2>/dev/null
+    fi
+    command -v pkill >/dev/null && pkill -TERM -u "$(id -u)" -f "[m]ide-portal --portal-only"
+}
+
+# O mide em segundo plano e o script esperando: um SIGTERM/SIGHUP da tela de login
+# (sair da sessão) passa ao mide, que fecha direito, e a limpeza roda depois.
+"$mide" >"$log" 2>&1 &
+pid=$!
+trap 'kill -TERM "$pid" 2>/dev/null' TERM HUP INT
+status=0
+wait "$pid" || status=$?
+# O `wait` volta também quando chega um sinal: espera o mide sair de verdade.
+while kill -0 "$pid" 2>/dev/null; do
+    status=0
+    wait "$pid" || status=$?
+done
+fim_da_sessao
+exit $status

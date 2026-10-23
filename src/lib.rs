@@ -20,6 +20,7 @@ pub mod launcher_layout;
 pub mod motion;
 pub mod notify;
 pub mod places;
+pub mod portal;
 pub mod search;
 pub mod settings_file;
 pub mod sounds;
