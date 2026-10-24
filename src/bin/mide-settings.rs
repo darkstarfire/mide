@@ -48,24 +48,24 @@ enum Section {
 /// Itens da barra lateral, na ordem: seção (ou espaço entre grupos), nome, ícone do
 /// tema e cor do quadradinho.
 const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
-    (Some(Section::Wifi), "Wi-Fi", "network-wireless", [10, 132, 255]),
-    (Some(Section::Bluetooth), "Bluetooth", "bluetooth", [10, 132, 255]),
+    (Some(Section::Wifi), "Wi-Fi", "network-wireless-symbolic", [10, 132, 255]),
+    (Some(Section::Bluetooth), "Bluetooth", "bluetooth-symbolic", [10, 132, 255]),
     (None, "", "", [0, 0, 0]),
-    (Some(Section::Appearance), "Aparência", "preferences-desktop-theme", [72, 72, 80]),
-    (Some(Section::Sound), "Som", "audio-volume-high", [255, 55, 95]),
-    (Some(Section::Displays), "Monitores", "video-display", [52, 120, 246]),
-    (Some(Section::Wallpaper), "Papel de parede", "preferences-desktop-wallpaper", [100, 210, 255]),
-    (Some(Section::Dock), "Dock", "user-desktop", [52, 199, 89]),
-    (Some(Section::Bar), "Barra superior", "gnome-panel", [88, 86, 214]),
-    (Some(Section::Effects), "Efeitos", "preferences-desktop-theme", [191, 90, 242]),
-    (Some(Section::Lock), "Bloqueio de tela", "system-lock-screen", [255, 59, 48]),
+    (Some(Section::Appearance), "Aparência", "preferences-desktop-appearance-symbolic", [72, 72, 80]),
+    (Some(Section::Sound), "Som", "audio-volume-high-symbolic", [255, 55, 95]),
+    (Some(Section::Displays), "Monitores", "video-display-symbolic", [52, 120, 246]),
+    (Some(Section::Wallpaper), "Papel de parede", "preferences-desktop-wallpaper-symbolic", [100, 210, 255]),
+    (Some(Section::Dock), "Dock", "view-app-grid-symbolic", [52, 199, 89]),
+    (Some(Section::Bar), "Barra superior", "window-new-symbolic", [88, 86, 214]),
+    (Some(Section::Effects), "Efeitos", "starred-symbolic", [191, 90, 242]),
+    (Some(Section::Lock), "Bloqueio de tela", "system-lock-screen-symbolic", [255, 59, 48]),
     (None, "", "", [0, 0, 0]),
-    (Some(Section::Mouse), "Mouse e trackpad", "input-mouse", [142, 142, 147]),
-    (Some(Section::Keyboard), "Teclado", "preferences-desktop-keyboard", [142, 142, 147]),
-    (Some(Section::Region), "Idioma e região", "preferences-desktop-locale", [10, 132, 255]),
-    (Some(Section::Energy), "Energia", "battery", [52, 199, 89]),
-    (Some(Section::DefaultApps), "Apps padrão", "preferences-desktop-default-applications", [142, 142, 147]),
-    (Some(Section::About), "Sobre", "help-about", [142, 142, 147]),
+    (Some(Section::Mouse), "Mouse e trackpad", "input-mouse-symbolic", [142, 142, 147]),
+    (Some(Section::Keyboard), "Teclado", "input-keyboard-symbolic", [142, 142, 147]),
+    (Some(Section::Region), "Idioma e região", "preferences-desktop-locale-symbolic", [10, 132, 255]),
+    (Some(Section::Energy), "Energia", "battery-full-symbolic", [52, 199, 89]),
+    (Some(Section::DefaultApps), "Apps padrão", "applications-system-symbolic", [142, 142, 147]),
+    (Some(Section::About), "Sobre", "help-about-symbolic", [142, 142, 147]),
 ];
 
 /// Efeitos do `[effects]`: chave, rótulo e explicação.
@@ -1464,6 +1464,8 @@ impl App for Settings {
         // (o que for digitado agora pede outro quadro, que já mostra os resultados).
         let mut query = self.query.clone();
         let searching = !query.trim().is_empty();
+        // Tahoe: barra lateral flutuante de vidro, como nos Ajustes do Sistema.
+        ui.glass_sidebar();
         let chosen = ui.sidebar_search(&items, if searching { usize::MAX } else { selected }, &mut query, "Buscar", |ui, _| {
             if !self.query.trim().is_empty() {
                 self.results(ui);
@@ -1800,7 +1802,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => Section::Wifi,
     };
     tracing::info!("configurações abertas: {section:?}");
-    let window = Window::new("Configurações do Sistema").app_id("mide-settings").size(820, 560).min_size(640, 440);
+    let window = Window::new("Configurações do Sistema").app_id("mide-settings").size(820, 560).min_size(640, 440).full_size_content();
     run(window, Settings::new(section))
 }
 

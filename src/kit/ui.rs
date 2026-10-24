@@ -3697,7 +3697,11 @@ impl<'a> Ui<'a> {
             self.x = panel.0 + 10.0;
             self.width = panel.2 - 20.0;
             self.cursor_y = if tahoe { row_y } else { y0 + 12.0 };
-            self.text_input(query, placeholder);
+            if tahoe {
+                self.search_field(query, placeholder);
+            } else {
+                self.text_input(query, placeholder);
+            }
             row_y = self.cursor_y + 4.0;
             self.x = old_x;
             self.width = old_w;
@@ -3801,6 +3805,10 @@ impl<'a> Ui<'a> {
             content(self, selected);
         } else {
             self.page(|ui| content(ui, selected));
+            // Tahoe: a faixa de cima da página (onde fica o título) arrasta a janela.
+            if tahoe {
+                self.window_drag_area((x + side_w, y0, old_w - side_w, super::theme::TOOLBAR_HEIGHT));
+            }
         }
         self.x = old_x;
         self.width = old_w;

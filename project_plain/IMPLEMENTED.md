@@ -1467,3 +1467,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Menus:** cantos de 12, sem a setinha, destaque em pílula de 8, contorno fino; itens com símbolo à esquerda e atalho à direita, item marcado (✓) e a linha das etiquetas coloridas (para o Finder). As posições das linhas não mudaram.
 - **Diálogos** com cantos de 20.
 - **Galeria** (`cargo run --example mide-ui-demo`): janela do Tahoe com uma página para botões, controles e indicadores.
+
+## Configurações no visual do Tahoe (D3, etapa 8, 2026-10-24)
+- As Configurações viraram janela de conteúdo inteiro, como os Ajustes do Sistema: barra lateral flutuante de vidro com os botões da janela, busca em cápsula e cada seção com um símbolo branco no quadradinho colorido; a faixa do título da página arrasta a janela. O conteúdo das páginas ficou no mesmo lugar.
+- Corrigido junto: os ícones da barra lateral das Configurações não apareciam (os nomes coloridos só têm tamanhos de contorno no tema do mide, recusados desde o B24); agora são símbolos.

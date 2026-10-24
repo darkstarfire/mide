@@ -139,8 +139,9 @@ fi
 # Seção Dock: arrastar o trilho até o fim grava 64 px e a dock cresce sozinha.
 check "Configurações → Dock: tamanho dos ícones muda a dock" 'camada "mide-dock" em \([0-9]+, [0-9]+\) [0-9]+x81' "400 list; 420 press 500 161; 425 move 600 161; 430 move 700 161; 435 move 790 161; 440 release 790 161; 520 list" "$SETTINGS dock"
 # Dock: "Ocultar e mostrar a Dock automaticamente" em (807, 212); a dock desce e esconde.
-# Ocultar é inteligente: só esconde com janela sobre a dock (aqui, maximizando a janela).
-check "Configurações → Dock: ocultar automaticamente esconde a dock sob uma janela" "dock escondida" "400 click 807 212; 500 click 103 61; 800 list" "$SETTINGS dock"
+# Ocultar é inteligente: só esconde com janela sobre a dock (aqui, maximizando a janela
+# pelo botão verde, que no Tahoe fica dentro da barra lateral, em (115, 102)).
+check "Configurações → Dock: ocultar automaticamente esconde a dock sob uma janela" "dock escondida" "400 click 807 212; 500 click 115 102; 800 list" "$SETTINGS dock"
 if grep -q "autohide = true" "$SCFG/mide/config.toml"; then
     echo "ok    ocultar a dock grava no config.toml"; PASS=$((PASS + 1))
 else
@@ -171,9 +172,9 @@ s = open(p).read()
 s = re.sub(r"(?ms)^\[input\]\n(.*?)(?=^\[|\Z)", "", s)
 open(p, "w").write(s)
 PY
-# Busca na barra lateral (campo em (158, 104)): "teclas" acha "Teclas no estilo Mac"; o
+# Busca na barra lateral (campo em cápsula, embaixo dos botões da janela, em (162, 146)): "teclas" acha "Teclas no estilo Mac"; o
 # resultado (primeira linha, y=158) abre a seção Teclado, com o interruptor em (807, 169).
-timeout 150 "$SCEN" "400 click 158 104; 420 type teclas; 460 click 500 158; 500 click 807 253; 560 list" -- "$SETTINGS" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 162 146; 420 type teclas; 460 click 500 158; 500 click 807 253; 560 list" -- "$SETTINGS" >/dev/null 2>&1
 if grep -q "mac_style = true" "$SCFG/mide/config.toml"; then
     echo "ok    busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; PASS=$((PASS + 1))
 else
