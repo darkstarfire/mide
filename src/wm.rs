@@ -125,6 +125,11 @@ impl State {
             surface.send_configure();
             return;
         };
+        // Janela de tamanho fixo (Sobre este computador): não maximiza.
+        if crate::state::fixed_size(&window) {
+            surface.send_configure();
+            return;
+        }
         let Some(area) = self.area_for(&window) else {
             surface.send_configure();
             return;

@@ -1142,6 +1142,26 @@ pub fn window_id(window: &Window) -> u64 {
         .unwrap_or(0)
 }
 
+/// Tamanho mínimo e máximo que o app pediu para a janela (`xdg_toplevel.set_min_size`
+/// e `set_max_size`; 0 = sem limite).
+pub fn size_limits(window: &Window) -> (smithay::utils::Size<i32, smithay::utils::Logical>, smithay::utils::Size<i32, smithay::utils::Logical>) {
+    let Some(toplevel) = window.toplevel() else {
+        return (Default::default(), Default::default());
+    };
+    with_states(toplevel.wl_surface(), |states| {
+        let mut cached = states.cached_state.get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
+        let current = cached.current();
+        (current.min_size, current.max_size)
+    })
+}
+
+/// A janela tem tamanho fixo (mínimo igual ao máximo, como o "Sobre este computador"):
+/// não redimensiona pela borda nem maximiza.
+pub fn fixed_size(window: &Window) -> bool {
+    let (min, max) = size_limits(window);
+    max.w > 0 && max.h > 0 && min == max
+}
+
 /// Altura da barra de título desta janela: 30 px se a janela usa decoração de
 /// servidor, 0 se o app desenha a própria barra (GTK4, libadwaita).
 pub fn bar_height_for(window: &Window) -> i32 {

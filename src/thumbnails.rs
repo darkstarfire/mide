@@ -60,7 +60,6 @@ pub fn text_page(path: &Path, size: u32) -> Option<Pixmap> {
     let (px, py) = ((s - pw) / 2.0, (s - ph) / 2.0);
     let r = s * 0.035;
     let fold = pw * 0.24;
-    draw::soft_shadow(&mut pixmap, px, py, pw, ph, r, s * 0.035, s * 0.015, 46);
     let page = {
         let mut pb = tiny_skia::PathBuilder::new();
         pb.move_to(px + r, py);
@@ -75,6 +74,15 @@ pub fn text_page(path: &Path, size: u32) -> Option<Pixmap> {
         pb.close();
         pb.finish()?
     };
+    // Sombra no formato da folha (sem o canto dobrado): camadas finas deslocadas
+    // para baixo. Uma sombra retangular aparecia no canto como uma segunda orelha.
+    for i in 1..=4 {
+        let mut shade = tiny_skia::Paint::default();
+        shade.anti_alias = true;
+        shade.set_color(Color::from_rgba8(0, 0, 0, 14));
+        let d = i as f32 * s * 0.004;
+        pixmap.fill_path(&page, &shade, tiny_skia::FillRule::Winding, draw::tf().pre_translate(0.0, d), None);
+    }
     let mut paint = tiny_skia::Paint::default();
     paint.anti_alias = true;
     // Branco com um cinza muito leve embaixo (a folha tem volume).

@@ -526,6 +526,8 @@ pub struct Ctx {
     pub content_window: bool,
     /// A janela está maximizada (ou presa a um lado da tela).
     pub maximized: bool,
+    /// Janela de tamanho fixo (`Window::fixed_size`): minimizar e maximizar desativados.
+    pub fixed_size: bool,
     /// Acorda a janela de outra thread (`Ui::waker`).
     pub waker: Option<super::app::Waker>,
     /// Área que recebe cliques neste quadro (`Ui::input_area`; `None`: a superfície toda).
@@ -599,6 +601,7 @@ impl Ctx {
             window_request: None,
             content_window: false,
             maximized: false,
+            fixed_size: false,
             waker: None,
             input_region: None,
             hide_request: None,
@@ -990,6 +993,11 @@ impl<'a> Ui<'a> {
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
         let group_hover = !blocked && self.ctx.input.over(group);
         let focused = self.ctx.input.focused;
+        // Regra do Tahoe: janela de tamanho fixo tem minimizar e maximizar cinza e sem ação.
+        if self.ctx.fixed_size {
+            self.window_close_only(x, y);
+            return width;
+        }
         for (i, request) in [WindowRequest::Close, WindowRequest::Minimize, WindowRequest::ToggleMaximize].into_iter().enumerate() {
             let id = self.ctx.id();
             let cx = x + i as f32 * LIGHT_STEP;
@@ -1092,7 +1100,7 @@ impl<'a> Ui<'a> {
         }
         let now = std::time::Instant::now();
         let double = self.ctx.memory.drag_area_press.is_some_and(|at| now.duration_since(at) < std::time::Duration::from_millis(450));
-        if double {
+        if double && !self.ctx.fixed_size {
             self.ctx.memory.drag_area_press = None;
             self.ctx.window_request = Some(WindowRequest::ToggleMaximize);
         } else {
@@ -4132,12 +4140,16 @@ impl<'a> Ui<'a> {
             // Ícones "symbolic" (de uma cor só) na cor do texto (no Tahoe sem
             // quadradinho, na cor de destaque); na linha em destaque, brancos.
             let symbolic = icon.ends_with("-symbolic");
-            let size = if symbolic { if tahoe { 17 } else { 18 } } else { 20 };
+            // No quadradinho colorido (22), o símbolo de 16 fica com 3 de cada lado.
+            let size = if symbolic { if tint.is_some() { 16 } else if tahoe { 17 } else { 18 } } else { 20 };
             let pix = self.ctx.icon(&[icon], size, false);
             if let Some(pix) = pix {
                 // No quadradinho colorido (22 pontos), o símbolo fica no meio dele.
                 let ix = if tint.is_some() { rect.0 + 6.0 + (22.0 - size as f32) / 2.0 } else if tahoe { rect.0 + 8.0 } else { rect.0 + 10.0 };
-                let (ix, iy) = (ix.round() as i32, (rect.1 + (rect.3 - size as f32) / 2.0).round() as i32);
+                // O quadradinho fica em `rect.1 + (rect.3 - 22) / 2`; o símbolo, no mesmo
+                // centro (arredondado para baixo, como o quadradinho).
+                let iy = if tint.is_some() { rect.1 + (rect.3 - 22.0) / 2.0 + (22.0 - size as f32) / 2.0 } else { rect.1 + (rect.3 - size as f32) / 2.0 };
+                let (ix, iy) = (ix.floor() as i32, iy.floor() as i32);
                 if symbolic {
                     let tint_c = if on_accent { t.on_accent } else if tahoe && tint.is_none() { t.accent } else if tint.is_some() { [255, 255, 255, 255] } else { t.text };
                     crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [tint_c[0], tint_c[1], tint_c[2]]);

@@ -109,6 +109,8 @@ pub struct Window {
     pub corner: bool,
     /// Janela de conteúdo inteiro, no estilo do Tahoe (`Window::full_size_content`).
     pub full_size: bool,
+    /// Tamanho fixo (`Window::fixed_size`): sem redimensionar, minimizar nem maximizar.
+    pub fixed: bool,
 }
 
 impl Window {
@@ -129,7 +131,16 @@ impl Window {
             every_output: false,
             corner: false,
             full_size: false,
+            fixed: false,
         }
+    }
+
+    /// Janela de tamanho fixo, como o "Sobre este computador": não redimensiona, e os
+    /// botões de minimizar e maximizar ficam cinza e sem ação (só o fechar funciona).
+    pub fn fixed_size(mut self) -> Self {
+        self.fixed = true;
+        self.min_size = self.size;
+        self
     }
 
     /// Janela de conteúdo inteiro, como no Tahoe (`docs/tahoe.md`): sem a barra de
@@ -325,6 +336,9 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             xdg.set_title(window.title.clone());
             xdg.set_app_id(window.app_id.clone());
             xdg.set_min_size(Some(window.min_size));
+            if window.fixed {
+                xdg.set_max_size(Some(window.size));
+            }
             xdg.commit();
             Shell::Xdg(xdg)
         }
@@ -379,6 +393,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         ctx: {
             let mut ctx = Ctx::new(window.theme.clone());
             ctx.content_window = window.full_size;
+            ctx.fixed_size = window.fixed;
             ctx
         },
         follow_theme: !window.theme_fixed,

@@ -34,7 +34,7 @@ impl App for About {
             canvas.fill(Color::TRANSPARENT);
             mide::ui::draw::paint_rounded_solid(canvas, 0.0, 0.0, w, h, 0.0, veil);
         });
-        ui.window_close_only(16.0, 16.0);
+        ui.window_controls(16.0, 16.0);
         ui.window_drag_area((0.0, 0.0, w, 44.0));
 
         // Imagem do computador.
@@ -145,6 +145,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let machine = mide::sysinfo::machine();
     tracing::info!("sobre este computador: {} ({})", machine.name, machine.subtitle);
-    let window = Window::new("Sobre este computador").app_id("mide-about").size(W as u32, H as u32).min_size(W as u32, H as u32).full_size_content();
+    let window = Window::new("Sobre este computador").app_id("mide-about").size(W as u32, H as u32).fixed_size().full_size_content();
     run(window, About { machine })
 }

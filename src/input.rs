@@ -1136,7 +1136,7 @@ fn resize_target(
     let toplevel = window.toplevel()?;
     let loc = state.space.element_location(&window)?;
     let flags = toplevel.current_state().states;
-    if flags.contains(XdgState::Maximized) {
+    if flags.contains(XdgState::Maximized) || crate::state::fixed_size(&window) {
         return None;
     }
     let size = window.geometry().size;
@@ -1199,8 +1199,17 @@ fn resize_to(state: &mut State, grab: &ResizeGrab, pos: Point<f64, Logical>) {
     if e.top {
         h -= dy;
     }
-    let w = w.max(MIN_W);
-    let h = h.max(MIN_H);
+    // Dentro dos limites pedidos pelo app (0 = sem limite).
+    let (min, max) = crate::state::size_limits(&grab.window);
+    let mut w = w.max(MIN_W).max(min.w);
+    let mut h = h.max(MIN_H).max(min.h);
+    if max.w > 0 {
+        w = w.min(max.w);
+    }
+    if max.h > 0 {
+        h = h.min(max.h);
+    }
+    let (w, h) = (w, h);
 
     // Pela esquerda e pelo topo, a origem acompanha a parte que sobrou ou foi cortada.
     let x = if e.left {
