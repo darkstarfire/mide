@@ -116,6 +116,8 @@ pub struct ParaStyle {
     pub name: String,
     /// Começa numa página nova.
     pub page_break_before: bool,
+    /// A última tabulação vai até a margem direita com pontos (sumário: "Título ..... 5").
+    pub leader: bool,
 }
 
 impl Default for ParaStyle {
@@ -132,6 +134,7 @@ impl Default for ParaStyle {
             level: 0,
             name: String::new(),
             page_break_before: false,
+            leader: false,
         }
     }
 }

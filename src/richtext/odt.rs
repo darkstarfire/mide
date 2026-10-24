@@ -78,10 +78,15 @@ fn text_props(s: &CharStyle) -> String {
     p
 }
 
-fn para_props(st: &ParaStyle) -> String {
+fn para_props(st: &ParaStyle, content_width: f32) -> String {
     let list_left = if st.list.is_some() { 18.0 * (st.level as f32 + 1.0) } else { 0.0 };
+    let tabs = if st.leader {
+        format!("<style:tab-stops><style:tab-stop style:position=\"{:.2}pt\" style:type=\"right\" style:leader-style=\"dotted\" style:leader-text=\".\"/></style:tab-stops>", content_width - st.left_indent - st.right_indent)
+    } else {
+        String::new()
+    };
     format!(
-        "<style:paragraph-properties fo:text-align=\"{}\" fo:margin-left=\"{:.2}pt\" fo:margin-right=\"{:.2}pt\" fo:text-indent=\"{:.2}pt\" fo:margin-top=\"{:.2}pt\" fo:margin-bottom=\"{:.2}pt\" fo:line-height=\"{:.0}%\"{}/>",
+        "<style:paragraph-properties fo:text-align=\"{}\" fo:margin-left=\"{:.2}pt\" fo:margin-right=\"{:.2}pt\" fo:text-indent=\"{:.2}pt\" fo:margin-top=\"{:.2}pt\" fo:margin-bottom=\"{:.2}pt\" fo:line-height=\"{:.0}%\"{}>{tabs}</style:paragraph-properties>",
         match st.align {
             Align::Left => "start",
             Align::Center => "center",
@@ -94,7 +99,7 @@ fn para_props(st: &ParaStyle) -> String {
         st.space_before,
         st.space_after,
         st.line_spacing * 100.0,
-        if st.page_break_before { " fo:break-before=\"page\"" } else { "" }
+        if st.page_break_before { " fo:break-before=\"page\"" } else { "" },
     )
 }
 
@@ -183,7 +188,7 @@ pub fn write(doc: &Doc) -> Vec<u8> {
             None => {
                 let n = format!("P{}", pstyles.len() + 1);
                 let parent = odf_style(&st.name).map_or(String::new(), |(id, _)| format!(" style:parent-style-name=\"{id}\""));
-                auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"paragraph\"{parent}>{}</style:style>", para_props(st)));
+                auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"paragraph\"{parent}>{}</style:style>", para_props(st, doc.page.content_width())));
                 pstyles.push((key, n.clone()));
                 n
             }
@@ -423,6 +428,9 @@ fn apply_para(e: &Element, p: &mut ParaStyle) {
     }
     if e.attr("fo:break-before") == Some("page") {
         p.page_break_before = true;
+    }
+    if let Some(tabs) = e.child("style:tab-stops") {
+        p.leader = tabs.elements().any(|t| t.attr("style:type") == Some("right") && t.attr("style:leader-text").is_some_and(|l| !l.trim().is_empty()));
     }
 }
 

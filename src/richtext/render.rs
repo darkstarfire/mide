@@ -106,6 +106,16 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
             let c = style_of(g).color;
             [c[0], c[1], c[2], 255]
         });
+        // Pontilhado do sumário.
+        if let Some((a, b)) = line.leader {
+            let c = styles.first().map_or([0, 0, 0], |st| st.color);
+            let dot = (1.2 * s).max(1.0);
+            let mut x = a + 4.0;
+            while x < b - 4.0 {
+                fill(pixmap, left + x * s, baseline - dot, dot, dot, [c[0], c[1], c[2], 255]);
+                x += 4.0;
+            }
+        }
         // Sublinhado e tachado.
         for g in &line.glyphs {
             let st = style_of(g);

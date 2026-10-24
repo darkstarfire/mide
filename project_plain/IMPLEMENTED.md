@@ -1599,3 +1599,10 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 ## Editor de Texto, etapa 3: buscar e substituir no modo formatado (2026-10-24)
 
 - Ctrl+F (e o botão da lupa, e Editar → Buscar e substituir…) abre a barra abaixo da de formatação. Busca em cápsula; anterior/próxima (também Ctrl+G e Ctrl+Shift+G); "Aa" para diferenciar maiúsculas (desligado por padrão); substituir e substituir tudo, mantendo a formatação do texto trocado. Desfazer volta a substituição inteira.
+
+## Editor de Texto, etapa 4a: sumário (2026-10-24)
+
+- Formatar → Inserir sumário: "SUMÁRIO" centralizado e uma linha por título (Título 1, 2 e 3, com recuo por nível, nível 1 em negrito), com pontilhado até o número da página na margem direita; o texto seguinte começa numa página nova. Formatar → Atualizar sumário refaz a lista. Os números são acertados depois de quebrar o documento (até duas passadas, porque o sumário pode mudar as páginas).
+- Tabulação com pontilhado (`ParaStyle::leader`) na quebra de linhas, na tela, no PDF e nos formatos: RTF `\tqr\tldot`, DOCX `w:tabs` com `w:leader="dot"` (e os estilos TOC do Word lidos como sumário), ODT `style:tab-stops` com `style:leader-text`.
+- Atalhos de título como no Word: Ctrl+Alt+1, 2 e 3; Ctrl+Alt+0 volta ao corpo.
+- Teste de unidade do sumário (páginas 2 e 3 e o pontilhado até a margem).

@@ -56,6 +56,8 @@ pub struct Line {
     /// Começo e fim do texto da linha (x), para a seleção.
     pub x0: f32,
     pub x1: f32,
+    /// Pontilhado da tabulação até a margem (início e fim em x), no sumário.
+    pub leader: Option<(f32, f32)>,
 }
 
 /// Um parágrafo quebrado em linhas (largura fixa, sem a posição na página).
@@ -216,7 +218,7 @@ fn fingerprint(p: &Paragraph, width: f32) -> u64 {
         (&c.family, c.size.to_bits(), c.bold, c.italic, c.underline, c.strike, c.color, c.highlight, c.baseline).hash(&mut h);
     }
     let st = &p.style;
-    (st.align, st.first_indent.to_bits(), st.left_indent.to_bits(), st.right_indent.to_bits(), st.line_spacing.to_bits(), st.list, st.level).hash(&mut h);
+    (st.align, st.first_indent.to_bits(), st.left_indent.to_bits(), st.right_indent.to_bits(), st.line_spacing.to_bits(), st.list, st.level, st.leader).hash(&mut h);
     if let Some(img) = &p.image {
         (img.width.to_bits(), img.height.to_bits()).hash(&mut h);
     }
@@ -351,6 +353,7 @@ impl Layouter {
                 carets: vec![(0, x0), (end, x0 + w)],
                 x0,
                 x1: x0 + w,
+                leader: None,
             };
             return ParaBox { lines: vec![line], marker: None };
         }
@@ -436,13 +439,25 @@ impl Layouter {
             }
             let mut natural = 0.0;
             let mut pen = 0.0;
+            let mut last_tab: Option<(usize, f32)> = None;
             for (k, &wi) in idx.iter().enumerate() {
                 let w = &words[wi];
                 let ww = if w.tab { TAB_STOP - ((line_left + pen) % TAB_STOP).max(0.0) } else { width_of(w) };
+                if w.tab {
+                    last_tab = Some((k, ww));
+                }
                 pen += ww;
                 if k < content_end {
                     natural = pen;
                 }
+            }
+            // Sumário: a última tabulação estica até o número ficar na margem direita.
+            let leader_w = match (st.leader, last_tab) {
+                (true, Some((k, tw))) => Some((k, (avail - (natural - tw)).max(6.0))),
+                _ => None,
+            };
+            if let Some((_, lw)) = leader_w {
+                natural = natural - last_tab.map_or(0.0, |t| t.1) + lw;
             }
             let gaps = idx[..content_end].iter().filter(|&&wi| words[wi].blank && !words[wi].tab).count();
             let justify = st.align == Align::Justify && !forced && gaps > 0;
@@ -458,9 +473,17 @@ impl Layouter {
             let (mut ascent, mut descent) = (0.0f32, 0.0f32);
             let mut start = usize::MAX;
             let mut end = 0;
+            let mut leader = None;
             for (k, &wi) in idx.iter().enumerate() {
                 let w = &words[wi];
-                let tab_w = if w.tab { Some(TAB_STOP - ((pen) % TAB_STOP).max(0.0)) } else { None };
+                let tab_w = match leader_w {
+                    Some((lk, lw)) if lk == k => {
+                        leader = Some((pen, pen + lw));
+                        Some(lw)
+                    }
+                    _ if w.tab => Some(TAB_STOP - ((pen) % TAB_STOP).max(0.0)),
+                    _ => None,
+                };
                 let gap_extra = if justify && w.blank && !w.tab && k < content_end { extra } else { 0.0 };
                 for (g, size) in &w.glyphs {
                     let gw = tab_w.unwrap_or(g.width(*size)) + if w.blank { gap_extra / w.glyphs.len().max(1) as f32 } else { 0.0 };
@@ -511,7 +534,7 @@ impl Layouter {
             let single = ascent + descent;
             let height = single * st.line_spacing.max(0.5);
             let x0 = carets.first().map_or(line_left + shift, |c| c.1);
-            lines.push(Line { start, end, height, baseline: ascent, ascent, descent, glyphs, carets, x0, x1: pen });
+            lines.push(Line { start, end, height, baseline: ascent, ascent, descent, glyphs, carets, x0, x1: pen, leader });
         }
         // Marcador da lista, à esquerda do texto.
         let marker = st.list.map(|kind| {

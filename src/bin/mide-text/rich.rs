@@ -167,6 +167,9 @@ pub struct Rich {
     /// Pedido ao app (abrir o seletor de imagem).
     pub wants_image: bool,
     pub find: Option<FindBar>,
+    /// Passadas que faltam para acertar os números do sumário (cada uma depois de quebrar
+    /// o documento de novo: o sumário pode mudar as páginas).
+    toc_passes: u8,
     pub message: Option<String>,
 }
 
@@ -210,6 +213,7 @@ impl Rich {
             paste_pending: false,
             wants_image: false,
             find: None,
+            toc_passes: 0,
             message: None,
         }
     }
@@ -512,6 +516,88 @@ impl Rich {
         self.zoom * SCREEN
     }
 
+    /// Os títulos do documento (nível, texto, parágrafo), para o sumário.
+    fn headings(&self) -> Vec<(u8, String, usize)> {
+        self.doc
+            .paras
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                let level = match p.style.name.as_str() {
+                    "Título 1" => 1,
+                    "Título 2" => 2,
+                    "Título 3" => 3,
+                    _ => return None,
+                };
+                let t = p.text.replace(LINE_BREAK, " ").trim().to_string();
+                (!t.is_empty()).then_some((level, t, i))
+            })
+            .collect()
+    }
+
+    /// Formatar → Inserir sumário: o título "SUMÁRIO" e as linhas dos títulos, com o
+    /// número da página à direita (acertado depois de quebrar o documento).
+    fn insert_toc(&mut self) {
+        if self.headings().is_empty() {
+            self.message = Some("Não há títulos no documento: use os estilos Título 1, 2 e 3 (menu ¶) nos títulos das seções.".into());
+            return;
+        }
+        self.begin(None);
+        let mut at = self.cursor;
+        if at.off > 0 || !self.doc.paras[at.para].text.is_empty() {
+            at = self.doc.split(Pos::new(at.para, if at.off > 0 { self.doc.paras[at.para].text.len() } else { 0 }));
+            if self.cursor.off == 0 {
+                at = Pos::new(at.para - 1, 0);
+            }
+        }
+        let body = self.doc.paras[at.para].spans[0].style.clone();
+        let title_style = CharStyle { bold: true, size: body.size.max(12.0), ..body.clone() };
+        let title = Paragraph::new("SUMÁRIO", title_style, ParaStyle { align: Align::Center, space_after: 18.0, name: "Sumário título".into(), ..ParaStyle::default() });
+        self.doc.paras[at.para] = title;
+        self.doc.paras.insert(at.para + 1, Paragraph::new("", body, ParaStyle { name: "Sumário".into(), leader: true, ..ParaStyle::default() }));
+        // O texto depois do sumário começa numa página nova.
+        if let Some(next) = self.doc.paras.get_mut(at.para + 2) {
+            next.style.page_break_before = true;
+        }
+        self.fill_toc();
+        self.toc_passes = 2;
+        self.cursor = Pos::new(at.para, 0);
+        self.anchor = self.cursor;
+    }
+
+    /// Refaz as linhas do sumário com os títulos e as páginas de agora.
+    fn fill_toc(&mut self) {
+        let Some(start) = self.doc.paras.iter().position(|p| p.style.name == "Sumário") else {
+            return;
+        };
+        let end = self.doc.paras[start..].iter().position(|p| p.style.name != "Sumário").map_or(self.doc.paras.len(), |n| start + n);
+        let base = self.doc.paras[start].spans[0].style.clone();
+        let removed = end - start;
+        let entries: Vec<(u8, String, usize)> = self.headings().into_iter().map(|(l, t, i)| (l, t, if i >= end { i - removed } else { i })).collect();
+        let mut lines = Vec::new();
+        for (level, text, para) in &entries {
+            // A página do título no layout atual (as linhas do sumário ainda contam).
+            let index = if *para >= start { para + removed } else { *para };
+            let page = self.layout.first.get(index).and_then(|&f| self.layout.placed.get(f)).map_or(0, |p| p.page) + 1;
+            let bold = *level == 1;
+            let style = CharStyle { bold, ..base.clone() };
+            lines.push(Paragraph::new(&format!("{text}\t{page}"), style, ParaStyle { name: "Sumário".into(), leader: true, left_indent: 14.0 * (*level as f32 - 1.0), space_after: 4.0, ..ParaStyle::default() }));
+        }
+        if lines.is_empty() {
+            lines.push(Paragraph::new("", base, ParaStyle { name: "Sumário".into(), leader: true, ..ParaStyle::default() }));
+        }
+        let cursor_in = self.cursor.para >= start && self.cursor.para < end;
+        self.doc.paras.splice(start..end, lines);
+        if cursor_in {
+            self.cursor = Pos::new(start, 0);
+            self.anchor = self.cursor;
+        }
+        self.cursor = self.doc.clamp(self.cursor);
+        self.anchor = self.doc.clamp(self.anchor);
+        self.stale = true;
+        self.version += 1;
+    }
+
     pub fn toggle_find(&mut self) {
         self.find = match self.find.take() {
             Some(_) => None,
@@ -725,6 +811,8 @@ impl Rich {
                     MenuItem::Separator,
                     MenuItem::action("inserir-imagem", "Inserir imagem…"),
                     MenuItem::action("quebra-pagina", "Inserir quebra de página").shortcut("Ctrl+Enter"),
+                    MenuItem::action("sumario", "Inserir sumário"),
+                    MenuItem::action("atualizar-sumario", "Atualizar sumário"),
                     MenuItem::Separator,
                     MenuItem::action("configurar-pagina", "Configurar página…").shortcut("Ctrl+Shift+P"),
                     MenuItem::action("abnt", "Aplicar normas ABNT…"),
@@ -796,6 +884,16 @@ impl Rich {
             "recortar" => self.copy(ui, true),
             "colar" => self.paste(ui),
             "selecionar-tudo" => self.select_all(),
+            "sumario" => self.insert_toc(),
+            "atualizar-sumario" => {
+                if self.doc.paras.iter().any(|p| p.style.name == "Sumário") {
+                    self.begin(None);
+                    self.fill_toc();
+                    self.toc_passes = 2;
+                } else {
+                    self.insert_toc();
+                }
+            }
             "buscar" => self.toggle_find(),
             _ => return false,
         }
@@ -927,7 +1025,7 @@ impl Rich {
         // Atalhos com Ctrl.
         let shortcuts = [("b", "negrito"), ("i", "italico"), ("u", "sublinhado"), ("e", "centralizar"), ("l", "alinhar-esquerda"), ("r", "alinhar-direita"), ("j", "justificar"), ("a", "selecionar-tudo"), ("c", "copiar"), ("x", "recortar"), ("v", "colar"), ("y", "refazer"), ("=", "zoom-mais"), ("+", "zoom-mais"), ("-", "zoom-menos"), ("0", "zoom-real")];
         for (letter, action) in shortcuts {
-            if input.shortcut(letter) {
+            if input.shortcut(letter) && !(input.alt && letter == "0") {
                 self.command(action, ui);
             }
         }
@@ -938,6 +1036,14 @@ impl Rich {
         }
         if input.shortcut("f") {
             self.toggle_find();
+        }
+        // Títulos como no Word: Ctrl+Alt+1, 2, 3; Ctrl+Alt+0 volta ao corpo.
+        if input.alt {
+            for (key, name) in [("1", "Título 1"), ("2", "Título 2"), ("3", "Título 3"), ("0", "Corpo")] {
+                if input.shortcut(key) {
+                    self.apply_named(name);
+                }
+            }
         }
         match input.shortcut_shift("g") {
             Some(back) => self.find_next(back),
@@ -1144,6 +1250,22 @@ impl Rich {
             self.anchor = self.doc.clamp(self.anchor);
         }
         let _ = relaid;
+        // Sumário: números das páginas acertados com o layout novo (até duas vezes).
+        if self.toc_passes > 0 && !self.stale {
+            self.toc_passes -= 1;
+            let before: Vec<String> = self.doc.paras.iter().filter(|p| p.style.name == "Sumário").map(|p| p.text.clone()).collect();
+            self.fill_toc();
+            let after: Vec<String> = self.doc.paras.iter().filter(|p| p.style.name == "Sumário").map(|p| p.text.clone()).collect();
+            if before == after {
+                self.toc_passes = 0;
+                self.stale = false;
+            } else {
+                ui.paint_text(|_, text, _| {
+                    self.layout = self.layouter.layout(text.font_system(), &self.doc);
+                });
+                self.stale = false;
+            }
+        }
         // PDF e impressão pedidos (precisam das fontes do sistema).
         if self.pdf_request.is_some() || self.print_job.is_some() {
             let pdf = self.pdf_request.take();
@@ -1706,4 +1828,45 @@ fn body_size(doc: &Doc) -> f32 {
 /// Retângulo do botão `i` de um grupo de `toolbar_buttons`.
 fn seg(group: (f32, f32, f32, f32), i: usize) -> (f32, f32, f32, f32) {
     (group.0 + 2.0 + i as f32 * 40.0, group.1, 40.0, group.3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn relayout(r: &mut Rich, fs: &mut cosmic_text::FontSystem) {
+        r.layout = r.layouter.layout(fs, &r.doc);
+        r.stale = false;
+    }
+
+    #[test]
+    fn sumario_com_paginas() {
+        let mut fs = cosmic_text::FontSystem::new();
+        let mut doc = Doc::new();
+        doc.insert_text(Pos::default(), "1 INTRODUÇÃO\nTexto.\n2 DESENVOLVIMENTO\n2.1 Método\nMais texto.", &CharStyle::default());
+        doc.paras[0].style.name = "Título 1".into();
+        doc.paras[2].style.name = "Título 1".into();
+        doc.paras[2].style.page_break_before = true;
+        doc.paras[3].style.name = "Título 2".into();
+        let mut r = Rich::new(doc);
+        relayout(&mut r, &mut fs);
+        r.cursor = Pos::default();
+        r.anchor = r.cursor;
+        r.insert_toc();
+        for _ in 0..3 {
+            relayout(&mut r, &mut fs);
+            r.fill_toc();
+        }
+        let toc: Vec<String> = r.doc.paras.iter().filter(|p| p.style.name == "Sumário").map(|p| p.text.clone()).collect();
+        assert_eq!(r.doc.paras[0].text, "SUMÁRIO");
+        // O sumário fica na página 1; a introdução começa na 2 e o desenvolvimento na 3.
+        assert_eq!(toc, ["1 INTRODUÇÃO\t2", "2 DESENVOLVIMENTO\t3", "2.1 Método\t3"], "{toc:?}");
+        // O pontilhado vai até a margem.
+        relayout(&mut r, &mut fs);
+        let first = r.doc.paras.iter().position(|p| p.style.name == "Sumário").unwrap();
+        let line = &r.layout.paras[first].lines[0];
+        let (a, b) = line.leader.expect("pontilhado");
+        assert!(b > a + 100.0);
+        assert!((line.x1 - r.doc.page.content_width()).abs() < 2.0, "número na margem: {} de {}", line.x1, r.doc.page.content_width());
+    }
 }

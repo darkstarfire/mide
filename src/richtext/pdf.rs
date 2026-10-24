@@ -215,6 +215,14 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
             }
         }
         glyph_ops(&mut pg.ops, &line.glyphs, &para.text, ml, base, &|g| style_of(g).color, &mut font_uses);
+        if let Some((a, b)) = line.leader {
+            let c = styles.first().map_or([0, 0, 0], |s| s.color);
+            let mut x = a + 4.0;
+            while x < b - 4.0 {
+                rect(&mut pg.ops, ml + x, base - 1.2, 1.2, 1.2, c);
+                x += 4.0;
+            }
+        }
         for g in &line.glyphs {
             let st = style_of(g);
             let thick = st.size * 0.06;

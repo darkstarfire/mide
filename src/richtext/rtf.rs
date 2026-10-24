@@ -78,6 +78,9 @@ pub fn write(doc: &Doc) -> String {
         if st.page_break_before {
             body.push_str("\\pagebb");
         }
+        if st.leader {
+            body.push_str(&format!("\\tqr\\tldot\\tx{}", twips(page.content_width() - st.right_indent)));
+        }
         if let Some(kind) = st.list {
             let k = match kind {
                 ListKind::Bullet => "bullet",
@@ -490,6 +493,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                         pstyle.line_spacing = if p > 0 { (p as f32 / 240.0).max(0.5) } else { 1.0 };
                     }
                     "pagebb" => pstyle.page_break_before = true,
+                    "tldot" => pstyle.leader = true,
                     "page" if st.dest == Dest::Text => {
                         if !para.text.is_empty() {
                             finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break);

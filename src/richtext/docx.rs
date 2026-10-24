@@ -191,6 +191,9 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         if st.page_break_before {
             body.push_str("<w:pageBreakBefore/>");
         }
+        if st.leader {
+            body.push_str(&format!("<w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{}\"/></w:tabs>", twips(doc.page.content_width() - st.right_indent)));
+        }
         if let Some(kind) = st.list {
             body.push_str(&format!("<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{}\"/></w:numPr>", st.level, list_num_id(kind)));
         }
@@ -493,6 +496,16 @@ fn apply_ppr(ppr: &Element, p: &mut ParaStyle) {
     }
     if let Some(b) = on(ppr.child("w:pageBreakBefore")) {
         p.page_break_before = b;
+    }
+    if let Some(tabs) = ppr.child("w:tabs") {
+        p.leader = tabs.elements().any(|t| t.attr("w:leader").is_some_and(|l| l == "dot") && t.attr("w:val") == Some("right"));
+    }
+    // O sumário do Word (TOC 1, TOC 2...) com pontilhado.
+    if let Some(id) = ppr.child("w:pStyle").and_then(val) {
+        if id.to_lowercase().starts_with("toc") || id.to_lowercase().starts_with("sumário") || id.to_lowercase().starts_with("sumario") {
+            p.leader = true;
+            p.name = "Sumário".into();
+        }
     }
     if let Some(id) = ppr.child("w:pStyle").and_then(val) {
         if let Some(name) = mide_style(id) {
