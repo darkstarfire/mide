@@ -551,6 +551,9 @@ pub struct Ctx {
     /// As luzes da janela já foram desenhadas neste quadro (a barra lateral do Tahoe as
     /// desenha; um segundo pedido no mesmo quadro é ignorado).
     controls_drawn: bool,
+    /// Um clique numa área de arrastar a janela já foi tratado neste quadro (áreas
+    /// sobrepostas contariam o mesmo clique duas vezes, como um duplo clique).
+    drag_area_handled: bool,
 }
 
 /// O que o passe da tela principal deixou no `Ctx` e que um passe de outra tela não
@@ -606,6 +609,7 @@ impl Ctx {
             window_request: None,
             last_rect: (0.0, 0.0, 0.0, 0.0),
             controls_drawn: false,
+            drag_area_handled: false,
             content_window: false,
             maximized: false,
             fixed_size: false,
@@ -739,6 +743,7 @@ impl Ctx {
         self.repaint = false;
         self.hover_claimed = false;
         self.controls_drawn = false;
+        self.drag_area_handled = false;
         self.ticking = false;
         self.glass.clear();
         self.glass_capable = false;
@@ -1118,7 +1123,7 @@ impl<'a> Ui<'a> {
             return;
         }
         let r = self.background(rect);
-        if !r.clicked {
+        if !r.clicked || std::mem::replace(&mut self.ctx.drag_area_handled, true) {
             return;
         }
         let now = std::time::Instant::now();

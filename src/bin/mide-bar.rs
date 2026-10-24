@@ -904,11 +904,42 @@ impl Bar {
             }
             return top.get(index).map(|m| dbus_entries(&m.children, &MenuAction::Native)).unwrap_or_default();
         }
-        let Some(menu) = top.get(index) else {
+        // Os números dos itens mudam quando o app troca os menus (a Calculadora ao trocar
+        // de modo): a raiz é lida de novo e o menu é achado pelo título.
+        let title = top.get(index).map(|m| m.label.clone());
+        if let Some(root) = mide::appmenu::layout(conn, sender, path, 0) {
+            let fresh: Vec<mide::appmenu::Item> = root.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect();
+            if !fresh.is_empty() {
+                *top = fresh;
+            }
+        }
+        let menu = title.and_then(|t| top.iter().find(|m| m.label == t)).or_else(|| top.get(index));
+        let Some(menu) = menu else {
             return Vec::new();
         };
-        let children = mide::appmenu::layout(conn, sender, path, menu.id).unwrap_or_else(|| menu.children.clone());
+        let children = mide::appmenu::layout(conn, sender, path, menu.id).filter(|c| !c.is_empty()).unwrap_or_else(|| menu.children.clone());
         dbus_entries(&children, &MenuAction::Native)
+    }
+
+    /// Relê os títulos dos menus do app em foco (o app pode ter trocado os menus sem
+    /// trocar de janela). Só dbusmenu; os do GTK são lidos ao abrir.
+    fn reread_native_titles(&mut self) {
+        if self.native_gtk.is_some() {
+            return;
+        }
+        let (Some((_, conn)), Some((sender, path, top))) = (&self.appmenu, &mut self.native) else {
+            return;
+        };
+        let Some(root) = mide::appmenu::layout(conn, sender, path, 0) else {
+            return;
+        };
+        let fresh: Vec<mide::appmenu::Item> = root.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect();
+        let same = fresh.len() == top.len() && fresh.iter().zip(top.iter()).all(|(a, b)| a.label == b.label && a.id == b.id);
+        if !fresh.is_empty() && !same {
+            tracing::info!("menu do app {}: {}", self.focused_id, fresh.iter().map(|i| i.label.as_str()).collect::<Vec<_>>().join(", "));
+            *top = fresh;
+            self.draw_bar();
+        }
     }
 
     /// Seletor de layout: os layouts escolhidos (o ativo marcado) e as Configurações.
@@ -1030,6 +1061,8 @@ impl Bar {
         // registro pode chegar depois da janela).
         if focus_changed || self.native.is_none() {
             self.refresh_native();
+        } else if self.menu.is_none() {
+            self.reread_native_titles();
         }
     }
 

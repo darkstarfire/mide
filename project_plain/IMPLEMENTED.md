@@ -1545,3 +1545,8 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
   - barra de busca com campos em cápsula, anterior/próxima numa cápsula, Substituir, Tudo e OK;
   - rodapé com linha, coluna e o total de linhas.
 - **Menus do app na barra:** o `list` do compositor manda o processo (PID) de cada janela, como quarto campo. A barra prefere os menus registrados por esse processo. Antes valia o registro mais novo com o mesmo nome, e com dois processos do mesmo app (o Terminal comum e o de atalho, F12) a barra podia mostrar os menus genéricos ou os do outro processo. Pedido do usuário: o Terminal mostrava Arquivo/Editar/Janela e não dava para abrir as Preferências.
+
+## Correções: menu do app depois de trocar os menus e clique que maximizava (2026-10-24)
+
+- **Menu vazio:** os números dos itens dos menus publicados pelo mide-ui dependem da posição. Ao trocar de modo, a Calculadora muda os menus, o "Editar" ganha outro número e a barra abria um menu vazio. Agora a barra relê a raiz ao abrir um menu e o acha pelo título. Os títulos do app em foco também são relidos a cada volta da barra, então menus que entram ou saem aparecem sem trocar de janela.
+- **Janela maximizava com um clique (Notas):** a área de arrastar da barra lateral e a da Calculadora se sobrepunham, e o mesmo clique contava duas vezes, como duplo clique. Agora o mide-ui trata um clique de arrastar por quadro.
