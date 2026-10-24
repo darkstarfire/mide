@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 use tiny_skia::Pixmap;
 
 /// Nome do tema de ícones do mide (o fork do WhiteSur, `mide-icons`, instalado pelo
-/// `mide-atualizar`).
+/// `mide-update`).
 pub const MIDE_THEME: &str = "mide";
 
 /// Ícone de app pelo nome: primeiro no tema do mide (quando instalado: os apps de

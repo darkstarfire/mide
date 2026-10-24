@@ -54,5 +54,5 @@ As anotações têm as lições já aprendidas: leia antes de mexer numa área.
 ## Atualizar e testar na sessão de verdade (outro PC)
 
 O passo a passo está em `project_plain/TESTS.md`, seção "Atualizar e testar num PC
-com a sessão do mide". O script `data/mide-conferir` mostra o estado da instalação
+com a sessão do mide". O script `data/mide-check` mostra o estado da instalação
 (binários, tema de ícones, `mide-session`, erros no log).

@@ -36,4 +36,4 @@ serve apenas como inspiração; o mide não é concorrente nem cópia do macOS. 
 Os ícones vêm do [mide-icons](https://github.com/fabioaacarneiro/mide-icons), um fork
 do [WhiteSur icon theme](https://github.com/vinceliuice/WhiteSur-icon-theme) (de Vince
 Liuice, GPL-3.0) sem o logo da Apple e com desenhos próprios no lugar dos que recriavam
-ícones de apps da Apple. O `data/mide-atualizar` instala o tema.
+ícones de apps da Apple. O `data/mide-update` instala o tema.

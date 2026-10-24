@@ -8,7 +8,7 @@
 
 ## Dependências de execução já definidas
 
-- **Obrigatórias, porque sustentam recursos que o desktop promete** (decisão do usuário em 2026-10-21: sem elas, parece que o mide não funciona). O instalador instala sempre, e o `data/mide-conferir` acusa FALTA se não estiverem:
+- **Obrigatórias, porque sustentam recursos que o desktop promete** (decisão do usuário em 2026-10-21: sem elas, parece que o mide não funciona). O instalador instala sempre, e o `data/mide-check` acusa FALTA se não estiverem:
   - `xdg-desktop-portal-wlr` + PipeWire: gravar e compartilhar a tela pelos apps (OBS, navegador em videochamada) (A19).
   - `curl`: buscar as cotações das moedas do Banco Central na Calculadora (só quando a pessoa usa moeda e deixa buscar na internet). Sem ele, a conversão de moedas usa a última cotação guardada ou fica sem cotação; o resto funciona. O Ubuntu Desktop pode não trazer: o instalador confere.
   - `ffmpeg`: gravar a tela em vídeo, com áudio, pela ferramenta de captura do mide (A21). Só codifica e salva; a captura das imagens e do som é do mide.
@@ -17,7 +17,7 @@
 - Tema de cursores (ex.: `adwaita-icon-theme`), para o cursor do mide no console (A13); sem tema, o mide desenha uma seta própria.
 
 - **Bibliotecas do sistema usadas pelos binários** (medido com `ldd` em 2026-10-20): `libinput`, `libseat`, `libudev`/`libgudev`, `libgbm` + `libdrm` (Mesa), `libEGL`/GLES (Mesa, carregado na hora), `libxkbcommon`, `libsystemd`, `glib` e as que elas puxam (`libevdev`, `libmtdev`, `libwacom`). As **dependências do Rust (crates) ficam dentro dos binários**: quem só instala não precisa de Rust nem de `cargo`.
-- **Programas usados em tempo de execução:** D-Bus (sessão), `systemd --user`, `xdg-desktop-portal` + `xdg-desktop-portal-gtk` (configurações do sistema para os apps GTK), `xdg-desktop-portal-wlr` + PipeWire (gravar e compartilhar a tela: OBS, navegador em videochamada), `dbus-update-activation-environment`, fontes do sistema (fontconfig), tema de ícones do mide (`mide-icons`, fork do WhiteSur: o `mide-atualizar` baixa e instala em `~/.local/share/icons`; precisa de `git` e rede na primeira vez); recomendados: `qt5-gtk-platformtheme` e `qt6-gtk-platformtheme` (apps Qt 5 e Qt 6 seguem o tema de ícones e o claro/escuro do mide); opcionais: `foot` (terminal), `nmcli`, `bluetoothctl`, `wpctl`, `loginctl`.
+- **Programas usados em tempo de execução:** D-Bus (sessão), `systemd --user`, `xdg-desktop-portal` + `xdg-desktop-portal-gtk` (configurações do sistema para os apps GTK), `xdg-desktop-portal-wlr` + PipeWire (gravar e compartilhar a tela: OBS, navegador em videochamada), `dbus-update-activation-environment`, fontes do sistema (fontconfig), tema de ícones do mide (`mide-icons`, fork do WhiteSur: o `mide-update` baixa e instala em `~/.local/share/icons`; precisa de `git` e rede na primeira vez); recomendados: `qt5-gtk-platformtheme` e `qt6-gtk-platformtheme` (apps Qt 5 e Qt 6 seguem o tema de ícones e o claro/escuro do mide); opcionais: `foot` (terminal), `nmcli`, `bluetoothctl`, `wpctl`, `loginctl`.
 - Para compilar o `xwayland-satellite` no Debian/Ubuntu: `libxcb-cursor-dev` e `clang` (além de `libxcb1-dev` e `pkg-config`).
 
 ## Estratégia de instalação (sem compilar na máquina do usuário)

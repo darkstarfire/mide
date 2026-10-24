@@ -1,9 +1,9 @@
 #!/bin/sh
 # Recompila o mide deste projeto e atualiza a sessão aberta, sem sair dela.
 #
-# Uso: data/mide-atualizar          barra, dock, área de trabalho, notificações e
+# Uso: data/mide-update          barra, dock, área de trabalho, notificações e
 #                                   launcher com os programas novos (as janelas ficam)
-#      data/mide-atualizar --tudo   também o compositor: as janelas dos apps fecham,
+#      data/mide-update --tudo   também o compositor: as janelas dos apps fecham,
 #                                   mas a sessão continua (sem voltar ao login)
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."

@@ -24,7 +24,7 @@ check "clique direito abre o menu do app" "menu de Terminal aberto" "400 rclick 
 check "clique no ícone durante a animação de minimizar restaura" "janela restaurada" "400 combo super+h; 420 click 654 728" "$CALCULATOR"
 
 # Tema de ícones do mide (fork do WhiteSur): instalado numa pasta de dados de teste a
-# partir do clone (o do mide-atualizar ou o do lado deste projeto); sem clone, pulado.
+# partir do clone (o do mide-update ou o do lado deste projeto); sem clone, pulado.
 ICONSRC=""
 for d in "${XDG_CACHE_HOME:-$HOME/.cache}/mide/mide-icons" "$PWD/../mide-icons"; do
     if [ -x "$d/install.sh" ]; then ICONSRC="$d"; break; fi

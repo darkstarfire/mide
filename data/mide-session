@@ -72,7 +72,7 @@ for candidate in "$dir/mide" "$dir/../target/release/mide" "$dir/../target/debug
 done
 
 # Log da sessão, para quando algo der errado (a tela não mostra o terminal).
-log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/sessao.log"
+log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/session.log"
 mkdir -p "$(dirname "$log")"
 [ -f "$log" ] && mv -f "$log" "$log.anterior"
 

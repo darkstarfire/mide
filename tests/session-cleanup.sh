@@ -9,7 +9,7 @@
 #   3. sem barramento de sessão (`dbus-run-session`): a limpeza roda também.
 set -u
 cd "$(dirname "$0")/.."
-root="$(mktemp -d "${TMPDIR:-/tmp}/mide-sessao-limpeza.XXXXXX")"
+root="$(mktemp -d "${TMPDIR:-/tmp}/mide-session-cleanup.XXXXXX")"
 trap 'pkill -KILL -f "^/bin/sh $root/bin/mide\$"; rm -rf "$root"' EXIT
 fails=0
 ok() { echo "  ok: $1"; }
@@ -73,7 +73,7 @@ grep -q "dbus-run-session -- $root/bin/mide-session" "$log" && ok "abriu um barr
 limpou && ok "limpeza rodou dentro do dbus-run-session" || { falha "limpeza não rodou"; cat "$log"; }
 
 if [ "$fails" -gt 0 ]; then
-    echo "sessao-limpeza: $fails falha(s)"
+    echo "session-cleanup: $fails falha(s)"
     exit 1
 fi
-echo "sessao-limpeza: tudo certo"
+echo "session-cleanup: tudo certo"

@@ -3,8 +3,8 @@
 # para este projeto: escolher ela no login roda o data/mide-session daqui, com os
 # binários de target/ (compile antes com `cargo build`).
 #
-# Uso: sudo tests/sessao-dev.sh            (instala)
-#      sudo tests/sessao-dev.sh remover    (remove)
+# Uso: sudo tests/session-dev.sh            (instala)
+#      sudo tests/session-dev.sh remover    (remove)
 set -eu
 cd "$(dirname "$0")/.."
 DEST=/usr/share/wayland-sessions/mide-dev.desktop
@@ -32,4 +32,4 @@ echo "e escolha \"mide (desenvolvimento)\"."
 echo "Para testar sem sair da sessão atual: Ctrl+Alt+F3, entre no console e rode"
 echo "  timeout 300 $PWD/data/mide-session"
 echo "(Ctrl+Alt+F7, ou o console da sua sessão, volta para ela.)"
-echo "Log da sessão: ~/.local/state/mide/sessao.log"
+echo "Log da sessão: ~/.local/state/mide/session.log"

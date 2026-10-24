@@ -3,7 +3,7 @@
 # tema de ícones (mide-icons) na versão do projeto, o mide-session em uso, o tema de
 # ícones da sessão e os erros recentes no log. Só lê; não muda nada.
 #
-# Uso: data/mide-conferir
+# Uso: data/mide-check
 cd "$(dirname "$(readlink -f "$0")")/.."
 
 ok() { printf '  ok      %s\n' "$1"; }
@@ -15,15 +15,15 @@ printf '  commit  %s\n' "$(git log --oneline -1 2>/dev/null)"
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then aviso "há mudanças locais sem commit"; fi
 git fetch -q origin 2>/dev/null && [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master 2>/dev/null)" ] && aviso "o GitHub tem commits novos: git pull"
 
-echo "== binários (data/mide-atualizar compila)"
+echo "== binários (data/mide-update compila)"
 if [ -x target/release/mide ]; then
     if [ -n "$(find src Cargo.toml -newer target/release/mide -print -quit 2>/dev/null)" ]; then
-        aviso "o código é mais novo que target/release/mide: rode data/mide-atualizar"
+        aviso "o código é mais novo que target/release/mide: rode data/mide-update"
     else
         ok "target/release/mide em dia"
     fi
 else
-    falta "target/release/mide: rode data/mide-atualizar"
+    falta "target/release/mide: rode data/mide-update"
 fi
 
 echo "== tema de ícones (mide-icons)"
@@ -33,9 +33,9 @@ instalada="$(cat "$dados/mide/.versao-mide-icons" 2>/dev/null)"
 if [ "$instalada" = "$versao" ]; then
     ok "tema mide instalado em $dados/mide ($(echo "$versao" | cut -c1-8))"
 elif [ -n "$instalada" ]; then
-    aviso "tema mide na versão $(echo "$instalada" | cut -c1-8); o projeto pede $(echo "$versao" | cut -c1-8): rode data/mide-atualizar"
+    aviso "tema mide na versão $(echo "$instalada" | cut -c1-8); o projeto pede $(echo "$versao" | cut -c1-8): rode data/mide-update"
 else
-    falta "tema mide não instalado: rode data/mide-atualizar (precisa de git e internet)"
+    falta "tema mide não instalado: rode data/mide-update (precisa de git e internet)"
 fi
 for nome in mide-terminal mide-files mide-settings; do
     [ -e "$dados/hicolor/scalable/apps/$nome.svg" ] || aviso "$nome não está no hicolor (menus de outros ambientes sem o ícone)"
@@ -68,7 +68,7 @@ fi
 if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal-wlr/mide" ]; then
     ok "portal wlr com a janela de escolha do mide"
 else
-    falta "configuração do portal wlr: rode data/mide-atualizar"
+    falta "configuração do portal wlr: rode data/mide-update"
 fi
 
 echo "== apps do mide como padrão (B25)"
@@ -93,7 +93,7 @@ else
     aviso "mide.portal fora de /usr/share/xdg-desktop-portal/portals: a sessão monta uma pasta própria (XDG_DESKTOP_PORTAL_DIR)"
 fi
 [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/org.freedesktop.impl.portal.desktop.mide.service" ] ||
-    falta "ativação do seletor de arquivos do mide: rode data/mide-atualizar"
+    falta "ativação do seletor de arquivos do mide: rode data/mide-update"
 dono() {
     pid="$(gdbus call --session -d org.freedesktop.DBus -o /org/freedesktop/DBus -m org.freedesktop.DBus.GetConnectionUnixProcessID "$1" 2>/dev/null | sed -n 's/.*uint32 \([0-9]*\).*/\1/p')"
     [ -n "$pid" ] && cat "/proc/$pid/comm" 2>/dev/null
@@ -109,7 +109,7 @@ if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
     if [ -f /usr/share/xdg-desktop-portal/portals/mide.portal ] || [ -e "$pasta/mide.portal" ]; then
         ok "o portal acha o seletor do mide"
     else
-        falta "o portal não acha o mide.portal: saia e entre de novo na sessão (ou data/mide-atualizar --tudo)"
+        falta "o portal não acha o mide.portal: saia e entre de novo na sessão (ou data/mide-update --tudo)"
     fi
     [ -n "$(dono org.freedesktop.impl.portal.desktop.mide)" ] && ok "seletor de arquivos do mide no barramento" ||
         aviso "seletor de arquivos do mide fora do barramento (inicia no primeiro pedido)"
@@ -119,7 +119,7 @@ fi
 
 echo "== senha de administrador (mide-sudo e polkit, C7)"
 for prog in mide-sudo mide-askpass mide-polkit-agent; do
-    [ -x "target/release/$prog" ] || falta "target/release/$prog: rode data/mide-atualizar"
+    [ -x "target/release/$prog" ] || falta "target/release/$prog: rode data/mide-update"
 done
 if command -v sudo >/dev/null; then
     if id -nG | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin'; then
@@ -141,7 +141,7 @@ else
 fi
 command -v xhost >/dev/null || aviso "xhost: sudo apt install x11-xserver-utils (apps abertos com o mide-sudo podem não achar a tela X11)"
 if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
-    if pgrep -u "$(id -u)" -x mide-polkit-agen >/dev/null; then
+    if pgrep -u "$(id -u)" -f "[m]ide-polkit-agent" >/dev/null; then
         ok "agente do polkit do mide rodando"
     else
         aviso "agente do polkit do mide não está rodando (veja \"agente do polkit\" no log da sessão)"
@@ -159,8 +159,14 @@ fi
 
 echo "== sessão"
 sessao="$(command -v mide-session)"
+# A tela de login acha a sessão pelo Exec da entrada em wayland-sessions (pode apontar
+# direto para o script do projeto, sem ele estar no PATH).
 if [ -z "$sessao" ]; then
-    falta "mide-session não está no PATH (a tela de login não acha a sessão)"
+    sessao="$(grep -hs '^Exec=' /usr/share/wayland-sessions/mide*.desktop /usr/local/share/wayland-sessions/mide*.desktop | head -1 | sed 's/^Exec=//; s/ .*//')"
+    [ -x "$sessao" ] || sessao=""
+fi
+if [ -z "$sessao" ]; then
+    falta "mide-session não está no PATH nem numa entrada de wayland-sessions (a tela de login não acha a sessão)"
 elif [ "$(readlink -f "$sessao")" = "$(readlink -f data/mide-session)" ]; then
     ok "mide-session é o deste projeto ($sessao)"
 elif cmp -s "$sessao" data/mide-session; then
@@ -191,7 +197,10 @@ else
 fi
 
 echo "== log da sessão"
-log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/sessao.log"
+log="${XDG_STATE_HOME:-$HOME/.local/state}/mide/session.log"
+# Sessão aberta antes da troca de nome do log (sessao.log): lê o antigo.
+old="${XDG_STATE_HOME:-$HOME/.local/state}/mide/sessao.log"
+[ -f "$log" ] || [ ! -f "$old" ] || log="$old"
 if [ -f "$log" ]; then
     erros="$(sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -cE ' (ERROR|WARN) ')"
     printf '  %s: %s aviso(s)/erro(s)\n' "$log" "$erros"
