@@ -11,6 +11,10 @@ serve para três coisas:
 O mide se inspira no visual do macOS (sem copiar nada dele): claro, limpo, com vidro,
 cantos arredondados, movimento curto e suave. Bonito, mas sempre leve.
 
+> **Visual do Tahoe (regra forte, 2026-10-24):** o mapa de componentes, medidas e
+> materiais está em [`docs/tahoe.md`](tahoe.md). Onde este guia e o mapa discordam
+> (raios, tamanhos, anatomia da janela), vale o mapa.
+
 Valores marcados com `código:` estão no código e devem ser lidos de lá (o tema do
 mide-ui em `src/kit/theme.rs`, as durações e curvas em `src/motion.rs`). Se mudar aqui,
 mude lá, e vice-versa.
