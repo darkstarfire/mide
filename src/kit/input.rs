@@ -61,6 +61,8 @@ pub struct Input {
     pub key_mods: Vec<(bool, bool)>,
     /// Shift no momento de cada atalho de `shortcuts` (Ctrl+Shift+Z refaz).
     pub shortcut_shift: Vec<bool>,
+    /// O Alt de quando cada atalho foi apertado (Ctrl+Alt+letra).
+    pub shortcut_alt: Vec<bool>,
     /// Atalhos com Ctrl neste quadro (a letra, em minúscula: "c", "v", "n"...).
     pub shortcuts: Vec<String>,
     /// Todas as teclas apertadas neste quadro, cruas e na ordem (ver [`KeyPress`]).
@@ -93,6 +95,7 @@ impl Input {
         self.key_mods.clear();
         self.shortcuts.clear();
         self.shortcut_shift.clear();
+        self.shortcut_alt.clear();
         self.presses.clear();
         self.menu.clear();
         self.paste = None;
@@ -124,6 +127,16 @@ impl Input {
     }
 
     /// Ctrl+`letra` neste quadro, e se o Shift estava junto (`Some(true)` em Ctrl+Shift).
+    /// Ctrl+Alt+letra apertado neste quadro (com o Alt de quando a tecla foi apertada).
+    pub fn shortcut_alt(&self, letter: &str) -> bool {
+        self.shortcuts.iter().enumerate().any(|(i, s)| s == letter && self.shortcut_alt.get(i).copied().unwrap_or(self.alt))
+    }
+
+    /// Ctrl+letra sem Alt.
+    pub fn shortcut_plain(&self, letter: &str) -> bool {
+        self.shortcuts.iter().enumerate().any(|(i, s)| s == letter && !self.shortcut_alt.get(i).copied().unwrap_or(self.alt))
+    }
+
     pub fn shortcut_shift(&self, letter: &str) -> Option<bool> {
         let i = self.shortcuts.iter().position(|s| s == letter)?;
         Some(self.shortcut_shift.get(i).copied().unwrap_or(self.shift))

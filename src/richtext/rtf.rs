@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use super::{Align, Baseline, CharStyle, Doc, Image, ListKind, NumberPosition, PageSetup, ParaStyle, Paragraph, LINE_BREAK, OBJECT};
+use super::{Align, Baseline, CharStyle, Doc, Image, ListKind, NumberPosition, PageSetup, ParaStyle, Paragraph, LINE_BREAK, NOTE, OBJECT};
 
 fn twips(pt: f32) -> i32 {
     (pt * 20.0).round() as i32
@@ -23,7 +23,7 @@ fn escape(out: &mut String, text: &str) {
             '}' => out.push_str("\\}"),
             '\t' => out.push_str("\\tab "),
             LINE_BREAK => out.push_str("\\line "),
-            OBJECT => {}
+            OBJECT | NOTE => {}
             c if (c as u32) < 128 => out.push(c),
             c => {
                 let mut buf = [0u16; 2];
@@ -107,6 +107,13 @@ pub fn write(doc: &Doc) -> String {
         } else {
             for (a, b, s) in p.runs() {
                 if a == b && !p.text.is_empty() {
+                    continue;
+                }
+                // Nota de rodapé: o número automático e o texto dela.
+                if let Some(id) = s.note {
+                    body.push_str("{\\super\\chftn}{\\footnote\\pard\\plain\\fs20 {\\super\\chftn} ");
+                    escape(&mut body, doc.note_text(id).unwrap_or(""));
+                    body.push('}');
                     continue;
                 }
                 let f = font(&s.family, &mut fonts);
@@ -205,6 +212,7 @@ enum Dest {
     MideList,
     MideStyle,
     MidePageNum,
+    Footnote,
     Skip,
 }
 
@@ -223,7 +231,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
         return None;
     }
     let bytes = src.as_bytes();
-    let mut doc = Doc { paras: Vec::new(), page: PageSetup::default() };
+    let mut doc = Doc { paras: Vec::new(), page: PageSetup::default(), notes: Vec::new() };
     let mut fonts: Vec<(i32, String)> = Vec::new();
     let mut font_name = String::new();
     let mut font_id = 0;
@@ -242,6 +250,11 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     let mut skip_chars = 0usize;
     let mut next_page_break = false;
     let mut cbg: Option<usize> = None;
+    // Profundidade do grupo da nota de rodapé aberta (o fim dele cria a nota).
+    let mut footnote_depth: Option<usize> = None;
+    let mut footnote_text = String::new();
+    // O parágrafo de fora (o `\pard` de dentro da nota não vale para ele).
+    let mut footnote_saved: Option<ParaStyle> = None;
     let mut i = 0;
     let push_text = |para: &mut Paragraph, s: &str, ch: &CharStyle| {
         if s.is_empty() {
@@ -274,6 +287,21 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                 i += 1;
             }
             b'}' => {
+                if st.dest == Dest::Footnote && footnote_depth == Some(stack.len()) {
+                    footnote_depth = None;
+                    if let Some(saved) = footnote_saved.take() {
+                        pstyle = saved;
+                    }
+                    let id = doc.add_note(footnote_text.split_whitespace().collect::<Vec<_>>().join(" ").as_str());
+                    footnote_text.clear();
+                    if let Some(prev) = stack.pop() {
+                        st = prev;
+                    }
+                    let style = CharStyle { note: Some(id), baseline: Baseline::Normal, ..st.ch.clone() };
+                    push_text(&mut para, &NOTE.to_string(), &style);
+                    i += 1;
+                    continue;
+                }
                 // Fim de um destino: guarda o que foi juntado.
                 match st.dest {
                     Dest::Pict => {
@@ -358,6 +386,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                             let ch = cp1252(u8::from_str_radix(hex, 16).unwrap_or(b'?'));
                             match st.dest {
                                 Dest::Text => push_text(&mut para, &ch.to_string(), &st.ch),
+                                Dest::Footnote => footnote_text.push(ch),
                                 Dest::FontTable => font_name.push(ch),
                                 Dest::Header | Dest::Footer | Dest::MideStyle => side_text.push(ch),
                                 _ => {}
@@ -430,6 +459,13 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     "pichgoal" => pict_goal.1 = pt(p),
                     "picw" => pict_px.0 = p as f32,
                     "pich" => pict_px.1 = p as f32,
+                    "footnote" => {
+                        st.dest = Dest::Footnote;
+                        footnote_depth = Some(stack.len());
+                        footnote_saved = Some(pstyle.clone());
+                        footnote_text.clear();
+                    }
+                    "chftn" => {}
                     "header" | "headerr" | "headerf" => {
                         st.dest = Dest::Header;
                         side_text.clear();
@@ -528,6 +564,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                         skip_chars = st.uc;
                         match st.dest {
                             Dest::Text => push_text(&mut para, &s, &st.ch),
+                            Dest::Footnote => footnote_text.push_str(&s),
                             Dest::FontTable => font_name.push_str(&s),
                             Dest::Header | Dest::Footer | Dest::MideStyle => side_text.push_str(&s),
                             _ => {}
@@ -535,6 +572,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     }
                     "par" | "sect" if st.dest == Dest::Text => finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break),
                     "par" if matches!(st.dest, Dest::Header | Dest::Footer) => side_text.push(' '),
+                    "par" | "line" | "tab" if st.dest == Dest::Footnote => footnote_text.push(' '),
                     "line" if st.dest == Dest::Text => push_text(&mut para, &LINE_BREAK.to_string(), &st.ch),
                     "tab" if st.dest == Dest::Text => push_text(&mut para, "\t", &st.ch),
                     "emdash" if st.dest == Dest::Text => push_text(&mut para, "—", &st.ch),
@@ -575,6 +613,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     }
                     Dest::Pict => pict_hex.extend(chunk.chars().filter(|c| c.is_ascii_hexdigit())),
                     Dest::Header | Dest::Footer | Dest::MideList | Dest::MideStyle | Dest::MidePageNum => side_text.push_str(chunk),
+                    Dest::Footnote => footnote_text.push_str(chunk),
                     Dest::Skip => {}
                 }
             }
@@ -622,10 +661,11 @@ mod tests {
         d.page.numbers.position = NumberPosition::TopRight;
         d.page.numbers.show_from = 3;
         d.page.header = "Cabeçalho".into();
+        d.insert_note(Pos::new(0, "Título".len()), "Nota em RTF, com vírgula.");
         let rtf = write(&d);
         let back = read(rtf.as_bytes()).expect("RTF");
         assert_eq!(back.paras.len(), 2, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
-        assert_eq!(back.paras[0].text, "Título");
+        assert_eq!(back.paras[0].text.replace(crate::richtext::NOTE, ""), "Título");
         assert_eq!(back.paras[1].text, "Olá, “mundo” — ção {x}\\");
         assert!(back.paras[0].spans[0].style.bold);
         assert_eq!(back.paras[0].spans[0].style.size, 18.0);
@@ -637,6 +677,8 @@ mod tests {
         assert_eq!(back.paras[1].style.list, Some(ListKind::Number));
         assert_eq!(back.page.numbers.show_from, 3);
         assert_eq!(back.page.header, "Cabeçalho");
+        assert_eq!(back.notes, vec![(1, "Nota em RTF, com vírgula.".to_string())]);
+        assert!(back.paras[0].text.contains(crate::richtext::NOTE));
         assert!((back.page.width - d.page.width).abs() < 0.1);
     }
 

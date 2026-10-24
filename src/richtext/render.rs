@@ -129,6 +129,26 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
             }
         }
     }
+    // Notas de rodapé no pé da página: o traço e as notas.
+    let notes_h = layout.notes_height(view.page);
+    if notes_h > 0.0 {
+        let mut y = doc.page.height - doc.page.margins[2] - notes_h;
+        fill(pixmap, left, view.origin.1 + (y + 4.0) * s, doc.page.content_width() / 3.0 * s, (0.5 * s).max(1.0), [0, 0, 0, 255]);
+        y += super::layout::NOTE_SEPARATOR;
+        for id in &layout.page_notes[view.page] {
+            let Some((_, boxed, styles)) = layout.note_boxes.get(id) else {
+                continue;
+            };
+            for line in &boxed.lines {
+                let base = view.origin.1 + (y + line.baseline) * s;
+                draw_glyphs(text, pixmap, &line.glyphs, (left, base), s, |g| {
+                    let c = styles.get(g.span).map_or([0, 0, 0], |st| st.color);
+                    [c[0], c[1], c[2], 255]
+                });
+                y += line.height;
+            }
+        }
+    }
     // Cursor.
     if let (Some(p), None) = (view.caret, sel) {
         if let Some(placed) = layout.line_of(p).filter(|pl| pl.page == view.page) {

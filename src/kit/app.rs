@@ -1400,9 +1400,11 @@ impl Runner {
             None if input.ctrl => {
                 // Ctrl+letra vira atalho, não texto. Com Ctrl, o texto da tecla é um
                 // caractere de controle (Ctrl+D = 0x04): vale o símbolo da tecla.
-                if let Some(c) = event.keysym.key_char().filter(|c| c.is_alphanumeric()) {
+                // Letras, números e pontuação (Ctrl+=, Ctrl+−, Ctrl+Shift+.).
+                if let Some(c) = event.keysym.key_char().filter(|c| c.is_alphanumeric() || c.is_ascii_punctuation()) {
                     input.shortcuts.push(c.to_lowercase().to_string());
                     input.shortcut_shift.push(input.shift);
+                    input.shortcut_alt.push(input.alt);
                 }
             }
             None => {

@@ -156,7 +156,7 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
             let width = g.width / g.size.max(0.01) * 1000.0;
             let entry = use_.widths.entry(g.glyph_id).or_insert(width);
             *entry = entry.min(width);
-            let s = text.get(g.start..g.end).unwrap_or("").replace([OBJECT, LINE_BREAK], "");
+            let s = text.get(g.start..g.end).unwrap_or("").replace([OBJECT, LINE_BREAK, super::NOTE], "");
             if !s.is_empty() {
                 use_.unicode.entry(g.glyph_id).or_insert(s);
             }
@@ -231,6 +231,27 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
             }
             if st.strike {
                 rect(&mut pg.ops, ml + g.x, base - st.size * 0.28, g.width, thick, st.color);
+            }
+        }
+    }
+    // Notas de rodapé no pé de cada página.
+    for (i, pg) in pages.iter_mut().enumerate() {
+        let page_i = from + i;
+        let notes_h = layout.notes_height(page_i);
+        if notes_h == 0.0 {
+            continue;
+        }
+        let mut y = page.height - page.margins[2] - notes_h;
+        rect(&mut pg.ops, ml, y + 4.0, page.content_width() / 3.0, 0.5, [0, 0, 0]);
+        y += super::layout::NOTE_SEPARATOR;
+        for id in &layout.page_notes[page_i] {
+            let Some((n, boxed, styles)) = layout.note_boxes.get(id) else {
+                continue;
+            };
+            let full = format!("{n} {}", doc.note_text(*id).unwrap_or(""));
+            for line in &boxed.lines {
+                glyph_ops(&mut pg.ops, &line.glyphs, &full, ml, y + line.baseline, &|g| styles.get(g.span).map_or([0, 0, 0], |st| st.color), &mut font_uses);
+                y += line.height;
             }
         }
     }
@@ -388,6 +409,8 @@ mod tests {
         doc.paras[1].style.page_break_before = true;
         doc.apply_char(Pos::new(0, 0), Pos::new(0, 4), |s| s.color = [200, 0, 0]);
         doc.page.numbers.show = true;
+        let end = Pos::new(0, doc.paras[0].text.len());
+        doc.insert_note(end, "SILVA, J. Métodos do mide. São Paulo, 2026.");
         let mut l = Layouter::default();
         let lay = l.layout(&mut fonts, &doc);
         let pdf = write(&doc, &lay, &mut l, &mut fonts, None);
@@ -397,6 +420,7 @@ mod tests {
         assert!(text.contains("/Count 2"), "duas páginas");
         assert!(text.contains("/FontFile"), "fonte embutida");
         assert!(text.contains("/ToUnicode"));
+        assert_eq!(lay.page_notes[0].len(), 1, "a nota fica na página 1");
         // Só a segunda página.
         let one = write(&doc, &lay, &mut l, &mut fonts, Some((1, 1)));
         assert!(String::from_utf8_lossy(&one).contains("/Count 1"));

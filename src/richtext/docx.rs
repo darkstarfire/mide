@@ -15,7 +15,7 @@ use std::{
 
 use super::{
     xml::{self, escape, Element, Node},
-    Align, Baseline, CharStyle, Doc, Image, ListKind, NumberPosition, PageSetup, ParaStyle, Paragraph, Span, LINE_BREAK, OBJECT,
+    Align, Baseline, CharStyle, Doc, Image, ListKind, NumberPosition, PageSetup, ParaStyle, Paragraph, Span, LINE_BREAK, NOTE, OBJECT,
 };
 
 const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -112,7 +112,7 @@ fn run_text(text: &str) -> String {
                 flush(&mut buf, &mut out);
                 out.push_str("<w:br/>");
             }
-            OBJECT => {}
+            OBJECT | NOTE => {}
             c => buf.push(c),
         }
     }
@@ -182,6 +182,7 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         ("rIdSettings".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings".into(), "settings.xml".into()),
     ];
     let mut body = String::new();
+    let mut notes: Vec<u32> = Vec::new();
     for p in &doc.paras {
         let st = &p.style;
         body.push_str("<w:p><w:pPr>");
@@ -230,6 +231,11 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         } else {
             for (a, b, s) in p.runs() {
                 if a == b {
+                    continue;
+                }
+                if let Some(id) = s.note {
+                    body.push_str(&format!("<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteReference w:id=\"{id}\"/></w:r>"));
+                    notes.push(id);
                     continue;
                 }
                 body.push_str(&format!("<w:r>{}{}</w:r>", run_props(s), run_text(&p.text[a..b])));
@@ -307,6 +313,19 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:settings xmlns:w=\"{W}\"><w:defaultTabStop w:val=\"720\"/><w:docVars><w:docVar w:name=\"mideShowFrom\" w:val=\"{}\"/></w:docVars></w:settings>",
         page.numbers.show_from
     );
+    // Notas de rodapé (as duas primeiras são os separadores que o Word espera).
+    let mut footnotes = format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:footnotes xmlns:w=\"{W}\" xmlns:r=\"{R}\"><w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>");
+    let note_style = CharStyle { size: 10.0, ..small.clone() };
+    for id in &notes {
+        footnotes.push_str(&format!(
+            "<w:footnote w:id=\"{id}\"><w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr><w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteRef/></w:r><w:r>{}{}</w:r></w:p></w:footnote>",
+            run_props(&note_style),
+            run_text(&format!(" {}", doc.note_text(*id).unwrap_or("")))
+        ));
+    }
+    footnotes.push_str("</w:footnotes>");
+    rels.push(("rIdFootnotes".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes".into(), "footnotes.xml".into()));
+    parts.push(("footnotes.xml".into(), footnotes));
     let doc_rels: String = rels.iter().map(|(id, t, target)| format!("<Relationship Id=\"{id}\" Type=\"{t}\" Target=\"{target}\"/>")).collect();
     let content_types = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/><Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/><Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>{}</Types>",
@@ -314,7 +333,13 @@ pub fn write(doc: &Doc) -> Vec<u8> {
             .iter()
             .map(|(name, _)| format!(
                 "<Override PartName=\"/word/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.{}+xml\"/>",
-                if name.starts_with("header") { "header" } else { "footer" }
+                if name.starts_with("header") {
+                    "header"
+                } else if name.starts_with("footnotes") {
+                    "footnotes"
+                } else {
+                    "footer"
+                }
             ))
             .collect::<String>()
     );
@@ -516,6 +541,9 @@ fn apply_ppr(ppr: &Element, p: &mut ParaStyle) {
 
 struct Reader<'a> {
     files: &'a HashMap<String, Vec<u8>>,
+    /// Texto das notas de rodapé do arquivo (id do Word → texto).
+    footnotes: HashMap<String, String>,
+    notes: std::cell::RefCell<Vec<(u32, String)>>,
     rels: HashMap<String, String>,
     /// Estilos de parágrafo do Word: id → (pPr, rPr, basedOn).
     styles: HashMap<String, (Option<Element>, Option<Element>, Option<String>)>,
@@ -626,6 +654,14 @@ impl Reader<'_> {
                     }
                     "w:br" | "w:cr" => push(&mut para, &LINE_BREAK.to_string(), &style),
                     "w:noBreakHyphen" => push(&mut para, "\u{2011}", &style),
+                    "w:footnoteReference" => {
+                        let text = c.attr("w:id").and_then(|i| self.footnotes.get(i)).cloned().unwrap_or_default();
+                        let mut notes = self.notes.borrow_mut();
+                        let id = notes.len() as u32 + 1;
+                        notes.push((id, text));
+                        let s = CharStyle { note: Some(id), baseline: Baseline::Normal, ..style.clone() };
+                        push(&mut para, &NOTE.to_string(), &s);
+                    }
                     "w:sym" => {
                         if let Some(ch) = c.attr("w:char").and_then(|h| u32::from_str_radix(h, 16).ok()).and_then(char::from_u32) {
                             push(&mut para, &ch.to_string(), &style);
@@ -884,7 +920,17 @@ pub fn read(data: &[u8]) -> Option<Doc> {
             page.numbers.show_from = n;
         }
     }
-    let reader = Reader { files: &files, rels, styles, default_run: default_run.clone(), default_para, theme_font, nums, formats, content_width: page.content_width() };
+    // Notas de rodapé: o texto de cada uma (sem a marca do número).
+    let mut footnotes = HashMap::new();
+    if let Some(f) = xml_of(&files, "word/footnotes.xml") {
+        for n in f.elements().filter(|e| e.name == "w:footnote" && e.attr("w:type").is_none()) {
+            let mut ts = Vec::new();
+            n.find_all("w:t", &mut ts);
+            let text: String = ts.iter().map(|t| t.text()).collect();
+            footnotes.insert(n.attr("w:id").unwrap_or("").to_string(), text.trim().to_string());
+        }
+    }
+    let reader = Reader { files: &files, footnotes, notes: std::cell::RefCell::new(Vec::new()), rels, styles, default_run: default_run.clone(), default_para, theme_font, nums, formats, content_width: page.content_width() };
     let mut paras = Vec::new();
     reader.paragraphs(body, &mut paras);
     // Parágrafo vazio que só tinha a quebra de página: a quebra passa para o seguinte.
@@ -901,7 +947,8 @@ pub fn read(data: &[u8]) -> Option<Doc> {
         paras.push(Paragraph::new("", default_run, ParaStyle::default()));
     }
     let _ = Node::Text(String::new());
-    Some(Doc { paras, page })
+    let notes = reader.notes.take();
+    Some(Doc { paras, page, notes })
 }
 
 #[cfg(test)]
@@ -934,6 +981,8 @@ mod tests {
         d.page.numbers.position = NumberPosition::TopRight;
         d.page.numbers.show_from = 3;
         d.page.footer = "Rodapé".into();
+        let end = Pos::new(1, d.paras[1].text.len());
+        d.insert_note(end, "Nota do Word.");
         let bytes = write(&d);
         let back = read(&bytes).expect("docx");
         assert_eq!(back.paras.len(), 4, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
@@ -955,6 +1004,9 @@ mod tests {
         assert_eq!(back.page.numbers.position, NumberPosition::TopRight);
         assert_eq!(back.page.numbers.show_from, 3);
         assert_eq!(back.page.footer, "Rodapé");
+        assert_eq!(back.notes.len(), 1);
+        assert_eq!(back.notes[0].1, "Nota do Word.");
+        assert!(back.paras[1].text.ends_with(crate::richtext::NOTE));
         if let Ok(dir) = std::env::var("MIDE_DOCX_OUT") {
             let _ = std::fs::write(format!("{dir}/teste.docx"), &bytes);
         }

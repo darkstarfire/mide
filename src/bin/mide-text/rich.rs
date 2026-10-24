@@ -122,6 +122,13 @@ fn printers() -> Vec<String> {
     list
 }
 
+/// Nota de rodapé: nova (`id` vazio) ou a que está sendo editada.
+struct NoteDialog {
+    id: Option<u32>,
+    text: String,
+    focus: bool,
+}
+
 /// Diálogo das normas ABNT.
 struct AbntDialog {
     font: usize,
@@ -154,6 +161,7 @@ pub struct Rich {
     families: Vec<String>,
     page_dialog: Option<PageDialog>,
     print_dialog: Option<PrintDialog>,
+    note_dialog: Option<NoteDialog>,
     /// Pedido ao app: escolher onde salvar o PDF (com as páginas).
     pub wants_pdf_path: Option<Option<(usize, usize)>>,
     /// PDF a gravar (caminho e páginas), feito no próximo quadro (precisa das fontes).
@@ -204,6 +212,7 @@ impl Rich {
             families: Vec::new(),
             page_dialog: None,
             print_dialog: None,
+            note_dialog: None,
             wants_pdf_path: None,
             pdf_request: None,
             print_job: None,
@@ -811,6 +820,7 @@ impl Rich {
                     MenuItem::Separator,
                     MenuItem::action("inserir-imagem", "Inserir imagem…"),
                     MenuItem::action("quebra-pagina", "Inserir quebra de página").shortcut("Ctrl+Enter"),
+                    MenuItem::action("nota", "Inserir nota de rodapé…").shortcut("Ctrl+Alt+F"),
                     MenuItem::action("sumario", "Inserir sumário"),
                     MenuItem::action("atualizar-sumario", "Atualizar sumário"),
                     MenuItem::Separator,
@@ -885,6 +895,7 @@ impl Rich {
             "colar" => self.paste(ui),
             "selecionar-tudo" => self.select_all(),
             "sumario" => self.insert_toc(),
+            "nota" => self.note_dialog = Some(NoteDialog { id: None, text: String::new(), focus: true }),
             "atualizar-sumario" => {
                 if self.doc.paras.iter().any(|p| p.style.name == "Sumário") {
                     self.begin(None);
@@ -1025,7 +1036,7 @@ impl Rich {
         // Atalhos com Ctrl.
         let shortcuts = [("b", "negrito"), ("i", "italico"), ("u", "sublinhado"), ("e", "centralizar"), ("l", "alinhar-esquerda"), ("r", "alinhar-direita"), ("j", "justificar"), ("a", "selecionar-tudo"), ("c", "copiar"), ("x", "recortar"), ("v", "colar"), ("y", "refazer"), ("=", "zoom-mais"), ("+", "zoom-mais"), ("-", "zoom-menos"), ("0", "zoom-real")];
         for (letter, action) in shortcuts {
-            if input.shortcut(letter) && !(input.alt && letter == "0") {
+            if input.shortcut_plain(letter) {
                 self.command(action, ui);
             }
         }
@@ -1034,15 +1045,16 @@ impl Rich {
             Some(false) => self.undo(false),
             None => {}
         }
-        if input.shortcut("f") {
+        if input.shortcut_plain("f") {
             self.toggle_find();
         }
         // Títulos como no Word: Ctrl+Alt+1, 2, 3; Ctrl+Alt+0 volta ao corpo.
-        if input.alt {
-            for (key, name) in [("1", "Título 1"), ("2", "Título 2"), ("3", "Título 3"), ("0", "Corpo")] {
-                if input.shortcut(key) {
-                    self.apply_named(name);
-                }
+        if input.shortcut_alt("f") {
+            self.note_dialog = Some(NoteDialog { id: None, text: String::new(), focus: true });
+        }
+        for (key, name) in [("1", "Título 1"), ("2", "Título 2"), ("3", "Título 3"), ("0", "Corpo")] {
+            if input.shortcut_alt(key) {
+                self.apply_named(name);
             }
         }
         match input.shortcut_shift("g") {
@@ -1186,6 +1198,12 @@ impl Rich {
             self.last_kind = None;
             self.blink = now;
             match count {
+                // Duplo clique no número de uma nota: edita a nota.
+                2 if self.doc.note_near(pos).is_some() => {
+                    let id = self.doc.note_near(pos).expect("nota");
+                    let text = self.doc.note_text(id).unwrap_or("").to_string();
+                    self.note_dialog = Some(NoteDialog { id: Some(id), text, focus: true });
+                }
                 2 => {
                     let (a, b) = self.doc.word_at(pos);
                     self.anchor = a;
@@ -1230,7 +1248,7 @@ impl Rich {
         let (w, h) = ui.window_size();
         let find_h = if self.find.is_some() { FIND_H } else { 0.0 };
         let area = (0.0, top + FORMAT_H + find_h, w, (h - top - FORMAT_H - find_h - STATUS_H).max(10.0));
-        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some();
+        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
         }
@@ -1596,6 +1614,16 @@ impl Rich {
     }
 
     fn dialogs(&mut self, ui: &mut Ui) {
+        let had = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some();
+        self.dialogs_inner(ui);
+        // Diálogo fechado: o teclado volta para o texto (o campo dele sumiu).
+        let has = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some();
+        if had && !has {
+            ui.blur();
+        }
+    }
+
+    fn dialogs_inner(&mut self, ui: &mut Ui) {
         if let Some(d) = self.page_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
             ui.modal(480.0, |ui| {
@@ -1674,6 +1702,59 @@ impl Rich {
         }
         if self.print_dialog.is_some() {
             self.print_dialog_view(ui);
+        }
+        if let Some(d) = self.note_dialog.as_mut() {
+            let (mut ok, mut cancel, mut remove) = (false, false, false);
+            let editing = d.id.is_some();
+            ui.modal(480.0, |ui| {
+                ui.title(if editing { "Editar nota de rodapé" } else { "Nota de rodapé" });
+                ui.note("O número aparece no texto, onde está o cursor, e a nota no pé da mesma página (letra 10, como na ABNT).");
+                if std::mem::take(&mut d.focus) {
+                    ui.focus_next_input();
+                }
+                ok = ui.text_input(&mut d.text, "Texto da nota").submitted();
+                ui.row(|ui| {
+                    if editing {
+                        ui.sized(110.0, |ui| remove = ui.button_styled("Remover", ButtonStyle::Bordered).clicked());
+                    }
+                    ui.push_right(2.0 * 110.0 + 8.0);
+                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
+                    ui.sized(110.0, |ui| ok |= ui.primary_button("OK").clicked());
+                });
+            });
+            if cancel || ui.input().key(Key::Escape) {
+                self.note_dialog = None;
+            } else if remove || ok {
+                let d = self.note_dialog.take().expect("diálogo");
+                self.begin(None);
+                match (d.id, remove) {
+                    (Some(id), true) => {
+                        // Tira a referência do texto (a nota some junto).
+                        for i in 0..self.doc.paras.len() {
+                            let hits: Vec<(usize, usize)> = self.doc.paras[i].runs().filter(|(_, _, st)| st.note == Some(id)).map(|(a, b, _)| (a, b)).collect();
+                            for (a, b) in hits.into_iter().rev() {
+                                self.doc.delete(Pos::new(i, a), Pos::new(i, b));
+                            }
+                        }
+                        self.doc.notes.retain(|(n, _)| *n != id);
+                        self.cursor = self.doc.clamp(self.cursor);
+                        self.anchor = self.cursor;
+                    }
+                    (Some(id), false) => {
+                        if let Some(n) = self.doc.notes.iter_mut().find(|(n, _)| *n == id) {
+                            n.1 = d.text.trim().to_string();
+                        }
+                    }
+                    (None, _) => {
+                        if let Some((a, b)) = self.sel() {
+                            self.cursor = self.doc.delete(a, b);
+                        }
+                        self.cursor = self.doc.insert_note(self.cursor, d.text.trim());
+                        self.anchor = self.cursor;
+                        tracing::info!("editor: nota de rodapé inserida");
+                    }
+                }
+            }
         }
         if let Some(d) = self.abnt_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);

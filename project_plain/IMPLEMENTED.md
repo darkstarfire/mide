@@ -1606,3 +1606,10 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - Tabulação com pontilhado (`ParaStyle::leader`) na quebra de linhas, na tela, no PDF e nos formatos: RTF `\tqr\tldot`, DOCX `w:tabs` com `w:leader="dot"` (e os estilos TOC do Word lidos como sumário), ODT `style:tab-stops` com `style:leader-text`.
 - Atalhos de título como no Word: Ctrl+Alt+1, 2 e 3; Ctrl+Alt+0 volta ao corpo.
 - Teste de unidade do sumário (páginas 2 e 3 e o pontilhado até a margem).
+
+## Editor de Texto, etapa 4b: notas de rodapé (2026-10-24)
+
+- Formatar → Inserir nota de rodapé… (Ctrl+Alt+F, como no Word): diálogo com o texto da nota; o número sobrescrito entra no texto e a nota vai para o pé da mesma página, com o traço separador, em letra 10, entrelinha simples, preto e justificado (ABNT). Numeração automática na ordem do texto. Duplo clique no número edita ou remove a nota.
+- Modelo: o caractere `NOTE` no texto, com `CharStyle::note` (id), e `Doc::notes`. A paginação reserva o espaço das notas no pé da página onde a referência cai (a linha passa para a página seguinte junto com a nota, se não couber).
+- Na tela, no PDF (texto copiável) e nos formatos: RTF `\footnote` com `\chftn`; DOCX `footnotes.xml` com os separadores do Word; ODT `text:note`. Conferido com o LibreOffice (ele mostra as notas dos nossos .docx e .odt) e em testes de ida e volta.
+- mide-ui: o Alt de cada atalho é guardado (`shortcut_alt`, `shortcut_plain`); atalhos com pontuação (Ctrl+=, Ctrl+−, Ctrl+Shift+.) passam a chegar aos apps. Os diálogos do editor devolvem o teclado ao texto ao fechar.

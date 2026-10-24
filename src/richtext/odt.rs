@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use super::{
     docx::{unzip, zip_files},
     xml::{self, escape, Element, Node},
-    Align, Baseline, CharStyle, Doc, Image, ListKind, NumberPosition, PageSetup, ParaStyle, Paragraph, Span, LINE_BREAK, OBJECT,
+    Align, Baseline, CharStyle, Doc, Image, ListKind, NumberPosition, PageSetup, ParaStyle, Paragraph, Span, LINE_BREAK, NOTE, OBJECT,
 };
 
 const NS: &str = "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\" office:version=\"1.3\"";
@@ -132,7 +132,7 @@ fn odf_text(text: &str) -> String {
                 flush(&mut spaces, &mut out);
                 out.push_str("<text:line-break/>");
             }
-            OBJECT => {}
+            OBJECT | NOTE => {}
             c => {
                 flush(&mut spaces, &mut out);
                 out.push_str(&escape(&c.to_string()));
@@ -180,6 +180,7 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         auto.push_str(&list_style(name, kind));
     }
     let mut last_list: Option<ListKind> = None;
+    let mut note_n = 0;
     for p in &doc.paras {
         let st = &p.style;
         let key = ParaStyle { list: st.list, level: st.level, ..st.clone() };
@@ -207,6 +208,14 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         } else {
             for (a, b, s) in p.runs() {
                 if a == b {
+                    continue;
+                }
+                if let Some(id) = s.note {
+                    note_n += 1;
+                    inner.push_str(&format!(
+                        "<text:note text:id=\"ftn{id}\" text:note-class=\"footnote\"><text:note-citation>{note_n}</text:note-citation><text:note-body><text:p>{}</text:p></text:note-body></text:note>",
+                        odf_text(doc.note_text(id).unwrap_or(""))
+                    ));
                     continue;
                 }
                 let tname = match tstyles.iter().find(|(t, _)| t == s) {
@@ -352,6 +361,7 @@ struct OdfStyle {
 
 struct Reader<'a> {
     files: &'a HashMap<String, Vec<u8>>,
+    notes: std::cell::RefCell<Vec<(u32, String)>>,
     styles: HashMap<String, OdfStyle>,
     /// Estilos de lista: nome → tipo por nível.
     lists: HashMap<String, Vec<ListKind>>,
@@ -543,6 +553,15 @@ impl Reader<'_> {
                         push(para, &" ".repeat(n), style);
                     }
                     "text:tab" => push(para, "\t", style),
+                    "text:note" => {
+                        let text = c.child("text:note-body").map(|b| b.text()).unwrap_or_default();
+                        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                        let mut notes = self.notes.borrow_mut();
+                        let id = notes.len() as u32 + 1;
+                        notes.push((id, text));
+                        let s = CharStyle { note: Some(id), baseline: Baseline::Normal, ..style.clone() };
+                        push(para, &NOTE.to_string(), &s);
+                    }
                     "text:line-break" => push(para, &LINE_BREAK.to_string(), style),
                     "draw:frame" => {
                         if let Some(img) = self.image(c) {
@@ -723,14 +742,15 @@ pub fn read(data: &[u8]) -> Option<Doc> {
             page.numbers.show_from = n;
         }
     }
-    let reader = Reader { files: &files, styles, lists, default_text: default_text.clone(), content_width: page.content_width() };
+    let reader = Reader { files: &files, notes: std::cell::RefCell::new(Vec::new()), styles, lists, default_text: default_text.clone(), content_width: page.content_width() };
     let text = content.path("office:body/office:text")?;
     let mut paras = Vec::new();
     reader.block(text, &mut paras, None);
     if paras.is_empty() {
         paras.push(Paragraph::new("", default_text, ParaStyle::default()));
     }
-    Some(Doc { paras, page })
+    let notes = reader.notes.take();
+    Some(Doc { paras, page, notes })
 }
 
 #[cfg(test)]
@@ -758,6 +778,7 @@ mod tests {
         d.page.numbers.show = true;
         d.page.numbers.position = NumberPosition::BottomRight;
         d.page.header = "Universidade do mide".into();
+        d.insert_note(Pos::new(0, d.paras[0].text.len()), "Nota do LibreOffice.");
         let bytes = write(&d);
         assert_eq!(&bytes[30..38], b"mimetype");
         let back = read(&bytes).expect("odt");
@@ -775,6 +796,8 @@ mod tests {
         assert!((back.page.margins[3] - cm(3.0)).abs() < 0.2);
         assert_eq!(back.page.header, "Universidade do mide");
         assert_eq!(back.page.numbers.position, NumberPosition::BottomRight);
+        assert_eq!(back.notes, vec![(1, "Nota do LibreOffice.".to_string())]);
+        assert!(back.paras[0].text.ends_with(crate::richtext::NOTE));
         if let Ok(dir) = std::env::var("MIDE_DOCX_OUT") {
             let _ = std::fs::write(format!("{dir}/teste.odt"), &bytes);
         }

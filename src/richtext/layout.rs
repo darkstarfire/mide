@@ -13,7 +13,10 @@ use std::{
 
 use cosmic_text::{Attrs, AttrsList, CacheKeyFlags, Family, FontSystem, Metrics, ShapeLine, Shaping, Style, Weight};
 
-use super::{Align, Baseline, CharStyle, Doc, ListKind, PageSetup, Paragraph, Pos, LINE_BREAK, OBJECT};
+use super::{Align, Baseline, CharStyle, Doc, ListKind, PageSetup, ParaStyle, Paragraph, Pos, Span, LINE_BREAK, NOTE, OBJECT};
+
+/// Espaço do traço que separa as notas do texto, no pé da página.
+pub const NOTE_SEPARATOR: f32 = 10.0;
 
 /// Distância entre as tabulações padrão (meia polegada).
 pub const TAB_STOP: f32 = 36.0;
@@ -58,6 +61,8 @@ pub struct Line {
     pub x1: f32,
     /// Pontilhado da tabulação até a margem (início e fim em x), no sumário.
     pub leader: Option<(f32, f32)>,
+    /// Notas de rodapé referidas nesta linha (ids).
+    pub notes: Vec<u32>,
 }
 
 /// Um parágrafo quebrado em linhas (largura fixa, sem a posição na página).
@@ -88,6 +93,21 @@ pub struct Layout {
     pub pages: usize,
     /// Estilos de cada parágrafo (cópia, para o desenho achar cor e sublinhado).
     pub styles: Vec<Vec<CharStyle>>,
+    /// Notas de rodapé quebradas: id → (número, linhas, estilos dos trechos).
+    pub note_boxes: HashMap<u32, (usize, ParaBox, Vec<CharStyle>)>,
+    /// Notas de cada página, em ordem.
+    pub page_notes: Vec<Vec<u32>>,
+}
+
+impl Layout {
+    /// Altura das notas da página (com o traço), 0 sem notas.
+    pub fn notes_height(&self, page: usize) -> f32 {
+        let notes = self.page_notes.get(page).map_or(&[][..], |v| &v[..]);
+        if notes.is_empty() {
+            return 0.0;
+        }
+        NOTE_SEPARATOR + notes.iter().filter_map(|id| self.note_boxes.get(id)).map(|(_, b, _)| b.lines.iter().map(|l| l.height).sum::<f32>()).sum::<f32>()
+    }
 }
 
 impl Layout {
@@ -253,6 +273,9 @@ impl Layouter {
         let mut used = HashSet::new();
         let mut out = Layout::default();
         let mut counters = [0usize; 9];
+        // Números das notas, na ordem do texto.
+        let mut note_base = 0usize;
+        let mut note_numbers: Vec<(u32, usize)> = Vec::new();
         for (index, para) in doc.paras.iter().enumerate() {
             // Numeração das listas: conta os parágrafos seguidos do mesmo nível.
             let number = match para.style.list {
@@ -270,19 +293,39 @@ impl Layouter {
                     0
                 }
             };
-            let key = fingerprint(para, width) ^ (number as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let key = fingerprint(para, width) ^ (number as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (note_base as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
             used.insert(key);
             let boxed = match self.cache.get(&key) {
                 Some(b) => b.clone(),
                 None => {
-                    let b = self.para(fonts, para, width, number);
+                    let b = self.para(fonts, para, width, number, note_base);
                     self.cache.insert(key, b.clone());
                     b
                 }
             };
             out.paras.push(boxed);
+            for (_, _, st) in para.runs() {
+                if let Some(id) = st.note {
+                    if !note_numbers.iter().any(|(i, _)| *i == id) {
+                        note_base += 1;
+                        note_numbers.push((id, note_base));
+                    }
+                }
+            }
             out.styles.push(para.spans.iter().map(|s| s.style.clone()).collect());
             let _ = index;
+        }
+        // As notas: "N texto", letra 10, entrelinha simples (como a ABNT pede).
+        let body = doc.paras.iter().find(|p| p.style.name.is_empty() && !p.text.is_empty()).map(|p| p.spans[0].style.clone()).unwrap_or_default();
+        for (id, n) in &note_numbers {
+            let text = doc.note_text(*id).unwrap_or("");
+            let num = n.to_string();
+            let small = CharStyle { size: 10.0, color: [0, 0, 0], note: None, link: None, highlight: None, bold: false, italic: false, underline: false, strike: false, ..body.clone() };
+            let sup = CharStyle { baseline: Baseline::Super, ..small.clone() };
+            let full = format!("{num} {text}");
+            let p = Paragraph { text: full.clone(), spans: vec![Span { len: num.len(), style: sup }, Span { len: full.len() - num.len(), style: small }], style: ParaStyle { align: Align::Justify, ..ParaStyle::default() }, image: None };
+            let b = self.para(fonts, &p, width, 0, 0);
+            out.note_boxes.insert(*id, (*n, b, p.spans.iter().map(|s| s.style.clone()).collect()));
         }
         self.cache.retain(|k, _| used.contains(k));
         paginate(&mut out, doc, page);
@@ -325,7 +368,7 @@ impl Layouter {
     }
 
     /// Quebra um parágrafo na largura `width` (a do texto da página).
-    fn para(&mut self, fonts: &mut FontSystem, para: &Paragraph, width: f32, number: usize) -> ParaBox {
+    fn para(&mut self, fonts: &mut FontSystem, para: &Paragraph, width: f32, number: usize, note_base: usize) -> ParaBox {
         let st = &para.style;
         let list_indent = if st.list.is_some() { LIST_INDENT * (st.level as f32 + 1.0) } else { 0.0 };
         let left = st.left_indent + list_indent;
@@ -354,6 +397,7 @@ impl Layouter {
                 x0,
                 x1: x0 + w,
                 leader: None,
+                notes: Vec::new(),
             };
             return ParaBox { lines: vec![line], marker: None };
         }
@@ -377,6 +421,28 @@ impl Layouter {
         }
         let attrs_list = list.expect("ao menos um trecho");
         let shaped = ShapeLine::new(fonts, &para.text, &attrs_list, Shaping::Advanced, 4);
+        // Referências de notas: o número sobrescrito no lugar do caractere (byte → letras,
+        // largura e id).
+        let mut note_shapes: HashMap<usize, (Vec<Glyph>, f32, u32)> = HashMap::new();
+        {
+            let mut seen: Vec<u32> = Vec::new();
+            for (a, _, st) in para.runs() {
+                if let Some(id) = st.note {
+                    for (o, c) in para.text[a..].char_indices() {
+                        if c == NOTE {
+                            if !seen.contains(&id) {
+                                seen.push(id);
+                            }
+                            let n = note_base + seen.iter().position(|x| *x == id).unwrap_or(0) + 1;
+                            let sup = CharStyle { baseline: Baseline::Super, ..st.clone() };
+                            let (g, w) = self.shape_simple(fonts, &n.to_string(), &sup);
+                            note_shapes.insert(a + o, (g, w, id));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         // As palavras em ordem (texto da esquerda para a direita).
         struct Word {
             glyphs: Vec<(cosmic_text::ShapeGlyph, f32)>,
@@ -401,7 +467,8 @@ impl Layouter {
                 words.push(Word { glyphs, blank: word.blank, forced, tab });
             }
         }
-        let width_of = |w: &Word| w.glyphs.iter().map(|(g, s)| g.width(*s)).sum::<f32>();
+        let gwidth = |g: &cosmic_text::ShapeGlyph, size: f32| note_shapes.get(&g.start).map_or_else(|| g.width(size), |n| n.1);
+        let width_of = |w: &Word| w.glyphs.iter().map(|(g, s)| gwidth(g, *s)).sum::<f32>();
         // Quebra gulosa.
         let mut lines_words: Vec<(Vec<usize>, bool)> = Vec::new();
         let mut cur: Vec<usize> = Vec::new();
@@ -474,6 +541,7 @@ impl Layouter {
             let mut start = usize::MAX;
             let mut end = 0;
             let mut leader = None;
+            let mut line_notes = Vec::new();
             for (k, &wi) in idx.iter().enumerate() {
                 let w = &words[wi];
                 let tab_w = match leader_w {
@@ -486,7 +554,7 @@ impl Layouter {
                 };
                 let gap_extra = if justify && w.blank && !w.tab && k < content_end { extra } else { 0.0 };
                 for (g, size) in &w.glyphs {
-                    let gw = tab_w.unwrap_or(g.width(*size)) + if w.blank { gap_extra / w.glyphs.len().max(1) as f32 } else { 0.0 };
+                    let gw = tab_w.unwrap_or(gwidth(g, *size)) + if w.blank { gap_extra / w.glyphs.len().max(1) as f32 } else { 0.0 };
                     start = start.min(g.start);
                     end = end.max(g.end);
                     // Cursores: um por caractere do grupo de letras (ligaduras dividem).
@@ -502,7 +570,14 @@ impl Layouter {
                             Baseline::Super => -span_style.size * 0.33,
                             Baseline::Sub => span_style.size * 0.14,
                         };
-                    let is_break = cluster.contains(LINE_BREAK) || cluster == "\t" || cluster.contains(OBJECT);
+                    let is_break = cluster.contains(LINE_BREAK) || cluster == "\t" || cluster.contains(OBJECT) || cluster.contains(NOTE);
+                    if let Some((ng, _, id)) = note_shapes.get(&g.start) {
+                        line_notes.push(*id);
+                        let lift = -span_style.size * 0.33;
+                        for n in ng {
+                            glyphs.push(Glyph { x: pen + n.x, dy: lift + n.dy, start: g.start, end: g.end, span: g.metadata, ..n.clone() });
+                        }
+                    }
                     if !is_break {
                         glyphs.push(Glyph { x: pen + g.x_offset * size, dy, font_id: g.font_id, glyph_id: g.glyph_id, size: *size, weight: g.font_weight, flags: g.cache_key_flags, width: gw, span: g.metadata, start: g.start, end: g.end });
                     }
@@ -534,7 +609,7 @@ impl Layouter {
             let single = ascent + descent;
             let height = single * st.line_spacing.max(0.5);
             let x0 = carets.first().map_or(line_left + shift, |c| c.1);
-            lines.push(Line { start, end, height, baseline: ascent, ascent, descent, glyphs, carets, x0, x1: pen, leader });
+            lines.push(Line { start, end, height, baseline: ascent, ascent, descent, glyphs, carets, x0, x1: pen, leader, notes: line_notes });
         }
         // Marcador da lista, à esquerda do texto.
         let marker = st.list.map(|kind| {
@@ -552,17 +627,23 @@ impl Layouter {
     }
 }
 
-/// Coloca as linhas nas páginas.
+/// Coloca as linhas nas páginas, guardando no pé de cada uma o espaço das notas das
+/// linhas que caem nela.
 fn paginate(out: &mut Layout, doc: &Doc, page: &PageSetup) {
     let top = page.margins[0];
     let bottom = page.height - page.margins[2];
+    let note_h = |out: &Layout, id: &u32| out.note_boxes.get(id).map_or(0.0, |(_, b, _)| b.lines.iter().map(|l| l.height).sum::<f32>());
     let mut y = top;
     let mut page_no = 0;
+    let mut notes_h = 0.0;
+    out.page_notes = vec![Vec::new()];
     for (pi, para) in doc.paras.iter().enumerate() {
         let st = &para.style;
         if st.page_break_before && y > top {
             page_no += 1;
             y = top;
+            notes_h = 0.0;
+            out.page_notes.push(Vec::new());
         }
         if y > top {
             y += st.space_before;
@@ -571,11 +652,18 @@ fn paginate(out: &mut Layout, doc: &Doc, page: &PageSetup) {
         let count = out.paras[pi].lines.len();
         for li in 0..count {
             let h = out.paras[pi].lines[li].height;
-            if y + h > bottom && y > top {
+            let ids = out.paras[pi].lines[li].notes.clone();
+            let ids_h: f32 = ids.iter().map(|id| note_h(out, id)).sum();
+            let extra = |notes_h: f32| ids_h + if notes_h == 0.0 && !ids.is_empty() { NOTE_SEPARATOR } else { 0.0 };
+            if y + h + notes_h + extra(notes_h) > bottom && y > top {
                 page_no += 1;
                 y = top;
+                notes_h = 0.0;
+                out.page_notes.push(Vec::new());
             }
+            notes_h += extra(notes_h);
             out.placed.push(Placed { para: pi, line: li, page: page_no, y });
+            out.page_notes[page_no].extend(ids);
             y += h;
         }
         y += st.space_after;

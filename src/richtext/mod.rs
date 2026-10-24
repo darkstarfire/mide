@@ -54,6 +54,8 @@ pub struct CharStyle {
     pub highlight: Option<[u8; 3]>,
     pub baseline: Baseline,
     pub link: Option<String>,
+    /// Este trecho é a referência de uma nota de rodapé (o id dela em `Doc::notes`).
+    pub note: Option<u32>,
 }
 
 impl Default for CharStyle {
@@ -69,6 +71,7 @@ impl Default for CharStyle {
             highlight: None,
             baseline: Baseline::Normal,
             link: None,
+            note: None,
         }
     }
 }
@@ -195,6 +198,8 @@ pub struct Span {
 pub const OBJECT: char = '\u{FFFC}';
 /// Quebra de linha dentro do parágrafo (Shift+Enter).
 pub const LINE_BREAK: char = '\u{2028}';
+/// Referência de uma nota de rodapé no texto (o número é desenhado no lugar dele).
+pub const NOTE: char = '\u{E001}';
 
 /// Um parágrafo: o texto, os trechos de estilo (cobrem o texto inteiro, sempre ao
 /// menos um, mesmo vazio) e o estilo do parágrafo.
@@ -456,6 +461,8 @@ impl Default for PageSetup {
 pub struct Doc {
     pub paras: Vec<Paragraph>,
     pub page: PageSetup,
+    /// Notas de rodapé: id e texto (as referências ficam no texto, com `CharStyle::note`).
+    pub notes: Vec<(u32, String)>,
 }
 
 impl Default for Doc {
@@ -466,13 +473,13 @@ impl Default for Doc {
 
 impl Doc {
     pub fn new() -> Self {
-        Self { paras: vec![Paragraph::new("", CharStyle::default(), ParaStyle::default())], page: PageSetup::default() }
+        Self { paras: vec![Paragraph::new("", CharStyle::default(), ParaStyle::default())], page: PageSetup::default(), notes: Vec::new() }
     }
 
     /// Documento com o texto puro (um parágrafo por linha).
     pub fn from_plain(text: &str, style: CharStyle) -> Self {
         let paras = text.split('\n').map(|l| Paragraph::new(l.trim_end_matches('\r'), style.clone(), ParaStyle::default())).collect();
-        Self { paras, page: PageSetup::default() }
+        Self { paras, page: PageSetup::default(), notes: Vec::new() }
     }
 
     pub fn end(&self) -> Pos {
@@ -575,9 +582,46 @@ impl Doc {
         (Pos::new(p.para, a), Pos::new(p.para, b))
     }
 
-    /// Estilo para o que for digitado em `p`.
+    /// Estilo para o que for digitado em `p` (depois de uma nota, o texto não é nota).
     pub fn style_at(&self, p: Pos) -> CharStyle {
-        self.paras[p.para].style_at(p.off).clone()
+        let mut s = self.paras[p.para].style_at(p.off).clone();
+        s.note = None;
+        s
+    }
+
+    /// Texto de uma nota de rodapé.
+    pub fn note_text(&self, id: u32) -> Option<&str> {
+        self.notes.iter().find(|(i, _)| *i == id).map(|(_, t)| t.as_str())
+    }
+
+    /// Guarda uma nota nova e devolve o id dela.
+    pub fn add_note(&mut self, text: &str) -> u32 {
+        let id = self.notes.iter().map(|(i, _)| *i).max().unwrap_or(0) + 1;
+        self.notes.push((id, text.to_string()));
+        id
+    }
+
+    /// Insere a referência de uma nota (com o texto dela) em `p`; devolve a posição depois.
+    pub fn insert_note(&mut self, p: Pos, text: &str) -> Pos {
+        let id = self.add_note(text);
+        let mut style = self.style_at(p);
+        style.note = Some(id);
+        style.baseline = Baseline::Normal;
+        self.insert_text(p, &NOTE.to_string(), &style)
+    }
+
+    /// A nota cuja referência está logo antes ou logo depois de `p`.
+    pub fn note_near(&self, p: Pos) -> Option<u32> {
+        let para = &self.paras[p.para];
+        let mut best = None;
+        for (a, b, s) in para.runs() {
+            if let Some(id) = s.note {
+                if p.off >= a && p.off <= b {
+                    best = Some(id);
+                }
+            }
+        }
+        best
     }
 
     /// Insere texto (com `\n` separando parágrafos) e devolve a posição depois dele.
@@ -640,7 +684,7 @@ impl Doc {
             let text = &self.paras[i].text;
             let from = if i == a.para { a.off } else { 0 };
             let to = if i == b.para { b.off } else { text.len() };
-            out.push_str(&text[from..to].replace(OBJECT, "").replace(LINE_BREAK, "\n"));
+            out.push_str(&text[from..to].replace([OBJECT, NOTE], "").replace(LINE_BREAK, "\n"));
             if i != b.para {
                 out.push('\n');
             }
