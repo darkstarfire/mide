@@ -72,6 +72,19 @@ struct Snapshot {
     anchor: Pos,
 }
 
+/// Altura da barra de busca.
+const FIND_H: f32 = 44.0;
+
+/// Buscar e substituir.
+#[derive(Default)]
+pub struct FindBar {
+    query: String,
+    replace: String,
+    /// Diferenciar maiúsculas e minúsculas.
+    case: bool,
+    focus: bool,
+}
+
 /// Configurar página (diálogo), com os valores em centímetros.
 struct PageDialog {
     paper: usize,
@@ -153,6 +166,7 @@ pub struct Rich {
     paste_pending: bool,
     /// Pedido ao app (abrir o seletor de imagem).
     pub wants_image: bool,
+    pub find: Option<FindBar>,
     pub message: Option<String>,
 }
 
@@ -195,6 +209,7 @@ impl Rich {
             blink: Instant::now(),
             paste_pending: false,
             wants_image: false,
+            find: None,
             message: None,
         }
     }
@@ -497,6 +512,167 @@ impl Rich {
         self.zoom * SCREEN
     }
 
+    pub fn toggle_find(&mut self) {
+        self.find = match self.find.take() {
+            Some(_) => None,
+            None => {
+                let query = self.sel().map(|(a, b)| self.doc.plain(a, b)).filter(|q| !q.contains('\n')).unwrap_or_default();
+                Some(FindBar { query, focus: true, ..Default::default() })
+            }
+        };
+    }
+
+    /// Onde a busca acha `query` no parágrafo `i` (bytes), a partir de `from`.
+    fn matches_in(&self, i: usize, query: &str, case: bool) -> Vec<usize> {
+        let text = &self.doc.paras[i].text;
+        if case {
+            return text.match_indices(query).map(|(o, _)| o).collect();
+        }
+        let lower = text.to_lowercase();
+        let q = query.to_lowercase();
+        // Só quando minúsculas não mudam o tamanho dos bytes (quase sempre).
+        if lower.len() != text.len() {
+            return text.match_indices(query).map(|(o, _)| o).collect();
+        }
+        lower.match_indices(&q).map(|(o, _)| o).filter(|o| text.is_char_boundary(*o) && text.is_char_boundary(o + q.len())).collect()
+    }
+
+    fn find_next(&mut self, back: bool) {
+        let Some((query, case)) = self.find.as_ref().map(|f| (f.query.clone(), f.case)).filter(|(q, _)| !q.is_empty()) else {
+            return;
+        };
+        let (a, b) = self.sel().unwrap_or((self.cursor, self.cursor));
+        let n = self.doc.paras.len();
+        let mut found = None;
+        if back {
+            'outer: for k in 0..=n {
+                let i = (a.para + n - k % n) % n;
+                let mut ms = self.matches_in(i, &query, case);
+                ms.reverse();
+                for o in ms {
+                    if k == 0 && o >= a.off {
+                        continue;
+                    }
+                    found = Some(Pos::new(i, o));
+                    break 'outer;
+                }
+            }
+        } else {
+            'outer2: for k in 0..=n {
+                let i = (b.para + k) % n;
+                for o in self.matches_in(i, &query, case) {
+                    if k == 0 && o < b.off {
+                        continue;
+                    }
+                    found = Some(Pos::new(i, o));
+                    break 'outer2;
+                }
+            }
+        }
+        match found {
+            Some(p) => {
+                self.anchor = p;
+                self.cursor = Pos::new(p.para, p.off + query.len());
+                self.reveal = true;
+                self.message = None;
+            }
+            None => self.message = Some(format!("\"{query}\" não encontrado.")),
+        }
+    }
+
+    fn replace_one(&mut self) {
+        let Some(f) = &self.find else {
+            return;
+        };
+        let (query, with, case) = (f.query.clone(), f.replace.clone(), f.case);
+        if let Some((a, b)) = self.sel() {
+            let selected = self.doc.plain(a, b);
+            let same = if case { selected == query } else { selected.to_lowercase() == query.to_lowercase() };
+            if same && a.para == b.para {
+                self.begin(None);
+                let style = self.doc.style_at(self.doc.next(a));
+                self.doc.delete(a, b);
+                self.cursor = self.doc.insert_text(a, &with, &style);
+                self.anchor = self.cursor;
+            }
+        }
+        self.find_next(false);
+    }
+
+    fn replace_all(&mut self) {
+        let Some(f) = &self.find else {
+            return;
+        };
+        let (query, with, case) = (f.query.clone(), f.replace.clone(), f.case);
+        if query.is_empty() {
+            return;
+        }
+        let mut count = 0;
+        self.begin(None);
+        for i in 0..self.doc.paras.len() {
+            let mut ms = self.matches_in(i, &query, case);
+            ms.reverse();
+            for o in ms {
+                let a = Pos::new(i, o);
+                let style = self.doc.style_at(self.doc.next(a));
+                self.doc.delete(a, Pos::new(i, o + query.len()));
+                self.doc.insert_text(a, &with, &style);
+                count += 1;
+            }
+        }
+        self.cursor = self.doc.clamp(self.cursor);
+        self.anchor = self.cursor;
+        self.message = Some(format!("{count} {} substituída(s).", if count == 1 { "ocorrência" } else { "ocorrências" }));
+    }
+
+    /// A barra de busca, abaixo da barra de formatação.
+    fn find_bar(&mut self, ui: &mut Ui, y: f32, w: f32) {
+        let Some(f) = self.find.as_mut() else {
+            return;
+        };
+        let theme = ui.theme().clone();
+        ui.paint(|pixmap, _| {
+            let c = theme.background;
+            mide::ui::draw::paint_rounded_solid(pixmap, 0.0, y, w, FIND_H, 0.0, [c[0], c[1], c[2], 255]);
+        });
+        let focus = std::mem::take(&mut f.focus);
+        let (mut next, mut prev, mut one, mut all, mut close) = (false, false, false, false, false);
+        let mut case = f.case;
+        ui.at(12.0, y + 4.0, w - 24.0, |ui| {
+            ui.row(|ui| {
+                if focus {
+                    ui.focus_next_input();
+                }
+                ui.sized(240.0, |ui| next = ui.search_field(&mut f.query, "Buscar").submitted());
+                match ui.toolbar_buttons(&[("go-up-symbolic", "‹", false, true), ("go-down-symbolic", "›", false, true), ("", "Aa", case, true)]) {
+                    Some(0) => prev = true,
+                    Some(1) => next = true,
+                    Some(2) => case = !case,
+                    _ => {}
+                }
+                ui.sized(200.0, |ui| one = ui.search_field(&mut f.replace, "Substituir por").submitted());
+                ui.sized(100.0, |ui| one |= ui.button_styled("Substituir", ButtonStyle::Bordered).clicked());
+                ui.sized(70.0, |ui| all = ui.button_styled("Tudo", ButtonStyle::Bordered).clicked());
+                ui.sized(60.0, |ui| close = ui.button_styled("OK", ButtonStyle::Prominent).clicked());
+            });
+        });
+        f.case = case;
+        if close || (ui.typing() && ui.input().key(Key::Escape)) {
+            self.find = None;
+            ui.blur();
+            return;
+        }
+        if next || prev {
+            self.find_next(prev);
+        }
+        if one {
+            self.replace_one();
+        }
+        if all {
+            self.replace_all();
+        }
+    }
+
     fn zoom_by(&mut self, factor: f32) {
         self.zoom = (self.zoom * factor).clamp(0.5, 3.0);
         if (self.zoom - 1.0).abs() < 0.04 {
@@ -620,6 +796,7 @@ impl Rich {
             "recortar" => self.copy(ui, true),
             "colar" => self.paste(ui),
             "selecionar-tudo" => self.select_all(),
+            "buscar" => self.toggle_find(),
             _ => return false,
         }
         ui.request_repaint();
@@ -757,6 +934,13 @@ impl Rich {
         match input.shortcut_shift("z") {
             Some(true) => self.undo(true),
             Some(false) => self.undo(false),
+            None => {}
+        }
+        if input.shortcut("f") {
+            self.toggle_find();
+        }
+        match input.shortcut_shift("g") {
+            Some(back) => self.find_next(back),
             None => {}
         }
         match input.shortcut_shift("p") {
@@ -938,7 +1122,8 @@ impl Rich {
     /// A tela inteira do modo formatado, abaixo da barra de ferramentas do app.
     pub fn view(&mut self, ui: &mut Ui, top: f32) {
         let (w, h) = ui.window_size();
-        let area = (0.0, top + FORMAT_H, w, (h - top - FORMAT_H - STATUS_H).max(10.0));
+        let find_h = if self.find.is_some() { FIND_H } else { 0.0 };
+        let area = (0.0, top + FORMAT_H + find_h, w, (h - top - FORMAT_H - find_h - STATUS_H).max(10.0));
         let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
@@ -1045,8 +1230,9 @@ impl Rich {
         if focused && !blocked {
             ui.wake_after(Duration::from_millis(530));
         }
-        // Barra de formatação (em cima das páginas).
+        // Barra de formatação (em cima das páginas) e a de busca.
         self.format_bar(ui, top, w);
+        self.find_bar(ui, top + FORMAT_H, w);
         // Rodapé.
         let page_now = self.layout.line_of(self.cursor).map_or(1, |p| p.page + 1);
         let (words, chars, _) = self.doc.counts();

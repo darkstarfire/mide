@@ -263,7 +263,7 @@ impl Editor {
     fn toolbar(&mut self, ui: &mut Ui) {
         let mut clicked = None;
         let title = if self.modified() { format!("{} — Editado", self.name()) } else { self.name() };
-        let finding = self.find.is_some();
+        let finding = self.find.is_some() || self.rich.as_ref().is_some_and(|r| r.find.is_some());
         ui.toolbar(|ui| {
             ui.toolbar_title(&title, 420.0);
             ui.push_right(2.0 * 40.0 + 4.0 + 10.0 + 40.0 + 4.0);
@@ -281,7 +281,10 @@ impl Editor {
             Some("salvar") => {
                 self.save(false);
             }
-            Some("buscar") => self.toggle_find(),
+            Some("buscar") => match self.rich.as_mut() {
+                Some(r) => r.toggle_find(),
+                None => self.toggle_find(),
+            },
             _ => {}
         }
     }
@@ -608,6 +611,8 @@ impl App for Editor {
                         MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C"),
                         MenuItem::action("colar", "Colar").shortcut("Ctrl+V"),
                         MenuItem::action("selecionar-tudo", "Selecionar tudo").shortcut("Ctrl+A"),
+                        MenuItem::Separator,
+                        MenuItem::action("buscar", "Buscar e substituir…").shortcut("Ctrl+F"),
                     ],
                 },
             ];

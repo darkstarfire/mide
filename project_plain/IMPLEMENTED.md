@@ -1595,3 +1595,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **`src/richtext/odt.rs` (LibreOffice):** o mesmo, com estilos automáticos, listas aninhadas, espaços seguidos (`text:s`), imagens em `Pictures/`, página e cabeçalho/rodapé na página mestra, e a altura do cabeçalho somada à margem (também no modo `dynamic-spacing` do LibreOffice).
 - **Conferido com o LibreOffice nos dois sentidos:** ele abre os nossos .docx e .odt (convertidos para PDF, com o texto, as listas e o realce certos) e o mide lê o que ele grava (margens 3/2/2/3 cm, estilos, listas, cores).
 - **No editor:** .docx, .odt e .rtf abrem formatados; salvar usa a extensão; documento novo sugere .docx. Configurações → Apps padrão ganhou "Documentos" (o Editor de Texto é o padrão da sessão se nada foi escolhido); o `.desktop` do editor declara os tipos.
+
+## Editor de Texto, etapa 3: buscar e substituir no modo formatado (2026-10-24)
+
+- Ctrl+F (e o botão da lupa, e Editar → Buscar e substituir…) abre a barra abaixo da de formatação. Busca em cápsula; anterior/próxima (também Ctrl+G e Ctrl+Shift+G); "Aa" para diferenciar maiúsculas (desligado por padrão); substituir e substituir tudo, mantendo a formatação do texto trocado. Desfazer volta a substituição inteira.
