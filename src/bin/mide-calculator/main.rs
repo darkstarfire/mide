@@ -66,7 +66,7 @@ impl Mode {
         match self {
             Mode::Basic => ((300, 490), (260, 430)),
             Mode::Scientific => ((680, 470), (600, 420)),
-            Mode::Programmer => ((520, 560), (480, 500)),
+            Mode::Programmer => ((520, 600), (480, 540)),
             Mode::Notes => ((720, 480), (520, 320)),
         }
     }
@@ -107,6 +107,8 @@ const PAD: f32 = 14.0;
 const GAP: f32 = 10.0;
 /// Visor (com os botões da janela por cima, no canto).
 const DISPLAY_H: f32 = 132.0;
+/// Faixa de cima com os botões da janela (Tahoe): o conteúdo do visor começa abaixo.
+const TITLE_H: f32 = converter::TITLE_H;
 const HISTORY_W: f32 = 230.0;
 /// Fileira a mais do Básico com RPN (x↔y, R↓, R↑ e LASTx): altura de uma tecla e o vão.
 const RPN_ROW: u32 = 58;
@@ -940,13 +942,13 @@ impl App for Calculator {
         // Programador: a tela e os 64 bits em cima; conversor: as duas linhas.
         let converting = self.converting();
         let top = match self.mode {
-            Mode::Programmer => DISPLAY_H + 112.0,
+            Mode::Programmer => DISPLAY_H + TITLE_H + 112.0,
             _ if converting => DISPLAY_H + CONVERT_H as f32,
             _ => DISPLAY_H,
         };
         let bw = (w - 2.0 * PAD - (cols - 1.0) * GAP) / cols;
         // Teclas redondas (quadradas por dentro), como no Tahoe: no máximo a largura.
-        let bh = ((h - top - PAD - (rows - 1.0) * GAP) / rows).clamp(20.0, bw);
+        let bh = ((h - top - PAD - (rows - 1.0) * GAP) / rows).max(20.0).min(bw.max(20.0));
         // O que sobra de altura vai para o visor (as teclas ficam embaixo).
         let top = h - PAD - rows * bh - (rows - 1.0) * GAP;
         let keys_top = if self.mode == Mode::Programmer || converting { top } else { top };
@@ -984,7 +986,7 @@ impl App for Calculator {
             _ => self.engine.clear_label() == "C",
         };
         let erase = match self.mode {
-            Mode::Programmer => (w - PAD - 30.0, 6.0, 30.0, 24.0),
+            Mode::Programmer => (w - PAD - 30.0, TITLE_H + 6.0, 30.0, 24.0),
             _ if converting => converter::erase_rect(w, self.conv.active, self.conv_label_w[self.conv.active]),
             _ => (PAD, DISPLAY_H - GAP - 30.0, 30.0, 24.0),
         };
@@ -1029,7 +1031,7 @@ impl App for Calculator {
                 act = Some((0, 4));
             }
             // Na Moeda, a faixa (fonte e data) abre "Cotações de moedas".
-            if converter::is_money(self.conv.category) && ui.background((w / 2.0, 73.0, w / 2.0 - PAD, 20.0)).clicked {
+            if converter::is_money(self.conv.category) && ui.background((w / 2.0, TITLE_H + 65.0, w / 2.0 - PAD, 20.0)).clicked {
                 self.money.window = true;
             }
             match act {
@@ -1054,7 +1056,7 @@ impl App for Calculator {
         let mut base_rects = Vec::new();
         if self.mode == Mode::Programmer {
             for (i, base) in [Base::Hex, Base::Dec, Base::Oct, Base::Bin].into_iter().enumerate() {
-                let rect = (PAD + i as f32 * 58.0, 8.0, 52.0, 22.0);
+                let rect = (PAD + i as f32 * 58.0, TITLE_H + 8.0, 52.0, 22.0);
                 if ui.background(rect).clicked {
                     self.programmer.set_base(base);
                     self.save("base", (base != Base::Dec).then(|| Value::Text(base.label().to_lowercase())));
@@ -1064,7 +1066,7 @@ impl App for Calculator {
             let bit_w = (w - 2.0 * PAD) / 32.0;
             for n in 0..64u32 {
                 let (row, col) = ((63 - n) / 32, (63 - n) % 32);
-                let rect = (PAD + col as f32 * bit_w, DISPLAY_H + 14.0 + row as f32 * 44.0, bit_w, 26.0);
+                let rect = (PAD + col as f32 * bit_w, DISPLAY_H + TITLE_H + 14.0 + row as f32 * 44.0, bit_w, 26.0);
                 if ui.background(rect).clicked {
                     self.change(|c| c.programmer.toggle_bit(n));
                 }
@@ -1178,7 +1180,7 @@ impl App for Calculator {
                 let tw = text.measure(&screen, size, FontWeight::Regular);
                 // Pela base: no Programador, logo acima da fileira de bits.
                 // Pela base, logo acima das teclas (no Programador, acima dos bits).
-                let display_y = if mode == Mode::Programmer { DISPLAY_H + 8.0 - size * 1.3 } else { keys_top - GAP - size * 1.3 };
+                let display_y = if mode == Mode::Programmer { DISPLAY_H + TITLE_H + 8.0 - size * 1.3 } else { keys_top - GAP - size * 1.3 };
                 text.draw(pixmap, &screen, ox + w - PAD - 4.0 - tw, oy + display_y, size, FontWeight::Regular, [255, 255, 255, 255]);
             }
             // Indicadores pequenos à esquerda da tela: Rad, memória, RPN (Y Z T).
@@ -1187,7 +1189,7 @@ impl App for Calculator {
                 // Como no Tahoe: a conta em cinza, logo acima do número (no Programador e no
                 // conversor, pequena no alto).
                 let big = mode != Mode::Programmer && conv_view.is_none();
-                let (es, ey) = if big { (24.0, keys_top - GAP - 48.0 * 1.3 - 24.0 * 1.2) } else { (13.0, 8.0) };
+                let (es, ey) = if big { (24.0, keys_top - GAP - 48.0 * 1.3 - 24.0 * 1.2) } else { (13.0, TITLE_H + 8.0) };
                 let x0 = if mode == Mode::Scientific { PAD + 70.0 } else { PAD + 4.0 };
                 let shown = fit_terms(text, &expression, es, w - x0 - PAD - 4.0);
                 let ew = text.measure(&shown, es, FontWeight::Regular);
@@ -1204,14 +1206,14 @@ impl App for Calculator {
                 if memory {
                     tags.push("M");
                 }
-                text.draw(pixmap, &tags.join("  "), ox + PAD + 4.0, oy + 10.0, 12.0, FontWeight::Regular, small);
+                text.draw(pixmap, &tags.join("  "), ox + PAD + 4.0, oy + TITLE_H + 2.0, 12.0, FontWeight::Regular, small);
             }
             if let Some([y, z, t]) = &rpn_stack {
                 // A pilha acima de X (no Científico, depois de Rad e M); cortada pela
                 // esquerda se não cabe (Y é o que mais importa).
                 let x0 = if mode == Mode::Scientific { PAD + 70.0 } else { PAD + 4.0 };
                 let stack = fit_left(text, &format!("T {t}   Z {z}   Y {y}"), 12.0, w - x0 - PAD);
-                text.draw(pixmap, &stack, ox + x0, oy + 10.0, 12.0, FontWeight::Regular, small);
+                text.draw(pixmap, &stack, ox + x0, oy + TITLE_H + 2.0, 12.0, FontWeight::Regular, small);
             }
             if mode == Mode::Programmer {
                 for (b, (x, y, bw2, bh2)) in &base_rects {
@@ -1221,7 +1223,7 @@ impl App for Calculator {
                     text.draw(pixmap, b.label(), ox + x + (bw2 - lw) / 2.0, oy + y + 4.0, 12.0, FontWeight::Semibold, [255, 255, 255, 255]);
                 }
                 if !character.is_empty() {
-                    text.draw(pixmap, &format!("“{character}”"), ox + PAD + 4.0, oy + 46.0, 14.0, FontWeight::Regular, small);
+                    text.draw(pixmap, &format!("“{character}”"), ox + PAD + 4.0, oy + TITLE_H + 46.0, 14.0, FontWeight::Regular, small);
                 }
                 for (n, (x, y, bw2, _)) in &bit_rects {
                     let on = value >> n & 1 == 1;
@@ -1492,13 +1494,13 @@ mod tests {
 
     #[test]
     fn tamanhos_da_janela() {
-        assert_eq!(window_size_for(Mode::Basic, false, false, false).0, (250, 380));
-        assert_eq!(window_size_for(Mode::Basic, false, false, true), ((250, 444), (220, 384)));
-        assert_eq!(window_size_for(Mode::Basic, true, false, true).0, (250, 502));
-        assert_eq!(window_size_for(Mode::Scientific, false, false, true).0, (620, 444));
-        assert_eq!(window_size_for(Mode::Basic, false, true, true).0, (480, 444));
+        assert_eq!(window_size_for(Mode::Basic, false, false, false).0, (300, 490));
+        assert_eq!(window_size_for(Mode::Basic, false, false, true), ((300, 554), (260, 494)));
+        assert_eq!(window_size_for(Mode::Basic, true, false, true).0, (300, 612));
+        assert_eq!(window_size_for(Mode::Scientific, false, false, true).0, (680, 534));
+        assert_eq!(window_size_for(Mode::Basic, false, true, true).0, (530, 554));
         // O Programador não mostra o conversor (o `converting` já vem falso).
-        assert_eq!(window_size_for(Mode::Programmer, false, false, false).0, (520, 560));
+        assert_eq!(window_size_for(Mode::Programmer, false, false, false).0, (520, 600));
         // As notas não somam o histórico, o RPN nem o conversor.
         assert_eq!(window_size_for(Mode::Notes, true, true, true), ((720, 480), (520, 320)));
     }

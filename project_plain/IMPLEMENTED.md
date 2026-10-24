@@ -1522,3 +1522,9 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Estilo:** popovers de Estilo do traço (cinco espessuras, tracejado), Cor da borda, Preenchimento (ou nenhum) e Estilo do texto (tamanho). Valem para a próxima forma e para a escolhida.
 - **Mais:** girar para a esquerda e a direita, recortar, desfazer e refazer de tudo (`doc.rs` guarda o estado inteiro: imagem, formas e recorte), Copiar e Salvar na barra. A janela é de conteúdo inteiro (Tahoe), e o menu Ferramentas tem tudo isso.
 - **mide-ui:** `Ui::last_rect()` dá o retângulo do último componente (âncora de popovers), e `Text::draw_px` desenha texto em pixels do canvas.
+
+## Calculadora: correções do visual do Tahoe (2026-10-24)
+
+- **Fechava ao trocar de modo:** no primeiro quadro depois da troca, a janela ainda tem o tamanho do modo anterior, as teclas ficavam mais estreitas que o mínimo e o `clamp` do tamanho caía (mínimo maior que o máximo). Agora o tamanho das teclas aceita a janela pequena até o compositor mudar o tamanho.
+- **Luzes por cima do conteúdo:** o visor ganhou uma faixa de cima (`TITLE_H`, 36 pontos) para os botões da janela. As bases e os bits do Programador, as linhas do conversor, Rad/M, a pilha do RPN e a conta pequena ficam abaixo dela. O Programador ficou 40 pontos mais alto.
+- **Luzes duplicadas nas Notas:** a barra lateral do Tahoe já desenha os botões da janela. O mide-ui agora desenha as luzes uma vez por quadro (o segundo pedido no mesmo quadro é ignorado).

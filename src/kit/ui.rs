@@ -548,6 +548,9 @@ pub struct Ctx {
     /// Faixa (topo e base, na janela) que a área que rola em volta deve mostrar
     /// (`Ui::reveal`): a mais próxima que termina depois do pedido rola até ela.
     reveal: Option<(f32, f32)>,
+    /// As luzes da janela já foram desenhadas neste quadro (a barra lateral do Tahoe as
+    /// desenha; um segundo pedido no mesmo quadro é ignorado).
+    controls_drawn: bool,
 }
 
 /// O que o passe da tela principal deixou no `Ctx` e que um passe de outra tela não
@@ -602,6 +605,7 @@ impl Ctx {
             drag_out: None,
             window_request: None,
             last_rect: (0.0, 0.0, 0.0, 0.0),
+            controls_drawn: false,
             content_window: false,
             maximized: false,
             fixed_size: false,
@@ -734,6 +738,7 @@ impl Ctx {
         self.reveal = None;
         self.repaint = false;
         self.hover_claimed = false;
+        self.controls_drawn = false;
         self.ticking = false;
         self.glass.clear();
         self.glass_capable = false;
@@ -1004,6 +1009,9 @@ impl<'a> Ui<'a> {
     pub fn window_controls(&mut self, x: f32, y: f32) -> f32 {
         let t = self.ctx.theme.clone();
         let width = LIGHT_STEP * 2.0 + LIGHT_SIZE;
+        if std::mem::replace(&mut self.ctx.controls_drawn, true) {
+            return width;
+        }
         let group = (x - 4.0, y - 4.0, width + 8.0, LIGHT_SIZE + 8.0);
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
         let group_hover = !blocked && self.ctx.input.over(group);

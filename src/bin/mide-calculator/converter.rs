@@ -21,6 +21,8 @@ use crate::{fit_left, PAD, SCIENCE};
 
 /// Altura a mais do visor com o conversor (pontos).
 pub const CONVERT_H: u32 = 64;
+/// Faixa dos botões da janela no alto do visor (as linhas do conversor ficam abaixo).
+pub const TITLE_H: f32 = 36.0;
 
 /// A categoria é a Moeda (as unidades são as moedas, convertidas pelas cotações).
 pub fn is_money(category: usize) -> bool {
@@ -298,7 +300,7 @@ fn with(mut pair: [usize; 2], row: usize, unit: usize) -> [usize; 2] {
 
 /// Lugar de uma linha do visor (x, y, largura, altura), com o visor `w` de largura.
 pub fn row_rect(w: f32, row: usize) -> (f32, f32, f32, f32) {
-    (PAD, 22.0 + row as f32 * 72.0, w - 2.0 * PAD, 50.0)
+    (PAD, TITLE_H + 14.0 + row as f32 * 72.0, w - 2.0 * PAD, 50.0)
 }
 
 /// A parte da linha com o nome da unidade (o clique abre o seletor), com o nome de
@@ -310,7 +312,7 @@ pub fn name_rect(w: f32, row: usize, label_w: f32) -> (f32, f32, f32, f32) {
 
 /// O botão ⇅, entre as linhas.
 pub fn swap_rect() -> (f32, f32, f32, f32) {
-    (PAD, 73.0, 30.0, 20.0)
+    (PAD, TITLE_H + 65.0, 30.0, 20.0)
 }
 
 /// O ⌫ do toque, na linha ativa, logo depois do nome da unidade.
