@@ -188,6 +188,56 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
         let line = &layout.paras[placed.para].lines[placed.line];
         let styles = &layout.styles[placed.para];
         let base = placed.y + line.baseline;
+        // Tabela: fundo, texto e bordas das células desta linha.
+        if let (Some(table), Some(tb)) = (&para.table, &layout.paras[placed.para].table) {
+            let r = placed.line;
+            let rh = line.height;
+            for (c, cell_box) in tb.rows[r].iter().enumerate() {
+                let (cx, cw) = (ml + tb.col_x[c], tb.col_w[c]);
+                let cell = &table.rows[r][c];
+                if let Some(shade) = cell.shade {
+                    rect(&mut pg.ops, cx, placed.y, cw, rh, shade);
+                }
+                let (ox, oy) = (cx + super::layout::CELL_PAD_X, placed.y + super::layout::CELL_PAD_Y);
+                for cpl in &cell_box.layout.placed {
+                    let cpara = &cell.doc.paras[cpl.para];
+                    let cline = &cell_box.layout.paras[cpl.para].lines[cpl.line];
+                    let cstyles = &cell_box.layout.styles[cpl.para];
+                    let cstyle_of = |g: &Glyph| cstyles.get(g.span).cloned().unwrap_or_default();
+                    for g in &cline.glyphs {
+                        if let Some(hl) = cstyle_of(g).highlight {
+                            rect(&mut pg.ops, ox + g.x, oy + cpl.y, g.width, cline.height, hl);
+                        }
+                    }
+                    let base = oy + cpl.y + cline.baseline;
+                    if cpl.line == 0 {
+                        if let Some((glyphs, mx)) = &cell_box.layout.paras[cpl.para].marker {
+                            let col = cstyles.first().map_or([0, 0, 0], |s| s.color);
+                            glyph_ops(&mut pg.ops, glyphs, "", ox + mx, base, &|_| col, &mut font_uses);
+                        }
+                    }
+                    glyph_ops(&mut pg.ops, &cline.glyphs, &cpara.text, ox, base, &|g| cstyle_of(g).color, &mut font_uses);
+                    for g in &cline.glyphs {
+                        let st = cstyle_of(g);
+                        let thick = st.size * 0.06;
+                        if st.underline || st.link.is_some() {
+                            rect(&mut pg.ops, ox + g.x, base + st.size * 0.12, g.width, thick, st.color);
+                        }
+                        if st.strike {
+                            rect(&mut pg.ops, ox + g.x, base - st.size * 0.28, g.width, thick, st.color);
+                        }
+                    }
+                }
+                if table.borders {
+                    let b = [128, 128, 132];
+                    rect(&mut pg.ops, cx, placed.y, cw, 0.5, b);
+                    rect(&mut pg.ops, cx, placed.y + rh - 0.5, cw, 0.5, b);
+                    rect(&mut pg.ops, cx, placed.y, 0.5, rh, b);
+                    rect(&mut pg.ops, cx + cw - 0.5, placed.y, 0.5, rh, b);
+                }
+            }
+            continue;
+        }
         if let Some(img) = &para.image {
             let index = *image_of_para.entry(placed.para).or_insert_with(|| {
                 let id = w.reserve();
@@ -256,7 +306,9 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
         }
     }
     // Cabeçalho, rodapé e números.
-    let small = CharStyle { size: 10.0, color: [80, 80, 80], ..doc.paras.first().map(|p| p.spans[0].style.clone()).unwrap_or_default() };
+    // Cabeçalho, rodapé e números: só a fonte do documento (sem o negrito de um título).
+    let family = doc.paras.iter().find(|p| p.style.name.is_empty() && !p.text.is_empty()).or(doc.paras.first()).map(|p| p.spans[0].style.family.clone()).unwrap_or_default();
+    let small = CharStyle { size: 10.0, color: [80, 80, 80], family, ..CharStyle::default() };
     let content_w = page.content_width();
     let header_y = (page.margins[0] * 0.5).max(18.0);
     let footer_y = page.height - (page.margins[2] * 0.5).max(18.0) + 8.0;
@@ -409,6 +461,12 @@ mod tests {
         doc.paras[1].style.page_break_before = true;
         doc.apply_char(Pos::new(0, 0), Pos::new(0, 4), |s| s.color = [200, 0, 0]);
         doc.page.numbers.show = true;
+        // Uma tabela 2x2 com texto.
+        let after = doc.insert_table(Pos::new(0, doc.paras[0].text.len()), 2, 2);
+        if let Some(t) = doc.paras[after.para - 1].table.as_mut() {
+            t.rows[0][0].doc.insert_text(Pos::default(), "Célula A1", &CharStyle::default());
+            t.rows[1][1].doc.insert_text(Pos::default(), "Célula B2", &CharStyle::default());
+        }
         let end = Pos::new(0, doc.paras[0].text.len());
         doc.insert_note(end, "SILVA, J. Métodos do mide. São Paulo, 2026.");
         let mut l = Layouter::default();

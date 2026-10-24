@@ -128,6 +128,8 @@ impl Editor {
             return false;
         };
         if let Some(r) = self.rich.as_mut() {
+            // A célula em edição volta para a tabela antes de gravar.
+            r.leave_cell();
             // Formatado: pela extensão (DOCX, ODT, RTF; num .txt, o texto simples).
             let data: Vec<u8> = match ext_of(&path).as_str() {
                 "docx" => mide::richtext::docx::write(&r.doc),

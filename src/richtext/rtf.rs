@@ -35,32 +35,37 @@ fn escape(out: &mut String, text: &str) {
     }
 }
 
-/// Grava o documento em RTF.
-pub fn write(doc: &Doc) -> String {
-    let mut fonts: Vec<String> = Vec::new();
-    let mut colors: Vec<[u8; 3]> = Vec::new();
-    let font = |name: &str, fonts: &mut Vec<String>| match fonts.iter().position(|f| f == name) {
+fn font(name: &str, fonts: &mut Vec<String>) -> usize {
+    match fonts.iter().position(|f| f == name) {
         Some(i) => i,
         None => {
             fonts.push(name.to_string());
             fonts.len() - 1
         }
-    };
-    let color = |c: [u8; 3], colors: &mut Vec<[u8; 3]>| {
-        // Cor 0 é a "automática"; as nossas começam em 1.
-        1 + match colors.iter().position(|x| *x == c) {
-            Some(i) => i,
-            None => {
-                colors.push(c);
-                colors.len() - 1
-            }
+    }
+}
+
+/// Número da cor na tabela de cores (0 é a "automática"; as nossas começam em 1).
+fn color(c: [u8; 3], colors: &mut Vec<[u8; 3]>) -> usize {
+    1 + match colors.iter().position(|x| *x == c) {
+        Some(i) => i,
+        None => {
+            colors.push(c);
+            colors.len() - 1
         }
-    };
+    }
+}
+
+/// Grava parágrafos (do documento ou de uma célula, `in_table`).
+fn write_paras(paras: &[Paragraph], doc: &Doc, fonts: &mut Vec<String>, colors: &mut Vec<[u8; 3]>, in_table: bool, content_width: f32) -> String {
     let mut body = String::new();
-    let page = &doc.page;
-    for p in &doc.paras {
+    for (pi, p) in paras.iter().enumerate() {
         let st = &p.style;
-        body.push_str("\\pard");
+        if let Some(table) = &p.table {
+            body.push_str(&write_table(table, doc, fonts, colors));
+            continue;
+        }
+        body.push_str(if in_table { "\\pard\\intbl" } else { "\\pard" });
         body.push_str(match st.align {
             Align::Left => "\\ql",
             Align::Center => "\\qc",
@@ -79,7 +84,7 @@ pub fn write(doc: &Doc) -> String {
             body.push_str("\\pagebb");
         }
         if st.leader {
-            body.push_str(&format!("\\tqr\\tldot\\tx{}", twips(page.content_width() - st.right_indent)));
+            body.push_str(&format!("\\tqr\\tldot\\tx{}", twips(content_width - st.right_indent)));
         }
         if let Some(kind) = st.list {
             let k = match kind {
@@ -116,7 +121,7 @@ pub fn write(doc: &Doc) -> String {
                     body.push('}');
                     continue;
                 }
-                let f = font(&s.family, &mut fonts);
+                let f = font(&s.family, fonts);
                 body.push_str(&format!("{{\\f{f}\\fs{}", (s.size * 2.0).round() as i32));
                 if s.bold {
                     body.push_str("\\b");
@@ -136,10 +141,10 @@ pub fn write(doc: &Doc) -> String {
                     Baseline::Normal => {}
                 }
                 if s.color != [0, 0, 0] {
-                    body.push_str(&format!("\\cf{}", color(s.color, &mut colors)));
+                    body.push_str(&format!("\\cf{}", color(s.color, colors)));
                 }
                 if let Some(h) = s.highlight {
-                    let c = color(h, &mut colors);
+                    let c = color(h, colors);
                     body.push_str(&format!("\\cb{c}\\highlight{c}"));
                 }
                 body.push(' ');
@@ -147,8 +152,45 @@ pub fn write(doc: &Doc) -> String {
                 body.push('}');
             }
         }
-        body.push_str("\\par\n");
+        // Numa célula, o último parágrafo termina com \cell.
+        body.push_str(if in_table && pi + 1 == paras.len() { "\\cell\n" } else { "\\par\n" });
     }
+    body
+}
+
+/// Grava uma tabela como o Word: `\trowd`, as células (`\cellx`, bordas e fundo), o
+/// conteúdo de cada uma (`\intbl` ... `\cell`) e `\row`.
+fn write_table(table: &super::Table, doc: &Doc, fonts: &mut Vec<String>, colors: &mut Vec<[u8; 3]>) -> String {
+    let mut out = String::new();
+    for row in &table.rows {
+        out.push_str("\\trowd\\trgaph100\\trleft0");
+        let mut x = 0.0;
+        for (c, cell) in row.iter().enumerate() {
+            if table.borders {
+                out.push_str("\\clbrdrt\\brdrs\\brdrw10\\clbrdrl\\brdrs\\brdrw10\\clbrdrb\\brdrs\\brdrw10\\clbrdrr\\brdrs\\brdrw10");
+            }
+            if let Some(sh) = cell.shade {
+                out.push_str(&format!("\\clcbpat{}", color(sh, colors)));
+            }
+            x += table.cols.get(c).copied().unwrap_or(72.0);
+            out.push_str(&format!("\\cellx{}", twips(x)));
+        }
+        out.push('\n');
+        for (c, cell) in row.iter().enumerate() {
+            let w = table.cols.get(c).copied().unwrap_or(72.0);
+            out.push_str(&write_paras(&cell.doc.paras, doc, fonts, colors, true, w - 10.0));
+        }
+        out.push_str("\\row\n");
+    }
+    out
+}
+
+/// Grava o documento em RTF.
+pub fn write(doc: &Doc) -> String {
+    let mut fonts: Vec<String> = Vec::new();
+    let mut colors: Vec<[u8; 3]> = Vec::new();
+    let page = &doc.page;
+    let body = write_paras(&doc.paras, doc, &mut fonts, &mut colors, false, page.content_width());
     let mut out = String::from("{\\rtf1\\ansi\\ansicpg1252\\deff0\n{\\fonttbl");
     if fonts.is_empty() {
         fonts.push("Helvetica".into());
@@ -191,6 +233,24 @@ pub fn write(doc: &Doc) -> String {
     out.push_str(&body);
     out.push('}');
     out
+}
+
+/// Coloca a tabela lida (linhas de células) no documento.
+fn flush_table(doc: &mut Doc, rows: &mut Vec<Vec<super::Cell>>, cols: &[f32], borders: bool, ch: &CharStyle) {
+    if rows.is_empty() {
+        return;
+    }
+    let n = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    for r in rows.iter_mut() {
+        while r.len() < n {
+            r.push(super::Cell::empty(ch));
+        }
+    }
+    let mut cols = cols.to_vec();
+    if cols.len() != n || cols.iter().any(|c| *c <= 0.0) {
+        cols = vec![doc.page.content_width() / n as f32; n];
+    }
+    doc.paras.push(Paragraph::table(super::Table { cols, rows: std::mem::take(rows), borders }, ch.clone(), ParaStyle::default()));
 }
 
 /// Windows-1252 nos bytes 0x80–0x9F (o resto é Latin-1).
@@ -255,6 +315,17 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     let mut footnote_text = String::new();
     // O parágrafo de fora (o `\pard` de dentro da nota não vale para ele).
     let mut footnote_saved: Option<ParaStyle> = None;
+    // Tabela sendo lida (\trowd, \cellx, \intbl, \cell, \row).
+    let mut intbl = false;
+    let mut tbl_active = false;
+    let mut tbl_rows: Vec<Vec<super::Cell>> = Vec::new();
+    let mut tbl_row: Vec<super::Cell> = Vec::new();
+    let mut tbl_cell_start = 0usize;
+    let mut tbl_cols: Vec<f32> = Vec::new();
+    let mut cellx: Vec<f32> = Vec::new();
+    let mut cell_shades: Vec<Option<[u8; 3]>> = Vec::new();
+    let mut pending_shade: Option<[u8; 3]> = None;
+    let mut tbl_borders = false;
     let mut i = 0;
     let push_text = |para: &mut Paragraph, s: &str, ch: &CharStyle| {
         if s.is_empty() {
@@ -267,7 +338,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
         }
     };
     let finish = |doc: &mut Doc, para: &mut Paragraph, pstyle: &ParaStyle, ch: &CharStyle, page_break: &mut bool| {
-        let mut p = std::mem::replace(para, Paragraph { text: String::new(), spans: Vec::new(), style: ParaStyle::default(), image: None });
+        let mut p = std::mem::replace(para, Paragraph { text: String::new(), spans: Vec::new(), style: ParaStyle::default(), image: None, table: None });
         if p.spans.is_empty() {
             p.spans.push(super::Span { len: 0, style: ch.clone() });
         }
@@ -509,7 +580,53 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                         let family = st.ch.family.clone();
                         st.ch = CharStyle { family, ..CharStyle::default() };
                     }
+                    "intbl" => {
+                        intbl = true;
+                        if !tbl_active {
+                            tbl_active = true;
+                            tbl_cell_start = doc.paras.len();
+                        }
+                    }
+                    "trowd" => {
+                        cellx.clear();
+                        cell_shades.clear();
+                        pending_shade = None;
+                    }
+                    "cellx" => {
+                        cellx.push(pt(p));
+                        cell_shades.push(pending_shade.take());
+                    }
+                    "clcbpat" => pending_shade = colors.get((p as usize).wrapping_sub(1)).copied(),
+                    "clbrdrt" | "clbrdrl" | "clbrdrb" | "clbrdrr" => tbl_borders = true,
+                    "cell" if st.dest == Dest::Text => {
+                        if !tbl_active {
+                            tbl_active = true;
+                            tbl_cell_start = doc.paras.len();
+                        }
+                        finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break);
+                        let paras: Vec<Paragraph> = doc.paras.drain(tbl_cell_start.min(doc.paras.len())..).collect();
+                        let mut cell = super::Cell::from_paras(paras);
+                        cell.shade = cell_shades.get(tbl_row.len()).copied().flatten();
+                        tbl_row.push(cell);
+                        tbl_cell_start = doc.paras.len();
+                    }
+                    "row" if st.dest == Dest::Text => {
+                        if !tbl_row.is_empty() {
+                            tbl_rows.push(std::mem::take(&mut tbl_row));
+                        }
+                        let mut prev = 0.0;
+                        tbl_cols = cellx
+                            .iter()
+                            .map(|x| {
+                                let w = x - prev;
+                                prev = *x;
+                                w
+                            })
+                            .collect();
+                        tbl_cell_start = doc.paras.len();
+                    }
                     "pard" => {
+                        intbl = false;
                         let keep_list = std::mem::take(&mut pstyle.list);
                         let keep_level = pstyle.level;
                         pstyle = ParaStyle::default();
@@ -570,7 +687,15 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                             _ => {}
                         }
                     }
-                    "par" | "sect" if st.dest == Dest::Text => finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break),
+                    "par" | "sect" if st.dest == Dest::Text => {
+                        // O primeiro parágrafo fora da tabela: ela entra no documento antes.
+                        if tbl_active && !intbl {
+                            flush_table(&mut doc, &mut tbl_rows, &tbl_cols, tbl_borders, &st.ch);
+                            tbl_active = false;
+                            tbl_borders = false;
+                        }
+                        finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break)
+                    }
                     "par" if matches!(st.dest, Dest::Header | Dest::Footer) => side_text.push(' '),
                     "par" | "line" | "tab" if st.dest == Dest::Footnote => footnote_text.push(' '),
                     "line" if st.dest == Dest::Text => push_text(&mut para, &LINE_BREAK.to_string(), &st.ch),
@@ -620,6 +745,12 @@ pub fn read(data: &[u8]) -> Option<Doc> {
         }
     }
     let _ = cbg;
+    if tbl_active {
+        if !tbl_row.is_empty() {
+            tbl_rows.push(std::mem::take(&mut tbl_row));
+        }
+        flush_table(&mut doc, &mut tbl_rows, &tbl_cols, tbl_borders, &st.ch);
+    }
     if !para.text.is_empty() {
         finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break);
     }
@@ -628,7 +759,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     }
     // Imagens sem dados (falharam) não deixam o objeto solto no texto.
     for p in &mut doc.paras {
-        if p.image.is_none() && p.text.contains(OBJECT) {
+        if !p.is_object() && p.text.contains(OBJECT) {
             let t = p.text.replace(OBJECT, "");
             *p = Paragraph::new(&t, p.spans[0].style.clone(), p.style.clone());
         }
@@ -662,9 +793,22 @@ mod tests {
         d.page.numbers.show_from = 3;
         d.page.header = "Cabeçalho".into();
         d.insert_note(Pos::new(0, "Título".len()), "Nota em RTF, com vírgula.");
+        let after = d.insert_table(d.end(), 2, 2);
+        if let Some(t) = d.paras[after.para - 1].table.as_mut() {
+            t.rows[0][0].doc.insert_text(Pos::default(), "um\ndois", &CharStyle { bold: true, ..CharStyle::default() });
+            t.rows[1][1].doc.insert_text(Pos::default(), "B2", &CharStyle::default());
+            t.rows[1][1].shade = Some([210, 230, 210]);
+        }
         let rtf = write(&d);
         let back = read(rtf.as_bytes()).expect("RTF");
-        assert_eq!(back.paras.len(), 2, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
+        assert!(back.paras.len() >= 3, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
+        let table = back.paras.iter().find_map(|p| p.table.as_ref()).expect("tabela");
+        assert_eq!((table.rows.len(), table.cols.len()), (2, 2));
+        assert_eq!(table.rows[0][0].doc.paras.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(), ["um", "dois"]);
+        assert!(table.rows[0][0].doc.paras[0].spans[0].style.bold);
+        assert_eq!(table.rows[1][1].doc.paras[0].text, "B2");
+        assert_eq!(table.rows[1][1].shade, Some([210, 230, 210]));
+        assert!(table.borders);
         assert_eq!(back.paras[0].text.replace(crate::richtext::NOTE, ""), "Título");
         assert_eq!(back.paras[1].text, "Olá, “mundo” — ção {x}\\");
         assert!(back.paras[0].spans[0].style.bold);

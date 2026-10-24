@@ -169,39 +169,48 @@ fn list_style(name: &str, kind: ListKind) -> String {
     s
 }
 
-/// Grava o documento em ODT.
-pub fn write(doc: &Doc) -> Vec<u8> {
-    let mut auto = String::new();
+/// O que os parágrafos juntam ao serem gravados: estilos automáticos, imagens e notas.
+#[derive(Default)]
+struct WriteCtx {
+    auto: String,
+    pstyles: Vec<(ParaStyle, String)>,
+    tstyles: Vec<(CharStyle, String)>,
+    pictures: Vec<(String, Vec<u8>, &'static str)>,
+    last_list: Option<ListKind>,
+    note_n: usize,
+    tables: usize,
+    cell_styles: Vec<(Option<[u8; 3]>, bool, String)>,
+}
+
+/// Grava parágrafos (do documento ou de uma célula) em ODF.
+fn write_paras(paras: &[Paragraph], content_width: f32, doc: &Doc, ctx: &mut WriteCtx) -> String {
     let mut body = String::new();
-    let mut pstyles: Vec<(ParaStyle, String)> = Vec::new();
-    let mut tstyles: Vec<(CharStyle, String)> = Vec::new();
-    let mut pictures: Vec<(String, Vec<u8>, &'static str)> = Vec::new();
-    for (kind, name) in [(ListKind::Bullet, "LBullet"), (ListKind::Dash, "LDash"), (ListKind::Number, "LNumber"), (ListKind::Letter, "LLetter")] {
-        auto.push_str(&list_style(name, kind));
-    }
-    let mut last_list: Option<ListKind> = None;
-    let mut note_n = 0;
-    for p in &doc.paras {
+    for p in paras {
         let st = &p.style;
+        if let Some(table) = &p.table {
+            body.push_str(&write_table(table, doc, ctx));
+            ctx.last_list = None;
+            continue;
+        }
         let key = ParaStyle { list: st.list, level: st.level, ..st.clone() };
-        let pname = match pstyles.iter().find(|(s, _)| *s == key) {
+        let pname = match ctx.pstyles.iter().find(|(s, _)| *s == key) {
             Some((_, n)) => n.clone(),
             None => {
-                let n = format!("P{}", pstyles.len() + 1);
+                let n = format!("P{}", ctx.pstyles.len() + 1);
                 let parent = odf_style(&st.name).map_or(String::new(), |(id, _)| format!(" style:parent-style-name=\"{id}\""));
-                auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"paragraph\"{parent}>{}</style:style>", para_props(st, doc.page.content_width())));
-                pstyles.push((key, n.clone()));
+                ctx.auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"paragraph\"{parent}>{}</style:style>", para_props(st, content_width)));
+                ctx.pstyles.push((key, n.clone()));
                 n
             }
         };
         let mut inner = String::new();
         if let Some(img) = &p.image {
             let ext = if img.format == "png" { "png" } else { "jpg" };
-            let file = format!("Pictures/imagem{}.{ext}", pictures.len() + 1);
-            pictures.push((file.clone(), img.data.as_ref().clone(), if img.format == "png" { "image/png" } else { "image/jpeg" }));
+            let file = format!("Pictures/imagem{}.{ext}", ctx.pictures.len() + 1);
+            ctx.pictures.push((file.clone(), img.data.as_ref().clone(), if img.format == "png" { "image/png" } else { "image/jpeg" }));
             inner.push_str(&format!(
                 "<draw:frame draw:name=\"Imagem{}\" text:anchor-type=\"as-char\" svg:width=\"{:.2}pt\" svg:height=\"{:.2}pt\"><draw:image xlink:href=\"{file}\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>",
-                pictures.len(),
+                ctx.pictures.len(),
                 img.width,
                 img.height
             ));
@@ -211,19 +220,20 @@ pub fn write(doc: &Doc) -> Vec<u8> {
                     continue;
                 }
                 if let Some(id) = s.note {
-                    note_n += 1;
+                    ctx.note_n += 1;
                     inner.push_str(&format!(
-                        "<text:note text:id=\"ftn{id}\" text:note-class=\"footnote\"><text:note-citation>{note_n}</text:note-citation><text:note-body><text:p>{}</text:p></text:note-body></text:note>",
+                        "<text:note text:id=\"ftn{id}\" text:note-class=\"footnote\"><text:note-citation>{}</text:note-citation><text:note-body><text:p>{}</text:p></text:note-body></text:note>",
+                        ctx.note_n,
                         odf_text(doc.note_text(id).unwrap_or(""))
                     ));
                     continue;
                 }
-                let tname = match tstyles.iter().find(|(t, _)| t == s) {
+                let tname = match ctx.tstyles.iter().find(|(t, _)| t == s) {
                     Some((_, n)) => n.clone(),
                     None => {
-                        let n = format!("T{}", tstyles.len() + 1);
-                        auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"text\">{}</style:style>", text_props(s)));
-                        tstyles.push((s.clone(), n.clone()));
+                        let n = format!("T{}", ctx.tstyles.len() + 1);
+                        ctx.auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"text\">{}</style:style>", text_props(s)));
+                        ctx.tstyles.push((s.clone(), n.clone()));
                         n
                     }
                 };
@@ -240,20 +250,71 @@ pub fn write(doc: &Doc) -> Vec<u8> {
                     ListKind::Letter => "LLetter",
                 };
                 // Itens seguidos continuam a numeração; os níveis são listas dentro de itens.
-                let cont = if last_list == Some(kind) { " text:continue-numbering=\"true\"" } else { "" };
+                let cont = if ctx.last_list == Some(kind) { " text:continue-numbering=\"true\"" } else { "" };
                 let mut item = para;
                 for _ in 0..st.level {
                     item = format!("<text:list><text:list-item>{item}</text:list-item></text:list>");
                 }
                 body.push_str(&format!("<text:list text:style-name=\"{lname}\"{cont}><text:list-item>{item}</text:list-item></text:list>"));
-                last_list = Some(kind);
+                ctx.last_list = Some(kind);
             }
             None => {
                 body.push_str(&para);
-                last_list = None;
+                ctx.last_list = None;
             }
         }
     }
+    body
+}
+
+/// Grava uma tabela: colunas com largura, células com borda e fundo, e o conteúdo.
+fn write_table(table: &super::Table, doc: &Doc, ctx: &mut WriteCtx) -> String {
+    ctx.tables += 1;
+    let tname = format!("Tabela{}", ctx.tables);
+    let total: f32 = table.cols.iter().sum();
+    ctx.auto.push_str(&format!("<style:style style:name=\"{tname}\" style:family=\"table\"><style:table-properties style:width=\"{total:.2}pt\" table:align=\"left\"/></style:style>"));
+    let mut s = format!("<table:table table:name=\"{tname}\" table:style-name=\"{tname}\">");
+    for (i, w) in table.cols.iter().enumerate() {
+        let cname = format!("{tname}.C{}", i + 1);
+        ctx.auto.push_str(&format!("<style:style style:name=\"{cname}\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"{w:.2}pt\"/></style:style>"));
+        s.push_str(&format!("<table:table-column table:style-name=\"{cname}\"/>"));
+    }
+    for row in &table.rows {
+        s.push_str("<table:table-row>");
+        for (c, cell) in row.iter().enumerate() {
+            let key = (cell.shade, table.borders);
+            let cs = match ctx.cell_styles.iter().find(|(sh, b, _)| (*sh, *b) == key) {
+                Some((_, _, n)) => n.clone(),
+                None => {
+                    let n = format!("Celula{}", ctx.cell_styles.len() + 1);
+                    let border = if table.borders { "0.5pt solid #808084" } else { "none" };
+                    let bg = cell.shade.map_or(String::new(), |c| format!(" fo:background-color=\"{}\"", color(c)));
+                    ctx.auto.push_str(&format!("<style:style style:name=\"{n}\" style:family=\"table-cell\"><style:table-cell-properties fo:padding=\"4pt\" fo:border=\"{border}\"{bg}/></style:style>"));
+                    ctx.cell_styles.push((cell.shade, table.borders, n.clone()));
+                    n
+                }
+            };
+            let w = table.cols.get(c).copied().unwrap_or(72.0);
+            s.push_str(&format!("<table:table-cell table:style-name=\"{cs}\" office:value-type=\"string\">"));
+            let saved = ctx.last_list.take();
+            s.push_str(&write_paras(&cell.doc.paras, w - 8.0, doc, ctx));
+            ctx.last_list = saved;
+            s.push_str("</table:table-cell>");
+        }
+        s.push_str("</table:table-row>");
+    }
+    s.push_str("</table:table>");
+    s
+}
+
+/// Grava o documento em ODT.
+pub fn write(doc: &Doc) -> Vec<u8> {
+    let mut ctx = WriteCtx::default();
+    for (kind, name) in [(ListKind::Bullet, "LBullet"), (ListKind::Dash, "LDash"), (ListKind::Number, "LNumber"), (ListKind::Letter, "LLetter")] {
+        ctx.auto.push_str(&list_style(name, kind));
+    }
+    let body = write_paras(&doc.paras, doc.page.content_width(), doc, &mut ctx);
+    let WriteCtx { auto, pictures, .. } = ctx;
     let content = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-content {NS}><office:automatic-styles>{auto}</office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>");
     // Estilos: os nomeados, a página e o cabeçalho/rodapé.
     let page = &doc.page;
@@ -357,6 +418,8 @@ struct OdfStyle {
     para: Option<Element>,
     text: Option<Element>,
     parent: Option<String>,
+    /// O estilo inteiro (colunas e células de tabela).
+    whole: Option<Element>,
 }
 
 struct Reader<'a> {
@@ -484,10 +547,9 @@ impl Reader<'_> {
                 }
                 "text:section" | "text:list-item" | "text:table-of-content" | "text:index-body" => self.block(c, out, list),
                 "table:table" => {
-                    let mut cells = Vec::new();
-                    c.find_all("table:table-cell", &mut cells);
-                    for cell in cells {
-                        self.block(cell, out, None);
+                    if let Some(p) = self.table(c) {
+                        out.push(p);
+                        out.push(Paragraph::new("", self.default_text.clone(), ParaStyle::default()));
                     }
                 }
                 _ => {}
@@ -512,7 +574,7 @@ impl Reader<'_> {
             pstyle.left_indent = (pstyle.left_indent - 18.0 * (level as f32 + 1.0)).max(0.0);
             pstyle.first_indent = pstyle.first_indent.max(0.0);
         }
-        let mut para = Paragraph { text: String::new(), spans: Vec::new(), style: pstyle.clone(), image: None };
+        let mut para = Paragraph { text: String::new(), spans: Vec::new(), style: pstyle.clone(), image: None, table: None };
         self.inline(e, &base, &mut para, out, &pstyle);
         if para.spans.is_empty() {
             para.spans.push(Span { len: 0, style: base });
@@ -566,7 +628,7 @@ impl Reader<'_> {
                     "draw:frame" => {
                         if let Some(img) = self.image(c) {
                             if !para.text.is_empty() {
-                                let done = std::mem::replace(para, Paragraph { text: String::new(), spans: Vec::new(), style: pstyle.clone(), image: None });
+                                let done = std::mem::replace(para, Paragraph { text: String::new(), spans: Vec::new(), style: pstyle.clone(), image: None, table: None });
                                 let mut done = done;
                                 done.normalize();
                                 out.push(done);
@@ -583,6 +645,79 @@ impl Reader<'_> {
                 },
             }
         }
+    }
+
+    /// Propriedades de um estilo de coluna ou de célula.
+    fn props(&self, style: Option<&str>, child: &str) -> Option<Element> {
+        self.styles.get(style?)?.whole.as_ref()?.child(child).cloned()
+    }
+
+    /// Uma tabela do ODF: colunas (com as repetidas), linhas (também as de cabeçalho),
+    /// células (as cobertas por uma mesclagem ficam vazias), fundo e bordas.
+    fn table(&self, e: &Element) -> Option<Paragraph> {
+        let mut cols = Vec::new();
+        let mut col_elems = Vec::new();
+        for c in e.elements() {
+            match c.name.as_str() {
+                "table:table-column" => col_elems.push(c),
+                "table:table-columns" | "table:table-header-columns" => col_elems.extend(c.elements().filter(|x| x.name == "table:table-column")),
+                _ => {}
+            }
+        }
+        for c in col_elems {
+            let n = c.attr("table:number-columns-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).min(64);
+            let w = self.props(c.attr("table:style-name"), "style:table-column-properties").and_then(|p| p.attr("style:column-width").and_then(length)).unwrap_or(0.0);
+            cols.extend(std::iter::repeat_n(w, n));
+        }
+        let mut rows_e = Vec::new();
+        for c in e.elements() {
+            match c.name.as_str() {
+                "table:table-row" => rows_e.push(c),
+                "table:table-header-rows" | "table:table-rows" => rows_e.extend(c.elements().filter(|x| x.name == "table:table-row")),
+                _ => {}
+            }
+        }
+        let mut borders = false;
+        let mut rows = Vec::new();
+        for r in rows_e {
+            let mut row = Vec::new();
+            for cell in r.elements() {
+                match cell.name.as_str() {
+                    "table:table-cell" => {
+                        let mut paras = Vec::new();
+                        self.block(cell, &mut paras, None);
+                        let mut c = super::Cell::from_paras(paras);
+                        if let Some(props) = self.props(cell.attr("table:style-name"), "style:table-cell-properties") {
+                            c.shade = props.attr("fo:background-color").and_then(parse_color);
+                            borders |= ["fo:border", "fo:border-top", "fo:border-left"].iter().any(|k| props.attr(k).is_some_and(|b| b != "none" && !b.is_empty()));
+                        }
+                        let n = cell.attr("table:number-columns-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).min(64);
+                        for _ in 1..n {
+                            row.push(c.clone());
+                        }
+                        row.push(c);
+                    }
+                    "table:covered-table-cell" => row.push(super::Cell::empty(&self.default_text)),
+                    _ => {}
+                }
+            }
+            if !row.is_empty() {
+                rows.push(row);
+            }
+        }
+        if rows.is_empty() {
+            return None;
+        }
+        let n = rows.iter().map(Vec::len).max().unwrap_or(1);
+        for row in &mut rows {
+            while row.len() < n {
+                row.push(super::Cell::empty(&self.default_text));
+            }
+        }
+        if cols.len() != n || cols.iter().any(|w| *w <= 0.0) {
+            cols = vec![self.content_width / n as f32; n];
+        }
+        Some(Paragraph::table(super::Table { cols, rows, borders }, self.default_text.clone(), ParaStyle::default()))
     }
 
     fn image(&self, frame: &Element) -> Option<Image> {
@@ -616,7 +751,12 @@ fn collect_styles(root: &Element, styles: &mut HashMap<String, OdfStyle>, lists:
                     let name = s.attr("style:name").unwrap_or("").to_string();
                     styles.insert(
                         name,
-                        OdfStyle { para: s.child("style:paragraph-properties").cloned(), text: s.child("style:text-properties").cloned(), parent: s.attr("style:parent-style-name").map(str::to_string) },
+                        OdfStyle {
+                            para: s.child("style:paragraph-properties").cloned(),
+                            text: s.child("style:text-properties").cloned(),
+                            parent: s.attr("style:parent-style-name").map(str::to_string),
+                            whole: matches!(s.attr("style:family"), Some("table-column" | "table-cell")).then(|| s.clone()),
+                        },
                     );
                 }
                 "text:list-style" => {
@@ -779,10 +919,21 @@ mod tests {
         d.page.numbers.position = NumberPosition::BottomRight;
         d.page.header = "Universidade do mide".into();
         d.insert_note(Pos::new(0, d.paras[0].text.len()), "Nota do LibreOffice.");
+        let after = d.insert_table(d.end(), 2, 2);
+        if let Some(t) = d.paras[after.para - 1].table.as_mut() {
+            t.rows[1][0].doc.insert_text(Pos::default(), "A2", &CharStyle { italic: true, ..CharStyle::default() });
+            t.rows[0][1].shade = Some([255, 230, 200]);
+        }
         let bytes = write(&d);
         assert_eq!(&bytes[30..38], b"mimetype");
         let back = read(&bytes).expect("odt");
-        assert_eq!(back.paras.len(), 4, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
+        assert!(back.paras.len() >= 5, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
+        let table = back.paras.iter().find_map(|p| p.table.as_ref()).expect("tabela");
+        assert_eq!((table.rows.len(), table.cols.len()), (2, 2));
+        assert_eq!(table.rows[1][0].doc.paras[0].text, "A2");
+        assert!(table.rows[1][0].doc.paras[0].spans[0].style.italic);
+        assert_eq!(table.rows[0][1].shade, Some([255, 230, 200]));
+        assert!(table.borders);
         assert_eq!(back.paras[0].style.name, "Título 1");
         assert!(back.paras[0].spans[0].style.bold);
         assert_eq!(back.paras[1].text, "Texto  com  espaços duplos.");

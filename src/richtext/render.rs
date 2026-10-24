@@ -18,6 +18,19 @@ pub struct View {
     pub caret_color: [u8; 4],
     /// Faixa vertical (pixels) que está à vista: as linhas fora dela não são desenhadas.
     pub visible: (f32, f32),
+    /// Célula sendo editada: tabela (parágrafo), linha, coluna, a seleção e o cursor
+    /// dentro dela.
+    pub cell: Option<CellEdit>,
+}
+
+/// Cursor e seleção dentro de uma célula de tabela.
+#[derive(Debug, Clone, Copy)]
+pub struct CellEdit {
+    pub table: usize,
+    pub row: usize,
+    pub col: usize,
+    pub selection: Option<(Pos, Pos)>,
+    pub caret: Option<Pos>,
 }
 
 fn fill(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, rgba: [u8; 4]) {
@@ -72,6 +85,48 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
                 }
                 fill(pixmap, left + xa * s, top, (xb - xa) * s, line.height * s, view.selection_color);
             }
+        }
+        // Tabela: fundo, conteúdo e bordas das células desta linha.
+        if let (Some(table), Some(tb)) = (&para.table, &layout.paras[placed.para].table) {
+            let r = placed.line;
+            let rh = line.height;
+            for (c, cell_box) in tb.rows[r].iter().enumerate() {
+                let (cx, cw) = (tb.col_x[c], tb.col_w[c]);
+                let cell = &table.rows[r][c];
+                if let Some(shade) = cell.shade {
+                    fill(pixmap, left + cx * s, top, cw * s, rh * s, [shade[0], shade[1], shade[2], 255]);
+                }
+                let editing = view.cell.filter(|e| e.table == placed.para && e.row == r && e.col == c);
+                let sub = View {
+                    page: 0,
+                    origin: (left + (cx + super::layout::CELL_PAD_X) * s, top + super::layout::CELL_PAD_Y * s),
+                    scale: s,
+                    selection: editing.and_then(|e| e.selection),
+                    caret: editing.and_then(|e| e.caret),
+                    selection_color: view.selection_color,
+                    caret_color: view.caret_color,
+                    visible: view.visible,
+                    cell: None,
+                };
+                draw_page(text, layouter, pixmap, &cell.doc, &cell_box.layout, &sub);
+                if table.borders {
+                    let b = [128, 128, 132, 255];
+                    let t = (0.75 * s).max(1.0);
+                    fill(pixmap, left + cx * s, top, cw * s, t, b);
+                    fill(pixmap, left + cx * s, top + rh * s - t, cw * s, t, b);
+                    fill(pixmap, left + cx * s, top, t, rh * s, b);
+                    fill(pixmap, left + (cx + cw) * s - t, top, t, rh * s, b);
+                }
+            }
+            // A tabela inteira selecionada (de fora): um véu por cima.
+            if let Some((a, b)) = sel {
+                if a <= Pos::new(placed.para, 0) && b >= Pos::new(placed.para, line.end) {
+                    let mut c = view.selection_color;
+                    c[3] = 90;
+                    fill(pixmap, left + line.x0 * s, top, (line.x1 - line.x0) * s, rh * s, c);
+                }
+            }
+            continue;
         }
         // Imagem.
         if let Some(img) = &para.image {
@@ -161,7 +216,9 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
     }
     // Cabeçalho, rodapé e número da página.
     let page = &doc.page;
-    let small = CharStyle { size: 10.0, color: [80, 80, 80], ..doc.paras.first().map(|p| p.spans[0].style.clone()).unwrap_or_default() };
+    // Cabeçalho, rodapé e números: só a fonte do documento (sem o negrito de um título).
+    let family = doc.paras.iter().find(|p| p.style.name.is_empty() && !p.text.is_empty()).or(doc.paras.first()).map(|p| p.spans[0].style.family.clone()).unwrap_or_default();
+    let small = CharStyle { size: 10.0, color: [80, 80, 80], family, ..CharStyle::default() };
     let content_w = page.content_width();
     let mut put = |text_s: &str, y_pt: f32, align: f32, style: &CharStyle| {
         if text_s.is_empty() {

@@ -122,6 +122,29 @@ fn printers() -> Vec<String> {
     list
 }
 
+/// Célula em edição: o documento de fora fica guardado aqui enquanto `Rich::doc` é o da
+/// célula (assim digitar, formatar, colar e desfazer funcionam igual dentro dela).
+struct Outer {
+    doc: Doc,
+    /// O documento de fora como estava ao entrar (vira um passo de desfazer ao sair, se a
+    /// célula mudou).
+    start: Doc,
+    cursor: Pos,
+    anchor: Pos,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    version: u64,
+    table: usize,
+    row: usize,
+    col: usize,
+}
+
+/// Inserir tabela: linhas e colunas.
+struct TableDialog {
+    rows: i64,
+    cols: i64,
+}
+
 /// Nota de rodapé: nova (`id` vazio) ou a que está sendo editada.
 struct NoteDialog {
     id: Option<u32>,
@@ -162,6 +185,13 @@ pub struct Rich {
     page_dialog: Option<PageDialog>,
     print_dialog: Option<PrintDialog>,
     note_dialog: Option<NoteDialog>,
+    table_dialog: Option<TableDialog>,
+    /// Célula a abrir depois da próxima quebra (a tabela mudou de forma).
+    pending_cell: Option<(usize, usize, usize)>,
+    outer: Option<Outer>,
+    /// Com uma célula em edição: o documento todo (com a célula) e o layout dele, para
+    /// desenhar as páginas (`layout` é o da célula).
+    full: Option<(Doc, Layout)>,
     /// Pedido ao app: escolher onde salvar o PDF (com as páginas).
     pub wants_pdf_path: Option<Option<(usize, usize)>>,
     /// PDF a gravar (caminho e páginas), feito no próximo quadro (precisa das fontes).
@@ -213,6 +243,10 @@ impl Rich {
             page_dialog: None,
             print_dialog: None,
             note_dialog: None,
+            table_dialog: None,
+            pending_cell: None,
+            outer: None,
+            full: None,
             wants_pdf_path: None,
             pdf_request: None,
             print_job: None,
@@ -525,6 +559,205 @@ impl Rich {
         self.zoom * SCREEN
     }
 
+    /// O documento das páginas (o de fora, com uma célula em edição).
+    fn page_doc(&self) -> &Doc {
+        self.full.as_ref().map_or(&self.doc, |f| &f.0)
+    }
+
+    fn page_layout(&self) -> &Layout {
+        self.full.as_ref().map_or(&self.layout, |f| &f.1)
+    }
+
+    pub fn in_cell(&self) -> bool {
+        self.outer.is_some()
+    }
+
+    /// Quebra o documento de novo (com uma célula em edição, o documento todo e a célula).
+    fn relayout(&mut self, fonts: &mut cosmic_text::FontSystem) {
+        match &self.outer {
+            None => {
+                self.layout = self.layouter.layout(fonts, &self.doc);
+                self.full = None;
+            }
+            Some(o) => {
+                let mut doc = o.doc.clone();
+                if let Some(t) = doc.paras.get_mut(o.table).and_then(|p| p.table.as_mut()) {
+                    if let Some(cell) = t.rows.get_mut(o.row).and_then(|r| r.get_mut(o.col)) {
+                        cell.doc = self.doc.clone();
+                    }
+                }
+                let full = self.layouter.layout(fonts, &doc);
+                self.layout = full.paras.get(o.table).and_then(|b| b.table.as_ref()).and_then(|tb| tb.rows.get(o.row)).and_then(|r| r.get(o.col)).map(|c| c.layout.clone()).unwrap_or_default();
+                self.full = Some((doc, full));
+            }
+        }
+    }
+
+    /// Entra na célula (a tabela é o parágrafo `t` do documento de fora).
+    fn enter_cell(&mut self, t: usize, r: usize, c: usize, at_end: bool) {
+        if self.outer.is_some() {
+            self.leave_cell();
+        }
+        let Some(table) = self.doc.paras.get(t).and_then(|p| p.table.as_ref()) else {
+            return;
+        };
+        if r >= table.rows.len() || c >= table.rows[r].len() {
+            return;
+        }
+        let start = self.doc.clone();
+        let page_layout = self.layout.clone();
+        let cell_layout = page_layout.paras.get(t).and_then(|b| b.table.as_ref()).and_then(|tb| tb.rows.get(r)).and_then(|row| row.get(c)).map(|cb| cb.layout.clone()).unwrap_or_default();
+        let cell_doc = std::mem::take(&mut self.doc.paras[t].table.as_mut().expect("tabela").rows[r][c].doc);
+        let outer_doc = std::mem::replace(&mut self.doc, cell_doc);
+        self.outer = Some(Outer { doc: outer_doc, start: start.clone(), cursor: self.cursor, anchor: self.anchor, undo: std::mem::take(&mut self.undo), redo: std::mem::take(&mut self.redo), version: self.version, table: t, row: r, col: c });
+        self.full = Some((start, page_layout));
+        self.layout = cell_layout;
+        self.cursor = if at_end { self.doc.end() } else { Pos::default() };
+        self.anchor = self.cursor;
+        self.typing = None;
+        self.last_kind = None;
+        self.reveal = true;
+        self.stale = true;
+    }
+
+    /// Sai da célula: ela volta para a tabela; o que mudou nela vira um passo de desfazer.
+    pub fn leave_cell(&mut self) -> bool {
+        let Some(o) = self.outer.take() else {
+            return false;
+        };
+        let cell_doc = std::mem::replace(&mut self.doc, o.doc);
+        if let Some(cell) = self.doc.paras.get_mut(o.table).and_then(|p| p.table.as_mut()).and_then(|t| t.rows.get_mut(o.row)).and_then(|r| r.get_mut(o.col)) {
+            cell.doc = cell_doc;
+        }
+        self.undo = o.undo;
+        self.redo = o.redo;
+        if self.version != o.version {
+            self.undo.push(Snapshot { doc: o.start, cursor: o.cursor, anchor: o.anchor });
+            self.redo.clear();
+        }
+        let after = Pos::new((o.table + 1).min(self.doc.paras.len() - 1), 0);
+        self.cursor = after;
+        self.anchor = after;
+        if let Some((_, full)) = self.full.take() {
+            self.layout = full;
+        }
+        self.stale = true;
+        self.reveal = true;
+        self.last_kind = None;
+        true
+    }
+
+    /// Célula sob o ponto (página, x desde a margem esquerda, y desde o topo da página):
+    /// tabela, linha, coluna e o ponto dentro do texto da célula.
+    fn cell_at(&self, page: usize, x: f32, y: f32) -> Option<(usize, usize, usize, f32, f32)> {
+        let layout = self.page_layout();
+        for pl in layout.placed.iter().filter(|p| p.page == page) {
+            let pb = &layout.paras[pl.para];
+            let Some(tb) = &pb.table else {
+                continue;
+            };
+            let line = &pb.lines[pl.line];
+            if y < pl.y || y > pl.y + line.height {
+                continue;
+            }
+            for c in 0..tb.col_x.len() {
+                if x >= tb.col_x[c] && x <= tb.col_x[c] + tb.col_w[c] {
+                    return Some((pl.para, pl.line, c, x - tb.col_x[c] - mide::richtext::layout::CELL_PAD_X, y - pl.y - mide::richtext::layout::CELL_PAD_Y));
+                }
+            }
+        }
+        None
+    }
+
+    /// Onde a célula em edição está: página, x e y do canto do texto dela.
+    fn cell_origin(&self) -> Option<(usize, f32, f32)> {
+        let o = self.outer.as_ref()?;
+        let layout = self.page_layout();
+        let first = *layout.first.get(o.table)?;
+        let pl = layout.placed.get(first + o.row)?;
+        let tb = layout.paras.get(o.table)?.table.as_ref()?;
+        Some((pl.page, tb.col_x[o.col] + mide::richtext::layout::CELL_PAD_X, pl.y + mide::richtext::layout::CELL_PAD_Y))
+    }
+
+    /// Próxima célula (Tab) ou a anterior (Shift+Tab); depois da última, uma linha nova.
+    fn next_cell(&mut self, back: bool) {
+        let Some((t, r, c)) = self.outer.as_ref().map(|o| (o.table, o.row, o.col)) else {
+            return;
+        };
+        let (rows, cols) = {
+            let doc = &self.outer.as_ref().expect("célula").doc;
+            let tb = doc.paras[t].table.as_ref().expect("tabela");
+            (tb.rows.len(), tb.cols.len())
+        };
+        let (mut nr, mut nc) = (r as i64, c as i64 + if back { -1 } else { 1 });
+        if nc >= cols as i64 {
+            nc = 0;
+            nr += 1;
+        } else if nc < 0 {
+            nc = cols as i64 - 1;
+            nr -= 1;
+        }
+        if nr < 0 {
+            return;
+        }
+        if nr as usize >= rows {
+            self.table_op("tabela-linha-abaixo");
+            return;
+        }
+        self.leave_cell();
+        self.enter_cell(t, nr as usize, nc as usize, false);
+    }
+
+    /// Operações de tabela (com a célula em edição como referência).
+    fn table_op(&mut self, op: &str) {
+        let Some((t, r, c)) = self.outer.as_ref().map(|o| (o.table, o.row, o.col)) else {
+            self.message = Some("Clique numa célula da tabela primeiro.".into());
+            return;
+        };
+        self.leave_cell();
+        self.begin(None);
+        let style = self.doc.style_at(Pos::new(t, 0));
+        let Some(table) = self.doc.paras[t].table.as_mut() else {
+            return;
+        };
+        let (mut nr, mut nc) = (r, c);
+        let mut gone = false;
+        match op {
+            "tabela-linha-acima" => table.insert_row(r, &style),
+            "tabela-linha-abaixo" => {
+                table.insert_row(r + 1, &style);
+                nr = r + 1;
+            }
+            "tabela-coluna-esquerda" => table.insert_col(c, &style),
+            "tabela-coluna-direita" => {
+                table.insert_col(c + 1, &style);
+                nc = c + 1;
+            }
+            "tabela-excluir-linha" => {
+                table.remove_row(r);
+                nr = r.min(table.rows.len() - 1);
+            }
+            "tabela-excluir-coluna" => {
+                table.remove_col(c);
+                nc = c.min(table.cols.len() - 1);
+            }
+            "tabela-bordas" => table.borders = !table.borders,
+            "tabela-excluir" => gone = true,
+            _ => {}
+        }
+        if gone {
+            self.doc.paras.remove(t);
+            if self.doc.paras.is_empty() {
+                self.doc.paras.push(Paragraph::new("", style, ParaStyle::default()));
+            }
+            self.cursor = self.doc.clamp(Pos::new(t, 0));
+            self.anchor = self.cursor;
+            return;
+        }
+        // A célula entra com o layout novo no próximo quadro.
+        self.pending_cell = Some((t, nr, nc));
+    }
+
     /// Os títulos do documento (nível, texto, parágrafo), para o sumário.
     fn headings(&self) -> Vec<(u8, String, usize)> {
         self.doc
@@ -831,6 +1064,26 @@ impl Rich {
                 ],
             },
             MenuGroup {
+                title: "Tabela".into(),
+                items: {
+                    let on = self.in_cell();
+                    vec![
+                        MenuItem::action("tabela", "Inserir tabela…").shortcut("Ctrl+Alt+T"),
+                        MenuItem::Separator,
+                        MenuItem::action("tabela-linha-acima", "Inserir linha acima").enabled(on),
+                        MenuItem::action("tabela-linha-abaixo", "Inserir linha abaixo").enabled(on),
+                        MenuItem::action("tabela-coluna-esquerda", "Inserir coluna à esquerda").enabled(on),
+                        MenuItem::action("tabela-coluna-direita", "Inserir coluna à direita").enabled(on),
+                        MenuItem::Separator,
+                        MenuItem::action("tabela-excluir-linha", "Excluir linha").enabled(on),
+                        MenuItem::action("tabela-excluir-coluna", "Excluir coluna").enabled(on),
+                        MenuItem::action("tabela-excluir", "Excluir tabela").enabled(on),
+                        MenuItem::Separator,
+                        MenuItem::action("tabela-bordas", "Mostrar bordas").enabled(on).checked(self.outer.as_ref().and_then(|o| o.doc.paras[o.table].table.as_ref()).is_some_and(|t| t.borders)),
+                    ]
+                },
+            },
+            MenuGroup {
                 title: "Visualizar".into(),
                 items: vec![
                     MenuItem::action("zoom-mais", "Aumentar zoom").shortcut("Ctrl+="),
@@ -881,10 +1134,22 @@ impl Rich {
             "lista-letras" => self.para_style(|p| p.list = Some(ListKind::Letter)),
             "inserir-imagem" => self.wants_image = true,
             "quebra-pagina" => self.page_break(),
-            "configurar-pagina" => self.open_page_dialog(),
-            "imprimir" => self.open_print_dialog(),
-            "exportar-pdf" => self.wants_pdf_path = Some(None),
-            "abnt" => self.abnt_dialog = Some(AbntDialog { font: 0, numbers_from: "2".into() }),
+            "configurar-pagina" => {
+                self.leave_cell();
+                self.open_page_dialog();
+            }
+            "imprimir" => {
+                self.leave_cell();
+                self.open_print_dialog();
+            }
+            "exportar-pdf" => {
+                self.leave_cell();
+                self.wants_pdf_path = Some(None);
+            }
+            "abnt" => {
+                self.leave_cell();
+                self.abnt_dialog = Some(AbntDialog { font: 0, numbers_from: "2".into() });
+            }
             "zoom-mais" => self.zoom_by(1.1),
             "zoom-menos" => self.zoom_by(1.0 / 1.1),
             "zoom-real" => self.zoom = 1.0,
@@ -894,7 +1159,15 @@ impl Rich {
             "recortar" => self.copy(ui, true),
             "colar" => self.paste(ui),
             "selecionar-tudo" => self.select_all(),
-            "sumario" => self.insert_toc(),
+            "sumario" => {
+                self.leave_cell();
+                self.insert_toc();
+            }
+            "tabela" => {
+                self.leave_cell();
+                self.table_dialog = Some(TableDialog { rows: 3, cols: 3 });
+            }
+            op if op.starts_with("tabela-") => self.table_op(op),
             "nota" => self.note_dialog = Some(NoteDialog { id: None, text: String::new(), focus: true }),
             "atualizar-sumario" => {
                 if self.doc.paras.iter().any(|p| p.style.name == "Sumário") {
@@ -1049,6 +1322,9 @@ impl Rich {
             self.toggle_find();
         }
         // Títulos como no Word: Ctrl+Alt+1, 2, 3; Ctrl+Alt+0 volta ao corpo.
+        if input.shortcut_alt("t") {
+            self.command("tabela", ui);
+        }
         if input.shortcut_alt("f") {
             self.note_dialog = Some(NoteDialog { id: None, text: String::new(), focus: true });
         }
@@ -1095,6 +1371,30 @@ impl Rich {
                     };
                     self.move_to(to, shift);
                 }
+                Key::Up | Key::Down if self.in_cell() && {
+                    let lay = &self.layout;
+                    let idx = lay.line_of(p).and_then(|pl| lay.placed.iter().position(|x| x.para == pl.para && x.line == pl.line));
+                    match (key, idx) {
+                        (Key::Up, Some(0)) => true,
+                        (Key::Down, Some(i)) => i + 1 >= lay.placed.len(),
+                        _ => false,
+                    }
+                } => {
+                    // Na primeira/última linha da célula: a célula de cima/de baixo (ou sai).
+                    let (t, r, c, rows) = {
+                        let o = self.outer.as_ref().expect("célula");
+                        (o.table, o.row, o.col, o.doc.paras[o.table].table.as_ref().map_or(1, |tb| tb.rows.len()))
+                    };
+                    self.leave_cell();
+                    if key == Key::Up && r > 0 {
+                        self.enter_cell(t, r - 1, c, true);
+                    } else if key == Key::Down && r + 1 < rows {
+                        self.enter_cell(t, r + 1, c, false);
+                    } else if key == Key::Up {
+                        let to = if t > 0 { Pos::new(t - 1, self.doc.paras[t - 1].text.len()) } else { Pos::new(t, 0) };
+                        self.move_to(to, false);
+                    }
+                }
                 Key::Up | Key::Down => {
                     let x = *self.goal_x.get_or_insert_with(|| self.layout.caret_x(p));
                     let to = self.layout.vertical(p, x, if key == Key::Up { -1 } else { 1 });
@@ -1122,6 +1422,10 @@ impl Rich {
                 Key::Enter if ctrl => self.page_break(),
                 Key::Enter if shift => self.type_text(&LINE_BREAK.to_string()),
                 Key::Enter => self.enter(),
+                Key::Tab if self.in_cell() => self.next_cell(shift),
+                Key::Escape if self.in_cell() => {
+                    self.leave_cell();
+                }
                 Key::Tab => {
                     // Numa lista, Tab desce um nível (Shift+Tab sobe).
                     if self.doc.paras[p.para].style.list.is_some() && (p.off == 0 || self.sel().is_some()) {
@@ -1149,16 +1453,25 @@ impl Rich {
 
     /// Geometria das páginas: x da página, altura de cada uma e o topo da página `i`.
     fn page_x(&self, area: (f32, f32, f32, f32)) -> f32 {
-        let pw = self.doc.page.width * self.z();
+        let pw = self.page_doc().page.width * self.z();
         area.0 + ((area.2 - pw) / 2.0).max(GAP)
     }
 
     fn page_top(&self, area: (f32, f32, f32, f32), i: usize) -> f32 {
-        area.1 + GAP + i as f32 * (self.doc.page.height * self.z() + GAP) - self.scroll
+        area.1 + GAP + i as f32 * (self.page_doc().page.height * self.z() + GAP) - self.scroll
     }
 
     fn content_height(&self) -> f32 {
-        GAP + self.layout.pages.max(1) as f32 * (self.doc.page.height * self.z() + GAP)
+        GAP + self.page_layout().pages.max(1) as f32 * (self.page_doc().page.height * self.z() + GAP)
+    }
+
+    /// Ponto da janela → página e o ponto no texto da página (desde a margem esquerda).
+    fn to_page(&self, area: (f32, f32, f32, f32), (px, py): (f32, f32)) -> (usize, f32, f32) {
+        let ph = self.page_doc().page.height * self.z();
+        let rel = py - area.1 + self.scroll - GAP;
+        let page = ((rel / (ph + GAP)).floor().max(0.0) as usize).min(self.page_layout().pages.saturating_sub(1));
+        let top = self.page_top(area, page);
+        ((page), (px - self.page_x(area)) / self.z() - self.page_doc().page.margins[3], (py - top) / self.z())
     }
 
     /// A posição sob o ponto da janela.
@@ -1188,7 +1501,24 @@ impl Rich {
             ui.request_repaint();
         }
         if input.pressed && inside && p.0 < area.0 + area.2 - 14.0 {
-            let pos = self.hit(area, p);
+            // Clique numa célula: entra nela; fora da célula em edição: sai dela.
+            let (page, x, y) = self.to_page(area, p);
+            let pos = match self.cell_at(page, x, y) {
+                Some((t, r, c, lx, ly)) => {
+                    let same = self.outer.as_ref().is_some_and(|o| (o.table, o.row, o.col) == (t, r, c));
+                    if !same {
+                        self.leave_cell();
+                        self.enter_cell(t, r, c, false);
+                    }
+                    self.doc.clamp(self.layout.hit(0, lx, ly))
+                }
+                None => {
+                    if self.leave_cell() {
+                        self.layout = self.full.take().map_or(std::mem::take(&mut self.layout), |f| f.1);
+                    }
+                    self.hit(area, p)
+                }
+            };
             let now = Instant::now();
             let (at, count, last) = self.clicks;
             let count = if now.duration_since(at) < Duration::from_millis(450) && last == pos { count + 1 } else { 1 };
@@ -1226,7 +1556,13 @@ impl Rich {
             ui.request_repaint();
         }
         if self.selecting && input.down {
-            let pos = self.hit(area, p);
+            let pos = match self.cell_origin() {
+                Some((_, cx, cy)) => {
+                    let (_, x, y) = self.to_page(area, p);
+                    self.doc.clamp(self.layout.hit(0, x - cx, y - cy))
+                }
+                None => self.hit(area, p),
+            };
             if pos != self.cursor {
                 self.cursor = pos;
                 ui.request_repaint();
@@ -1248,7 +1584,7 @@ impl Rich {
         let (w, h) = ui.window_size();
         let find_h = if self.find.is_some() { FIND_H } else { 0.0 };
         let area = (0.0, top + FORMAT_H + find_h, w, (h - top - FORMAT_H - find_h - STATUS_H).max(10.0));
-        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some();
+        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
         }
@@ -1259,15 +1595,18 @@ impl Rich {
         let theme = ui.theme().clone();
         let mut relaid = false;
         if self.stale || self.layout.paras.len() != self.doc.paras.len() {
-            ui.paint_text(|_, text, _| {
-                self.layout = self.layouter.layout(text.font_system(), &self.doc);
-            });
+            ui.paint_text(|_, text, _| self.relayout(text.font_system()));
             self.stale = false;
             relaid = true;
             self.cursor = self.doc.clamp(self.cursor);
             self.anchor = self.doc.clamp(self.anchor);
         }
         let _ = relaid;
+        if let Some((t, r, c)) = self.pending_cell.take() {
+            self.enter_cell(t, r, c, false);
+            ui.paint_text(|_, text, _| self.relayout(text.font_system()));
+            self.stale = false;
+        }
         // Sumário: números das páginas acertados com o layout novo (até duas vezes).
         if self.toc_passes > 0 && !self.stale {
             self.toc_passes -= 1;
@@ -1278,14 +1617,16 @@ impl Rich {
                 self.toc_passes = 0;
                 self.stale = false;
             } else {
-                ui.paint_text(|_, text, _| {
-                    self.layout = self.layouter.layout(text.font_system(), &self.doc);
-                });
+                ui.paint_text(|_, text, _| self.relayout(text.font_system()));
                 self.stale = false;
             }
         }
         // PDF e impressão pedidos (precisam das fontes do sistema).
         if self.pdf_request.is_some() || self.print_job.is_some() {
+            if self.leave_cell() {
+                ui.paint_text(|_, text, _| self.relayout(text.font_system()));
+                self.stale = false;
+            }
             let pdf = self.pdf_request.take();
             let job = self.print_job.take();
             let mut result = None;
@@ -1308,9 +1649,12 @@ impl Rich {
             }
         }
         if std::mem::take(&mut self.reveal) {
+            // Dentro de uma célula: a linha da célula somada ao lugar dela na página.
+            let (cell_page, cell_dy) = self.cell_origin().map_or((None, 0.0), |(pg, _, cy)| (Some(pg), cy));
             if let Some(placed) = self.layout.line_of(self.cursor).copied() {
                 let line = &self.layout.paras[self.cursor.para].lines[placed.line];
-                let y = GAP + placed.page as f32 * (self.doc.page.height * self.z() + GAP) + placed.y * self.z();
+                let page = cell_page.unwrap_or(placed.page);
+                let y = GAP + page as f32 * (self.page_doc().page.height * self.z() + GAP) + (placed.y + cell_dy) * self.z();
                 let lh = line.height * self.z();
                 if y < self.scroll + 8.0 {
                     self.scroll = y - 8.0;
@@ -1323,20 +1667,25 @@ impl Rich {
         self.scroll = self.scroll.clamp(0.0, max_scroll);
         // Páginas.
         let k = mide::ui::draw::scale();
-        let (pw, ph) = (self.doc.page.width * self.z(), self.doc.page.height * self.z());
+        let (pw, ph) = (self.page_doc().page.width * self.z(), self.page_doc().page.height * self.z());
         let px = self.page_x(area);
         let blink_on = (Instant::now().duration_since(self.blink).as_millis() / 530) % 2 == 0;
         let focused = ui.input().focused && !ui.typing();
-        let caret = (focused && blink_on && !blocked).then_some(self.cursor);
-        let selection = self.sel();
+        let caret_on = focused && blink_on && !blocked;
+        // Numa célula, o cursor e a seleção são desenhados dentro dela.
+        let cell_edit = self.outer.as_ref().map(|o| render::CellEdit { table: o.table, row: o.row, col: o.col, selection: self.sel(), caret: caret_on.then_some(self.cursor) });
+        let caret = if cell_edit.is_some() { None } else { caret_on.then_some(self.cursor) };
+        let selection = if cell_edit.is_some() { None } else { self.sel() };
         let sel_color = if focused { [179, 215, 255, 255] } else { [220, 220, 224, 255] };
         let bg = if theme.dark { [44, 44, 48, 255] } else { [236, 236, 240, 255] };
-        let pages = self.layout.pages.max(1);
+        let pages = self.page_layout().pages.max(1);
         let tops: Vec<(usize, f32)> = (0..pages).map(|i| (i, self.page_top(area, i))).filter(|(_, t)| *t + ph >= area.1 && *t <= area.1 + area.3).collect();
         let z = self.z();
         let scroll = self.scroll;
-        let doc = &self.doc;
-        let layout = &self.layout;
+        let (doc, layout) = match &self.full {
+            Some((d, l)) => (d, l),
+            None => (&self.doc, &self.layout),
+        };
         let layouter = &mut self.layouter;
         let accent = theme.accent;
         ui.paint_text(|pixmap, text, _| {
@@ -1353,6 +1702,7 @@ impl Rich {
                     selection_color: sel_color,
                     caret_color: [0, 0, 0, 255],
                     visible: (area.1 * k, (area.1 + area.3) * k),
+                    cell: cell_edit,
                 };
                 render::draw_page(text, layouter, pixmap, doc, layout, &view);
             }
@@ -1374,9 +1724,12 @@ impl Rich {
         self.format_bar(ui, top, w);
         self.find_bar(ui, top + FORMAT_H, w);
         // Rodapé.
-        let page_now = self.layout.line_of(self.cursor).map_or(1, |p| p.page + 1);
-        let (words, chars, _) = self.doc.counts();
-        let status = format!("Página {page_now} de {} · {words} {} · {chars} caracteres · {:.0}%", self.layout.pages.max(1), if words == 1 { "palavra" } else { "palavras" }, self.zoom * 100.0);
+        let page_now = match self.cell_origin() {
+            Some((pg, _, _)) => pg + 1,
+            None => self.layout.line_of(self.cursor).map_or(1, |p| p.page + 1),
+        };
+        let (words, chars, _) = self.page_doc().counts();
+        let status = format!("Página {page_now} de {} · {words} {} · {chars} caracteres · {:.0}%", self.page_layout().pages.max(1), if words == 1 { "palavra" } else { "palavras" }, self.zoom * 100.0);
         ui.paint(|pixmap, _| {
             let c = theme.background;
             mide::ui::draw::paint_rounded_solid(pixmap, 0.0, h - STATUS_H, w, STATUS_H, 0.0, [c[0], c[1], c[2], 255]);
@@ -1614,10 +1967,10 @@ impl Rich {
     }
 
     fn dialogs(&mut self, ui: &mut Ui) {
-        let had = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some();
+        let had = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
         self.dialogs_inner(ui);
         // Diálogo fechado: o teclado volta para o texto (o campo dele sumiu).
-        let has = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some();
+        let has = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
         if had && !has {
             ui.blur();
         }
@@ -1702,6 +2055,38 @@ impl Rich {
         }
         if self.print_dialog.is_some() {
             self.print_dialog_view(ui);
+        }
+        if let Some(d) = self.table_dialog.as_mut() {
+            let (mut ok, mut cancel) = (false, false);
+            ui.modal(360.0, |ui| {
+                ui.title("Inserir tabela");
+                ui.form_row("Linhas", 90.0, |ui| {
+                    ui.stepper(&mut d.rows, 1, 200);
+                });
+                ui.form_row("Colunas", 90.0, |ui| {
+                    ui.stepper(&mut d.cols, 1, 20);
+                });
+                ui.row(|ui| {
+                    ui.push_right(2.0 * 110.0 + 8.0);
+                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
+                    ui.sized(110.0, |ui| ok = ui.primary_button("Inserir").clicked());
+                });
+            });
+            if cancel || ui.input().key(Key::Escape) {
+                self.table_dialog = None;
+            } else if ok || ui.input().key(Key::Enter) {
+                let d = self.table_dialog.take().expect("diálogo");
+                self.begin(None);
+                if let Some((a, b)) = self.sel() {
+                    self.cursor = self.doc.delete(a, b);
+                }
+                let after = self.doc.insert_table(self.cursor, d.rows as usize, d.cols as usize);
+                let t = after.para - 1;
+                self.cursor = after;
+                self.anchor = after;
+                self.pending_cell = Some((t, 0, 0));
+                tracing::info!("editor: tabela {}x{} inserida", d.rows, d.cols);
+            }
         }
         if let Some(d) = self.note_dialog.as_mut() {
             let (mut ok, mut cancel, mut remove) = (false, false, false);
@@ -1872,7 +2257,7 @@ impl Rich {
             ui.paint_text(|pixmap, text, _| {
                 mide::ui::draw::soft_shadow(pixmap, x, y, tw, ph * scale, 0.0, 6.0, 1.0, 50);
                 mide::ui::draw::paint_rounded_solid(pixmap, x, y, tw, ph * scale, 0.0, [255, 255, 255, 255]);
-                let view = render::View { page, origin: (x * k, y * k), scale: scale * k, selection: None, caret: None, selection_color: [0; 4], caret_color: [0; 4], visible: (y * k, (y + ph * scale) * k) };
+                let view = render::View { page, origin: (x * k, y * k), scale: scale * k, selection: None, caret: None, selection_color: [0; 4], caret_color: [0; 4], visible: (y * k, (y + ph * scale) * k), cell: None };
                 render::draw_page(text, layouter, pixmap, doc, layout, &view);
             });
         }

@@ -187,6 +187,93 @@ impl Image {
     }
 }
 
+/// Uma célula de tabela: um documento pequeno (parágrafos com formatação) e a cor de
+/// fundo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cell {
+    pub doc: Doc,
+    pub shade: Option<[u8; 3]>,
+}
+
+impl Cell {
+    pub fn empty(style: &CharStyle) -> Self {
+        Self::from_paras(vec![Paragraph::new("", style.clone(), ParaStyle::default())])
+    }
+
+    /// Célula com os parágrafos (a "página" dela não tem margens nem números).
+    pub fn from_paras(mut paras: Vec<Paragraph>) -> Self {
+        if paras.is_empty() {
+            paras.push(Paragraph::new("", CharStyle::default(), ParaStyle::default()));
+        }
+        let page = PageSetup { margins: [0.0; 4], header: String::new(), footer: String::new(), numbers: PageNumbers::default(), ..PageSetup::default() };
+        Self { doc: Doc { paras, page, notes: Vec::new() }, shade: None }
+    }
+}
+
+/// Tabela num parágrafo dela (como a imagem): larguras das colunas (pontos), linhas de
+/// células e as bordas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    pub cols: Vec<f32>,
+    pub rows: Vec<Vec<Cell>>,
+    pub borders: bool,
+}
+
+impl Table {
+    /// Tabela vazia de `rows` × `cols` ocupando a largura `width`.
+    pub fn new(rows: usize, cols: usize, width: f32, style: &CharStyle) -> Self {
+        let cols = cols.max(1);
+        Self { cols: vec![width / cols as f32; cols], rows: (0..rows.max(1)).map(|_| (0..cols).map(|_| Cell::empty(style)).collect()).collect(), borders: true }
+    }
+
+    pub fn width(&self) -> f32 {
+        self.cols.iter().sum()
+    }
+
+    /// Ajusta as colunas à largura `width`, mantendo as proporções.
+    pub fn fit(&mut self, width: f32) {
+        let total = self.width().max(1.0);
+        if (total - width).abs() > 0.5 {
+            for c in &mut self.cols {
+                *c *= width / total;
+            }
+        }
+    }
+
+    pub fn insert_row(&mut self, at: usize, style: &CharStyle) {
+        let n = self.cols.len();
+        self.rows.insert(at.min(self.rows.len()), (0..n).map(|_| Cell::empty(style)).collect());
+    }
+
+    pub fn insert_col(&mut self, at: usize, style: &CharStyle) {
+        let at = at.min(self.cols.len());
+        let w = self.width() / (self.cols.len() + 1) as f32;
+        let total = self.width();
+        self.cols.insert(at, w);
+        self.fit(total);
+        for row in &mut self.rows {
+            row.insert(at, Cell::empty(style));
+        }
+    }
+
+    pub fn remove_row(&mut self, at: usize) {
+        if self.rows.len() > 1 && at < self.rows.len() {
+            self.rows.remove(at);
+        }
+    }
+
+    pub fn remove_col(&mut self, at: usize) {
+        if self.cols.len() > 1 && at < self.cols.len() {
+            let total = self.width();
+            self.cols.remove(at);
+            self.fit(total);
+            for row in &mut self.rows {
+                row.remove(at);
+            }
+        }
+    }
+}
+
 /// Um trecho de `len` bytes com o mesmo estilo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
@@ -209,11 +296,12 @@ pub struct Paragraph {
     pub spans: Vec<Span>,
     pub style: ParaStyle,
     pub image: Option<Image>,
+    pub table: Option<Box<Table>>,
 }
 
 impl Paragraph {
     pub fn new(text: &str, style: CharStyle, para: ParaStyle) -> Self {
-        Self { text: text.to_string(), spans: vec![Span { len: text.len(), style }], style: para, image: None }
+        Self { text: text.to_string(), spans: vec![Span { len: text.len(), style }], style: para, image: None, table: None }
     }
 
     pub fn image(image: Image, char_style: CharStyle, mut para: ParaStyle) -> Self {
@@ -221,7 +309,20 @@ impl Paragraph {
             para.align = Align::Center;
         }
         let text = OBJECT.to_string();
-        Self { spans: vec![Span { len: text.len(), style: char_style }], text, style: para, image: Some(image) }
+        Self { spans: vec![Span { len: text.len(), style: char_style }], text, style: para, image: Some(image), table: None }
+    }
+
+    /// Parágrafo de uma tabela (o caractere de objeto no texto, a tabela à parte).
+    pub fn table(table: Table, char_style: CharStyle, mut para: ParaStyle) -> Self {
+        para.list = None;
+        para.first_indent = 0.0;
+        let text = OBJECT.to_string();
+        Self { spans: vec![Span { len: text.len(), style: char_style }], text, style: para, image: None, table: Some(Box::new(table)) }
+    }
+
+    /// É um objeto (imagem ou tabela) que ocupa o parágrafo todo.
+    pub fn is_object(&self) -> bool {
+        self.image.is_some() || self.table.is_some()
     }
 
     /// Estilo de quem digita na posição `off`: o do caractere antes dela (no começo,
@@ -313,8 +414,9 @@ impl Paragraph {
             }
         }
         self.text.replace_range(a..b, "");
-        if self.image.is_some() && !self.text.contains(OBJECT) {
+        if !self.text.contains(OBJECT) {
             self.image = None;
+            self.table = None;
         }
         self.normalize();
     }
@@ -335,7 +437,7 @@ impl Paragraph {
         }
         let last_style = keep.last().or(tail_spans.first()).map(|s| s.style.clone()).unwrap_or_default();
         let tail_text = self.text.split_off(off);
-        let mut tail = Paragraph { text: tail_text, spans: tail_spans, style: self.style.clone(), image: None };
+        let mut tail = Paragraph { text: tail_text, spans: tail_spans, style: self.style.clone(), image: None, table: None };
         if tail.spans.is_empty() {
             tail.spans.push(Span { len: 0, style: last_style.clone() });
         }
@@ -343,11 +445,13 @@ impl Paragraph {
         if self.spans.is_empty() {
             self.spans.push(Span { len: 0, style: last_style });
         }
-        if self.image.is_some() {
+        if self.is_object() {
             if tail.text.contains(OBJECT) {
                 tail.image = self.image.take();
+                tail.table = self.table.take();
             } else if !self.text.contains(OBJECT) {
                 self.image = None;
+                self.table = None;
             }
         }
         self.normalize();
@@ -366,6 +470,9 @@ impl Paragraph {
         }
         if self.image.is_none() {
             self.image = other.image;
+        }
+        if self.table.is_none() {
+            self.table = other.table;
         }
         self.normalize();
     }
@@ -633,9 +740,9 @@ impl Doc {
             }
             let piece = piece.trim_end_matches('\r');
             // Texto num parágrafo de imagem vai para um parágrafo novo ao lado.
-            if self.paras[pos.para].image.is_some() && !piece.is_empty() {
+            if self.paras[pos.para].is_object() && !piece.is_empty() {
                 pos = self.split(pos);
-                if self.paras[pos.para].image.is_some() {
+                if self.paras[pos.para].is_object() {
                     // Estava antes da imagem: o novo parágrafo é o de cima.
                     pos = Pos::new(pos.para - 1, 0);
                 }
@@ -684,7 +791,13 @@ impl Doc {
             let text = &self.paras[i].text;
             let from = if i == a.para { a.off } else { 0 };
             let to = if i == b.para { b.off } else { text.len() };
-            out.push_str(&text[from..to].replace([OBJECT, NOTE], "").replace(LINE_BREAK, "\n"));
+            if let (Some(t), true) = (&self.paras[i].table, from == 0 && to > 0) {
+                // Tabela: uma linha por linha, Tab entre as células.
+                let rows: Vec<String> = t.rows.iter().map(|r| r.iter().map(|c| c.doc.all_plain().replace('\n', " ")).collect::<Vec<_>>().join("\t")).collect();
+                out.push_str(&rows.join("\n"));
+            } else {
+                out.push_str(&text[from..to].replace([OBJECT, NOTE], "").replace(LINE_BREAK, "\n"));
+            }
             if i != b.para {
                 out.push('\n');
             }
@@ -721,7 +834,7 @@ impl Doc {
         let tail = self.paras[p.para].split_off(p.off);
         let mut index = p.para;
         for (i, piece) in frag.iter().enumerate() {
-            if i == 0 && piece.image.is_none() && self.paras[index].image.is_none() {
+            if i == 0 && !piece.is_object() && !self.paras[index].is_object() {
                 let mut first = piece.clone();
                 if !self.paras[index].text.is_empty() {
                     first.style = self.paras[index].style.clone();
@@ -737,7 +850,7 @@ impl Doc {
         }
         let end = Pos::new(index, self.paras[index].text.len());
         if !tail.text.is_empty() || tail.image.is_some() {
-            if self.paras[index].image.is_some() || tail.image.is_some() {
+            if self.paras[index].is_object() || tail.is_object() {
                 self.paras.insert(index + 1, tail);
             } else {
                 self.paras[index].append(tail);
@@ -803,12 +916,46 @@ impl Doc {
         Pos::new(at + 1, 0)
     }
 
+    /// Insere uma tabela em `p` (num parágrafo dela) e devolve a posição depois.
+    pub fn insert_table(&mut self, p: Pos, rows: usize, cols: usize) -> Pos {
+        let style = self.style_at(p);
+        let width = self.page.content_width();
+        let table = Table::new(rows, cols, width, &style);
+        let body = ParaStyle { list: None, first_indent: 0.0, ..self.paras[p.para].style.clone() };
+        let at = if p.off == 0 && self.paras[p.para].text.is_empty() {
+            p.para
+        } else if p.off == 0 {
+            self.paras.insert(p.para, Paragraph::new("", style.clone(), body.clone()));
+            p.para
+        } else {
+            let next = self.split(p);
+            self.paras.insert(next.para, Paragraph::new("", style.clone(), body.clone()));
+            next.para
+        };
+        self.paras[at] = Paragraph::table(table, style.clone(), ParaStyle { align: Align::Left, space_after: 6.0, ..ParaStyle::default() });
+        if at + 1 >= self.paras.len() || self.paras[at + 1].is_object() {
+            self.paras.insert(at + 1, Paragraph::new("", style, body));
+        } else if self.paras[at + 1].text.is_empty() {
+            // O parágrafo vazio depois da tabela não continua uma lista.
+            self.paras[at + 1].style = body;
+        }
+        Pos::new(at + 1, 0)
+    }
+
     /// Número de palavras e de caracteres (sem os espaços e com eles).
     pub fn counts(&self) -> (usize, usize, usize) {
         let mut words = 0;
         let mut chars = 0;
         let mut no_spaces = 0;
         for p in &self.paras {
+            if let Some(t) = &p.table {
+                for cell in t.rows.iter().flatten() {
+                    let (w, c, n) = cell.doc.counts();
+                    words += w;
+                    chars += c;
+                    no_spaces += n;
+                }
+            }
             words += p.text.split(|c: char| c.is_whitespace() || c == LINE_BREAK).filter(|w| w.chars().any(char::is_alphanumeric)).count();
             for c in p.text.chars().filter(|c| *c != OBJECT) {
                 chars += 1;

@@ -1613,3 +1613,11 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - Modelo: o caractere `NOTE` no texto, com `CharStyle::note` (id), e `Doc::notes`. A paginação reserva o espaço das notas no pé da página onde a referência cai (a linha passa para a página seguinte junto com a nota, se não couber).
 - Na tela, no PDF (texto copiável) e nos formatos: RTF `\footnote` com `\chftn`; DOCX `footnotes.xml` com os separadores do Word; ODT `text:note`. Conferido com o LibreOffice (ele mostra as notas dos nossos .docx e .odt) e em testes de ida e volta.
 - mide-ui: o Alt de cada atalho é guardado (`shortcut_alt`, `shortcut_plain`); atalhos com pontuação (Ctrl+=, Ctrl+−, Ctrl+Shift+.) passam a chegar aos apps. Os diálogos do editor devolvem o teclado ao texto ao fechar.
+
+## Editor de Texto, etapa 4c: tabelas (2026-10-24)
+
+- Tabela > Inserir tabela… (Ctrl+Alt+T): linhas e colunas. Cada célula é um documento pequeno (`Cell` com um `Doc`): escrever, formatar, listas, colar e desfazer funcionam dentro dela. Ao entrar numa célula, o editor troca o documento de fora pelo da célula (`Outer`); ao sair, a célula volta e a edição dela vira um passo de desfazer do documento.
+- Tab/Shift+Tab andam entre as células (depois da última, uma linha nova); ↑/↓ na primeira/última linha passam para a célula de cima/de baixo; Esc ou um clique fora saem.
+- Menu Tabela: inserir linha acima/abaixo, coluna à esquerda/direita, excluir linha, coluna ou tabela, mostrar bordas.
+- Layout: colunas em pontos (encolhem juntas se não couberem), altura da linha da tabela pela célula mais alta, linhas da tabela não se partem entre páginas. Desenho na tela e no PDF (fundo, texto, bordas).
+- Formatos: DOCX `w:tbl` (grade, larguras, bordas, `w:shd`, `gridSpan`), ODT `table:table` (colunas repetidas, células cobertas, bordas, fundo) e RTF como o Word (`\trowd`, `\cellx`, `\clcbpat`, `\intbl`, `\cell`, `\row`). Conferido com o LibreOffice (os nossos .docx e .odt com tabela) e em testes de ida e volta. Copiar ou converter em texto simples: Tab entre as células.

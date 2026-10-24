@@ -173,18 +173,25 @@ fn styles_xml(base: &CharStyle) -> String {
     s
 }
 
-/// Grava o documento em DOCX.
-pub fn write(doc: &Doc) -> Vec<u8> {
-    let mut media: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut rels: Vec<(String, String, String)> = vec![
-        ("rIdStyles".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles".into(), "styles.xml".into()),
-        ("rIdNumbering".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering".into(), "numbering.xml".into()),
-        ("rIdSettings".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings".into(), "settings.xml".into()),
-    ];
+/// O que os parágrafos juntam ao serem gravados: imagens, relações e notas.
+struct WriteCtx {
+    media: Vec<(String, Vec<u8>)>,
+    rels: Vec<(String, String, String)>,
+    notes: Vec<u32>,
+}
+
+/// Grava parágrafos (do documento ou de uma célula) em WordprocessingML.
+fn write_paras(paras: &[Paragraph], content_width: f32, ctx: &mut WriteCtx) -> String {
     let mut body = String::new();
-    let mut notes: Vec<u32> = Vec::new();
-    for p in &doc.paras {
+    let (media, rels, notes) = (&mut ctx.media, &mut ctx.rels, &mut ctx.notes);
+    for p in paras {
         let st = &p.style;
+        if let Some(table) = &p.table {
+            let mut sub = WriteCtx { media: std::mem::take(media), rels: std::mem::take(rels), notes: std::mem::take(notes) };
+            body.push_str(&write_table(table, &mut sub));
+            (*media, *rels, *notes) = (sub.media, sub.rels, sub.notes);
+            continue;
+        }
         body.push_str("<w:p><w:pPr>");
         if let Some(id) = word_style(&st.name) {
             body.push_str(&format!("<w:pStyle w:val=\"{id}\"/>"));
@@ -193,7 +200,7 @@ pub fn write(doc: &Doc) -> Vec<u8> {
             body.push_str("<w:pageBreakBefore/>");
         }
         if st.leader {
-            body.push_str(&format!("<w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{}\"/></w:tabs>", twips(doc.page.content_width() - st.right_indent)));
+            body.push_str(&format!("<w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{}\"/></w:tabs>", twips(content_width - st.right_indent)));
         }
         if let Some(kind) = st.list {
             body.push_str(&format!("<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{}\"/></w:numPr>", st.level, list_num_id(kind)));
@@ -243,9 +250,60 @@ pub fn write(doc: &Doc) -> Vec<u8> {
         }
         body.push_str("</w:p>");
     }
+    body
+}
+
+/// Grava uma tabela (larguras, bordas, fundo das células e o conteúdo delas).
+fn write_table(table: &super::Table, ctx: &mut WriteCtx) -> String {
+    let total: f32 = table.cols.iter().sum();
+    let mut s = format!("<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/>", twips(total));
+    if table.borders {
+        s.push_str("<w:tblBorders>");
+        for side in ["top", "left", "bottom", "right", "insideH", "insideV"] {
+            s.push_str(&format!("<w:{side} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"808084\"/>"));
+        }
+        s.push_str("</w:tblBorders>");
+    } else {
+        s.push_str("<w:tblBorders><w:top w:val=\"nil\"/><w:left w:val=\"nil\"/><w:bottom w:val=\"nil\"/><w:right w:val=\"nil\"/><w:insideH w:val=\"nil\"/><w:insideV w:val=\"nil\"/></w:tblBorders>");
+    }
+    s.push_str("<w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"100\" w:type=\"dxa\"/><w:right w:w=\"100\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>");
+    for c in &table.cols {
+        s.push_str(&format!("<w:gridCol w:w=\"{}\"/>", twips(*c)));
+    }
+    s.push_str("</w:tblGrid>");
+    for row in &table.rows {
+        s.push_str("<w:tr>");
+        for (c, cell) in row.iter().enumerate() {
+            let w = table.cols.get(c).copied().unwrap_or(72.0);
+            s.push_str(&format!("<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/>", twips(w)));
+            if let Some(sh) = cell.shade {
+                s.push_str(&format!("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{}\"/>", hex(sh)));
+            }
+            s.push_str("</w:tcPr>");
+            s.push_str(&write_paras(&cell.doc.paras, w - 10.0, ctx));
+            s.push_str("</w:tc>");
+        }
+        s.push_str("</w:tr>");
+    }
+    s.push_str("</w:tbl>");
+    s
+}
+
+/// Grava o documento em DOCX.
+pub fn write(doc: &Doc) -> Vec<u8> {
+    let rels: Vec<(String, String, String)> = vec![
+        ("rIdStyles".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles".into(), "styles.xml".into()),
+        ("rIdNumbering".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering".into(), "numbering.xml".into()),
+        ("rIdSettings".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings".into(), "settings.xml".into()),
+    ];
+    let mut ctx = WriteCtx { media: Vec::new(), rels, notes: Vec::new() };
+    let body = write_paras(&doc.paras, doc.page.content_width(), &mut ctx);
+    let WriteCtx { media, mut rels, notes } = ctx;
     // Cabeçalho e rodapé (com o número da página).
     let page = &doc.page;
-    let small = CharStyle { size: 10.0, ..doc.paras.first().map(|p| p.spans[0].style.clone()).unwrap_or_default() };
+    // Cabeçalho, rodapé e notas: só a fonte do documento, letra 10.
+    let family = doc.paras.iter().find(|p| p.style.name.is_empty() && !p.text.is_empty()).or(doc.paras.first()).map(|p| p.spans[0].style.family.clone()).unwrap_or_default();
+    let small = CharStyle { size: 10.0, family, ..CharStyle::default() };
     let part = |text: &str, number: Option<&str>| -> String {
         let mut s = format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:{{}} xmlns:w=\"{W}\" xmlns:r=\"{R}\">");
         if !text.is_empty() {
@@ -581,12 +639,13 @@ impl Reader<'_> {
         for e in parent.elements() {
             match e.name.as_str() {
                 "w:p" => self.paragraph(e, out),
-                // Tabelas: cada célula vira parágrafos (até o editor ter tabelas).
                 "w:tbl" => {
-                    let mut cells = Vec::new();
-                    e.find_all("w:tc", &mut cells);
-                    for c in cells {
-                        self.paragraphs(c, out);
+                    if let Some(p) = self.table(e) {
+                        out.push(p);
+                        // Depois de uma tabela, sempre um parágrafo (para o cursor sair dela).
+                        if !matches!(e_next_is_para(parent, e), Some(true)) {
+                            out.push(Paragraph::new("", self.default_run.clone(), ParaStyle::default()));
+                        }
                     }
                 }
                 "w:sdt" => {
@@ -632,7 +691,7 @@ impl Reader<'_> {
                 }
             }
         }
-        let mut para = Paragraph { text: String::new(), spans: Vec::new(), style: pstyle.clone(), image: None };
+        let mut para = Paragraph { text: String::new(), spans: Vec::new(), style: pstyle.clone(), image: None, table: None };
         let mut pending_break = false;
         let mut runs = Vec::new();
         collect_runs(e, &mut runs, None);
@@ -693,6 +752,47 @@ impl Reader<'_> {
         }
     }
 
+    /// Uma tabela do Word: colunas (`w:gridCol`), linhas, células (as mescladas na
+    /// horizontal ocupam o espaço delas, com células vazias depois), fundo e bordas.
+    fn table(&self, e: &Element) -> Option<Paragraph> {
+        let cols: Vec<f32> = e.child("w:tblGrid").map(|g| g.elements().filter(|c| c.name == "w:gridCol").filter_map(|c| num(Some(c), "w:w")).map(|w| w / 20.0).collect()).unwrap_or_default();
+        let mut rows: Vec<Vec<super::Cell>> = Vec::new();
+        for tr in e.elements().filter(|r| r.name == "w:tr") {
+            let mut row = Vec::new();
+            for tc in tr.elements().filter(|c| c.name == "w:tc") {
+                let mut paras = Vec::new();
+                self.paragraphs(tc, &mut paras);
+                let mut cell = super::Cell::from_paras(paras);
+                cell.shade = tc.path("w:tcPr/w:shd").and_then(|s| s.attr("w:fill")).filter(|f| *f != "auto").and_then(parse_hex);
+                let span = tc.path("w:tcPr/w:gridSpan").and_then(val).and_then(|v| v.parse::<usize>().ok()).unwrap_or(1);
+                row.push(cell);
+                for _ in 1..span {
+                    row.push(super::Cell::empty(&self.default_run));
+                }
+            }
+            if !row.is_empty() {
+                rows.push(row);
+            }
+        }
+        if rows.is_empty() {
+            return None;
+        }
+        let n = rows.iter().map(Vec::len).max().unwrap_or(1);
+        for row in &mut rows {
+            while row.len() < n {
+                row.push(super::Cell::empty(&self.default_run));
+            }
+        }
+        let mut cols = cols;
+        if cols.len() != n || cols.iter().any(|c| *c <= 0.0) {
+            cols = vec![self.content_width / n as f32; n];
+        }
+        // Bordas: as da tabela, se não forem "nil"/"none" (sem nada, como a "Tabela com grade").
+        let borders = e.path("w:tblPr/w:tblBorders").is_none_or(|b| b.elements().any(|x| !matches!(x.attr("w:val"), Some("nil" | "none"))));
+        let table = super::Table { cols, rows, borders };
+        Some(Paragraph::table(table, self.default_run.clone(), ParaStyle::default()))
+    }
+
     fn image(&self, e: &Element) -> Option<Image> {
         let mut blips = Vec::new();
         e.find_all("a:blip", &mut blips);
@@ -713,6 +813,13 @@ impl Reader<'_> {
         }
         Some(img)
     }
+}
+
+/// O elemento depois de `e` em `parent` é um parágrafo?
+fn e_next_is_para(parent: &Element, e: &Element) -> Option<bool> {
+    let mut it = parent.elements().skip_while(|x| !std::ptr::eq(*x, e));
+    it.next()?;
+    Some(it.next()?.name == "w:p")
 }
 
 /// Os trechos (`w:r`) do parágrafo em ordem, entrando em links e campos.
@@ -742,7 +849,7 @@ fn finish(out: &mut Vec<Paragraph>, para: &mut Paragraph, style: &CharStyle) {
     if para.text.is_empty() {
         return;
     }
-    let mut p = std::mem::replace(para, Paragraph { text: String::new(), spans: Vec::new(), style: para.style.clone(), image: None });
+    let mut p = std::mem::replace(para, Paragraph { text: String::new(), spans: Vec::new(), style: para.style.clone(), image: None, table: None });
     if p.spans.is_empty() {
         p.spans.push(Span { len: 0, style: style.clone() });
     }
@@ -983,9 +1090,16 @@ mod tests {
         d.page.footer = "Rodapé".into();
         let end = Pos::new(1, d.paras[1].text.len());
         d.insert_note(end, "Nota do Word.");
+        // Tabela no fim.
+        let last = d.end();
+        let after = d.insert_table(last, 2, 3);
+        if let Some(t) = d.paras[after.para - 1].table.as_mut() {
+            t.rows[0][1].doc.insert_text(Pos::default(), "B1", &CharStyle { bold: true, ..CharStyle::default() });
+            t.rows[1][2].shade = Some([200, 220, 255]);
+        }
         let bytes = write(&d);
         let back = read(&bytes).expect("docx");
-        assert_eq!(back.paras.len(), 4, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
+        assert!(back.paras.len() >= 5, "{:?}", back.paras.iter().map(|p| &p.text).collect::<Vec<_>>());
         assert_eq!(back.paras[0].text, "Introdução");
         assert_eq!(back.paras[0].style.name, "Título 1");
         assert!(back.paras[0].spans[0].style.bold);
@@ -1004,6 +1118,12 @@ mod tests {
         assert_eq!(back.page.numbers.position, NumberPosition::TopRight);
         assert_eq!(back.page.numbers.show_from, 3);
         assert_eq!(back.page.footer, "Rodapé");
+        let table = back.paras.iter().find_map(|p| p.table.as_ref()).expect("tabela");
+        assert_eq!((table.rows.len(), table.cols.len()), (2, 3));
+        assert_eq!(table.rows[0][1].doc.paras[0].text, "B1");
+        assert!(table.rows[0][1].doc.paras[0].spans[0].style.bold);
+        assert_eq!(table.rows[1][2].shade, Some([200, 220, 255]));
+        assert!(table.borders);
         assert_eq!(back.notes.len(), 1);
         assert_eq!(back.notes[0].1, "Nota do Word.");
         assert!(back.paras[1].text.ends_with(crate::richtext::NOTE));

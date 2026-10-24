@@ -71,6 +71,29 @@ pub struct ParaBox {
     pub lines: Vec<Line>,
     /// Marcador da lista ("•", "1.") e o x dele.
     pub marker: Option<(Vec<Glyph>, f32)>,
+    /// Tabela: as colunas e as células quebradas (cada linha do parágrafo é uma linha da
+    /// tabela).
+    pub table: Option<TableBox>,
+}
+
+/// Margem interna das células (pontos).
+pub const CELL_PAD_X: f32 = 5.0;
+pub const CELL_PAD_Y: f32 = 3.0;
+
+/// Uma tabela quebrada: onde começa cada coluna (x, desde a esquerda do texto) e as
+/// linhas.
+#[derive(Debug, Clone)]
+pub struct TableBox {
+    pub col_x: Vec<f32>,
+    pub col_w: Vec<f32>,
+    pub rows: Vec<Vec<CellBox>>,
+}
+
+/// O conteúdo de uma célula: o layout do documento dela (uma página só, sem margens).
+#[derive(Debug, Clone)]
+pub struct CellBox {
+    pub layout: Layout,
+    pub height: f32,
 }
 
 /// Uma linha no lugar: parágrafo, linha dele, página e o topo (pontos, desde o topo da
@@ -212,6 +235,11 @@ fn nearest(line: &Line, x: f32) -> usize {
 pub struct Layouter {
     cache: HashMap<u64, ParaBox>,
     families: HashMap<String, String>,
+    /// Profundidade (tabelas quebram as células com `layout` de novo): o cache só é
+    /// limpo no nível de fora.
+    depth: usize,
+    /// Parágrafos das células usados nesta quebra (o nível de fora não os apaga).
+    keep: HashSet<u64>,
 }
 
 /// Fontes de troca para as famílias comuns que podem faltar no Linux (as de métricas
@@ -242,6 +270,21 @@ fn fingerprint(p: &Paragraph, width: f32) -> u64 {
     if let Some(img) = &p.image {
         (img.width.to_bits(), img.height.to_bits()).hash(&mut h);
     }
+    if let Some(t) = &p.table {
+        t.borders.hash(&mut h);
+        for c in &t.cols {
+            c.to_bits().hash(&mut h);
+        }
+        for row in &t.rows {
+            row.len().hash(&mut h);
+            for cell in row {
+                cell.shade.hash(&mut h);
+                for cp in &cell.doc.paras {
+                    fingerprint(cp, width).hash(&mut h);
+                }
+            }
+        }
+    }
     h.finish()
 }
 
@@ -268,6 +311,13 @@ impl Layouter {
 
     /// Quebra o documento todo.
     pub fn layout(&mut self, fonts: &mut FontSystem, doc: &Doc) -> Layout {
+        self.depth += 1;
+        let out = self.layout_inner(fonts, doc);
+        self.depth -= 1;
+        out
+    }
+
+    fn layout_inner(&mut self, fonts: &mut FontSystem, doc: &Doc) -> Layout {
         let page = &doc.page;
         let width = page.content_width();
         let mut used = HashSet::new();
@@ -323,11 +373,16 @@ impl Layouter {
             let small = CharStyle { size: 10.0, color: [0, 0, 0], note: None, link: None, highlight: None, bold: false, italic: false, underline: false, strike: false, ..body.clone() };
             let sup = CharStyle { baseline: Baseline::Super, ..small.clone() };
             let full = format!("{num} {text}");
-            let p = Paragraph { text: full.clone(), spans: vec![Span { len: num.len(), style: sup }, Span { len: full.len() - num.len(), style: small }], style: ParaStyle { align: Align::Justify, ..ParaStyle::default() }, image: None };
+            let p = Paragraph { text: full.clone(), spans: vec![Span { len: num.len(), style: sup }, Span { len: full.len() - num.len(), style: small }], style: ParaStyle { align: Align::Justify, ..ParaStyle::default() }, image: None, table: None };
             let b = self.para(fonts, &p, width, 0, 0);
             out.note_boxes.insert(*id, (*n, b, p.spans.iter().map(|s| s.style.clone()).collect()));
         }
-        self.cache.retain(|k, _| used.contains(k));
+        if self.depth == 1 {
+            self.cache.retain(|k, _| used.contains(k) || self.keep.contains(k));
+            self.keep.clear();
+        } else {
+            self.keep.extend(used.iter().copied());
+        }
         paginate(&mut out, doc, page);
         out
     }
@@ -374,6 +429,10 @@ impl Layouter {
         let left = st.left_indent + list_indent;
         let right = st.right_indent;
         let first_style = &para.spans[0].style;
+        // Tabela: uma "linha" por linha da tabela, com a altura da célula mais alta.
+        if let Some(table) = &para.table {
+            return self.table(fonts, table, para, width);
+        }
         // Imagem: uma linha com a altura dela.
         if let Some(img) = &para.image {
             let avail = (width - left - right).max(1.0);
@@ -399,7 +458,7 @@ impl Layouter {
                 leader: None,
                 notes: Vec::new(),
             };
-            return ParaBox { lines: vec![line], marker: None };
+            return ParaBox { lines: vec![line], marker: None, table: None };
         }
         // Atributos por trecho.
         let mut families: Vec<String> = vec![String::new(); para.spans.len()];
@@ -623,7 +682,63 @@ impl Layouter {
             let x = (left + st.first_indent.min(0.0) - 6.0 - w).max(st.left_indent);
             (glyphs, x)
         });
-        ParaBox { lines, marker }
+        ParaBox { lines, marker, table: None }
+    }
+
+    /// Quebra uma tabela: cada célula como um documento pequeno na largura da coluna.
+    fn table(&mut self, fonts: &mut FontSystem, table: &super::Table, para: &Paragraph, width: f32) -> ParaBox {
+        let st = &para.style;
+        let total: f32 = table.cols.iter().sum::<f32>().max(1.0);
+        // Mais larga que o espaço: as colunas encolhem na mesma proporção.
+        let avail = (width - st.left_indent - st.right_indent).max(36.0);
+        let k = if total > avail { avail / total } else { 1.0 };
+        let col_w: Vec<f32> = table.cols.iter().map(|c| c * k).collect();
+        let tw: f32 = col_w.iter().sum();
+        let x0 = st.left_indent
+            + match st.align {
+                Align::Center => (avail - tw) / 2.0,
+                Align::Right => avail - tw,
+                _ => 0.0,
+            };
+        let mut col_x = Vec::new();
+        let mut x = x0;
+        for w in &col_w {
+            col_x.push(x);
+            x += w;
+        }
+        let mut rows = Vec::new();
+        let mut lines = Vec::new();
+        let end = para.text.len();
+        for row in &table.rows {
+            let mut cells = Vec::new();
+            let mut h = 0.0f32;
+            for (c, cell) in row.iter().enumerate() {
+                let cw = (col_w.get(c).copied().unwrap_or(36.0) - 2.0 * CELL_PAD_X).max(12.0);
+                let mut doc = cell.doc.clone();
+                doc.page = super::PageSetup { width: cw, height: 1.0e7, margins: [0.0; 4], ..super::PageSetup::default() };
+                let lay = self.layout(fonts, &doc);
+                let ch = lay.placed.last().map_or(0.0, |p| p.y + lay.paras[p.para].lines[p.line].height);
+                h = h.max(ch);
+                cells.push(CellBox { layout: lay, height: ch });
+            }
+            let rh = h + 2.0 * CELL_PAD_Y;
+            lines.push(Line {
+                start: 0,
+                end,
+                height: rh,
+                baseline: rh,
+                ascent: rh,
+                descent: 0.0,
+                glyphs: Vec::new(),
+                carets: vec![(0, x0), (end, x0 + tw)],
+                x0,
+                x1: x0 + tw,
+                leader: None,
+                notes: Vec::new(),
+            });
+            rows.push(cells);
+        }
+        ParaBox { lines, marker: None, table: Some(TableBox { col_x, col_w, rows }) }
     }
 }
 
