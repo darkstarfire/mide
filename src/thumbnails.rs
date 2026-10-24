@@ -55,21 +55,50 @@ pub fn text_page(path: &Path, size: u32) -> Option<Pixmap> {
     let text = String::from_utf8_lossy(&bytes);
     let mut pixmap = Pixmap::new(size, size)?;
     let s = size as f32;
+    // Folha em pé, como os documentos do Finder: canto de cima à direita dobrado.
     let (pw, ph) = (s * 0.74, s * 0.94);
     let (px, py) = ((s - pw) / 2.0, (s - ph) / 2.0);
-    draw::soft_shadow(&mut pixmap, px, py, pw, ph, s * 0.03, s * 0.04, s * 0.015, 50);
-    draw::fill_rounded(&mut pixmap, px, py, pw, ph, s * 0.03, Color::from_rgba8(255, 255, 255, 255));
-    if let Some(edge) = draw::rounded_rect(px + 0.5, py + 0.5, pw - 1.0, ph - 1.0, s * 0.03) {
-        let mut paint = tiny_skia::Paint::default();
-        paint.anti_alias = true;
-        paint.set_color(Color::from_rgba8(0, 0, 0, 40));
-        pixmap.stroke_path(&edge, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, draw::tf(), None);
-    }
+    let r = s * 0.035;
+    let fold = pw * 0.24;
+    draw::soft_shadow(&mut pixmap, px, py, pw, ph, r, s * 0.035, s * 0.015, 46);
+    let page = {
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.move_to(px + r, py);
+        pb.line_to(px + pw - fold, py);
+        pb.line_to(px + pw, py + fold);
+        pb.line_to(px + pw, py + ph - r);
+        pb.quad_to(px + pw, py + ph, px + pw - r, py + ph);
+        pb.line_to(px + r, py + ph);
+        pb.quad_to(px, py + ph, px, py + ph - r);
+        pb.line_to(px, py + r);
+        pb.quad_to(px, py, px + r, py);
+        pb.close();
+        pb.finish()?
+    };
+    let mut paint = tiny_skia::Paint::default();
+    paint.anti_alias = true;
+    // Branco com um cinza muito leve embaixo (a folha tem volume).
+    paint.shader = tiny_skia::LinearGradient::new(
+        tiny_skia::Point::from_xy(0.0, py),
+        tiny_skia::Point::from_xy(0.0, py + ph),
+        vec![
+            tiny_skia::GradientStop::new(0.0, Color::from_rgba8(255, 255, 255, 255)),
+            tiny_skia::GradientStop::new(1.0, Color::from_rgba8(242, 242, 244, 255)),
+        ],
+        tiny_skia::SpreadMode::Pad,
+        tiny_skia::Transform::identity(),
+    )?;
+    pixmap.fill_path(&page, &paint, tiny_skia::FillRule::Winding, draw::tf(), None);
+    let mut edge = tiny_skia::Paint::default();
+    edge.anti_alias = true;
+    edge.set_color(Color::from_rgba8(0, 0, 0, 34));
+    pixmap.stroke_path(&page, &edge, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, draw::tf(), None);
     // Letra proporcional ao tamanho da folha: em ícones pequenos vira só a "textura"
-    // das linhas, como no Finder; nos grandes dá para ler.
+    // das linhas, como no Finder; nos grandes dá para ler. As linhas de cima param antes
+    // da dobra.
     let font = (s / 18.0).clamp(2.2, 9.0);
     let line_h = font * 1.35;
-    let margin = pw * 0.09;
+    let margin = pw * 0.1;
     let max_lines = ((ph - 2.0 * margin) / line_h).floor() as usize;
     thread_local! {
         static TEXT: std::cell::RefCell<Option<Text>> = const { std::cell::RefCell::new(None) };
@@ -83,13 +112,45 @@ pub fn text_page(path: &Path, size: u32) -> Option<Pixmap> {
                 continue;
             }
             let y = py + margin + i as f32 * line_h;
+            let room = if y < py + fold + line_h * 0.2 { pw - 2.0 * margin - fold * 0.8 } else { pw - 2.0 * margin };
             // Só o que cabe na folha: o resto da linha é cortado pela própria largura.
-            let mut row = Pixmap::new((pw - 2.0 * margin).ceil().max(1.0) as u32, line_h.ceil().max(1.0) as u32)?;
-            text_engine.draw_mono(&mut row, &line, 0.0, 0.0, font, [40, 40, 46, 255]);
+            let mut row = Pixmap::new(room.ceil().max(1.0) as u32, line_h.ceil().max(1.0) as u32)?;
+            text_engine.draw_mono(&mut row, &line, 0.0, 0.0, font, [46, 46, 52, 255]);
             draw::blit(&mut pixmap, &row, (px + margin) as i32, y as i32, 1.0);
+        }
+        // A extensão grande, em cinza, por cima do conteúdo (como o "TXT" do Finder).
+        let ext = path.extension().and_then(|e| e.to_str()).map(str::to_uppercase).unwrap_or_default();
+        if !ext.is_empty() && ext.chars().count() <= 5 && s >= 32.0 {
+            let mut fs = pw * 0.24;
+            let weight = crate::ui::text::FontWeight::Semibold;
+            let mut w = text_engine.measure(&ext, fs, weight);
+            if w > pw * 0.8 {
+                fs *= pw * 0.8 / w;
+                w = text_engine.measure(&ext, fs, weight);
+            }
+            let (ex, ey) = (px + (pw - w) / 2.0, py + ph * 0.66 - fs * 0.6);
+            text_engine.draw(&mut pixmap, &ext, ex, ey, fs, weight, [140, 140, 146, 215]);
         }
         Some(())
     })?;
+    // Dobra do canto: o verso da folha, cinza claro com sombra suave embaixo.
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.move_to(px + pw - fold, py);
+    pb.line_to(px + pw - fold, py + fold - r);
+    pb.quad_to(px + pw - fold, py + fold, px + pw - fold + r, py + fold);
+    pb.line_to(px + pw, py + fold);
+    pb.close();
+    if let Some(flap) = pb.finish() {
+        let mut shade = tiny_skia::Paint::default();
+        shade.anti_alias = true;
+        shade.set_color(Color::from_rgba8(0, 0, 0, 30));
+        pixmap.fill_path(&flap, &shade, tiny_skia::FillRule::Winding, draw::tf().pre_translate(-s * 0.012, s * 0.016), None);
+        let mut back = tiny_skia::Paint::default();
+        back.anti_alias = true;
+        back.set_color(Color::from_rgba8(226, 226, 230, 255));
+        pixmap.fill_path(&flap, &back, tiny_skia::FillRule::Winding, draw::tf(), None);
+        pixmap.stroke_path(&flap, &edge, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, draw::tf(), None);
+    }
     Some(pixmap)
 }
 
@@ -295,6 +356,19 @@ fn encode_bytes(path: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Grava a folha de um texto em `MIDE_THUMB_OUT` (para conferir o desenho a olho).
+    #[test]
+    #[ignore]
+    fn folha_de_texto_para_conferir() {
+        let Some(out) = std::env::var_os("MIDE_THUMB_OUT") else { return };
+        let dir = std::env::temp_dir().join("mide-folha");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("leia-me.txt");
+        std::fs::write(&file, "Aqui vão as primeiras linhas.\nO mide mostra o conteúdo\nde cada arquivo de texto,\ncom a orelha dobrada no canto.\n\nComo no Finder do Mac:\no tipo do arquivo em cinza\npor cima do texto.\n\nMais uma linha.\nE outra.\nE mais outra para encher.").unwrap();
+        let pix = text_page(&file, 256).unwrap();
+        pix.save_png(out).unwrap();
+    }
 
     #[test]
     fn folha_de_texto_tem_linhas_escuras() {

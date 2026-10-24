@@ -830,3 +830,122 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 }
+
+// -------------------------------------------------- etiquetas e comentários
+
+/// Etiquetas de cor do Finder, na ordem das bolinhas (`kit::TAG_COLORS`): o nome
+/// guardado no arquivo (inglês, como as outras chaves do mide) e o mostrado.
+pub const TAGS: [(&str, &str); 7] = [
+    ("Red", "Vermelho"),
+    ("Orange", "Laranja"),
+    ("Yellow", "Amarelo"),
+    ("Green", "Verde"),
+    ("Blue", "Azul"),
+    ("Purple", "Roxo"),
+    ("Gray", "Cinza"),
+];
+
+/// Atributo estendido das etiquetas (padrão freedesktop, o mesmo do Dolphin): nomes
+/// separados por vírgula.
+const TAGS_XATTR: &str = "user.xdg.tags";
+/// Atributo estendido do comentário (padrão freedesktop).
+const COMMENT_XATTR: &str = "user.xdg.comment";
+
+fn get_xattr(path: &Path, name: &str) -> Option<String> {
+    let mut buf = vec![0u8; 4096];
+    let n = rustix::fs::getxattr(path, name, &mut buf[..]).ok()?;
+    buf.truncate(n);
+    String::from_utf8(buf).ok()
+}
+
+fn set_xattr(path: &Path, name: &str, value: &str) -> std::io::Result<()> {
+    if value.is_empty() {
+        return match rustix::fs::removexattr(path, name) {
+            Ok(()) => Ok(()),
+            // Já não tinha: nada a apagar.
+            Err(e) if e == rustix::io::Errno::NODATA => Ok(()),
+            Err(e) => Err(e.into()),
+        };
+    }
+    rustix::fs::setxattr(path, name, value.as_bytes(), rustix::fs::XattrFlags::empty()).map_err(Into::into)
+}
+
+/// Índices (em `TAGS`) das etiquetas de cor do item. Etiquetas com outros nomes (de
+/// outro programa) ficam de fora daqui, mas são mantidas ao gravar.
+pub fn tags_of(path: &Path) -> Vec<usize> {
+    let Some(text) = get_xattr(path, TAGS_XATTR) else {
+        return Vec::new();
+    };
+    text.split(',').filter_map(|t| TAGS.iter().position(|(key, _)| key.eq_ignore_ascii_case(t.trim()))).collect()
+}
+
+/// Liga ou desliga a etiqueta `tag` (índice em `TAGS`) no item.
+pub fn toggle_tag(path: &Path, tag: usize) -> std::io::Result<()> {
+    let text = get_xattr(path, TAGS_XATTR).unwrap_or_default();
+    let mut names: Vec<String> = text.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    let key = TAGS[tag].0;
+    if let Some(i) = names.iter().position(|n| n.eq_ignore_ascii_case(key)) {
+        names.remove(i);
+    } else {
+        names.push(key.to_string());
+    }
+    set_xattr(path, TAGS_XATTR, &names.join(","))
+}
+
+/// Comentário do item (Obter informações → Comentários).
+pub fn comment_of(path: &Path) -> String {
+    get_xattr(path, COMMENT_XATTR).unwrap_or_default()
+}
+
+pub fn set_comment(path: &Path, comment: &str) -> std::io::Result<()> {
+    set_xattr(path, COMMENT_XATTR, comment.trim())
+}
+
+/// Espaço que o arquivo ocupa no disco (blocos de 512 bytes).
+pub fn disk_usage(meta: &fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.blocks() * 512
+}
+
+/// Nome do usuário ou do grupo pelo número (de `/etc/passwd` ou `/etc/group`).
+pub fn account_name(file: &str, id: u32) -> String {
+    fs::read_to_string(file)
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let mut parts = line.split(':');
+                let name = parts.next()?;
+                let _ = parts.next();
+                (parts.next()?.parse::<u32>().ok()? == id).then(|| name.to_string())
+            })
+        })
+        .unwrap_or_else(|| id.to_string())
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::*;
+
+    #[test]
+    fn etiquetas_ligam_e_desligam_mantendo_as_outras() {
+        let dir = std::env::temp_dir().join(format!("mide-tags-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        fs::write(&file, "x").unwrap();
+        // Sistema de arquivos sem atributos estendidos (tmpfs antigo): nada a testar.
+        if set_xattr(&file, TAGS_XATTR, "Projeto").is_err() {
+            return;
+        }
+        toggle_tag(&file, 0).unwrap();
+        toggle_tag(&file, 4).unwrap();
+        assert_eq!(tags_of(&file), vec![0, 4]);
+        assert_eq!(get_xattr(&file, TAGS_XATTR).unwrap(), "Projeto,Red,Blue");
+        toggle_tag(&file, 0).unwrap();
+        assert_eq!(tags_of(&file), vec![4]);
+        set_comment(&file, "  nota  ").unwrap();
+        assert_eq!(comment_of(&file), "nota");
+        set_comment(&file, "").unwrap();
+        assert_eq!(comment_of(&file), "");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

@@ -86,6 +86,11 @@ struct Files {
     dialog: Option<Dialog>,
     /// O campo do nome ainda precisa receber o foco.
     focus_rename: bool,
+    /// Etiquetas de cor de cada item já lido (relidas ao recarregar a pasta).
+    tags: HashMap<PathBuf, Vec<usize>>,
+    /// Renomear no lugar (Enter, como no Finder): o item, o nome sendo digitado e se o
+    /// campo ainda precisa receber o foco.
+    inline: Option<(PathBuf, String, bool)>,
     message: Option<String>,
     favorites: Vec<(String, PathBuf, &'static str)>,
     /// Miniaturas por (arquivo, tamanho): imagens, folhas de texto e as dos geradores
@@ -233,6 +238,8 @@ impl Files {
             searching: false,
             dialog: None,
             focus_rename: false,
+            inline: None,
+            tags: HashMap::new(),
             message: None,
             favorites: files::favorites(),
             thumbs: HashMap::new(),
@@ -291,6 +298,7 @@ impl Files {
 
     /// Lê de novo a pasta atual (depois de criar, renomear ou apagar).
     fn reload(&mut self) {
+        self.tags.clear();
         let dir = match &self.place {
             Place::Dir(dir) => dir.clone(),
             Place::Trash => Self::trash().join("files"),
@@ -791,7 +799,12 @@ impl Files {
         } else {
             vec![(Key::Left, -1isize), (Key::Right, 1), (Key::Up, -(columns as isize)), (Key::Down, columns as isize)]
         };
-        let step: isize = moves.iter().filter(|(k, _)| input.key(*k)).map(|(_, d)| *d).sum();
+        // Como no Finder: ⌘↓ (Ctrl+↓) abre e ⌘↑ (Ctrl+↑) sobe para a pasta de cima; as
+        // setas com Ctrl não andam pela seleção.
+        let ctrl_down = input.key_events().iter().any(|(k, ctrl, _)| *k == Key::Down && *ctrl);
+        let ctrl_up = input.key_events().iter().any(|(k, ctrl, _)| *k == Key::Up && *ctrl);
+        let open_key = input.shortcut("o") || ctrl_down;
+        let step: isize = if ctrl_down || ctrl_up { 0 } else { moves.iter().filter(|(k, _)| input.key(*k)).map(|(_, d)| *d).sum() };
         let (new, hidden, find, rename) = (input.shortcut("n"), input.shortcut("h"), input.shortcut("f"), input.shortcut("r"));
         let (copy, paste, dup, select_all) = (input.shortcut("c"), input.shortcut("v"), input.shortcut("d"), input.shortcut("a"));
         let info = input.shortcut("i");
@@ -828,11 +841,12 @@ impl Files {
             self.save_view();
             ui.request_repaint();
         }
+        // ⌘I: uma janela de informações por item escolhido (como no Finder).
         if info {
-            if let Some(path) = self.primary().cloned() {
+            for path in self.selection.clone() {
                 self.show_info(&path);
-                ui.request_repaint();
             }
+            ui.request_repaint();
         }
         let current = self.primary().and_then(|s| shown.iter().position(|e| &e.path == s));
         if step != 0 && !shown.is_empty() {
@@ -872,11 +886,22 @@ impl Files {
                 }
             }
         }
-        if enter {
+        // Enter renomeia o item escolhido (como no Finder); abrir é ⌘O/⌘↓.
+        if enter && self.place != Place::Trash {
+            if let Some(entry) = &chosen {
+                self.inline = Some((entry.path.clone(), entry.name.clone(), true));
+                ui.request_repaint();
+            }
+        }
+        if open_key {
             if let Some(entry) = &chosen {
                 self.open(entry);
                 ui.request_repaint();
             }
+        }
+        if ctrl_up {
+            self.go_up();
+            ui.request_repaint();
         }
         if delete {
             if let Some(entry) = &chosen {
@@ -1069,13 +1094,13 @@ impl Files {
     }
 
     /// Abre a janela de informações do item (lida agora do disco).
+    /// Obter informações (⌘I): uma janela "Informações" para o item, como no Finder
+    /// (o próprio Arquivos com `--info`, num processo à parte).
     fn show_info(&mut self, path: &Path) {
-        match files::info_lines(path) {
-            Ok(lines) => {
-                tracing::info!("informações de {}", path.display());
-                self.info = Some((path.to_path_buf(), lines));
-            }
-            Err(err) => self.message = Some(format!("Não foi possível ler \"{}\": {err}", path.display())),
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-files"));
+        match std::process::Command::new(exe).arg("--info").arg(path).spawn() {
+            Ok(_) => tracing::info!("informações de {}", path.display()),
+            Err(err) => self.message = Some(format!("Não foi possível abrir as informações de \"{}\": {err}", path.display())),
         }
     }
 
@@ -1274,6 +1299,22 @@ impl Files {
         let mut empty_action = None;
         let mut wanted: Vec<PathBuf> = Vec::new();
         let mut rects: Vec<(PathBuf, (f32, f32, f32, f32))> = Vec::new();
+        // Etiquetas dos itens que podem aparecer (lidas uma vez e guardadas).
+        let mut visible: Vec<&Entry> = shown.iter().collect();
+        visible.extend(row_entries.iter());
+        for list in &col_lists {
+            visible.extend(list.iter());
+        }
+        for entry in visible {
+            if !self.tags.contains_key(&entry.path) {
+                self.tags.insert(entry.path.clone(), files::tags_of(&entry.path));
+            }
+        }
+        let tags_map = self.tags.clone();
+        // Renomear no lugar: o estado sai do app durante o desenho e volta depois.
+        let mut inline = self.inline.take();
+        let inline_was_focusing = inline.as_ref().is_some_and(|(_, _, f)| *f);
+        let mut inline_done: Option<bool> = None;
         let ctrl_shift = ctrl || shift;
         ui.at(region.0, top, region.2 - preview_w, |ui| {
         ui.page_sized(body_h, |ui| {
@@ -1291,8 +1332,30 @@ impl Files {
             let mut select = None;
             let reveal = self.reveal.clone();
             let mut revealed = false;
+            let inline_icon = size as f32;
             let mut item = |ui: &mut Ui, entry: &Entry, r: mide::kit::Response| {
                 rects.push((entry.path.clone(), r.rect));
+                // Renomear no lugar: o nome vira um campo de texto por cima dele.
+                if let Some((path, name, focus)) = inline.as_mut() {
+                    if *path == entry.path {
+                        let (fx, fy, fw) = if mode == 0 {
+                            (r.rect.0 + 2.0, r.rect.1 + 16.0 + inline_icon - 9.0, r.rect.2 - 4.0)
+                        } else {
+                            (r.rect.0 + 24.0, r.rect.1 + (r.rect.3 - 32.0) / 2.0, (r.rect.2 * 0.6).max(180.0))
+                        };
+                        // O Enter que abriu o campo chega a ele no mesmo quadro: não confirma.
+                        let just_opened = std::mem::take(focus);
+                        if just_opened {
+                            let stem = if entry.is_dir { name.len() } else { name.rfind('.').filter(|i| *i > 0).unwrap_or(name.len()) };
+                            ui.focus_next_input_selecting(stem);
+                        }
+                        ui.at(fx, fy, fw, |ui| {
+                            if ui.text_input(name, "").submitted() && !just_opened {
+                                inline_done = Some(true);
+                            }
+                        });
+                    }
+                }
                 if reveal.as_ref() == Some(&entry.path) {
                     ui.reveal(r.rect);
                     revealed = true;
@@ -1326,6 +1389,29 @@ impl Files {
                             }
                         });
                     }
+                }
+                // Bolinhas das etiquetas: no canto do ícone (grade) ou no fim do nome
+                // (lista e colunas), como no Finder.
+                let entry_tags: Vec<usize> = tags_map.get(&entry.path).cloned().unwrap_or_default();
+                if !entry_tags.is_empty() {
+                    let rect = r.rect;
+                    let n = entry_tags.len() as f32;
+                    let (dx, dy) = if mode == 0 {
+                        (rect.0 + rect.2 - 18.0 - (n - 1.0) * 6.0, rect.1 + 4.0)
+                    } else if mode == 2 {
+                        (rect.0 + rect.2 - 34.0 - (n - 1.0) * 6.0, rect.1 + (rect.3 - 10.0) / 2.0)
+                    } else {
+                        (rect.0 + (rect.2 - 400.0).max(120.0) - 24.0 - (n - 1.0) * 6.0, rect.1 + (rect.3 - 10.0) / 2.0)
+                    };
+                    let bg = ui.theme().background;
+                    ui.paint(|canvas, _| {
+                        for (k, tag) in entry_tags.iter().enumerate() {
+                            let c = mide::kit::TAG_COLORS[*tag];
+                            let x = dx + k as f32 * 6.0;
+                            mide::ui::draw::fill_rounded(canvas, x - 1.0, dy - 1.0, 12.0, 12.0, 6.0, tiny_skia::Color::from_rgba8(bg[0], bg[1], bg[2], 255));
+                            mide::ui::draw::fill_rounded(canvas, x, dy, 10.0, 10.0, 5.0, tiny_skia::Color::from_rgba8(c[0], c[1], c[2], 255));
+                        }
+                    });
                 }
                 let multi = selection.len() > 1 && selection.contains(&entry.path);
                 let count = selection.len();
@@ -1391,6 +1477,12 @@ impl Files {
                         m.separator();
                         if m.danger(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
                             chosen = Some(Action::Trash);
+                        }
+                        // Etiquetas de cor, como no Finder (as marcadas com um anel).
+                        m.separator();
+                        let marked: Vec<bool> = (0..files::TAGS.len()).map(|i| entry_tags.contains(&i)).collect();
+                        if let Some(i) = m.tags("Etiquetas", &marked) {
+                            chosen = Some(Action::Tag(i));
                         }
                         chosen
                     };
@@ -1661,6 +1753,34 @@ impl Files {
         if !self.waiting.is_empty() {
             ui.request_tick();
         }
+        // Renomear no lugar: Enter confirma, Esc cancela e clicar fora (o campo perde o
+        // foco) também confirma, como no Finder.
+        if let Some((path, name, _)) = inline.take() {
+            let escape = ui.input().key(Key::Escape);
+            let lost = !inline_was_focusing && !ui.typing();
+            if escape {
+                ui.blur();
+                ui.request_repaint();
+            } else if inline_done == Some(true) || lost {
+                ui.blur();
+                let current = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if name.trim().is_empty() || name == current {
+                    tracing::debug!("renomear no lugar: sem mudança");
+                } else {
+                    match files::rename(&path, name.trim()) {
+                        Ok(new_path) => {
+                            tracing::info!("renomeado: {} → {}", path.display(), new_path.display());
+                            self.reload();
+                            self.select_one(new_path);
+                        }
+                        Err(err) => self.message = Some(format!("Não foi possível renomear \"{current}\": {err}")),
+                    }
+                }
+                ui.request_repaint();
+            } else {
+                self.inline = Some((path, name, false));
+            }
+        }
         // Painel de prévia à direita, separado por uma linha fina.
         if preview_w > 0.0 {
             ui.at(region.0 + region.2 - preview_w, top, preview_w, |ui| self.preview_panel(ui, body_h));
@@ -1806,6 +1926,15 @@ impl Files {
                 Action::Rename => self.start_rename(entry.path.clone()),
                 Action::CopyPath => places::copy_text(&entry.path.to_string_lossy()),
                 Action::Info => self.show_info(&entry.path),
+                Action::Tag(i) => {
+                    for path in self.targets(&entry) {
+                        if let Err(err) = files::toggle_tag(&path, i) {
+                            self.message = Some(format!("Não foi possível marcar a etiqueta: {err}"));
+                        }
+                        self.tags.remove(&path);
+                    }
+                    ui.request_repaint();
+                }
                 Action::Terminal => places::open_terminal(&entry.path),
                 Action::Duplicate => {
                     for path in self.targets(&entry) {
@@ -2064,6 +2193,8 @@ enum Action {
     CopyPath,
     /// Obter informações (Ctrl+I).
     Info,
+    /// Liga ou desliga uma etiqueta de cor (índice em `files::TAGS`).
+    Tag(usize),
     Trash,
     Restore,
     Delete,
@@ -2164,6 +2295,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // `args_os`: nomes que não são UTF-8 (ex.: Latin-1 vindo do "Mostrar na pasta") chegam
     // com os bytes originais; `args()` entraria em pânico com eles.
     let start = parse_args(std::env::args_os().skip(1).collect());
+    // `--info item`: só a janela de informações dele.
+    if let Some(path) = start.info {
+        return mide::files_info::run_info(path);
+    }
     let mut app = Files::new(start.place);
     if !start.select.is_empty() {
         // Itens ocultos pedidos: os ocultos aparecem.
@@ -2176,9 +2311,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         app.reveal = start.select.first().cloned();
         app.selection = start.select;
-    }
-    if let Some(path) = start.info {
-        app.show_info(&path);
     }
     let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360).full_size_content();
     run(window, app)

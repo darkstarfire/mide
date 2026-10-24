@@ -59,7 +59,8 @@ prog_check "Abrir confia no atalho e roda o app do Exec" 'confiado: .*/editor.de
 prog_check "atalho confiado aparece com o nome do app" 'atalho .*/editor.desktop: "Meu Editor" \(ícone accessories-text-editor\)' "" "400 list" "$D"
 prog_check "lista: o atalho também mostra o app" 'atalho .*/editor.desktop: "Meu Editor"' "" "400 click 569 102; 440 list" "$D"
 prog_check "duplo clique no .desktop confiado abre o app do Exec" 'executar \(teste\): /opt/Meu Editor/editor --novo \(pasta /tmp\)' "perguntar" "$DOUBLE; 460 list" "$D"
-prog_check "Enter no .desktop escolhido abre o app" 'executar \(teste\): /opt/Meu Editor/editor --novo' "perguntar" "400 click 345 190; 430 key enter; 460 list" "$D"
+# Como no Finder, Enter renomeia; abrir é Ctrl+O (⌘O).
+prog_check "Ctrl+O no .desktop escolhido abre o app" 'executar \(teste\): /opt/Meu Editor/editor --novo' "perguntar" "400 click 345 190; 430 combo ctrl+o; 460 list" "$D"
 
 # ELF com nome de documento ou de biblioteca abre como documento, nunca roda.
 D="$(one disfarce)"

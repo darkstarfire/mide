@@ -174,6 +174,13 @@ pub fn user_choice(mime: &str) -> Option<String> {
     fs::read_to_string(user_file()?).ok().and_then(|t| default_in_text(&t, mime))
 }
 
+/// Grava o app padrão de um tipo de arquivo só (Obter informações → Abrir com →
+/// "Alterar todos").
+pub fn set_for_mime(mime: &str, desktop_id: &str) -> std::io::Result<()> {
+    let path = user_file().ok_or_else(|| std::io::Error::other("sem pasta de configuração"))?;
+    write_defaults(&path, &[mime], desktop_id)
+}
+
 /// Grava o app padrão de uma categoria no arquivo do mide.
 pub fn set(category: &Category, desktop_id: &str) -> std::io::Result<()> {
     let path = user_file().ok_or_else(|| std::io::Error::other("sem pasta de configuração"))?;

@@ -51,6 +51,8 @@ enum Leave {
     Editor,
     Files,
     Trash,
+    /// Arrastada para outro app (o arquivo foi junto).
+    DragOut,
 }
 
 struct Thumb {
@@ -69,6 +71,8 @@ struct Thumb {
     /// Desde quando o ponteiro está fora da camada com o menu aberto.
     away_since: Option<Instant>,
     animate: bool,
+    /// A miniatura está sendo arrastada para outro app (Telegram, WhatsApp, uma janela).
+    dragging_out: bool,
 }
 
 /// Abre a miniatura de `path` (a captura que acabou de ser salva).
@@ -80,7 +84,7 @@ pub fn run_thumbnail(path: PathBuf) -> Result<(), Box<dyn Error>> {
     let _ = std::fs::write(&pid_file, std::process::id().to_string());
     tracing::info!("miniatura da captura: {} ({}x{} pixels)", path.display(), image.width(), image.height());
     let animate = mide::settings_file::effect("transitions");
-    let app = Thumb { path, image, size, card: None, shown_at: None, deadline: Instant::now() + SHOW_FOR, leaving: None, press: None, offset: 0.0, away_since: None, animate };
+    let app = Thumb { path, image, size, card: None, shown_at: None, deadline: Instant::now() + SHOW_FOR, leaving: None, press: None, offset: 0.0, away_since: None, animate, dragging_out: false };
     let result = run(Window::new("Miniatura da captura").app_id("mide-screenshot-editor").corner("mide-captura-miniatura").size(LAYER.0, LAYER.1), app);
     // O arquivo do PID só sai se ainda for desta miniatura (uma nova pode ter gravado o dela).
     if std::fs::read_to_string(&pid_file).is_ok_and(|p| p.trim() == std::process::id().to_string()) {
@@ -104,6 +108,23 @@ fn thumb_size(px: (u32, u32), k: f32) -> (f32, f32) {
 /// da tela (o ponteiro para nela: a camada encosta na borda direita).
 fn dismiss_drag(start_x: f32, layer_w: f32) -> f32 {
     DISMISS_DRAG.min(layer_w - 4.0 - start_x).max(6.0)
+}
+
+/// Imagem que segue o ponteiro ao arrastar a captura: a própria captura, reduzida a
+/// no máximo 160 pixels, com cantos arredondados.
+fn drag_image(image: &Pixmap) -> Option<Pixmap> {
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    let k = (160.0 / w.max(h)).min(1.0);
+    let (dw, dh) = ((w * k).round().max(1.0), (h * k).round().max(1.0));
+    let mut out = Pixmap::new(dw as u32, dh as u32)?;
+    let mask = tiny_skia::Mask::new(dw as u32, dh as u32).and_then(|mut m| {
+        let path = mide::ui::draw::rounded_rect(0.0, 0.0, dw, dh, 8.0)?;
+        m.fill_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
+        Some(m)
+    });
+    let paint = tiny_skia::PixmapPaint { opacity: 0.9, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    out.draw_pixmap(0, 0, image.as_ref(), &paint, tiny_skia::Transform::from_scale(k, k), mask.as_ref());
+    Some(out)
 }
 
 /// Ainda é a miniatura da vez? Uma captura nova grava o PID dela no arquivo.
@@ -215,13 +236,18 @@ impl App for Thumb {
             animating = true;
         }
         dx += self.offset;
+        if self.dragging_out {
+            alpha *= 0.35;
+        }
         let rect = (rest.0 + dx, rest.1, rest.2, rest.3);
 
         if self.leaving.is_none() {
             let input = ui.input().clone();
             let menu = ui.menu_open();
             let over = input.over(rect);
-            if over || menu.is_some() || self.press.is_some() {
+            // Enquanto a captura é arrastada para outro app, a miniatura não some (o
+            // programa precisa entregar o arquivo quando soltar).
+            if over || menu.is_some() || self.press.is_some() || self.dragging_out {
                 self.deadline = self.deadline.max(now + LINGER);
             }
             // O menu de contexto fecha quando o ponteiro fica fora da camada (o clique
@@ -237,6 +263,20 @@ impl App for Thumb {
             if menu.is_none() {
                 if input.pressed && over {
                     self.press = input.pointer;
+                }
+                if let (Some(start), Some(p)) = (self.press, input.pointer) {
+                    let (mx, my) = (p.0 - start.0, p.1 - start.1);
+                    // Arrastar para a esquerda, para cima ou para baixo leva a captura para
+                    // outro app (como no Mac); para a direita, descarta.
+                    if input.down && !self.dragging_out && (mx < -6.0 || my.abs() > 6.0) {
+                        tracing::info!("miniatura: arrastando a captura para outro app");
+                        let icon = drag_image(&self.image);
+                        ui.start_drag(std::slice::from_ref(&self.path), icon);
+                        self.dragging_out = true;
+                        self.press = None;
+                        self.offset = 0.0;
+                        self.deadline = self.deadline.max(now + LINGER);
+                    }
                 }
                 if let (Some(start), Some(p)) = (self.press, input.pointer) {
                     // Só para a direita (para fora da tela); para a esquerda fica no lugar.
@@ -259,6 +299,12 @@ impl App for Thumb {
                     self.press = None;
                     self.offset = 0.0;
                 }
+            }
+            // O arrasto para outro app acabou (solto ou cancelado): a miniatura sai, e a
+            // captura continua salva.
+            if self.dragging_out && input.drag_ended {
+                self.dragging_out = false;
+                self.leave(Leave::DragOut);
             }
             // Clique direito: o menu.
             let r = ui.background(rect);

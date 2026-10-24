@@ -13,6 +13,7 @@ pub mod default_apps;
 pub mod displays;
 pub mod elevate;
 pub mod files;
+pub mod files_info;
 pub mod files_view;
 pub mod gmenu;
 pub mod icons;

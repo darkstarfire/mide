@@ -422,6 +422,8 @@ pub struct Memory {
     arrange_drag: Option<ArrangeDrag>,
     /// O próximo `text_input` desenhado recebe o foco (`Ui::focus_next_input`).
     focus_next: bool,
+    /// Com o foco dado por `focus_next_input_selecting`: escolhe só até este byte.
+    focus_select_end: Option<usize>,
     /// Cursor e seleção do campo com foco.
     edit: super::textedit::Edit,
     /// Rolagem horizontal do texto do campo com foco (texto maior que o campo).
@@ -1043,6 +1045,40 @@ impl<'a> Ui<'a> {
         width
     }
 
+    /// Os botões da janela de um painel que não muda de tamanho (Sobre este
+    /// computador): só o de fechar funciona; minimizar e maximizar ficam cinza.
+    pub fn window_close_only(&mut self, x: f32, y: f32) {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = (x - 3.0, y - 3.0, LIGHT_SIZE + 6.0, LIGHT_SIZE + 6.0);
+        let r = self.interact(id, rect);
+        if r.clicked {
+            self.ctx.window_request = Some(WindowRequest::Close);
+        }
+        let focused = self.ctx.input.focused;
+        let red = if focused || r.hovered { LIGHT_COLORS[0] } else { t.shade(if t.dark { 60 } else { 38 }) };
+        fill_rounded(self.canvas, x, y, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE / 2.0, color(red));
+        if r.hovered {
+            let (mx, my, k) = (x + LIGHT_SIZE / 2.0, y + LIGHT_SIZE / 2.0, 3.4);
+            let mut pb = tiny_skia::PathBuilder::new();
+            pb.move_to(mx - k, my - k);
+            pb.line_to(mx + k, my + k);
+            pb.move_to(mx + k, my - k);
+            pb.line_to(mx - k, my + k);
+            if let Some(path) = pb.finish() {
+                let mut paint = tiny_skia::Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(color([0, 0, 0, 150]));
+                let stroke = tiny_skia::Stroke { width: 1.4, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+                self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+            }
+        }
+        for i in 1..3 {
+            let cx = x + i as f32 * LIGHT_STEP;
+            fill_rounded(self.canvas, cx, y, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE / 2.0, color(t.shade(if t.dark { 60 } else { 38 })));
+        }
+    }
+
     /// Vazio que arrasta a janela (barra de ferramentas, topo da barra lateral) num app
     /// de conteúdo inteiro: chamar **depois** de desenhar os controles da área, que têm
     /// prioridade. Apertar e arrastar move a janela; duplo clique maximiza ou restaura.
@@ -1300,6 +1336,14 @@ impl<'a> Ui<'a> {
     /// O próximo campo de texto desenhado já começa com o foco (para digitar).
     pub fn focus_next_input(&mut self) {
         self.ctx.memory.focus_next = true;
+        self.ctx.memory.focus_select_end = None;
+    }
+
+    /// Como `focus_next_input`, escolhendo só o começo do texto até o byte `end` (o
+    /// nome sem a extensão, ao renomear um arquivo, como no Finder).
+    pub fn focus_next_input_selecting(&mut self, end: usize) {
+        self.ctx.memory.focus_next = true;
+        self.ctx.memory.focus_select_end = Some(end);
     }
 
     /// Tira o foco do campo de texto (um diálogo que fechou devolve as teclas ao app).
@@ -1673,6 +1717,47 @@ impl<'a> Ui<'a> {
     pub fn label(&mut self, s: &str) {
         let t = self.ctx.theme.clone();
         self.paragraph(s, t.font, t.text);
+    }
+
+    /// Título grande e centralizado (o nome do computador no "Sobre").
+    pub fn centered_title(&mut self, s: &str) {
+        let t = self.ctx.theme.clone();
+        let size = 22.0;
+        let shown = self.fit(s, size, FontWeight::Bold, self.width);
+        let rect = self.alloc(None, size * 1.35);
+        let w = self.measure(&shown, size, FontWeight::Bold);
+        self.draw_text(&shown, rect.0 + (rect.2 - w) / 2.0, rect.1, size, FontWeight::Bold, t.text);
+    }
+
+    /// Texto pequeno e cinza, centralizado, quebrando a linha quando não cabe.
+    pub fn centered_note(&mut self, s: &str) {
+        let t = self.ctx.theme.clone();
+        let size = t.font_small;
+        let mut lines: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for word in s.split_whitespace() {
+            let candidate = if current.is_empty() { word.to_string() } else { format!("{current} {word}") };
+            if self.measure(&candidate, size, FontWeight::Regular) > self.width && !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current = word.to_string();
+            } else {
+                current = candidate;
+            }
+        }
+        lines.push(current);
+        let line_h = size * 1.4;
+        let rect = self.alloc(None, line_h * lines.len() as f32);
+        for (i, line) in lines.iter().enumerate() {
+            let w = self.measure(line, size, FontWeight::Regular);
+            self.draw_text(line, rect.0 + (rect.2 - w) / 2.0, rect.1 + i as f32 * line_h, size, FontWeight::Regular, t.text_secondary);
+        }
+    }
+
+    /// Espaço na horizontal dentro de uma linha (`row`).
+    pub fn space_x(&mut self, width: f32) {
+        if self.flow != Flow::Column {
+            self.row_x += width.max(0.0);
+        }
     }
 
     /// Texto menor e cinza, para explicações.
@@ -2269,6 +2354,57 @@ impl<'a> Ui<'a> {
         self.draw_text(text, rect.0 + (w - tw) / 2.0, rect.1 + 2.0, 11.0, FontWeight::Semibold, [255, 255, 255, 255]);
     }
 
+    /// Bolinha de etiqueta clicável (Obter informações, menus): a cor cheia e, se
+    /// marcada, um anel em volta.
+    pub fn tag_toggle(&mut self, c: Rgba, on: bool) -> Response {
+        let id = self.ctx.id();
+        let rect = self.alloc(Some(22.0), 22.0);
+        let r = self.interact(id, rect);
+        let grow = if r.hovered { 1.0 } else { 0.0 };
+        fill_rounded(self.canvas, rect.0 + 3.0 - grow, rect.1 + 3.0 - grow, 16.0 + 2.0 * grow, 16.0 + 2.0 * grow, 8.0 + grow, color(c));
+        if on {
+            let t = self.ctx.theme.clone();
+            outline(self.canvas, rect, 11.0, t.text);
+        }
+        r
+    }
+
+    /// Linha "chave: valor" (Obter informações, Sobre este computador): a chave em
+    /// cinza, alinhada à direita numa coluna de `key_w`, e o valor ao lado, quebrando
+    /// a linha quando não cabe. Devolve a resposta da área do valor (clique direito).
+    pub fn key_value(&mut self, key: &str, value: &str, key_w: f32) -> Response {
+        let t = self.ctx.theme.clone();
+        let size = t.font_small;
+        let line_h = size * 1.4;
+        let value_w = (self.width - key_w - 8.0).max(40.0);
+        let mut lines: Vec<String> = Vec::new();
+        for para in value.split('\n') {
+            let mut current = String::new();
+            for word in para.split_whitespace() {
+                let candidate = if current.is_empty() { word.to_string() } else { format!("{current} {word}") };
+                if self.measure(&candidate, size, FontWeight::Regular) > value_w && !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                    current = word.to_string();
+                } else {
+                    current = candidate;
+                }
+            }
+            lines.push(current);
+        }
+        let h = line_h * lines.len().max(1) as f32;
+        let rect = self.alloc(None, h);
+        let id = self.ctx.id();
+        let r = self.interact(id, (rect.0 + key_w + 8.0, rect.1, value_w, h));
+        if self.visible(rect) {
+            let kw = self.measure(key, size, FontWeight::Semibold);
+            self.draw_text(key, rect.0 + key_w - kw, rect.1, size, FontWeight::Semibold, t.text_secondary);
+            for (i, line) in lines.iter().enumerate() {
+                self.draw_text(line, rect.0 + key_w + 8.0, rect.1 + i as f32 * line_h, size, FontWeight::Regular, t.text);
+            }
+        }
+        r
+    }
+
     /// Bolinhas de etiqueta (cores do Finder), uma sobre a outra como no Tahoe.
     pub fn tag_dots(&mut self, colors: &[Rgba]) {
         let n = colors.len();
@@ -2435,7 +2571,10 @@ impl<'a> Ui<'a> {
         let pointer_x = self.ctx.input.pointer.map(|(px, _)| px - self.offset.0 - inner.0 + self.ctx.memory.text_scroll);
         if std::mem::take(&mut self.ctx.memory.focus_next) {
             self.ctx.memory.focus = Some(id);
-            self.ctx.memory.edit = Edit::all(value);
+            self.ctx.memory.edit = match self.ctx.memory.focus_select_end.take() {
+                Some(end) if end <= value.len() && value.is_char_boundary(end) => Edit { cursor: end, anchor: Some(0) },
+                _ => Edit::all(value),
+            };
             self.ctx.memory.text_scroll = 0.0;
             self.ctx.repaint = true;
         } else if r.hovered && self.ctx.input.pressed {
@@ -3124,8 +3263,13 @@ impl<'a> Ui<'a> {
             return r;
         }
         let (ix, iy) = (rect.0 + (w - fw) / 2.0, rect.1 + 6.0);
-        if selected {
+        // Nome claro: ladrilho sobre o papel de parede (área de trabalho).
+        let on_wallpaper = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
+        if selected && on_wallpaper {
             crate::ui::draw::glass(self.canvas, ix - 8.0, iy - 6.0, fw + 16.0, fh + 12.0, 10.0);
+        } else if selected {
+            // Como no Finder: fundo cinza arredondado atrás do ícone.
+            fill_rounded(self.canvas, ix - 6.0, iy - 5.0, fw + 12.0, fh + 10.0, super::theme::RADIUS_ITEM, color(t.shade(if t.dark { 46 } else { 26 })));
         } else if r.hovered {
             fill_rounded(self.canvas, ix - 8.0, iy - 6.0, fw + 16.0, fh + 12.0, 10.0, color(t.control));
         }
