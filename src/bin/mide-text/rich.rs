@@ -186,6 +186,16 @@ pub struct Rich {
     print_dialog: Option<PrintDialog>,
     note_dialog: Option<NoteDialog>,
     table_dialog: Option<TableDialog>,
+    /// Ortografia: o dicionário (carregado em segundo plano), ligado ou não, as palavras
+    /// erradas de cada parágrafo e o que foi verificado (texto → erros).
+    speller: Option<mide::spell::Speller>,
+    speller_rx: Option<std::sync::mpsc::Receiver<Option<mide::spell::Speller>>>,
+    pub spell_on: bool,
+    misspelled: std::collections::HashMap<usize, Vec<(usize, usize)>>,
+    spell_cache: std::collections::HashMap<String, Vec<(usize, usize)>>,
+    spell_version: u64,
+    /// Palavra do menu de contexto: o intervalo, a palavra e as sugestões.
+    spell_target: Option<(Pos, Pos, String, Vec<String>)>,
     /// Célula a abrir depois da próxima quebra (a tabela mudou de forma).
     pending_cell: Option<(usize, usize, usize)>,
     outer: Option<Outer>,
@@ -245,6 +255,13 @@ impl Rich {
             note_dialog: None,
             table_dialog: None,
             pending_cell: None,
+            speller: None,
+            speller_rx: None,
+            spell_on: true,
+            misspelled: std::collections::HashMap::new(),
+            spell_cache: std::collections::HashMap::new(),
+            spell_version: u64::MAX,
+            spell_target: None,
             outer: None,
             full: None,
             wants_pdf_path: None,
@@ -840,6 +857,155 @@ impl Rich {
         self.version += 1;
     }
 
+    /// Carrega o dicionário em segundo plano (uma vez) e marca as palavras erradas quando
+    /// o texto muda.
+    fn spelling(&mut self, ui: &mut Ui) {
+        if self.speller.is_none() && self.speller_rx.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let waker = ui.waker();
+            std::thread::spawn(move || {
+                let s = mide::spell::Speller::load_default();
+                if s.is_none() {
+                    tracing::info!("editor: sem dicionário de ortografia (instale o hunspell-pt-br)");
+                }
+                let _ = tx.send(s);
+                if let Some(w) = waker {
+                    w.wake();
+                }
+            });
+            self.speller_rx = Some(rx);
+        }
+        if let Some(rx) = &self.speller_rx {
+            if let Ok(s) = rx.try_recv() {
+                if let Some(s) = &s {
+                    tracing::info!("editor: dicionário de ortografia {}", s.language);
+                }
+                self.speller = s;
+                self.speller_rx = None;
+                self.spell_version = u64::MAX;
+            }
+        }
+        if self.speller.is_none() {
+            self.misspelled.clear();
+            return;
+        }
+        if !self.spell_on {
+            self.misspelled.clear();
+            return;
+        }
+        // Só o documento de fora (as células ficam para depois) e só quando muda.
+        let key = self.version ^ ((self.cursor.para as u64) << 40) ^ ((self.cursor.off as u64) << 20);
+        if key == self.spell_version {
+            return;
+        }
+        self.spell_version = key;
+        let typing = self.last_kind.is_some_and(|(k, _)| k == Kind::Typing);
+        let mut cache = std::mem::take(&mut self.spell_cache);
+        let (Some(speller), doc) = (&self.speller, self.full.as_ref().map_or(&self.doc, |f| &f.0)) else {
+            return;
+        };
+        let mut out = std::collections::HashMap::new();
+        let mut used = std::collections::HashMap::new();
+        for (i, p) in doc.paras.iter().enumerate() {
+            if p.is_object() || p.text.is_empty() {
+                continue;
+            }
+            let bad = match cache.remove(&p.text) {
+                Some(b) => b,
+                None => mide::spell::words(&p.text).into_iter().filter(|&(a, b)| !speller.check(&p.text[a..b])).collect(),
+            };
+            // A palavra que está sendo digitada não aparece errada antes de terminar.
+            let shown: Vec<(usize, usize)> = bad.iter().copied().filter(|&(a, b)| !(typing && self.outer.is_none() && self.cursor.para == i && self.cursor.off >= a && self.cursor.off <= b)).collect();
+            if !shown.is_empty() {
+                out.insert(i, shown);
+            }
+            used.insert(p.text.clone(), bad);
+        }
+        self.spell_cache = used;
+        self.misspelled = out;
+    }
+
+    /// Clique direito numa palavra errada: guarda as sugestões para o menu.
+    fn spell_menu_at(&mut self, pos: Pos) {
+        self.spell_target = None;
+        if self.outer.is_some() {
+            return;
+        }
+        let Some(words) = self.misspelled.get(&pos.para) else {
+            return;
+        };
+        let Some(&(a, b)) = words.iter().find(|(a, b)| pos.off >= *a && pos.off <= *b) else {
+            return;
+        };
+        let word = self.doc.paras[pos.para].text[a..b].to_string();
+        let sugg = self.speller.as_ref().map(|s| s.suggest(&word, 6)).unwrap_or_default();
+        self.anchor = Pos::new(pos.para, a);
+        self.cursor = Pos::new(pos.para, b);
+        self.spell_target = Some((Pos::new(pos.para, a), Pos::new(pos.para, b), word, sugg));
+    }
+
+    /// Menu de contexto das páginas: sugestões de ortografia e as ações de edição.
+    fn context_menu(&mut self, ui: &mut Ui, area: (f32, f32, f32, f32)) {
+        let r = ui.background(area);
+        let target = self.spell_target.clone();
+        let mut chosen: Option<String> = None;
+        let mut learn = false;
+        let mut ignore = false;
+        let mut action: Option<&str> = None;
+        let has_sel = self.sel().is_some();
+        ui.context_menu(&r, |m| {
+            if let Some((_, _, _, sugg)) = &target {
+                if sugg.is_empty() {
+                    m.item("Nenhuma sugestão");
+                }
+                for s in sugg {
+                    if m.item(s) {
+                        chosen = Some(s.clone());
+                    }
+                }
+                m.separator();
+                if m.item("Aprender ortografia") {
+                    learn = true;
+                }
+                if m.item("Ignorar") {
+                    ignore = true;
+                }
+                m.separator();
+            }
+            if has_sel && m.item("Recortar") {
+                action = Some("recortar");
+            }
+            if has_sel && m.item("Copiar") {
+                action = Some("copiar");
+            }
+            if m.item("Colar") {
+                action = Some("colar");
+            }
+        });
+        if let Some((a, b, word, _)) = target.filter(|_| chosen.is_some() || learn || ignore) {
+            if let Some(new) = chosen {
+                self.begin(None);
+                let style = self.doc.style_at(self.doc.next(a));
+                self.doc.delete(a, b);
+                self.cursor = self.doc.insert_text(a, &new, &style);
+                self.anchor = self.cursor;
+            }
+            if let Some(s) = self.speller.as_mut() {
+                if learn {
+                    s.learn(&word);
+                } else if ignore {
+                    s.ignore(&word);
+                }
+            }
+            self.spell_cache.clear();
+            self.spell_version = u64::MAX;
+            self.spell_target = None;
+        }
+        if let Some(a) = action {
+            self.command(a, ui);
+        }
+    }
+
     pub fn toggle_find(&mut self) {
         self.find = match self.find.take() {
             Some(_) => None,
@@ -1179,6 +1345,10 @@ impl Rich {
                 }
             }
             "buscar" => self.toggle_find(),
+            "ortografia" => {
+                self.spell_on = !self.spell_on;
+                self.spell_version = u64::MAX;
+            }
             _ => return false,
         }
         ui.request_repaint();
@@ -1500,6 +1670,14 @@ impl Rich {
             }
             ui.request_repaint();
         }
+        if input.secondary && inside && self.outer.is_none() {
+            let pos = self.hit(area, p);
+            self.spell_menu_at(pos);
+            if self.spell_target.is_none() && self.sel().is_none_or(|(a, b)| pos < a || pos > b) {
+                self.cursor = pos;
+                self.anchor = pos;
+            }
+        }
         if input.pressed && inside && p.0 < area.0 + area.2 - 14.0 {
             // Clique numa célula: entra nela; fora da célula em edição: sai dela.
             let (page, x, y) = self.to_page(area, p);
@@ -1663,6 +1841,7 @@ impl Rich {
                 }
             }
         }
+        self.spelling(ui);
         let max_scroll = (self.content_height() - area.3).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max_scroll);
         // Páginas.
@@ -1682,6 +1861,7 @@ impl Rich {
         let tops: Vec<(usize, f32)> = (0..pages).map(|i| (i, self.page_top(area, i))).filter(|(_, t)| *t + ph >= area.1 && *t <= area.1 + area.3).collect();
         let z = self.z();
         let scroll = self.scroll;
+        let spelling = (!self.misspelled.is_empty() && self.outer.is_none()).then_some(&self.misspelled);
         let (doc, layout) = match &self.full {
             Some((d, l)) => (d, l),
             None => (&self.doc, &self.layout),
@@ -1703,6 +1883,7 @@ impl Rich {
                     caret_color: [0, 0, 0, 255],
                     visible: (area.1 * k, (area.1 + area.3) * k),
                     cell: cell_edit,
+                    misspelled: spelling,
                 };
                 render::draw_page(text, layouter, pixmap, doc, layout, &view);
             }
@@ -1737,6 +1918,12 @@ impl Rich {
         ui.at(0.0, h - STATUS_H, w, |ui| {
             ui.status_bar(&status);
         });
+        // O menu de contexto é desenhado a cada quadro enquanto está aberto (só os
+        // diálogos o impedem).
+        let dialog = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
+        if !dialog {
+            self.context_menu(ui, area);
+        }
         self.popovers(ui);
         self.dialogs(ui);
     }
@@ -2257,7 +2444,7 @@ impl Rich {
             ui.paint_text(|pixmap, text, _| {
                 mide::ui::draw::soft_shadow(pixmap, x, y, tw, ph * scale, 0.0, 6.0, 1.0, 50);
                 mide::ui::draw::paint_rounded_solid(pixmap, x, y, tw, ph * scale, 0.0, [255, 255, 255, 255]);
-                let view = render::View { page, origin: (x * k, y * k), scale: scale * k, selection: None, caret: None, selection_color: [0; 4], caret_color: [0; 4], visible: (y * k, (y + ph * scale) * k), cell: None };
+                let view = render::View { page, origin: (x * k, y * k), scale: scale * k, selection: None, caret: None, selection_color: [0; 4], caret_color: [0; 4], visible: (y * k, (y + ph * scale) * k), cell: None, misspelled: None };
                 render::draw_page(text, layouter, pixmap, doc, layout, &view);
             });
         }

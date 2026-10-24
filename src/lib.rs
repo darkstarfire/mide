@@ -3,6 +3,7 @@
 
 pub mod annotate;
 pub mod richtext;
+pub mod spell;
 pub mod apps;
 pub mod appimage;
 pub mod appearance;

@@ -8,7 +8,7 @@ use super::{CharStyle, Doc, NumberPosition, Pos};
 
 /// Como desenhar: a página `page`, com o canto em `origin` (pixels) e `scale` pixels por
 /// ponto; seleção e cursor, se houver.
-pub struct View {
+pub struct View<'a> {
     pub page: usize,
     pub origin: (f32, f32),
     pub scale: f32,
@@ -21,6 +21,8 @@ pub struct View {
     /// Célula sendo editada: tabela (parágrafo), linha, coluna, a seleção e o cursor
     /// dentro dela.
     pub cell: Option<CellEdit>,
+    /// Palavras com erro de ortografia de cada parágrafo (bytes): ondulado vermelho.
+    pub misspelled: Option<&'a std::collections::HashMap<usize, Vec<(usize, usize)>>>,
 }
 
 /// Cursor e seleção dentro de uma célula de tabela.
@@ -50,7 +52,7 @@ fn draw_glyphs(text: &mut crate::ui::text::Text, pixmap: &mut Pixmap, glyphs: &[
 }
 
 /// Desenha uma página (o fundo branco fica com quem chama).
-pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixmap: &mut Pixmap, doc: &Doc, layout: &Layout, view: &View) {
+pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixmap: &mut Pixmap, doc: &Doc, layout: &Layout, view: &View<'_>) {
     let s = view.scale;
     let left = view.origin.0 + doc.page.margins[3] * s;
     let sel = view.selection.map(|(a, b)| if a <= b { (a, b) } else { (b, a) }).filter(|(a, b)| a != b);
@@ -107,6 +109,7 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
                     caret_color: view.caret_color,
                     visible: view.visible,
                     cell: None,
+                    misspelled: None,
                 };
                 draw_page(text, layouter, pixmap, &cell.doc, &cell_box.layout, &sub);
                 if table.borders {
@@ -169,6 +172,30 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
             while x < b - 4.0 {
                 fill(pixmap, left + x * s, baseline - dot, dot, dot, [c[0], c[1], c[2], 255]);
                 x += 4.0;
+            }
+        }
+        // Ortografia: ondulado vermelho embaixo das palavras erradas desta linha.
+        if let Some(words) = view.misspelled.and_then(|m| m.get(&placed.para)) {
+            let x_at = |off: usize| {
+                let mut x = line.x0;
+                for &(o, cx) in &line.carets {
+                    if o <= off {
+                        x = cx;
+                    }
+                }
+                x
+            };
+            let dot = (1.3 * s).max(1.5);
+            for &(a, b) in words.iter().filter(|(a, b)| *b > line.start && *a < line.end) {
+                let (xa, xb) = (x_at(a.max(line.start)), x_at(b.min(line.end)));
+                let y = baseline + (line.descent * 0.55) * s;
+                let mut x = left + xa * s;
+                let mut up = false;
+                while x < left + xb * s {
+                    fill(pixmap, x, y + if up { 0.0 } else { dot }, dot, dot, [230, 40, 40, 255]);
+                    x += dot;
+                    up = !up;
+                }
             }
         }
         // Sublinhado e tachado.

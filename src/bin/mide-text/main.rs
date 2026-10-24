@@ -615,6 +615,7 @@ impl App for Editor {
                         MenuItem::action("selecionar-tudo", "Selecionar tudo").shortcut("Ctrl+A"),
                         MenuItem::Separator,
                         MenuItem::action("buscar", "Buscar e substituir…").shortcut("Ctrl+F"),
+                        MenuItem::action("ortografia", "Verificar ortografia ao digitar").checked(r.spell_on),
                     ],
                 },
             ];
