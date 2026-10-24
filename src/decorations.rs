@@ -342,6 +342,39 @@ void main() {
 }
 "#;
 
+/// Sombra de uma janela desenhada logo atrás dela (por cima das janelas de baixo e do
+/// fundo): preto com a transparência da sombra, nada por dentro da moldura.
+const WINDOW_SHADOW_SRC: &str = r#"
+precision highp float;
+uniform float alpha;
+uniform vec2 size;
+uniform vec4 frame;
+uniform float strength;
+uniform float radius;
+uniform float offset_y;
+uniform float margin;
+varying vec2 v_coords;
+
+float sd_round_box(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + vec2(r);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
+}
+
+void main() {
+    vec2 p = v_coords * size;
+    vec2 half_size = frame.zw * 0.5;
+    // Dentro da janela, nada (a janela pode ser translúcida).
+    if (sd_round_box(p - (frame.xy + half_size), half_size, radius) < 0.0) {
+        gl_FragColor = vec4(0.0);
+        return;
+    }
+    float d = sd_round_box(p - (frame.xy + half_size + vec2(0.0, offset_y)), half_size, radius);
+    float f = 1.0 - smoothstep(0.0, margin, d);
+    float a = strength * f * f * alpha;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+}
+"#;
+
 /// Programas de shader usados pela decoração. Compilados uma vez na inicialização.
 pub struct Shaders {
     rounded: GlesPixelProgram,
@@ -350,6 +383,7 @@ pub struct Shaders {
     outline: GlesPixelProgram,
     glyph: GlesPixelProgram,
     glass: GlesPixelProgram,
+    window_shadow: GlesPixelProgram,
 }
 
 impl Shaders {
@@ -389,7 +423,18 @@ impl Shaders {
             ],
         )?;
         let glass = renderer.compile_custom_pixel_shader(GLASS_SRC, &[UniformName::new("radius", UniformType::_1f)])?;
+        let window_shadow = renderer.compile_custom_pixel_shader(
+            WINDOW_SHADOW_SRC,
+            &[
+                UniformName::new("frame", UniformType::_4f),
+                UniformName::new("strength", UniformType::_1f),
+                UniformName::new("radius", UniformType::_1f),
+                UniformName::new("offset_y", UniformType::_1f),
+                UniformName::new("margin", UniformType::_1f),
+            ],
+        )?;
         Ok(Self {
+            window_shadow,
             rounded,
             desktop,
             clip_tex,
@@ -553,9 +598,23 @@ pub fn desktop_element(shaders: &Shaders, output: Rect, bg: [f32; 4], casters: &
     pixel(&shaders.desktop, 3, output, uniforms)
 }
 
+/// Sombra de uma janela (moldura `frame`, cantos `radius`), para pôr logo atrás dela
+/// na cena: cai sobre o fundo e sobre as janelas de baixo.
+pub fn window_shadow_element(shaders: &Shaders, frame: Rect, radius: f32, strength: f32) -> PixelShaderElement {
+    let m = SHADOW_MARGIN;
+    let area = Rect::new((frame.loc.x - m, frame.loc.y - m).into(), (frame.size.w + 2 * m, frame.size.h + 2 * m + SHADOW_OFFSET).into());
+    pixel(&shaders.window_shadow, 7, area, vec![
+        Uniform::new("frame", [m as f32, m as f32, frame.size.w as f32, frame.size.h as f32]),
+        Uniform::new("strength", strength),
+        Uniform::new("radius", radius),
+        Uniform::new("offset_y", SHADOW_OFFSET as f32),
+        Uniform::new("margin", m as f32),
+    ])
+}
+
 /// Intensidade da sombra de uma janela.
 pub fn shadow_strength(focused: bool) -> f32 {
-    if focused { 0.45 } else { 0.25 }
+    if focused { 0.36 } else { 0.2 }
 }
 
 /// Os shaders daqui calculam em pontos (o `size` que o Smithay passa é o da área em
@@ -607,9 +666,9 @@ impl Shaders {
 }
 
 /// Margem em pixels em volta da janela onde a sombra aparece.
-pub const SHADOW_MARGIN: i32 = 24;
+pub const SHADOW_MARGIN: i32 = 18;
 /// Deslocamento da sombra para baixo, em pixels.
-pub const SHADOW_OFFSET: i32 = 8;
+pub const SHADOW_OFFSET: i32 = 6;
 
 /// Traço de 1 px em volta da janela inteira, seguindo os cantos arredondados.
 pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool, radius: f32) -> PixelShaderElement {

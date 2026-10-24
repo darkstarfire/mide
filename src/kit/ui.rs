@@ -817,6 +817,9 @@ pub struct Ui<'a> {
     toggled: bool,
     /// O próximo `text_input` é um campo de busca em cápsula (`Ui::search_field`).
     search_look: bool,
+    /// Dentro de um cartão: o recuo dos itens até a borda dele (o destaque das linhas
+    /// vai de borda a borda).
+    card_inset: f32,
 }
 
 impl<'a> Ui<'a> {
@@ -844,6 +847,7 @@ impl<'a> Ui<'a> {
             next_width: None,
             toggled: false,
             search_look: false,
+            card_inset: 0.0,
         }
     }
 
@@ -974,8 +978,9 @@ impl<'a> Ui<'a> {
     /// Os três botões da janela (fechar, minimizar, maximizar), com o canto de cima à
     /// esquerda do primeiro em (`x`, `y`), para apps de conteúdo inteiro
     /// (`Window::full_size_content`): no Tahoe ficam dentro da barra lateral ou no
-    /// canto da barra de ferramentas. Sem foco, ficam cinza; com o ponteiro sobre o
-    /// grupo, mostram os símbolos. Devolve a largura ocupada.
+    /// canto da barra de ferramentas. Sem foco, ficam cinza (coloridos com o ponteiro
+    /// sobre o grupo); o símbolo aparece só no botão sob o ponteiro. Devolve a
+    /// largura ocupada.
     pub fn window_controls(&mut self, x: f32, y: f32) -> f32 {
         let t = self.ctx.theme.clone();
         let width = LIGHT_STEP * 2.0 + LIGHT_SIZE;
@@ -1000,7 +1005,8 @@ impl<'a> Ui<'a> {
                 paint.set_color(color([0, 0, 0, 30]));
                 self.canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 0.5, ..Default::default() }, crate::ui::draw::tf(), None);
             }
-            if group_hover {
+            // Símbolo só no botão sob o ponteiro (os outros ficam só com a cor).
+            if r.hovered {
                 let mut pb = tiny_skia::PathBuilder::new();
                 let (mx, my) = (cx + LIGHT_SIZE / 2.0, y + LIGHT_SIZE / 2.0);
                 let k = 3.4;
@@ -1312,6 +1318,13 @@ impl<'a> Ui<'a> {
     /// um `popover` desenhado no fim do `view`.
     pub fn to_window(&self, rect: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
         (rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3)
+    }
+
+    /// O próximo item encosta neste, sem o espaçamento do tema (barras do rodapé).
+    fn tight_after(&mut self) {
+        if self.flow == Flow::Column {
+            self.cursor_y -= self.ctx.theme.spacing;
+        }
     }
 
     /// Largura que ainda sobra na linha atual (numa `row`/`toolbar`), a partir do
@@ -3015,15 +3028,25 @@ impl<'a> Ui<'a> {
         let t = self.ctx.theme.clone();
         let id = self.ctx.id();
         let rect = self.alloc(None, t.row);
+        let first = self.card_first;
         self.card_line(rect.1);
-        let r = self.interact(id, (rect.0 - 8.0, rect.1, rect.2 + 16.0, rect.3));
+        // Num cartão, a linha inteira (de borda a borda, de divisória a divisória)
+        // recebe o clique e o destaque; fora dele, uma pílula com folga.
+        let full = if self.in_card {
+            let up = if first { 6.0 } else { t.spacing / 2.0 - 0.5 };
+            let inset = self.card_inset;
+            (rect.0 - inset, rect.1 - up, rect.2 + 2.0 * inset, rect.3 + up + t.spacing / 2.0 + 0.5)
+        } else {
+            (rect.0 - 8.0, rect.1 + 3.0, rect.2 + 16.0, rect.3 - 6.0)
+        };
+        let r = self.interact(id, (full.0, rect.1, full.2, rect.3));
         // Fora da área à vista: só o lugar e o clique (listas longas desenham só o visível).
         if !self.visible(rect) {
             return r;
         }
-        // Destaque como o da barra lateral: pílula arredondada com folga, cinza claro.
         if r.hovered {
-            fill_rounded(self.canvas, rect.0 - 8.0, rect.1 + 3.0, rect.2 + 16.0, rect.3 - 6.0, t.control_radius, color(t.control));
+            let radius = if self.in_card { 0.0 } else { t.control_radius };
+            fill_rounded(self.canvas, full.0, full.1, full.2, full.3, radius, color(t.control));
         }
         let dw = if detail.is_empty() { 0.0 } else { self.measure(detail, t.font_small, FontWeight::Regular) + 12.0 };
         let label = self.fit(label, t.font, FontWeight::Regular, rect.2 - dw);
@@ -3149,6 +3172,14 @@ impl<'a> Ui<'a> {
         self.flow = Flow::Column;
         add(self);
         (self.x, self.width, self.cursor_y, self.flow, self.row_x, self.row_h) = saved;
+    }
+
+    /// Desenha `add` recortado no retângulo `rect` (nesta área): o que passa das bordas
+    /// não aparece (colunas do Finder deslizando para o lado). Dentro, as coordenadas
+    /// começam no canto do retângulo.
+    pub fn clip(&mut self, rect: (f32, f32, f32, f32), add: impl FnOnce(&mut Ui)) {
+        let (inner, _) = self.sub_area_from(rect.0, rect.1, rect.2, rect.3, rect.1, true, add);
+        copy_back(&inner, self.canvas, crate::ui::draw::px(rect.0), crate::ui::draw::px(rect.1));
     }
 
     /// Cabeçalho de uma lista em colunas (como no Finder): "Nome" à esquerda e as
@@ -3459,7 +3490,11 @@ impl<'a> Ui<'a> {
     /// clicado.
     pub fn path_bar(&mut self, parts: &[(String, String)]) -> Option<usize> {
         let t = self.ctx.theme.clone();
-        let rect = self.alloc(None, 24.0);
+        // Rodapé do Finder: 28 de altura, linha fina só em cima, sem espaço até a
+        // barra de status embaixo.
+        let h = 28.0;
+        let rect = self.alloc(None, h);
+        self.tight_after();
         fill_rounded(self.canvas, rect.0, rect.1, rect.2, 1.0, 0.0, color(t.line));
         // Sem espaço para tudo: os primeiros nomes encolhem antes do último.
         let room = rect.2 - 16.0;
@@ -3472,22 +3507,22 @@ impl<'a> Ui<'a> {
             let limit = if last { (rect.0 + rect.2 - x - 28.0).max(40.0) } else { each };
             let shown = self.fit(name, t.font_small, FontWeight::Regular, limit);
             let w = 20.0 + self.measure(&shown, t.font_small, FontWeight::Regular);
-            let cell = (x - 3.0, rect.1 + 3.0, w + 6.0, 18.0);
+            let cell = (x - 4.0, rect.1 + (h - 20.0) / 2.0, w + 8.0, 20.0);
             let id = self.ctx.id();
             let r = self.interact(id, cell);
             if r.hovered {
-                fill_rounded(self.canvas, cell.0, cell.1, cell.2, cell.3, 5.0, color(t.control));
+                fill_rounded(self.canvas, cell.0, cell.1, cell.2, cell.3, 10.0, color(t.control));
             }
             if let Some(pix) = self.ctx.icon(&[icon.as_str(), "folder"], 16, false) {
-                crate::ui::draw::blit(self.canvas, &pix, x as i32, (rect.1 + 4.0) as i32, 1.0);
+                crate::ui::draw::blit(self.canvas, &pix, x as i32, (rect.1 + (h - 16.0) / 2.0) as i32, 1.0);
             }
-            self.draw_text(&shown, x + 20.0, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text);
+            self.draw_text(&shown, x + 20.0, rect.1 + (h - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text);
             if r.clicked {
                 clicked = Some(i);
             }
             x += w + 6.0;
             if !last {
-                self.draw_text("›", x, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
+                self.draw_text("›", x, rect.1 + (h - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
                 x += 12.0;
             }
         }
@@ -3499,11 +3534,12 @@ impl<'a> Ui<'a> {
     /// por cima, como o zoom dos ícones).
     pub fn status_bar(&mut self, text: &str) -> (f32, f32, f32, f32) {
         let t = self.ctx.theme.clone();
-        let rect = self.alloc(None, 24.0);
-        fill_rounded(self.canvas, rect.0, rect.1, rect.2, 1.0, 0.0, color(t.line));
+        let h = 26.0;
+        let rect = self.alloc(None, h);
+        self.tight_after();
         let shown = self.fit(text, t.font_small, FontWeight::Regular, rect.2 - 360.0);
         let w = self.measure(&shown, t.font_small, FontWeight::Regular);
-        self.draw_text(&shown, rect.0 + (rect.2 - w) / 2.0, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
+        self.draw_text(&shown, rect.0 + (rect.2 - w) / 2.0, rect.1 + (h - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
         rect
     }
 
@@ -3625,6 +3661,7 @@ impl<'a> Ui<'a> {
                 next_width: None,
                 toggled: false,
                 search_look: false,
+                card_inset: 0.0,
             };
             add(&mut child);
             child.cursor_y - first
@@ -3637,36 +3674,48 @@ impl<'a> Ui<'a> {
         let t = self.ctx.theme.clone();
         let (pad_x, pad_y) = (16.0, 6.0);
         let x = self.x;
-        let inner_w = self.width - 2.0 * pad_x;
+        let card_w = self.width;
+        let inner_w = card_w - 2.0 * pad_x;
         let y0 = self.cursor_y;
-        // Só a parte do cartão que aparece na tela ganha imagem.
+        // Só a parte do cartão que aparece na tela ganha imagem. A imagem tem a largura
+        // do cartão inteiro (os itens ficam recuados): o destaque das linhas vai de borda
+        // a borda e os cantos são recortados na volta.
         let top = (y0 + pad_y).max(self.visible.0);
         let bottom = self.visible.1;
         let mut first = true;
-        let (inner, used) = self.sub_area(x + pad_x, top, inner_w, bottom - top, y0 + pad_y, |ui| {
+        let (inner, used) = self.sub_area(x, top, card_w, bottom - top, y0 + pad_y, |ui| {
+            ui.x = pad_x;
+            ui.width = inner_w;
             ui.in_card = true;
+            ui.card_inset = pad_x;
             ui.card_first = first;
             add(ui);
             first = ui.card_first;
         });
         let _ = first;
         let h = (used - t.spacing).max(0.0) + 2.0 * pad_y;
-        fill_rounded(self.canvas, x, y0, self.width, h, t.radius, color(t.card));
-        if let Some(path) = rounded_rect(x + 0.5, y0 + 0.5, self.width - 1.0, h - 1.0, t.radius) {
+        fill_rounded(self.canvas, x, y0, card_w, h, t.radius, color(t.card));
+        if bottom > top {
+            // Recorta no fim do cartão (a imagem cobre a faixa visível inteira) e nos
+            // cantos arredondados dele.
+            let k = crate::ui::draw::scale();
+            let clip_h = (((y0 + h) - top) * k).min(inner.height() as f32).max(0.0) as u32;
+            if clip_h > 0 {
+                if let Some(part) = inner.clone_rect(tiny_skia::IntRect::from_xywh(0, 0, inner.width(), clip_h).unwrap()) {
+                    let mask = tiny_skia::Mask::new(self.canvas.width(), self.canvas.height()).and_then(|mut m| {
+                        let path = rounded_rect(x, y0, card_w, h, t.radius)?;
+                        m.fill_path(&path, FillRule::Winding, true, crate::ui::draw::tf());
+                        Some(m)
+                    });
+                    self.canvas.draw_pixmap(crate::ui::draw::px(x), crate::ui::draw::px(top), part.as_ref(), &PixmapPaint::default(), Transform::identity(), mask.as_ref());
+                }
+            }
+        }
+        if let Some(path) = rounded_rect(x + 0.5, y0 + 0.5, card_w - 1.0, h - 1.0, t.radius) {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(color(t.line));
             self.canvas.stroke_path(&path, &paint, &Stroke::default(), crate::ui::draw::tf(), None);
-        }
-        if bottom > top {
-            // Recorta no fim do cartão (a imagem cobre a faixa visível inteira).
-            let k = crate::ui::draw::scale();
-            let clip_h = (((y0 + h - pad_y) - top) * k).min(inner.height() as f32).max(0.0) as u32;
-            if clip_h > 0 {
-                if let Some(part) = inner.clone_rect(tiny_skia::IntRect::from_xywh(0, 0, inner.width(), clip_h).unwrap()) {
-                    self.canvas.draw_pixmap(crate::ui::draw::px(x + pad_x), crate::ui::draw::px(top), part.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-                }
-            }
         }
         self.cursor_y = y0 + h + t.spacing;
     }
@@ -3942,7 +3991,9 @@ impl<'a> Ui<'a> {
             let size = if symbolic { if tahoe { 17 } else { 18 } } else { 20 };
             let pix = self.ctx.icon(&[icon], size, false);
             if let Some(pix) = pix {
-                let (ix, iy) = ((rect.0 + if tahoe && tint.is_none() { 8.0 } else { 10.0 }) as i32, (rect.1 + (rect.3 - size as f32) / 2.0) as i32);
+                // No quadradinho colorido (22 pontos), o símbolo fica no meio dele.
+                let ix = if tint.is_some() { rect.0 + 6.0 + (22.0 - size as f32) / 2.0 } else if tahoe { rect.0 + 8.0 } else { rect.0 + 10.0 };
+                let (ix, iy) = (ix.round() as i32, (rect.1 + (rect.3 - size as f32) / 2.0).round() as i32);
                 if symbolic {
                     let tint_c = if on_accent { t.on_accent } else if tahoe && tint.is_none() { t.accent } else if tint.is_some() { [255, 255, 255, 255] } else { t.text };
                     crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [tint_c[0], tint_c[1], tint_c[2]]);
@@ -3953,6 +4004,14 @@ impl<'a> Ui<'a> {
             let tc = if on_accent { t.on_accent } else { t.text };
             let tx = if tahoe { rect.0 + 34.0 } else { rect.0 + 42.0 };
             self.draw_text(name, tx, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
+        }
+        // Barra de rolagem fina quando a lista não cabe.
+        if max_scroll > 0.0 {
+            let view = list_bottom - list_top;
+            let thumb = (view * view / total).max(24.0);
+            let ty = list_top + (view - thumb) * (scroll / max_scroll);
+            let tx = panel.0 + panel.2 - 7.0;
+            fill_rounded(self.canvas, tx, ty, 4.0, thumb, 2.0, color(t.shade(if t.dark { 90 } else { 70 })));
         }
         // O vazio da barra lateral arrasta a janela (os itens têm prioridade).
         if tahoe {

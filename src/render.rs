@@ -435,22 +435,9 @@ fn window_elements(
         });
     }
 
-    // Janelas que projetam sombra no desktop: as 8 de cima, com moldura (não
-    // maximizadas e visíveis). Com sombras desligadas, a lista fica vazia.
-    let casters: Vec<decorations::Caster> = if state.config.effects.shadows {
-        placed
-            .iter()
-            .filter(|p| (!p.maximized || p.animating) && p.alpha > 0.99 && p.genie.is_none())
-            .take(8)
-            .map(|p| decorations::Caster {
-                frame: p.frame,
-                // Janela translúcida: sombra mais leve, na mesma proporção.
-                strength: decorations::shadow_strength(p.focused) * p.opacity,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // As sombras das janelas são desenhadas logo atrás de cada uma (caem também sobre
+    // as janelas de baixo); o fundo não recebe mais sombras por conta própria.
+    let casters: Vec<decorations::Caster> = Vec::new();
 
     // A tela inteira, nas coordenadas dela (origem no canto).
     let output_rect = Rectangle::from_size(
@@ -705,6 +692,11 @@ fn window_elements(
                     glass.push(GlassRegion { at: elements.len(), rect: r, radius, name: format!("app:{app_id}:{id}#{i}"), alpha: glass_alpha });
                 }
             }
+        }
+        // Sombra logo atrás da janela: cai sobre o fundo e sobre as janelas de baixo.
+        if decorated && effects.shadows && p.alpha > 0.99 {
+            let strength = decorations::shadow_strength(p.focused) * p.opacity;
+            elements.push(MideRenderElement::from(decorations::window_shadow_element(shaders, p.frame, radius.max(1.0), strength)));
         }
     }
 

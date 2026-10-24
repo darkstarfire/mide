@@ -1478,3 +1478,12 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Popover** (`ui.popover`): painel de vidro com ponta, preso a um botão; fecha com clique fora ou Esc. `ui.to_window` converte o retângulo de uma área que rola para a janela.
 - **Seleção** das listas, da árvore e da grade em pílula de cantos 8, cinza quando a janela perde o foco, como no Mac.
 - Tudo na galeria `mide-ui-demo` (página Indicadores).
+
+## Ajustes pedidos depois do primeiro teste do Tahoe (2026-10-24)
+- Botões da janela: o símbolo (×, −, +) aparece só no botão sob o ponteiro.
+- Rodapé do Arquivos: barra de caminho e de status coladas, com uma linha só em cima e o conteúdo centralizado na altura.
+- Configurações: símbolos no meio dos quadradinhos coloridos e barra de rolagem na barra lateral quando ela não cabe.
+- Cartões: o destaque de uma linha vai de borda a borda do cartão e encosta nas linhas divisórias (o conteúdo do cartão é recortado nos cantos arredondados).
+- Colunas do Finder: largura que se ajusta para caber colunas inteiras (mínimo 200), a vista desliza (animada, com interruptor em Efeitos → Transições) até a última: a pasta clicada fica no meio, a de cima à esquerda e o conteúdo à direita; Shift+roda rola para os lados. `ui.clip` no mide-ui (desenho recortado num retângulo).
+- Arrasto dentro do Arquivos: a miniatura dos itens (com o selo de contagem) segue o ponteiro em qualquer visualização.
+- Sombra das janelas menor e desenhada logo atrás de cada janela: cai também sobre as janelas de baixo.

@@ -120,6 +120,14 @@ struct Files {
     /// Arrasto que saiu da janela (para outro app, um site ou de volta para cá): os
     /// itens, até o compositor avisar que acabou.
     drag_out: Option<Vec<PathBuf>>,
+    /// Colunas: deslocamento para o lado (animado), o escolhido com Shift+roda e
+    /// quantas colunas havia (mudou: volta a seguir a última).
+    /// Imagem que segue o ponteiro num arrasto dentro da janela (a mesma do arrasto
+    /// entre apps).
+    drag_pix: Option<Pixmap>,
+    col_offset: f32,
+    col_manual: Option<f32>,
+    col_count: usize,
     /// Arquivo do "Abrir com…" (a lista dos apps aparece por cima).
     open_with: Option<PathBuf>,
     /// Compactar e extrair rodam numa thread: o resultado chega aqui.
@@ -193,6 +201,10 @@ impl Files {
             press: None,
             drag: None,
             drag_out: None,
+            drag_pix: None,
+            col_offset: 0.0,
+            col_manual: None,
+            col_count: 0,
             open_with: None,
             jobs_tx,
             jobs_rx,
@@ -1199,7 +1211,8 @@ impl Files {
         // da direita.
         let region = ui.region();
         let top = region.1 + region.3 - ui.remaining_height();
-        let footer_h = 2.0 * (24.0 + ui.theme().spacing);
+        // Barra de caminho (28) e de status (26), coladas.
+        let footer_h = 28.0 + 26.0;
         let body_h = (ui.remaining_height() - footer_h).max(80.0);
         let preview_w = if self.preview_pane && region.2 > 620.0 { 270.0 } else { 0.0 };
         let columns = ((region.2 - preview_w - 2.0 * ui.theme().padding) / (size as f32 + 44.0 + ui.theme().spacing)).max(1.0) as usize;
@@ -1387,32 +1400,71 @@ impl Files {
                 });
             };
             if mode == 2 {
-                // Colunas (como no Finder): uma lista por pasta, lado a lado; as últimas
-                // ficam à vista quando não cabem todas.
+                // Colunas (como no Finder): uma lista por pasta, lado a lado, de largura
+                // fixa. A vista desliza (animada) até a última coluna ficar à vista: a
+                // pasta clicada fica no meio, com a de cima à esquerda e o conteúdo à
+                // direita. Shift+roda rola para os lados.
                 let r = ui.region();
                 let col_top = r.1 + r.3 - ui.remaining_height();
-                let col_w = 230.0f32;
-                let fit = ((r.2 / col_w).floor() as usize).max(1);
-                let skip = col_lists.len().saturating_sub(fit);
                 let col_h = (r.1 + r.3 - col_top - 2.0).max(60.0);
-                let line = ui.theme().line;
-                for (ci, list) in col_lists.iter().enumerate().skip(skip) {
-                    let x = r.0 + (ci - skip) as f32 * col_w;
-                    ui.at(x, col_top, col_w - 8.0, |ui| {
-                        ui.scroll_area(col_h, |ui| {
-                            for entry in list {
-                                let selected = selection.contains(&entry.path) || col_dirs.contains(&entry.path);
-                                let (name, icon) = label_of(entry);
-                                let arrow = if entry.is_dir { "›" } else { "" };
-                                let (r, _) = ui.tree_row(0, false, false, &icon, &name, &[(arrow, 18.0)], selected, false);
-                                item(ui, entry, r);
-                            }
-                        });
-                    });
-                    ui.paint(|canvas, _| {
-                        mide::ui::draw::fill_rounded(canvas, x + col_w - 4.0, col_top, 1.0, col_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3]));
-                    });
+                // A área das colunas começa junto da barra lateral (sem a margem da
+                // página), com um recuo pequeno antes da primeira.
+                let left = ui.theme().padding.min(r.0);
+                let area_x = r.0 - left;
+                let view_w = r.2 + left;
+                let inset = 8.0;
+                // Colunas inteiras: a largura se ajusta para caber um número exato delas
+                // (pelo menos COLUMN_W de largura cada).
+                let fit = (((view_w - inset) / COLUMN_W).floor()).max(1.0);
+                let col_w = (view_w - inset) / fit;
+                let total = col_lists.len() as f32 * col_w;
+                let max_off = (inset + total - view_w).max(0.0);
+                if col_lists.len() != self.col_count {
+                    self.col_count = col_lists.len();
+                    self.col_manual = None;
                 }
+                let over_cols = ui.pointer().is_some_and(|(px, py)| px >= area_x && px <= area_x + view_w && py >= col_top && py <= col_top + col_h);
+                if over_cols && ui.input().shift && ui.input().scroll != 0.0 {
+                    let delta = ui.take_scroll();
+                    let base = self.col_manual.unwrap_or(max_off);
+                    self.col_manual = Some((base + delta).clamp(0.0, max_off));
+                }
+                let target = self.col_manual.unwrap_or(max_off).clamp(0.0, max_off);
+                if mide::settings_file::effect("transitions") {
+                    let diff = target - self.col_offset;
+                    if diff.abs() > 0.5 {
+                        self.col_offset += diff * 0.28;
+                        ui.request_tick();
+                    } else {
+                        self.col_offset = target;
+                    }
+                } else {
+                    self.col_offset = target;
+                }
+                let off = self.col_offset;
+                let line = ui.theme().line;
+                ui.clip((area_x, col_top, view_w, col_h), |ui| {
+                    for (ci, list) in col_lists.iter().enumerate() {
+                        let x = inset + ci as f32 * col_w - off;
+                        if x + col_w < 0.0 || x > view_w {
+                            continue;
+                        }
+                        ui.at(x, 0.0, col_w - 8.0, |ui| {
+                            ui.scroll_area(col_h, |ui| {
+                                for entry in list {
+                                    let selected = selection.contains(&entry.path) || col_dirs.contains(&entry.path);
+                                    let (name, icon) = label_of(entry);
+                                    let arrow = if entry.is_dir { "›" } else { "" };
+                                    let (r, _) = ui.tree_row(0, false, false, &icon, &name, &[(arrow, 18.0)], selected, false);
+                                    item(ui, entry, r);
+                                }
+                            });
+                        });
+                        ui.paint(|canvas, _| {
+                            mide::ui::draw::fill_rounded(canvas, x + col_w - 4.0, 0.0, 1.0, col_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3]));
+                        });
+                    }
+                });
                 ui.space(col_h);
             } else if in_list {
                 // Lista no estilo do Finder: cabeçalho que ordena e linhas alternadas,
@@ -1512,20 +1564,6 @@ impl Files {
                     let order: Vec<PathBuf> = if in_list { rows.iter().map(|(_, e)| e.path.clone()).collect() } else { shown.iter().map(|e| e.path.clone()).collect() };
                     self.click_select(path, ctrl, shift, &order);
                 }
-            }
-            // Arrasto em andamento: os itens seguem o ponteiro.
-            if let (Some(paths), Some((px, py))) = (&self.drag, ui.pointer()) {
-                let label = if paths.len() == 1 {
-                    paths[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-                } else {
-                    format!("{} itens", paths.len())
-                };
-                let (accent, on_accent) = (ui.theme().accent, ui.theme().on_accent);
-                ui.paint_text(|canvas, text, _| {
-                    let w = text.measure(&label, 12.5, mide::ui::text::FontWeight::Semibold) + 20.0;
-                    mide::ui::draw::fill_rounded(canvas, px + 14.0, py + 10.0, w, 24.0, 12.0, tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 230));
-                    text.draw(canvas, &label, px + 24.0, py + 14.0, 12.5, mide::ui::text::FontWeight::Semibold, on_accent);
-                });
             }
             // Fundo da pasta: clique no vazio tira a seleção; o botão direito abre o
             // menu da pasta.
@@ -1649,7 +1687,7 @@ impl Files {
         if mode == 0 {
             let mut value = self.icon_size as f32;
             let mut changed = false;
-            ui.at(status.0 + status.2 - 140.0, status.1 + 3.0, 128.0, |ui| {
+            ui.at(status.0 + status.2 - 140.0, status.1 + (status.3 - 18.0) / 2.0, 128.0, |ui| {
                 changed = ui.mini_slider(128.0, &mut value, files_view::ICON_MIN as f32, files_view::ICON_MAX as f32).changed();
             });
             if changed {
@@ -1684,6 +1722,7 @@ impl Files {
                 }
                 tracing::info!("arrastando {} item(ns)", self.selection.len());
                 self.drag = Some(self.selection.clone());
+                self.drag_pix = self.drag_icon(&self.selection.clone());
             }
         }
         // Arrastando para fora da janela: vira um arrasto entre apps (outro app, um site
@@ -2034,6 +2073,9 @@ enum Action {
     EmptyTrash,
 }
 
+/// Largura mínima de cada coluna da visualização em colunas.
+const COLUMN_W: f32 = 200.0;
+
 impl App for Files {
     fn view(&mut self, ui: &mut Ui) {
         ui.set_title(&self.title());
@@ -2051,6 +2093,19 @@ impl App for Files {
         let refs: Vec<(&str, &str)> = items.iter().map(|(n, i)| (n.as_str(), *i)).collect();
         ui.glass_sidebar();
         let chosen = ui.sidebar_area(&refs, current, |ui, _| self.content(ui));
+        // Arrasto em andamento: a miniatura dos itens segue o ponteiro, por cima de tudo.
+        if self.drag.is_none() {
+            self.drag_pix = None;
+        }
+        if let (Some(pix), Some((px, py))) = (&self.drag_pix, ui.input().pointer) {
+            let k = mide::ui::draw::scale();
+            let (w, h) = (pix.width() as f32, pix.height() as f32);
+            ui.paint(|canvas, _| {
+                let paint = tiny_skia::PixmapPaint { opacity: 0.85, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+                let tf = tiny_skia::Transform::from_translate(px - w / 2.0, py - h / 2.0).post_scale(k, k);
+                canvas.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, None);
+            });
+        }
         // Diálogo por cima de tudo (a janela inteira escurece atrás).
         self.dialog_view(ui);
         self.open_with_view(ui);
