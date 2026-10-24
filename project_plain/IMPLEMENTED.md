@@ -1513,3 +1513,12 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 ## Calculadora no visual do Tahoe (D3, etapa 8, 2026-10-24)
 - Janela de conteúdo inteiro (cantos de 24) com os botões da janela por cima do visor (o alto do visor arrasta a janela), fundo grafite, teclas redondas: números em cinza escuro, funções em cinza mais claro com texto branco e operações em laranja; disposição do Tahoe na Básica: ⌫ AC % ÷ em cima e ± 0 , = embaixo (o ⌫ do visor fica só no Programador e no conversor); a conta em andamento em cinza logo acima do número; sinais das operações maiores. Tamanho padrão da Básica 300x490.
+
+## Editor de Capturas como a Marcação do Mac (2026-10-24)
+
+- Pedido do usuário: o traço feito com a caneta vira forma editável (como no Mac), com alças de seleção e de tamanho, seletor e as ferramentas da Marcação.
+- **Formas editáveis (`src/annotate.rs`):** desenho livre, linha, seta, retângulo, retângulo arredondado, oval, triângulo, estrela, balão de fala e texto. Cada forma guarda borda, preenchimento, espessura, tracejado e texto, e fica editável até salvar ou copiar (só então entra nos pixels). O reconhecimento do esboço simplifica o traço e decide entre linha, seta, retângulo, triângulo e oval.
+- **Ferramentas:** Selecionar (V), Esboço (S, o traço vira forma e já fica escolhido), Desenho (D, traço livre), Formas (menu com as oito) e Texto (T: clique e digite). Com a forma escolhida: arrastar move, as alças redimensionam (numa linha ou seta, as pontas), Delete apaga, setas andam 1 pixel, Esc tira a escolha.
+- **Estilo:** popovers de Estilo do traço (cinco espessuras, tracejado), Cor da borda, Preenchimento (ou nenhum) e Estilo do texto (tamanho). Valem para a próxima forma e para a escolhida.
+- **Mais:** girar para a esquerda e a direita, recortar, desfazer e refazer de tudo (`doc.rs` guarda o estado inteiro: imagem, formas e recorte), Copiar e Salvar na barra. A janela é de conteúdo inteiro (Tahoe), e o menu Ferramentas tem tudo isso.
+- **mide-ui:** `Ui::last_rect()` dá o retângulo do último componente (âncora de popovers), e `Text::draw_px` desenha texto em pixels do canvas.

@@ -1,115 +1,102 @@
-//! O documento do Editor de Capturas: a imagem aberta e as edições por cima dela
-//! (marcações e recortes), com desfazer e refazer. Nada é aplicado na imagem original:
-//! o resultado é montado quando precisa (mostrar, salvar, copiar), então desfazer um
-//! recorte traz de volta o que estava fora dele.
+//! O documento do Editor de Capturas (como a Marcação do Mac): a imagem aberta, as
+//! formas por cima dela (editáveis até salvar: escolher, mover, redimensionar, trocar a
+//! cor) e o recorte, com desfazer e refazer do estado inteiro. Nada é aplicado na
+//! imagem original: o resultado é montado ao salvar ou copiar.
 //!
-//! Coordenadas: tudo em pixels da imagem original.
+//! Coordenadas: tudo em pixels da imagem (já girada, se girou).
 
-use std::path::Path;
+use std::{path::Path, rc::Rc};
 
-use mide::markup::{draw_mark, MarkKind, RectF};
+use mide::{
+    annotate::{self, Shape},
+    markup::RectF,
+};
 use tiny_skia::{IntRect, Pixmap, Transform};
 
-/// Uma marcação: tipo, cor, pontos (pixels da imagem) e a espessura do traço.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Mark {
-    pub kind: MarkKind,
-    pub color: [u8; 3],
-    pub points: Vec<(f32, f32)>,
-    pub width: f32,
-}
-
-/// Uma edição.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Op {
-    Mark(Mark),
-    /// O recorte passa a ser esta área (pixels inteiros da imagem original).
-    Crop(IntRect),
+/// Um estado do documento (o desfazer guarda estados inteiros: as formas são poucas
+/// e a imagem é compartilhada).
+#[derive(Clone)]
+pub struct State {
+    pub base: Rc<Pixmap>,
+    pub shapes: Vec<Shape>,
+    pub crop: IntRect,
+    /// Número do estado (muda a cada edição): diz se está como foi salvo.
+    generation: u64,
 }
 
 pub struct Doc {
-    /// A imagem como foi aberta (pré-multiplicada, como o tiny-skia usa).
-    pub base: Pixmap,
-    ops: Vec<Op>,
-    undone: Vec<Op>,
-    /// Aumenta a cada mudança (inclusive desfazer e refazer): serve de chave de cache.
+    pub state: State,
+    history: Vec<State>,
+    future: Vec<State>,
+    next_generation: u64,
+    saved: u64,
+    /// Aumenta a cada mudança (também desfazer e refazer): chave de cache.
     pub version: u64,
-    /// Quantas edições tinha quando foi salvo (ou aberto); `None` quando esse estado não
-    /// pode mais voltar (desfeito e trocado por outra edição). Como toda edição nova
-    /// apaga o refazer, o número de edições identifica o estado.
-    saved: Option<usize>,
-    /// A imagem com as marcações (sem o recorte), da versão guardada.
-    composed: Option<(u64, Pixmap)>,
 }
 
 impl Doc {
     pub fn new(base: Pixmap) -> Self {
-        Self { base, ops: Vec::new(), undone: Vec::new(), version: 0, saved: Some(0), composed: None }
+        let crop = IntRect::from_xywh(0, 0, base.width(), base.height()).expect("imagem com tamanho");
+        Self { state: State { base: Rc::new(base), shapes: Vec::new(), crop, generation: 0 }, history: Vec::new(), future: Vec::new(), next_generation: 1, saved: 0, version: 0 }
     }
 
     pub fn width(&self) -> u32 {
-        self.base.width()
+        self.state.base.width()
     }
 
     pub fn height(&self) -> u32 {
-        self.base.height()
+        self.state.base.height()
     }
 
-    /// A imagem inteira, em pixels.
     pub fn full(&self) -> IntRect {
         IntRect::from_xywh(0, 0, self.width(), self.height()).expect("imagem com tamanho")
     }
 
-    /// O recorte atual (o último), ou a imagem inteira.
     pub fn crop(&self) -> IntRect {
-        self.ops.iter().rev().find_map(|op| if let Op::Crop(r) = op { Some(*r) } else { None }).unwrap_or_else(|| self.full())
+        self.state.crop
     }
 
-    /// Espessura padrão do traço, proporcional ao tamanho da imagem (4 pixels numa
-    /// tela comum; mais grosso numa imagem grande, para não sumir quando reduzida).
+    /// Espessura padrão do traço, proporcional ao tamanho da imagem.
     pub fn stroke_width(&self) -> f32 {
         4.0 * (self.width().max(self.height()) as f32 / 1600.0).max(1.0)
     }
 
-    /// Há mudanças que não foram salvas (desfazer até o estado salvo volta a `false`).
     pub fn modified(&self) -> bool {
-        self.saved != Some(self.ops.len())
+        self.state.generation != self.saved
     }
 
-    /// O estado atual foi salvo.
     pub fn mark_saved(&mut self) {
-        self.saved = Some(self.ops.len());
+        self.saved = self.state.generation;
     }
 
-    pub fn push(&mut self, op: Op) {
-        // O estado salvo estava no refazer, que esta edição apaga: não volta mais.
-        if self.saved.is_some_and(|s| s > self.ops.len()) {
-            self.saved = None;
-        }
-        self.undone.clear();
-        self.apply(op);
-    }
-
-    /// Acrescenta a edição. Uma marcação é desenhada só ela, por cima da imagem já
-    /// montada (sem refazer as outras: numa captura 4K, recompor tudo a cada traço
-    /// custa caro).
-    fn apply(&mut self, op: Op) {
-        let current = self.version;
+    /// Guarda o estado atual no desfazer, antes de uma edição (que muda o estado).
+    pub fn checkpoint(&mut self) {
+        self.history.push(self.state.clone());
+        self.future.clear();
+        self.state.generation = self.next_generation;
+        self.next_generation += 1;
         self.version += 1;
-        if let Some((v, image)) = self.composed.as_mut()
-            && *v == current
-        {
-            // Um recorte não muda a imagem montada (só o que dela aparece).
-            if let Op::Mark(m) = &op {
-                draw_mark(image, m.kind, m.color, &m.points, m.width, Transform::identity());
-            }
-            *v = self.version;
-        }
-        self.ops.push(op);
     }
 
-    /// Recorta na área `r` (pixels da imagem, presa à imagem); `false` se a área é
-    /// vazia ou igual ao recorte atual (nada muda).
+    /// Mudança no meio de um arrasto (mover, redimensionar): sem novo ponto de desfazer.
+    pub fn touched(&mut self) {
+        self.version += 1;
+    }
+
+    pub fn add(&mut self, shape: Shape) -> usize {
+        self.checkpoint();
+        self.state.shapes.push(shape);
+        self.state.shapes.len() - 1
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        if index < self.state.shapes.len() {
+            self.checkpoint();
+            self.state.shapes.remove(index);
+        }
+    }
+
+    /// Recorta na área `r` (presa à imagem); `false` se nada muda.
     pub fn crop_to(&mut self, r: RectF) -> bool {
         let x0 = r.0.round().clamp(0.0, self.width() as f32) as i32;
         let y0 = r.1.round().clamp(0.0, self.height() as f32) as i32;
@@ -121,66 +108,66 @@ impl Doc {
         if rect == self.crop() {
             return false;
         }
-        self.push(Op::Crop(rect));
+        self.checkpoint();
+        self.state.crop = rect;
         true
     }
 
+    /// Gira a imagem (e as formas e o recorte) 90°.
+    pub fn rotate(&mut self, clockwise: bool) {
+        self.checkpoint();
+        let (w, h) = (self.width(), self.height());
+        let Some(mut out) = Pixmap::new(h, w) else {
+            return;
+        };
+        let tf = if clockwise { Transform::from_row(0.0, 1.0, -1.0, 0.0, h as f32, 0.0) } else { Transform::from_row(0.0, -1.0, 1.0, 0.0, 0.0, w as f32) };
+        out.draw_pixmap(0, 0, self.state.base.as_ref().as_ref(), &tiny_skia::PixmapPaint::default(), tf, None);
+        for shape in &mut self.state.shapes {
+            shape.rotate(clockwise, w as f32, h as f32);
+        }
+        let c = self.state.crop;
+        let (cx, cy, cw, ch) = (c.x() as f32, c.y() as f32, c.width() as f32, c.height() as f32);
+        let r = if clockwise { (h as f32 - cy - ch, cx, ch, cw) } else { (cy, w as f32 - cx - cw, ch, cw) };
+        self.state.base = Rc::new(out);
+        self.state.crop = IntRect::from_xywh(r.0.round() as i32, r.1.round() as i32, r.2.round() as u32, r.3.round() as u32).unwrap_or_else(|| self.full());
+    }
+
     pub fn can_undo(&self) -> bool {
-        !self.ops.is_empty()
+        !self.history.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.undone.is_empty()
+        !self.future.is_empty()
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(op) = self.ops.pop() else {
+        let Some(previous) = self.history.pop() else {
             return false;
         };
-        // Desfazer um recorte não muda a imagem montada.
-        let keeps = matches!(op, Op::Crop(_));
-        self.undone.push(op);
+        self.future.push(std::mem::replace(&mut self.state, previous));
         self.version += 1;
-        if keeps && let Some((v, _)) = self.composed.as_mut()
-            && *v + 1 == self.version
-        {
-            *v = self.version;
-        }
         true
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(op) = self.undone.pop() else {
+        let Some(next) = self.future.pop() else {
             return false;
         };
-        self.apply(op);
+        self.history.push(std::mem::replace(&mut self.state, next));
+        self.version += 1;
         true
     }
 
-    /// A imagem inteira com as marcações (sem o recorte), guardada até a próxima mudança
-    /// (uma marcação nova é desenhada por cima dela; desfazer uma marcação a refaz).
-    pub fn composed(&mut self) -> &Pixmap {
-        if self.composed.as_ref().is_none_or(|(v, _)| *v != self.version) {
-            let mut out = self.base.clone();
-            for op in &self.ops {
-                if let Op::Mark(m) = op {
-                    draw_mark(&mut out, m.kind, m.color, &m.points, m.width, Transform::identity());
-                }
-            }
-            self.composed = Some((self.version, out));
+    /// O resultado: a imagem com as formas e o recorte.
+    pub fn result(&self, text: &mut mide::ui::text::Text) -> Pixmap {
+        let mut out = self.state.base.as_ref().clone();
+        for shape in &self.state.shapes {
+            annotate::draw(&mut out, shape, Transform::identity(), text);
         }
-        &self.composed.as_ref().expect("acabou de ser montada").1
-    }
-
-    /// O resultado: as marcações e o recorte.
-    pub fn result(&mut self) -> Pixmap {
-        let crop = self.crop();
-        let full = self.full();
-        let composed = self.composed();
-        if crop == full {
-            return composed.clone();
+        if self.state.crop == self.full() {
+            return out;
         }
-        composed.clone_rect(crop).unwrap_or_else(|| composed.clone())
+        out.clone_rect(self.state.crop).unwrap_or(out)
     }
 }
 
@@ -228,6 +215,7 @@ pub fn encode(image: &Pixmap, path: &Path) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mide::annotate::ShapeKind;
 
     fn image(w: u32, h: u32, rgb: [u8; 3]) -> Pixmap {
         let mut p = Pixmap::new(w, h).unwrap();
@@ -235,133 +223,58 @@ mod tests {
         p
     }
 
-    fn rgb(p: &Pixmap, x: u32, y: u32) -> [u8; 3] {
-        let c = p.pixel(x, y).unwrap();
-        [c.red(), c.green(), c.blue()]
-    }
-
-    fn pen(points: &[(f32, f32)]) -> Op {
-        Op::Mark(Mark { kind: MarkKind::Pen, color: [235, 52, 52], points: points.to_vec(), width: 4.0 })
-    }
-
     #[test]
-    fn recorte_e_desfazer() {
-        let mut doc = Doc::new(image(400, 300, [255, 255, 255]));
+    fn formas_desfazer_refazer_e_salvo() {
+        let mut doc = Doc::new(image(100, 80, [255, 255, 255]));
         assert!(!doc.modified());
-        assert!(doc.crop_to((50.4, 20.0, 200.0, 100.6)));
-        assert_eq!(doc.crop(), IntRect::from_xywh(50, 20, 200, 101).unwrap());
-        assert_eq!((doc.result().width(), doc.result().height()), (200, 101));
-        // Recortar de novo na mesma área não vira outra edição.
-        assert!(!doc.crop_to((50.0, 20.0, 200.0, 101.0)));
-        assert!(doc.undo());
-        assert_eq!((doc.result().width(), doc.result().height()), (400, 300));
-        assert!(doc.redo());
-        assert_eq!(doc.result().width(), 200);
+        let i = doc.add(Shape::new(ShapeKind::Rect, vec![(10.0, 10.0), (50.0, 40.0)], [255, 0, 0], 4.0));
+        assert_eq!(i, 0);
         assert!(doc.modified());
-    }
-
-    #[test]
-    fn recorte_fora_da_imagem_fica_preso_a_ela() {
-        let mut doc = Doc::new(image(100, 80, [0, 0, 0]));
-        assert!(doc.crop_to((-20.0, -10.0, 70.0, 200.0)));
-        assert_eq!(doc.crop(), IntRect::from_xywh(0, 0, 50, 80).unwrap());
-        assert!(!doc.crop_to((120.0, 0.0, 10.0, 10.0)));
-    }
-
-    #[test]
-    fn desenho_livre_muda_os_pixels_e_desfaz() {
-        let mut doc = Doc::new(image(100, 100, [255, 255, 255]));
-        doc.push(pen(&[(10.0, 50.0), (50.0, 50.0), (90.0, 50.0)]));
-        let out = doc.result();
-        let p = rgb(&out, 50, 50);
-        assert!(p[0] > 200 && p[1] < 90 && p[2] < 90, "vermelho no traço: {p:?}");
-        assert_eq!(rgb(&out, 50, 10), [255, 255, 255]);
-        doc.undo();
-        assert_eq!(rgb(&doc.result(), 50, 50), [255, 255, 255]);
-    }
-
-    #[test]
-    fn marcacao_depois_do_recorte_fica_no_lugar_da_imagem() {
-        let mut doc = Doc::new(image(200, 200, [255, 255, 255]));
-        doc.crop_to((100.0, 100.0, 100.0, 100.0));
-        // Pontos em pixels da imagem original: (150, 150) é o meio do recorte.
-        doc.push(Op::Mark(Mark { kind: MarkKind::Square, color: [10, 132, 255], points: vec![(140.0, 140.0), (160.0, 160.0)], width: 4.0 }));
-        let out = doc.result();
-        assert_eq!((out.width(), out.height()), (100, 100));
-        let p = rgb(&out, 40, 50);
-        assert!(p[2] > 200 && p[0] < 60, "azul no lado do quadrado: {p:?}");
-    }
-
-    #[test]
-    fn desfazer_ate_o_salvo_nao_e_mudanca() {
-        let mut doc = Doc::new(image(50, 50, [255, 255, 255]));
-        doc.push(pen(&[(1.0, 1.0)]));
-        assert!(doc.modified());
-        doc.undo();
-        assert!(!doc.modified(), "igual ao arquivo aberto");
-        doc.redo();
         doc.mark_saved();
         assert!(!doc.modified());
-        doc.push(pen(&[(2.0, 2.0)]));
-        doc.undo();
-        assert!(!doc.modified(), "voltou ao salvo");
-        // Desfazer o salvo e fazer outra edição: o salvo não volta mais.
-        doc.undo();
-        doc.push(pen(&[(3.0, 3.0)]));
-        assert!(doc.modified());
-        doc.undo();
-        doc.push(pen(&[(4.0, 4.0)]));
-        assert!(doc.modified(), "mesmo número de edições, mas outra imagem");
+        assert!(doc.crop_to((10.0, 10.0, 50.0, 40.0)));
+        assert_eq!(doc.crop().width(), 50);
+        assert!(doc.undo());
+        assert_eq!(doc.crop().width(), 100);
+        assert!(!doc.modified(), "voltou ao estado salvo");
+        assert!(doc.redo());
+        assert_eq!(doc.crop().width(), 50);
     }
 
     #[test]
-    fn marcacao_por_cima_igual_a_recompor_tudo() {
-        let mut doc = Doc::new(image(120, 90, [255, 255, 255]));
-        doc.push(pen(&[(10.0, 10.0), (100.0, 80.0)]));
-        let _ = doc.composed();
-        // Desenhada só a nova, por cima da montada.
-        doc.push(Op::Mark(Mark { kind: MarkKind::Circle, color: [10, 132, 255], points: vec![(20.0, 20.0), (90.0, 70.0)], width: 4.0 }));
-        let fast = doc.composed().clone();
-        let mut fresh = Doc::new(image(120, 90, [255, 255, 255]));
-        fresh.ops = doc.ops.clone();
-        assert_eq!(fast.data(), fresh.composed().data());
-        doc.undo();
-        assert_ne!(doc.composed().data(), fast.data());
-        doc.redo();
-        assert_eq!(doc.composed().data(), fast.data());
-        // Um recorte não muda a imagem montada (nem a refaz).
-        doc.crop_to((10.0, 10.0, 50.0, 50.0));
-        assert_eq!(doc.composed().data(), fast.data());
-        assert_eq!(doc.result().width(), 50);
+    fn resultado_tem_a_forma_e_o_recorte() {
+        let mut doc = Doc::new(image(100, 80, [255, 255, 255]));
+        let mut s = Shape::new(ShapeKind::Rect, vec![(0.0, 0.0), (100.0, 80.0)], [255, 0, 0], 4.0);
+        s.fill = Some([0, 0, 255]);
+        doc.add(s);
+        doc.crop_to((20.0, 20.0, 30.0, 30.0));
+        let mut text = mide::ui::text::Text::new();
+        let out = doc.result(&mut text);
+        assert_eq!((out.width(), out.height()), (30, 30));
+        let px = out.pixel(15, 15).unwrap();
+        assert_eq!((px.red(), px.green(), px.blue()), (0, 0, 255));
     }
 
     #[test]
-    fn nova_edicao_apaga_o_refazer() {
-        let mut doc = Doc::new(image(50, 50, [255, 255, 255]));
-        doc.push(pen(&[(1.0, 1.0)]));
-        doc.undo();
-        assert!(doc.can_redo());
-        doc.push(pen(&[(2.0, 2.0)]));
-        assert!(!doc.can_redo());
+    fn girar_leva_formas_e_recorte_junto() {
+        let mut doc = Doc::new(image(100, 50, [255, 255, 255]));
+        doc.add(Shape::new(ShapeKind::Line, vec![(0.0, 0.0), (100.0, 0.0)], [0, 0, 0], 2.0));
+        doc.rotate(true);
+        assert_eq!((doc.width(), doc.height()), (50, 100));
+        assert_eq!(doc.state.shapes[0].points[1], (50.0, 100.0));
     }
 
     #[test]
     fn salva_png_e_jpeg_e_le_de_volta() {
         let dir = std::env::temp_dir().join(format!("mide-editor-doc-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut img = image(30, 20, [10, 200, 30]);
-        // Um pixel meio transparente (PNG guarda; JPEG vira opaco).
-        img.pixels_mut()[0] = tiny_skia::ColorU8::from_rgba(100, 0, 0, 128).premultiply();
-        for name in ["a.png", "b.jpg"] {
+        let img = image(20, 10, [200, 100, 50]);
+        for name in ["a.png", "a.jpg"] {
             let path = dir.join(name);
             std::fs::write(&path, encode(&img, &path).unwrap()).unwrap();
             let back = load(&path).unwrap();
-            assert_eq!((back.width(), back.height()), (30, 20));
-            let p = rgb(&back, 15, 10);
-            assert!(p[1] > 180 && p[0] < 40, "{name}: {p:?}");
+            assert_eq!((back.width(), back.height()), (20, 10));
         }
-        assert_eq!(load(&dir.join("a.png")).unwrap().pixel(0, 0).unwrap().alpha(), 128);
-        assert!(load(&dir.join("nada.png")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

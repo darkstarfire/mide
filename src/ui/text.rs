@@ -524,6 +524,17 @@ impl Text {
         self.draw_with(pixmap, text, (x, y), size, weight, rgba, Face::Sans)
     }
 
+    /// Como `draw`, com posição e tamanho já em pixels do canvas (sem a escala da tela):
+    /// texto desenhado sobre uma imagem (marcações do Editor de Capturas).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_px(&mut self, pixmap: &mut Pixmap, text: &str, x: f32, y: f32, size: f32, weight: FontWeight, rgba: [u8; 4]) -> f32 {
+        let k = super::draw::scale();
+        super::draw::set_scale(1.0);
+        let width = self.draw_with(pixmap, text, (x, y), size, weight, rgba, Face::Sans);
+        super::draw::set_scale(k);
+        width
+    }
+
     /// Desenha em fonte de largura fixa (editor de texto).
     pub fn draw_mono(&mut self, pixmap: &mut Pixmap, text: &str, x: f32, y: f32, size: f32, rgba: [u8; 4]) -> f32 {
         self.draw_with(pixmap, text, (x, y), size, FontWeight::Regular, rgba, Face::Mono)

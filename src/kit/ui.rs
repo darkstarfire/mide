@@ -521,6 +521,8 @@ pub struct Ctx {
     pub drag_out: Option<(Vec<String>, Option<Pixmap>)>,
     /// Pedido à janela (`Ui::window_controls`, `Ui::window_drag_area`).
     pub window_request: Option<WindowRequest>,
+    /// Retângulo do último componente posto (`Ui::last_rect`), na janela.
+    pub last_rect: (f32, f32, f32, f32),
     /// Janela de conteúdo inteiro (`Window::full_size_content`): o app desenha os
     /// botões da janela e as áreas de arrastar.
     pub content_window: bool,
@@ -599,6 +601,7 @@ impl Ctx {
             paste_requested: false,
             drag_out: None,
             window_request: None,
+            last_rect: (0.0, 0.0, 0.0, 0.0),
             content_window: false,
             maximized: false,
             fixed_size: false,
@@ -891,6 +894,18 @@ impl<'a> Ui<'a> {
     /// Reserva um lugar para o próximo item: em coluna ocupa a largura toda (ou
     /// `width`); em linha, vai para a direita do anterior.
     fn alloc(&mut self, width: Option<f32>, height: f32) -> (f32, f32, f32, f32) {
+        let rect = self.alloc_inner(width, height);
+        self.ctx.last_rect = (self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3);
+        rect
+    }
+
+    /// Retângulo (na janela) do último componente posto: para ancorar um popover num
+    /// grupo de botões (`toolbar_buttons`), por exemplo.
+    pub fn last_rect(&self) -> (f32, f32, f32, f32) {
+        self.ctx.last_rect
+    }
+
+    fn alloc_inner(&mut self, width: Option<f32>, height: f32) -> (f32, f32, f32, f32) {
         let spacing = self.ctx.theme.spacing;
         let width = width.or(self.next_width);
         match self.flow {

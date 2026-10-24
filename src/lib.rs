@@ -1,6 +1,7 @@
 //! Peças compartilhadas pelos programas cliente do mide (barra, dock e janelas
 //! próprias como "Sobre este computador").
 
+pub mod annotate;
 pub mod apps;
 pub mod appimage;
 pub mod appearance;
