@@ -133,7 +133,7 @@ pub fn text_page(path: &Path, size: u32) -> Option<Pixmap> {
         }
         Some(())
     })?;
-    // Dobra do canto: o verso da folha, cinza claro com sombra suave embaixo.
+    // Dobra do canto: o verso da folha, cinza claro.
     let mut pb = tiny_skia::PathBuilder::new();
     pb.move_to(px + pw - fold, py);
     pb.line_to(px + pw - fold, py + fold - r);
@@ -141,10 +141,6 @@ pub fn text_page(path: &Path, size: u32) -> Option<Pixmap> {
     pb.line_to(px + pw, py + fold);
     pb.close();
     if let Some(flap) = pb.finish() {
-        let mut shade = tiny_skia::Paint::default();
-        shade.anti_alias = true;
-        shade.set_color(Color::from_rgba8(0, 0, 0, 30));
-        pixmap.fill_path(&flap, &shade, tiny_skia::FillRule::Winding, draw::tf().pre_translate(-s * 0.012, s * 0.016), None);
         let mut back = tiny_skia::Paint::default();
         back.anti_alias = true;
         back.set_color(Color::from_rgba8(226, 226, 230, 255));
