@@ -1123,6 +1123,10 @@ impl<'a> Ui<'a> {
             return;
         }
         let r = self.background(rect);
+        // Um clique que começou numa barra de rolagem é dela.
+        if self.ctx.memory.dragging_scroll.is_some() {
+            return;
+        }
         if !r.clicked || std::mem::replace(&mut self.ctx.drag_area_handled, true) {
             return;
         }
@@ -4121,6 +4125,31 @@ impl<'a> Ui<'a> {
             scroll += std::mem::take(&mut self.ctx.input.scroll);
             self.ctx.repaint = true;
         }
+        // Barra de rolagem: fica entre a busca e o fim da curva do canto de baixo do
+        // painel (não entra no canto arredondado), e se arrasta como a da janela.
+        let view = list_bottom - list_top;
+        let track_top = list_top + 2.0;
+        let corner_end = if tahoe { panel.1 + panel.3 - super::theme::RADIUS_SIDEBAR * 0.75 } else { list_bottom };
+        let track_h = (corner_end.min(list_bottom) - track_top).max(24.0);
+        let thumb = (track_h * view / total.max(1.0)).clamp(24.0, track_h);
+        let bar = (panel.0 + panel.2 - 12.0, track_top, 12.0, track_h);
+        if max_scroll > 0.0 && !blocked {
+            if let Some((px, py)) = self.pointer() {
+                let on_bar = px >= bar.0 && px <= bar.0 + bar.2 && py >= bar.1 && py <= bar.1 + bar.3;
+                if on_bar && self.ctx.input.pressed {
+                    let top = track_top + (track_h - thumb) * (scroll / max_scroll).clamp(0.0, 1.0);
+                    let grab = if py >= top && py <= top + thumb { py - top } else { thumb / 2.0 };
+                    self.ctx.memory.dragging_scroll = Some((scroll_id, grab));
+                    self.ctx.memory.active = Some(scroll_id);
+                }
+                if let Some((sid, grab)) = self.ctx.memory.dragging_scroll {
+                    if sid == scroll_id {
+                        scroll = ((py - grab - track_top) / (track_h - thumb).max(1.0)).clamp(0.0, 1.0) * max_scroll;
+                        self.ctx.repaint = true;
+                    }
+                }
+            }
+        }
         let scroll = scroll.clamp(0.0, max_scroll);
         self.ctx.memory.scroll.insert(scroll_id, scroll);
         row_y -= scroll;
@@ -4197,11 +4226,11 @@ impl<'a> Ui<'a> {
         }
         // Barra de rolagem fina quando a lista não cabe.
         if max_scroll > 0.0 {
-            let view = list_bottom - list_top;
-            let thumb = (view * view / total).max(24.0);
-            let ty = list_top + (view - thumb) * (scroll / max_scroll);
-            let tx = panel.0 + panel.2 - 7.0;
-            fill_rounded(self.canvas, tx, ty, 4.0, thumb, 2.0, color(t.shade(if t.dark { 90 } else { 70 })));
+            let ty = track_top + (track_h - thumb) * (scroll / max_scroll);
+            let active = self.ctx.memory.dragging_scroll.is_some_and(|(s, _)| s == scroll_id) || self.over(bar);
+            let tw = if active { 7.0 } else { 4.0 };
+            let tx = panel.0 + panel.2 - 5.0 - tw;
+            fill_rounded(self.canvas, tx, ty, tw, thumb, tw / 2.0, color(t.shade(if active { 120 } else if t.dark { 90 } else { 70 })));
         }
         // O vazio da barra lateral arrasta a janela (os itens têm prioridade).
         if tahoe {
