@@ -434,3 +434,24 @@ cargo run --example mide-ui-demo
 - Seleção múltipla e arrastar e soltar entre componentes.
 - Animações dos componentes (o interruptor deslizando).
 - Toque na tela (gestos) e acessibilidade.
+
+## Compatibilidade com conceitos do Mac (plano futuro E10)
+
+O mide-ui segue os conceitos do AppKit do macOS, para que uma camada de compatibilidade futura (rodar apps de .dmg por meio de algo como o Darling, com a parte gráfica desenhada pelo mide-ui) possa casar um com o outro. Nada de código, frameworks ou imagens da Apple: só os conceitos. Equivalências de hoje:
+
+| mide-ui | AppKit |
+|---|---|
+| `Window` (`full_size_content`, `fixed_size`) | `NSWindow` (style mask: titled, fullSizeContentView, sem resizable) |
+| `window_controls`, `window_drag_area` | botões padrão da janela, `isMovableByWindowBackground` |
+| `toolbar`, `toolbar_buttons`, `toolbar_title`, `search_field` | `NSToolbar`, `NSToolbarItemGroup`, `NSSearchToolbarItem` |
+| `glass_sidebar`, `sidebar_search` | `NSSplitViewController` com a barra lateral |
+| `App::menu_bar`, `MenuGroup`, `MenuItem` | `NSMenu`, `NSMenuItem` (ações e atalhos) |
+| `context_menu`, `popover`, `tooltip` | menu de contexto, `NSPopover`, tooltip |
+| `alert`, `modal` | `NSAlert`, folha (sheet) |
+| `FileChooser` | `NSOpenPanel`, `NSSavePanel` |
+| `copy`, `request_paste`, `start_drag` | `NSPasteboard`, arrastar e soltar |
+| `button_styled` (`ButtonStyle`), `switch`, `segmented`, `checkbox`, `radio`, `stepper`, `slider`, `progress_bar` | `NSButton` (bezel styles), `NSSwitch`, `NSSegmentedControl`, `NSStepper`, `NSSlider`, `NSProgressIndicator` |
+| `list_row`, `tree_row`, `tile` | `NSTableView`, `NSOutlineView`, `NSCollectionView` |
+| `richtext` (trechos de estilo, RTF) | `NSAttributedString`, `NSTextView`, RTF |
+
+Regra: todo componente novo do kit ganha aqui a linha do equivalente no AppKit.
