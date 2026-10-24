@@ -3959,9 +3959,15 @@ impl<'a> Ui<'a> {
         }
         // Barra de rolagem.
         if max_scroll > 0.0 {
-            let track_h = h - 8.0;
+            // A barra não entra nos cantos arredondados da janela (Tahoe, raio 24): perto
+            // da borda direita, começa e termina onde a curva do canto acaba.
+            let (win_w, win_h) = self.window_size();
+            let corner = if self.ctx.content_window && !self.ctx.maximized && self.offset.0 + x + w >= win_w - 2.0 { super::theme::RADIUS_WINDOW * 0.75 } else { 0.0 };
+            let top_in = (corner - (self.offset.1 + y0)).max(4.0);
+            let bottom_in = (corner - (win_h - (self.offset.1 + y0 + h))).max(4.0);
+            let track_h = (h - top_in - bottom_in).max(40.0);
             let thumb_h = (track_h * h / content_h).max(32.0);
-            let thumb_y = |s: f32| y0 + 4.0 + (s / max_scroll).clamp(0.0, 1.0) * (track_h - thumb_h);
+            let thumb_y = |s: f32| y0 + top_in + (s / max_scroll).clamp(0.0, 1.0) * (track_h - thumb_h);
             let bar = (x + w - 14.0, y0, 14.0, h);
             if let Some((px, py)) = self.pointer() {
                 let on_bar = px >= bar.0 && px <= bar.0 + bar.2 && py >= bar.1 && py <= bar.1 + bar.3;
@@ -3973,7 +3979,7 @@ impl<'a> Ui<'a> {
                 }
                 if let Some((sid, grab)) = self.ctx.memory.dragging_scroll {
                     if sid == id {
-                        let k = (py - grab - y0 - 4.0) / (track_h - thumb_h).max(1.0);
+                        let k = (py - grab - y0 - top_in) / (track_h - thumb_h).max(1.0);
                         scroll = k.clamp(0.0, 1.0) * max_scroll;
                         self.ctx.repaint = true;
                     }
