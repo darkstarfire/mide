@@ -31,5 +31,6 @@ pub mod sounds;
 pub mod sysinfo;
 pub mod system;
 pub mod terminal;
+pub mod thumbnails;
 pub mod tray;
 pub mod ui;

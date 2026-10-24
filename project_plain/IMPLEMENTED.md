@@ -1434,3 +1434,15 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Código:** `src/appimage.rs` (pasta de apps, nome pelo arquivo, leitura do AppImage, atalho gerado, instalar, remover), `src/bin/mide-install.rs`, `src/programs.rs` (Instalar no diálogo), `src/bin/mide-launcher.rs` (menu).
 - **Revisão de segurança (2026-10-23):** um atalho `.desktop` fora das pastas de apps só roda e só mostra o nome e o ícone do app depois de confiado (mesmo executável: num pendrive ou num zip extraído todo arquivo tem a permissão); programas num pendrive ou em outro disco perguntam antes; um arquivo com nome de documento ou de biblioteca (`foto.jpg`, `libx.so`, `.o`) e um ELF que não é programa (biblioteca, objeto) abrem como documento, nunca rodam; um FIFO ou um arquivo enorme com nome `.desktop` não trava a janela; o Enter não confirma o diálogo de algo baixado nem de um script (só o clique), e nos outros não vale logo que o diálogo aparece nem com a tecla segurada; o nome do AppImage instalado e o `Exec` do atalho não levam nada que o shell interprete; o instalador extrai numa pasta só do usuário no cache dele, mata o grupo inteiro no limite de tempo e não roda um AppImage sem a marca (tipo 0); a pasta de apps fica gravada na primeira instalação (trocar o idioma não "desinstala" nada); remover só manda para a Lixeira um AppImage da pasta de apps.
 - **Fica para depois:** ler o squashfs (gzip/zstd) sem rodar o AppImage; atualização pelo zsync/AppImageUpdate; os .tar.gz comuns do E6 na mesma pasta; animação do ícone voltando quando é solto fora da pasta; o instalador nascer no meio da tela.
+
+## Arquivos mais perto do Finder (B26, primeira parte)
+
+- **Seleção por retângulo:** apertar no vazio e arrastar escolhe tudo o que o retângulo toca (Ctrl ou Shift somam à seleção de antes); o retângulo é desenhado na cor de destaque.
+- **Zoom dos ícones:** Ctrl+roda, Ctrl + / − / 0 e o controle deslizante na barra de status, de 32 a 256 pontos, lembrado por pasta junto com a visualização (`files-view.toml` ganhou `columns` e `icon_size`).
+- **Miniaturas de verdade** (`mide::thumbnails`): imagens; arquivos de texto viram uma folha com as primeiras linhas (como os ícones do Finder); PDF, vídeo, fontes, WebP, AppImage e o que mais houver gerador no sistema (`/usr/share/thumbnailers`), com cache em `~/.cache/mide/thumbnails`. Só os itens à vista são pedidos, em duas linhas de execução.
+- **Visualização em colunas:** uma coluna por pasta do caminho até o item escolhido; ← e → andam entre as colunas.
+- **Painel de prévia** (botão na barra de ferramentas): miniatura grande, nome, tipo, tamanho e as informações do item.
+- **Visualização Rápida** (Espaço): o item grande no meio da janela; as setas trocam de item; Esc ou Espaço fecham.
+- **Rodapé do Finder:** barra de caminho clicável (Computador › … › item) e barra de status com itens, escolhidos e espaço livre.
+- **mide-ui:** `path_bar`, `status_bar`, `mini_slider`, `image_centered`, `page_sized`, `scroll_area_padded` e `take_scroll`.
+- **Regra forte no CONTEXT.md:** o visual de referência é o macOS Tahoe.

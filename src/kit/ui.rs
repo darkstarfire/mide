@@ -1127,6 +1127,24 @@ impl<'a> Ui<'a> {
         &self.ctx.input
     }
 
+    /// Fica com a rolagem deste quadro (as áreas que rolam não a recebem): Ctrl+roda
+    /// para ampliar ícones, por exemplo.
+    pub fn take_scroll(&mut self) -> f32 {
+        std::mem::take(&mut self.ctx.input.scroll)
+    }
+
+    /// Página que rola com altura escolhida (o resto fica para uma barra embaixo, como a
+    /// barra de status do Arquivos).
+    pub fn page_sized(&mut self, height: f32, add: impl FnOnce(&mut Ui)) {
+        let pad = self.ctx.theme.padding;
+        self.scroll_impl(height.max(0.0), pad, None, add);
+    }
+
+    /// Área que rola com altura e margem escolhidas (colunas do Arquivos, prévia).
+    pub fn scroll_area_padded(&mut self, height: f32, pad: f32, add: impl FnOnce(&mut Ui)) {
+        self.scroll_impl(height.max(0.0), pad, None, add);
+    }
+
     /// Menu de contexto do componente `response`: abre com o clique direito nele e
     /// fica por cima de tudo. Os itens são montados no `build`:
     ///
@@ -2673,6 +2691,114 @@ impl<'a> Ui<'a> {
         self.row_h = old_h;
         self.width = old_width;
         self.cursor_y = old_y + h;
+    }
+
+    /// Imagem grande centralizada numa faixa de `size` de altura (prévia do Arquivos):
+    /// a miniatura, se houver, senão o ícone `icon` do tema.
+    pub fn image_centered(&mut self, image: Option<&Pixmap>, icon: &str, size: u32) {
+        let rect = self.alloc(None, size as f32);
+        if !self.visible(rect) {
+            return;
+        }
+        match image {
+            Some(pix) => {
+                let (pw, ph) = (pix.width() as f32, pix.height() as f32);
+                let (x, y) = (rect.0 + (rect.2 - pw) / 2.0, rect.1 + (rect.3 - ph) / 2.0);
+                crate::ui::draw::blit_image(self.canvas, pix, x.floor(), y.floor());
+            }
+            None => {
+                if let Some(pix) = self.ctx.icon(&[icon, "text-x-generic"], size, false) {
+                    let x = rect.0 + (rect.2 - size as f32) / 2.0;
+                    crate::ui::draw::blit(self.canvas, &pix, x as i32, rect.1 as i32, 1.0);
+                }
+            }
+        }
+    }
+
+    /// Barra de caminho (como a do Finder, embaixo da janela): ícone e nome de cada
+    /// pasta, separados por "›". `parts` são (nome, ícone do tema). Devolve o pedaço
+    /// clicado.
+    pub fn path_bar(&mut self, parts: &[(String, String)]) -> Option<usize> {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, 24.0);
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, 1.0, 0.0, color(t.line));
+        // Sem espaço para tudo: os primeiros nomes encolhem antes do último.
+        let room = rect.2 - 16.0;
+        let n = parts.len().max(1);
+        let each = (room / n as f32 - 34.0).clamp(40.0, 200.0);
+        let mut x = rect.0 + 8.0;
+        let mut clicked = None;
+        for (i, (name, icon)) in parts.iter().enumerate() {
+            let last = i + 1 == parts.len();
+            let limit = if last { (rect.0 + rect.2 - x - 28.0).max(40.0) } else { each };
+            let shown = self.fit(name, t.font_small, FontWeight::Regular, limit);
+            let w = 20.0 + self.measure(&shown, t.font_small, FontWeight::Regular);
+            let cell = (x - 3.0, rect.1 + 3.0, w + 6.0, 18.0);
+            let id = self.ctx.id();
+            let r = self.interact(id, cell);
+            if r.hovered {
+                fill_rounded(self.canvas, cell.0, cell.1, cell.2, cell.3, 5.0, color(t.control));
+            }
+            if let Some(pix) = self.ctx.icon(&[icon.as_str(), "folder"], 16, false) {
+                crate::ui::draw::blit(self.canvas, &pix, x as i32, (rect.1 + 4.0) as i32, 1.0);
+            }
+            self.draw_text(&shown, x + 20.0, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text);
+            if r.clicked {
+                clicked = Some(i);
+            }
+            x += w + 6.0;
+            if !last {
+                self.draw_text("›", x, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
+                x += 12.0;
+            }
+        }
+        clicked
+    }
+
+    /// Linha de status (como a do Finder: "1 de 12 itens escolhido, 20 GB
+    /// disponíveis"), com o texto no meio. Devolve o retângulo (para pôr controles
+    /// por cima, como o zoom dos ícones).
+    pub fn status_bar(&mut self, text: &str) -> (f32, f32, f32, f32) {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, 24.0);
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, 1.0, 0.0, color(t.line));
+        let shown = self.fit(text, t.font_small, FontWeight::Regular, rect.2 - 360.0);
+        let w = self.measure(&shown, t.font_small, FontWeight::Regular);
+        self.draw_text(&shown, rect.0 + (rect.2 - w) / 2.0, rect.1 + (24.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
+        rect
+    }
+
+    /// Controle deslizante pequeno, sem rótulo (zoom dos ícones na barra de status),
+    /// com `width` de largura. Muda o valor enquanto arrasta.
+    pub fn mini_slider(&mut self, width: f32, value: &mut f32, min: f32, max: f32) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(Some(width), 18.0);
+        let mut r = self.interact(id, rect);
+        let (tx, tw) = (rect.0 + 7.0, rect.2 - 14.0);
+        if self.ctx.memory.active == Some(id) && (self.ctx.input.down || self.ctx.input.released) {
+            if let Some((px, _)) = self.pointer() {
+                let new = min + ((px - tx) / tw).clamp(0.0, 1.0) * (max - min);
+                if (new - *value).abs() > f32::EPSILON {
+                    *value = new;
+                    r.changed = true;
+                    self.ctx.repaint = true;
+                }
+            }
+        }
+        let k = ((*value - min) / (max - min).max(f32::EPSILON)).clamp(0.0, 1.0);
+        let cy = rect.1 + rect.3 / 2.0;
+        fill_rounded(self.canvas, tx, cy - 2.0, tw, 4.0, 2.0, color(t.shade(40)));
+        fill_rounded(self.canvas, tx, cy - 2.0, tw * k, 4.0, 2.0, color(t.accent));
+        if let Some(knob) = PathBuilder::from_circle(tx + tw * k, cy, 6.0) {
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(color([255, 255, 255, 255]));
+            self.canvas.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+            paint.set_color(color(t.shade(70)));
+            self.canvas.stroke_path(&knob, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        }
+        r
     }
 
     /// Grade que quebra linha: os itens vão lado a lado e descem quando a largura acaba.

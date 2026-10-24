@@ -42,8 +42,6 @@ use mide::{
 };
 use tiny_skia::Pixmap;
 
-/// Lado das miniaturas e dos ícones da grade.
-const TILE: u32 = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Place {
@@ -60,6 +58,27 @@ struct Files {
     /// principal (teclas, Shift+clique a partir dele).
     selection: Vec<PathBuf>,
     list_view: bool,
+    /// Colunas (como no Finder): cada pasta escolhida abre a próxima coluna; vale mais
+    /// que `list_view`.
+    column_view: bool,
+    /// Lado dos ícones da grade (zoom: Ctrl+roda, Ctrl +/−, controle na barra de status).
+    icon_size: u32,
+    /// Painel de prévia à direita (Finder: Visualizar → Mostrar Pré-visualização).
+    preview_pane: bool,
+    /// Visualização Rápida (Espaço): o item mostrado grande por cima da janela.
+    quick_look: Option<PathBuf>,
+    /// Seleção por retângulo: onde o botão foi apertado no vazio, e depois de andar, o
+    /// retângulo (início, ponta) com a seleção de antes (Ctrl/Shift somam a ela).
+    lasso_press: Option<(f32, f32)>,
+    lasso: Option<((f32, f32), (f32, f32), Vec<PathBuf>)>,
+    /// Colunas: o que há em cada pasta aberta nelas (relido ao recarregar).
+    col_cache: HashMap<PathBuf, Vec<Entry>>,
+    /// Painel de prévia: as informações do item mostrado (lidas uma vez por item).
+    preview_info: Option<(PathBuf, Vec<(&'static str, String)>)>,
+    /// Espaço livre no disco da pasta atual (barra de status).
+    free_space: Option<u64>,
+    /// O zoom mudou pelo controle da barra de status: grava quando soltar.
+    zoom_dirty: bool,
     hidden: bool,
     search: String,
     searching: bool,
@@ -69,10 +88,12 @@ struct Files {
     focus_rename: bool,
     message: Option<String>,
     favorites: Vec<(String, PathBuf, &'static str)>,
-    thumbs: HashMap<PathBuf, Option<Pixmap>>,
-    waiting: HashSet<PathBuf>,
-    to_loader: Sender<PathBuf>,
-    from_loader: Receiver<(PathBuf, Option<Pixmap>)>,
+    /// Miniaturas por (arquivo, tamanho): imagens, folhas de texto e as dos geradores
+    /// do sistema (`mide::thumbnails`).
+    thumbs: HashMap<(PathBuf, u32), Option<Pixmap>>,
+    waiting: HashSet<(PathBuf, u32)>,
+    to_loader: Sender<(PathBuf, u32)>,
+    from_loader: Receiver<((PathBuf, u32), Option<Pixmap>)>,
     /// Lista: pastas abertas na própria lista e o que há dentro delas.
     expanded: HashSet<PathBuf>,
     children: HashMap<PathBuf, Vec<Entry>>,
@@ -118,16 +139,23 @@ impl Files {
     fn new(start: Place) -> Self {
         // Miniaturas carregam numa linha de execução à parte, para a janela não travar
         // numa pasta cheia de fotos grandes.
-        let (to_loader, jobs) = channel::<PathBuf>();
+        // Duas linhas de execução: um gerador lento (vídeo, PDF) não segura as fotos.
+        let (to_loader, jobs) = channel::<(PathBuf, u32)>();
         let (done, from_loader) = channel();
-        std::thread::spawn(move || {
-            for path in jobs {
-                let thumb = mide::icons::load_icon_file(&path.to_string_lossy(), TILE);
-                if done.send((path, thumb)).is_err() {
+        let jobs = std::sync::Arc::new(std::sync::Mutex::new(jobs));
+        for _ in 0..2 {
+            let (jobs, done) = (jobs.clone(), done.clone());
+            std::thread::spawn(move || loop {
+                let job = jobs.lock().ok().and_then(|rx| rx.recv().ok());
+                let Some((path, size)) = job else {
+                    break;
+                };
+                let thumb = mide::thumbnails::make(&path, size);
+                if done.send(((path, size), thumb)).is_err() {
                     break;
                 }
-            }
-        });
+            });
+        }
         let (to_sizer, size_jobs) = channel::<PathBuf>();
         let (size_done, from_sizer) = channel();
         std::thread::spawn(move || {
@@ -174,6 +202,16 @@ impl Files {
             entries: Vec::new(),
             selection: Vec::new(),
             list_view: false,
+            column_view: false,
+            icon_size: files_view::ICON_DEFAULT,
+            preview_pane: false,
+            quick_look: None,
+            lasso_press: None,
+            lasso: None,
+            col_cache: HashMap::new(),
+            preview_info: None,
+            free_space: None,
+            zoom_dirty: false,
             hidden: false,
             search: String::new(),
             searching: false,
@@ -206,7 +244,9 @@ impl Files {
         let view = ViewMemory::load().view_for(&key);
         if self.place != Place::Trash {
             self.list_view = view.list;
+            self.column_view = view.columns;
         }
+        self.icon_size = view.icon_size;
         self.sort = (view.sort_column, view.ascending);
         self.view_switched = None;
         tracing::info!("visualização de {key}: {}", view_text(self.list_view || self.place == Place::Trash, self.sort));
@@ -216,7 +256,13 @@ impl Files {
     fn save_view(&self) {
         let key = self.view_key();
         let in_trash = self.place == Place::Trash;
-        let view = files_view::View { list: self.list_view || in_trash, sort_column: self.sort.0, ascending: self.sort.1 };
+        let view = files_view::View {
+            list: self.list_view || in_trash,
+            sort_column: self.sort.0,
+            ascending: self.sort.1,
+            columns: self.column_view && !in_trash,
+            icon_size: self.icon_size,
+        };
         match ViewMemory::record(&key, view, !in_trash) {
             Ok(_) => tracing::info!("visualização guardada para {key}: {}", view_text(view.list, self.sort)),
             Err(err) => tracing::warn!("não foi possível guardar a visualização: {err}"),
@@ -253,6 +299,9 @@ impl Files {
         }
         // Tamanhos mudam depois de copiar, apagar ou renomear.
         self.sizes.clear();
+        self.col_cache.clear();
+        self.preview_info = None;
+        self.free_space = rustix::fs::statvfs(&dir).ok().map(|v| v.f_bavail.saturating_mul(v.f_frsize));
         self.selection.retain(|s| s.exists());
     }
 
@@ -652,12 +701,35 @@ impl Files {
         self.reload();
     }
 
-    /// Miniatura de uma imagem, pedindo o carregamento na primeira vez.
-    fn thumb(&mut self, path: &Path) -> Option<&Pixmap> {
-        if !self.thumbs.contains_key(path) && self.waiting.insert(path.to_path_buf()) {
-            let _ = self.to_loader.send(path.to_path_buf());
+    /// Miniatura de um arquivo no tamanho `size`, pedindo o carregamento na primeira
+    /// vez (enquanto não chega, o ícone do tipo fica no lugar).
+    fn thumb(&mut self, path: &Path, size: u32) -> Option<&Pixmap> {
+        let key = (path.to_path_buf(), size);
+        if !self.thumbs.contains_key(&key) && self.waiting.insert(key.clone()) {
+            let _ = self.to_loader.send(key.clone());
         }
-        self.thumbs.get(path).and_then(Option::as_ref)
+        // Cache limitado: zoom de um lado para o outro numa pasta grande.
+        if self.thumbs.len() > 3000 {
+            let size_now = size;
+            self.thumbs.retain(|(_, s), _| *s == size_now);
+        }
+        self.thumbs.get(&key).and_then(Option::as_ref)
+    }
+
+    /// Quem ganha miniatura: arquivos comuns, menos os atalhos `.desktop` (mostram o
+    /// ícone do app).
+    fn wants_thumb(entry: &Entry) -> bool {
+        !entry.is_dir && !entry.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("desktop"))
+    }
+
+    /// Muda o tamanho dos ícones (zoom), em passos de 16 pontos.
+    fn zoom(&mut self, steps: i32) {
+        let size = (self.icon_size as i32 + 16 * steps).clamp(files_view::ICON_MIN as i32, files_view::ICON_MAX as i32) as u32;
+        if size != self.icon_size {
+            self.icon_size = size;
+            tracing::info!("ícones com {size} pontos");
+            self.save_view();
+        }
     }
 
     /// Teclas da janela (quando não há um campo de texto com o foco).
@@ -691,6 +763,23 @@ impl Files {
         if ui.typing() || self.dialog.is_some() || self.open_with.is_some() || self.info.is_some() || self.prompt.is_some() {
             return;
         }
+        // Espaço: Visualização Rápida (abre e fecha). Ctrl +/−/0: zoom dos ícones.
+        let input = ui.input();
+        let space = input.text == " ";
+        let (zoom_in, zoom_out, zoom_reset) = (input.shortcut("=") || input.shortcut("+"), input.shortcut("-"), input.shortcut("0"));
+        if space {
+            self.quick_look = if self.quick_look.is_some() { None } else { self.primary().cloned() };
+            ui.request_repaint();
+        }
+        if zoom_in || zoom_out {
+            self.zoom(if zoom_in { 1 } else { -1 });
+            ui.request_repaint();
+        }
+        if zoom_reset && self.icon_size != files_view::ICON_DEFAULT {
+            self.icon_size = files_view::ICON_DEFAULT;
+            self.save_view();
+            ui.request_repaint();
+        }
         if info {
             if let Some(path) = self.primary().cloned() {
                 self.show_info(&path);
@@ -713,7 +802,7 @@ impl Files {
             ui.request_repaint();
         }
         let chosen = current.map(|i| shown[i].clone());
-        if list && (left || right) {
+        if list && self.mode() == 1 && (left || right) {
             if let Some(entry) = chosen.as_ref().filter(|e| e.is_dir) {
                 self.toggle_expand(&entry.path, right);
                 ui.request_repaint();
@@ -765,16 +854,43 @@ impl Files {
         }
     }
 
+    /// Colunas: ← volta para a pasta de cima (na coluna anterior) e → entra na pasta
+    /// escolhida (o primeiro item dela).
+    fn column_keys(&mut self, ui: &mut Ui, dirs: &[PathBuf]) {
+        let (left, right) = (ui.input().key(Key::Left), ui.input().key(Key::Right));
+        let Some(primary) = self.primary().cloned() else {
+            return;
+        };
+        if left {
+            if let Some(parent) = primary.parent().filter(|p| dirs.first().is_some_and(|base| p != base && p.starts_with(base))) {
+                self.select_one(parent.to_path_buf());
+                ui.request_repaint();
+            }
+        }
+        if right && primary.is_dir() {
+            if let Some(first) = self.column_list(&primary).first() {
+                self.select_one(first.path.clone());
+                ui.request_repaint();
+            }
+        }
+    }
+
+    /// Barra de ferramentas no estilo do Finder: voltar e avançar, o nome da pasta e,
+    /// à direita, as visualizações (ícones, lista, colunas), o painel de prévia, nova
+    /// pasta e a busca.
     fn toolbar(&mut self, ui: &mut Ui) {
         let mut back = false;
         let mut forward = false;
-        let mut toggle = None;
+        let mut mode = None;
+        let mut preview = false;
+        let mut new_folder = false;
         let can_back = !self.back.is_empty();
         let can_forward = !self.forward.is_empty();
         let title = self.title();
-        let list_view = self.list_view;
+        let current = self.mode();
         let in_trash = self.place == Place::Trash;
         let has_items = !self.entries.is_empty();
+        let preview_on = self.preview_pane;
         let mut empty_trash = false;
         let mut search = std::mem::take(&mut self.search);
         ui.toolbar(|ui| {
@@ -782,19 +898,22 @@ impl Files {
             forward = ui.icon_button("go-next-symbolic", "›", can_forward).clicked();
             ui.space(4.0);
             ui.strong(&title);
-            let right = if in_trash { 110.0 } else { 2.0 * 32.0 + 220.0 + 2.0 * 8.0 };
+            // Cada botão ocupa 32 pontos mais o espaçamento da barra.
+            let step = 32.0 + ui.theme().spacing;
+            let right = if in_trash { step + 110.0 } else { 5.0 * step + 200.0 };
             ui.push_right(right);
             if in_trash {
+                preview = ui.icon_toggle("view-dual-symbolic", "◨", preview_on).clicked();
                 ui.sized(110.0, |ui| empty_trash = has_items && ui.button("Esvaziar").clicked());
             } else {
-                if ui.icon_toggle("view-grid-symbolic", "▦", !list_view).clicked() {
-                    toggle = Some(false);
+                for (i, (icon, fallback)) in [("view-grid-symbolic", "▦"), ("view-list-symbolic", "☰"), ("view-column-symbolic", "▥")].into_iter().enumerate() {
+                    if ui.icon_toggle(icon, fallback, current == i).clicked() {
+                        mode = Some(i);
+                    }
                 }
-                let list = ui.icon_toggle("view-list-symbolic", "☰", list_view);
-                if list.clicked() {
-                    toggle = Some(true);
-                }
-                ui.sized(220.0, |ui| {
+                preview = ui.icon_toggle("view-dual-symbolic", "◨", preview_on).clicked();
+                new_folder = ui.icon_button("folder-new-symbolic", "+", true).clicked();
+                ui.sized(200.0, |ui| {
                     ui.text_input(&mut search, "Buscar");
                 });
             }
@@ -809,17 +928,14 @@ impl Files {
         if forward {
             self.go_forward();
         }
-        if let Some(list) = toggle {
-            if list != self.list_view && mide::settings_file::effect("transitions") {
-                self.view_switched = Some(std::time::Instant::now());
-            }
-            let changed = list != self.list_view;
-            self.list_view = list;
-            if changed {
-                self.save_view();
-                // O item escolhido continua à vista na outra visualização.
-                self.reveal = self.primary().cloned();
-            }
+        if preview {
+            self.preview_pane = !self.preview_pane;
+        }
+        if new_folder {
+            self.new_folder();
+        }
+        if let Some(mode) = mode {
+            self.set_mode(mode);
         }
         if empty_trash {
             match places::empty_trash(&Self::trash()) {
@@ -828,6 +944,32 @@ impl Files {
             }
             self.reload();
         }
+    }
+
+    /// Visualização atual: 0 ícones, 1 lista, 2 colunas (a Lixeira é sempre lista).
+    fn mode(&self) -> usize {
+        if self.place == Place::Trash || (self.list_view && !self.column_view) {
+            1
+        } else if self.column_view {
+            2
+        } else {
+            0
+        }
+    }
+
+    fn set_mode(&mut self, mode: usize) {
+        if mode == self.mode() || self.place == Place::Trash {
+            return;
+        }
+        if mide::settings_file::effect("transitions") {
+            self.view_switched = Some(std::time::Instant::now());
+        }
+        self.list_view = mode == 1;
+        self.column_view = mode == 2;
+        tracing::info!("visualização: {}", ["ícones", "lista", "colunas"][mode.min(2)]);
+        self.save_view();
+        // O item escolhido continua à vista na outra visualização.
+        self.reveal = self.primary().cloned();
     }
 
     /// Diálogo (modal, vidro branco no meio da janela): nome, Cancelar e Criar.
@@ -981,9 +1123,9 @@ impl Files {
             ui.request_tick();
         }
         // Miniaturas que chegaram.
-        while let Ok((path, thumb)) = self.from_loader.try_recv() {
-            self.waiting.remove(&path);
-            self.thumbs.insert(path, thumb);
+        while let Ok((key, thumb)) = self.from_loader.try_recv() {
+            self.waiting.remove(&key);
+            self.thumbs.insert(key, thumb);
             ui.request_repaint();
         }
         if !self.waiting.is_empty() {
@@ -1000,13 +1142,49 @@ impl Files {
             }
         }
         self.toolbar(ui);
+        let mode = self.mode();
+        // Zoom dos ícones: Ctrl+roda (como a pinça do trackpad no Finder).
+        if mode == 0 && ui.input().ctrl {
+            let scroll = ui.take_scroll();
+            if scroll.abs() > 0.5 {
+                self.zoom(if scroll < 0.0 { 1 } else { -1 });
+                ui.request_repaint();
+            }
+        }
+        let size = self.icon_size;
         let shown = self.shown();
-        let in_list = self.list_view || self.place == Place::Trash;
-        let columns = ((ui.available_width() - 2.0 * ui.theme().padding) / (TILE as f32 + 44.0 + ui.theme().spacing)).max(1.0) as usize;
+        let in_list = mode == 1;
+        // Área do conteúdo: sobra o rodapé (caminho e status) e, com a prévia, a faixa
+        // da direita.
+        let region = ui.region();
+        let top = region.1 + region.3 - ui.remaining_height();
+        let footer_h = 2.0 * (24.0 + ui.theme().spacing);
+        let body_h = (ui.remaining_height() - footer_h).max(80.0);
+        let preview_w = if self.preview_pane && region.2 > 620.0 { 270.0 } else { 0.0 };
+        let columns = ((region.2 - preview_w - 2.0 * ui.theme().padding) / (size as f32 + 44.0 + ui.theme().spacing)).max(1.0) as usize;
         // Na lista, as teclas andam pelas linhas (inclusive as de dentro das pastas).
         let rows = if in_list { self.rows(&shown) } else { Vec::new() };
         let row_entries: Vec<Entry> = rows.iter().map(|(_, e)| e.clone()).collect();
-        self.keys(ui, if in_list { &row_entries } else { &shown }, columns, in_list);
+        // Colunas: uma lista por pasta do caminho até o item escolhido.
+        let col_dirs = if mode == 2 { self.column_dirs() } else { Vec::new() };
+        let mut col_lists: Vec<Vec<Entry>> = Vec::new();
+        for dir in &col_dirs {
+            let list = if self.place == Place::Dir(dir.clone()) { shown.clone() } else { self.column_list(dir) };
+            col_lists.push(list);
+        }
+        // Nas colunas, ↑ e ↓ andam na coluna do item escolhido.
+        let key_list: Vec<Entry> = if mode == 2 {
+            let primary = self.primary().cloned();
+            col_lists.iter().rev().find(|l| primary.as_ref().is_some_and(|p| l.iter().any(|e| &e.path == p))).cloned().unwrap_or_else(|| shown.clone())
+        } else if in_list {
+            row_entries.clone()
+        } else {
+            shown.clone()
+        };
+        self.keys(ui, &key_list, columns, mode != 0);
+        if mode == 2 && !ui.typing() && self.dialog.is_none() {
+            self.column_keys(ui, &col_dirs);
+        }
         // Rótulos (nome e ícone) do que está à vista: os atalhos mostram o app. Só os
         // `.desktop` entram (os outros usam o nome e o ícone da própria entrada, sem
         // copiar textos a cada quadro numa pasta grande).
@@ -1039,7 +1217,11 @@ impl Files {
         let now = SystemTime::now();
         let mut action: Option<(Action, Entry)> = None;
         let mut empty_action = None;
-        ui.page(|ui| {
+        let mut wanted: Vec<PathBuf> = Vec::new();
+        let mut rects: Vec<(PathBuf, (f32, f32, f32, f32))> = Vec::new();
+        let ctrl_shift = ctrl || shift;
+        ui.at(region.0, top, region.2 - preview_w, |ui| {
+        ui.page_sized(body_h, |ui| {
             if let Some(message) = &self.message {
                 ui.note(message);
             }
@@ -1051,16 +1233,11 @@ impl Files {
                 });
             }
             let selection = self.selection.clone();
-            let thumbs: Vec<Option<Pixmap>> = if self.list_view || in_trash {
-                Vec::new()
-            } else {
-                // A miniatura de cada imagem vem do cache; o que falta é pedido.
-                shown.iter().map(|e| if e.is_image() { self.thumb_clone(&e.path) } else { None }).collect()
-            };
             let mut select = None;
             let reveal = self.reveal.clone();
             let mut revealed = false;
             let mut item = |ui: &mut Ui, entry: &Entry, r: mide::kit::Response| {
+                rects.push((entry.path.clone(), r.rect));
                 if reveal.as_ref() == Some(&entry.path) {
                     ui.reveal(r.rect);
                     revealed = true;
@@ -1167,7 +1344,35 @@ impl Files {
                     }
                 });
             };
-            if in_list {
+            if mode == 2 {
+                // Colunas (como no Finder): uma lista por pasta, lado a lado; as últimas
+                // ficam à vista quando não cabem todas.
+                let r = ui.region();
+                let col_top = r.1 + r.3 - ui.remaining_height();
+                let col_w = 230.0f32;
+                let fit = ((r.2 / col_w).floor() as usize).max(1);
+                let skip = col_lists.len().saturating_sub(fit);
+                let col_h = (r.1 + r.3 - col_top - 2.0).max(60.0);
+                let line = ui.theme().line;
+                for (ci, list) in col_lists.iter().enumerate().skip(skip) {
+                    let x = r.0 + (ci - skip) as f32 * col_w;
+                    ui.at(x, col_top, col_w - 8.0, |ui| {
+                        ui.scroll_area(col_h, |ui| {
+                            for entry in list {
+                                let selected = selection.contains(&entry.path) || col_dirs.contains(&entry.path);
+                                let (name, icon) = label_of(entry);
+                                let arrow = if entry.is_dir { "›" } else { "" };
+                                let (r, _) = ui.tree_row(0, false, false, &icon, &name, &[(arrow, 18.0)], selected, false);
+                                item(ui, entry, r);
+                            }
+                        });
+                    });
+                    ui.paint(|canvas, _| {
+                        mide::ui::draw::fill_rounded(canvas, x + col_w - 4.0, col_top, 1.0, col_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3]));
+                    });
+                }
+                ui.space(col_h);
+            } else if in_list {
                 // Lista no estilo do Finder: cabeçalho que ordena e linhas alternadas,
                 // com a setinha das pastas.
                 let widths = [("Modificado", 165.0), ("Tamanho", 85.0), ("Tipo", 150.0)];
@@ -1229,15 +1434,24 @@ impl Files {
                     }
                 }
             } else {
+                // Ícones com miniaturas (imagens, texto, PDF, vídeo...): só as que
+                // aparecem são pedidas; até chegar, o ícone do tipo.
+                let view = ui.region();
+                let thumbs = &self.thumbs;
                 ui.wrap(|ui| {
-                    for (entry, thumb) in shown.iter().zip(&thumbs) {
+                    for entry in &shown {
                         let selected = selection.contains(&entry.path);
                         let (name, icon) = label_of(entry);
-                        let image = match thumb {
-                            Some(pix) => Tile::Image(pix),
-                            None => Tile::Icon(&icon),
+                        let wants = Self::wants_thumb(entry);
+                        let cached = if wants { thumbs.get(&(entry.path.clone(), size)) } else { None };
+                        let image = match cached {
+                            Some(Some(pix)) => Tile::Image(pix),
+                            _ => Tile::Icon(&icon),
                         };
-                        let r = ui.tile(image, &name, selected, TILE);
+                        let r = ui.tile(image, &name, selected, size);
+                        if wants && cached.is_none() && r.rect.1 + r.rect.3 >= view.1 - 200.0 && r.rect.1 <= view.1 + view.3 + 200.0 {
+                            wanted.push(entry.path.clone());
+                        }
                         item(ui, entry, r);
                     }
                 });
@@ -1279,8 +1493,56 @@ impl Files {
                 let t = mide::motion::progress(at, mide::motion::VIEW_SWITCH);
                 veil(ui, area, 0.9 * (1.0 - mide::motion::ease_out_soft(t)));
             }
+            // Seleção por retângulo (como no Finder): apertar no vazio e arrastar
+            // escolhe o que o retângulo toca; com Ctrl ou Shift, soma à seleção.
+            let ptr = ui.pointer();
+            let (pressed_now, down_now) = (ui.input().pressed, ui.input().down);
+            let mut lasso_used = self.lasso.is_some();
+            if pressed_now && press.is_none() && dragging.is_none() && ui.menu_open().is_none() && mode != 2 {
+                if let Some(p) = ptr.filter(|p| ui.over(area) && p.0 < area.0 + area.2 - 16.0) {
+                    self.lasso_press = Some(p);
+                }
+            }
+            if let (Some(start), Some(p), true) = (self.lasso_press, ptr, down_now) {
+                if self.lasso.is_none() && ((p.0 - start.0).powi(2) + (p.1 - start.1).powi(2)).sqrt() > 4.0 {
+                    let base = if ctrl_shift { self.selection.clone() } else { Vec::new() };
+                    self.lasso = Some((start, p, base));
+                }
+                if let Some(lasso) = self.lasso.as_mut() {
+                    lasso.1 = p;
+                }
+            }
+            if let Some((a, b, base)) = self.lasso.clone() {
+                let (x0, y0, x1, y1) = (a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1));
+                let mut chosen = base;
+                for (path, r) in &rects {
+                    if r.0 < x1 && r.0 + r.2 > x0 && r.1 < y1 && r.1 + r.3 > y0 && !chosen.contains(path) {
+                        chosen.push(path.clone());
+                    }
+                }
+                self.selection = chosen;
+                lasso_used = true;
+                let accent = ui.theme().accent;
+                ui.paint(|canvas, _| {
+                    let (w, h) = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
+                    mide::ui::draw::fill_rounded(canvas, x0, y0, w, h, 2.0, tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 40));
+                    if let Some(path) = mide::ui::draw::rounded_rect(x0 + 0.5, y0 + 0.5, w - 1.0, h - 1.0, 2.0) {
+                        let mut paint = tiny_skia::Paint::default();
+                        paint.anti_alias = true;
+                        paint.set_color(tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 200));
+                        canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, mide::ui::draw::tf(), None);
+                    }
+                });
+                ui.request_repaint();
+            }
+            if !down_now {
+                if self.lasso.take().is_some() {
+                    tracing::info!("seleção por retângulo: {} item(ns)", self.selection.len());
+                }
+                self.lasso_press = None;
+            }
             let bg = ui.background(area);
-            if bg.clicked() {
+            if bg.clicked() && !lasso_used {
                 self.selection.clear();
                 ui.request_repaint();
             }
@@ -1312,6 +1574,55 @@ impl Files {
                 }
             });
         });
+        });
+        for path in wanted {
+            self.thumb(&path, size);
+        }
+        if !self.waiting.is_empty() {
+            ui.request_tick();
+        }
+        // Painel de prévia à direita, separado por uma linha fina.
+        if preview_w > 0.0 {
+            ui.at(region.0 + region.2 - preview_w, top, preview_w, |ui| self.preview_panel(ui, body_h));
+            let line = ui.theme().line;
+            let x = region.0 + region.2 - preview_w;
+            ui.paint(|canvas, _| mide::ui::draw::fill_rounded(canvas, x, top, 1.0, body_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3])));
+        }
+        ui.space(body_h);
+        // Rodapé do Finder: barra de caminho (clicar vai até a pasta) e barra de status
+        // com o zoom dos ícones.
+        let parts = self.path_parts();
+        let names: Vec<(String, String)> = parts.iter().map(|(n, i, _)| (n.clone(), i.clone())).collect();
+        if let Some(i) = ui.path_bar(&names) {
+            let target = parts[i].2.clone();
+            if target.is_dir() {
+                self.go(Place::Dir(target));
+            } else {
+                self.select_one(target);
+            }
+            ui.request_repaint();
+        }
+        let count = if mode == 2 { col_lists.first().map_or(0, Vec::len) } else { shown.len() };
+        let status = ui.status_bar(&self.status_text(count));
+        if mode == 0 {
+            let mut value = self.icon_size as f32;
+            let mut changed = false;
+            ui.at(status.0 + status.2 - 140.0, status.1 + 3.0, 128.0, |ui| {
+                changed = ui.mini_slider(128.0, &mut value, files_view::ICON_MIN as f32, files_view::ICON_MAX as f32).changed();
+            });
+            if changed {
+                let snapped = (((value / 16.0).round() * 16.0) as u32).clamp(files_view::ICON_MIN, files_view::ICON_MAX);
+                if snapped != self.icon_size {
+                    self.icon_size = snapped;
+                    self.zoom_dirty = true;
+                }
+                ui.request_repaint();
+            }
+            if self.zoom_dirty && !ui.input().down {
+                self.zoom_dirty = false;
+                self.save_view();
+            }
+        }
         for (path, open) in toggles {
             self.toggle_expand(&path, open);
             ui.request_repaint();
@@ -1446,8 +1757,165 @@ impl Files {
         }
     }
 
-    fn thumb_clone(&mut self, path: &Path) -> Option<Pixmap> {
-        self.thumb(path).cloned()
+    /// Pastas mostradas nas colunas: a pasta atual e, até o item escolhido, cada pasta
+    /// do caminho dele (como no Finder).
+    fn column_dirs(&self) -> Vec<PathBuf> {
+        let Place::Dir(base) = &self.place else {
+            return Vec::new();
+        };
+        let mut dirs = vec![base.clone()];
+        if let Some(rel) = self.primary().and_then(|p| p.strip_prefix(base).ok()) {
+            let mut cur = base.clone();
+            for part in rel.components() {
+                cur.push(part);
+                if cur.is_dir() {
+                    dirs.push(cur.clone());
+                }
+            }
+        }
+        dirs
+    }
+
+    /// O que há numa pasta das colunas (guardado até recarregar).
+    fn column_list(&mut self, dir: &Path) -> Vec<Entry> {
+        if let Some(list) = self.col_cache.get(dir) {
+            return list.clone();
+        }
+        let mut list = files::list_dir(dir, self.hidden).unwrap_or_default();
+        sort_list(&mut list, self.sort);
+        self.col_cache.insert(dir.to_path_buf(), list.clone());
+        list
+    }
+
+    /// Barra de caminho: do disco até a pasta atual (e o item escolhido, como no
+    /// Finder). Cada pedaço: nome, ícone e para onde vai.
+    fn path_parts(&self) -> Vec<(String, String, PathBuf)> {
+        let dir = match &self.place {
+            Place::Trash => return vec![("Lixeira".into(), "user-trash".into(), Self::trash())],
+            Place::Dir(dir) => dir.clone(),
+        };
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let mut parts = Vec::new();
+        let mut cur = PathBuf::new();
+        for comp in dir.components() {
+            cur.push(comp);
+            let (name, icon) = if cur == Path::new("/") {
+                ("Computador".to_string(), "drive-harddisk")
+            } else if Some(&cur) == home.as_ref() {
+                (cur.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), "user-home")
+            } else {
+                (cur.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), "folder")
+            };
+            parts.push((name, icon.to_string(), cur.clone()));
+        }
+        if let Some(sel) = self.primary().filter(|p| p.parent() == Some(dir.as_path())) {
+            let name = sel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let icon = self.entries.iter().find(|e| &e.path == sel).map(|e| e.icon_name()).unwrap_or("text-x-generic");
+            parts.push((name, icon.to_string(), sel.clone()));
+        }
+        parts
+    }
+
+    /// Texto da barra de status: itens, escolhidos e espaço livre.
+    fn status_text(&self, count: usize) -> String {
+        let items = if count == 1 { "1 item".to_string() } else { format!("{count} itens") };
+        let chosen = self.selection.len();
+        let mut text = if chosen > 0 { format!("{chosen} de {items} escolhido(s)") } else { items };
+        if let Some(free) = self.free_space {
+            text.push_str(&format!(", {} disponíveis", files::size_text(free)));
+        }
+        text
+    }
+
+    /// Painel de prévia (à direita, como no Finder): miniatura grande, nome, tipo e
+    /// tamanho, e as informações do item.
+    fn preview_panel(&mut self, ui: &mut Ui, height: f32) {
+        let Some(path) = self.primary().cloned() else {
+            ui.scroll_area_padded(height, 16.0, |ui| {
+                ui.space(40.0);
+                ui.note("Nenhum item escolhido");
+            });
+            return;
+        };
+        if self.preview_info.as_ref().is_none_or(|(p, _)| *p != path) {
+            self.preview_info = Some((path.clone(), files::info_lines(&path).unwrap_or_default()));
+        }
+        let entry = self.entries.iter().chain(self.col_cache.values().flatten()).find(|e| e.path == path).cloned();
+        let icon = entry.as_ref().map(|e| e.icon_name()).unwrap_or("text-x-generic");
+        let image = if entry.as_ref().is_some_and(Self::wants_thumb) { self.thumb_clone(&path, 220) } else { None };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let kind = entry.as_ref().map(files::kind_text).unwrap_or_default();
+        let size = entry.as_ref().filter(|e| !e.is_dir).map(|e| files::size_text(e.size)).unwrap_or_default();
+        let lines = self.preview_info.as_ref().map(|(_, l)| l.clone()).unwrap_or_default();
+        let mut quick = false;
+        ui.scroll_area_padded(height, 16.0, |ui| {
+            ui.space(8.0);
+            ui.image_centered(image.as_ref(), icon, 220);
+            ui.strong(&name);
+            ui.note(&if size.is_empty() { kind.clone() } else { format!("{kind} - {size}") });
+            ui.separator();
+            ui.heading("Informações");
+            for (label, value) in &lines {
+                ui.row(|ui| {
+                    ui.sized(96.0, |ui| ui.note(label));
+                    ui.label(value);
+                });
+            }
+            ui.space(8.0);
+            quick = ui.button("Visualização Rápida").clicked();
+        });
+        if quick {
+            self.quick_look = Some(path);
+        }
+    }
+
+    /// Visualização Rápida (Espaço, como no Finder): o item grande no meio da janela.
+    /// Espaço ou Esc fecham; as setas trocam de item.
+    fn quick_look_view(&mut self, ui: &mut Ui) {
+        let Some(path) = self.quick_look.clone() else {
+            return;
+        };
+        // A seleção mudou pelas setas: mostra o item novo.
+        if let Some(p) = self.primary().cloned() {
+            if p != path {
+                self.quick_look = Some(p);
+                ui.request_repaint();
+                return;
+            }
+        }
+        let (ww, wh) = ui.window_size();
+        let side = ((ww.min(wh) as f32) * 0.62).clamp(160.0, 640.0) as u32;
+        let entry = self.entries.iter().chain(self.col_cache.values().flatten()).find(|e| e.path == path).cloned();
+        let icon = entry.as_ref().map(|e| e.icon_name()).unwrap_or("text-x-generic");
+        let image = if entry.as_ref().is_some_and(Self::wants_thumb) { self.thumb_clone(&path, side) } else { None };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut close = ui.input().key(Key::Escape);
+        let mut open = false;
+        ui.modal(side as f32 + 48.0, |ui| {
+            ui.row(|ui| {
+                ui.strong(&short(&name));
+                ui.push_right(110.0);
+                ui.sized(110.0, |ui| open = ui.button("Abrir").clicked());
+            });
+            ui.image_centered(image.as_ref(), icon, side);
+        });
+        if open {
+            if let Some(entry) = entry {
+                self.open(&entry);
+            }
+            close = true;
+        }
+        if close {
+            self.quick_look = None;
+            ui.request_repaint();
+        }
+        if self.waiting.iter().any(|(p, _)| *p == path) {
+            ui.request_tick();
+        }
+    }
+
+    fn thumb_clone(&mut self, path: &Path, size: u32) -> Option<Pixmap> {
+        self.thumb(path, size).cloned()
     }
 }
 
@@ -1515,6 +1983,7 @@ impl App for Files {
         self.open_with_view(ui);
         self.info_view(ui);
         self.prompt_view(ui);
+        self.quick_look_view(ui);
         if chosen != current {
             let place = if chosen == favorites + 3 {
                 Place::Trash
