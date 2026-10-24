@@ -192,37 +192,38 @@ cápsula). Tab percorre os controles; Espaço aperta; setas mudam segmentado e l
 ## 4. Catálogo de componentes
 
 Status: **existe** (já no mide-ui, no visual certo), **ajustar** (existe, mudar para o
-Tahoe), **criar** (não existe).
+Tahoe), **criar** (não existe), **só no app** (feito dentro de um app; passar para o kit
+para outros apps usarem). Situação de 2026-10-24.
 
 ### 4.1 Estrutura da janela
 
 | Componente | Status | Como é no Tahoe |
 |---|---|---|
-| Janela de conteúdo inteiro | criar | sem barra de título; cantos 24; luzes onde o app pedir (compositor + kit) |
-| Barra lateral flutuante (`glass_sidebar`) | ajustar | recuo 8, raio 16, vidro, luzes dentro, seções com título `subhead`, recolher seção, arrastar largura, esconder (⌃⌘S) |
-| Barra de ferramentas (`toolbar`) | ajustar | 52, sem fundo e sem linha; título à esquerda; grupos à direita |
-| Grupo de botões em cápsula | criar | cápsula de vidro com 1–4 ícones; separador fino entre eles; o selecionado ganha pílula interna |
-| Botão de navegação ‹ › | ajustar | par em cápsula |
-| Campo de busca em cápsula | ajustar | cápsula 36, lupa, texto, ✕ para limpar; pode recolher para só a lupa quando falta espaço |
+| Janela de conteúdo inteiro (`Window::full_size_content`, `fixed_size`) | existe | sem barra de título; cantos 24; luzes onde o app pedir (compositor + kit) |
+| Barra lateral flutuante (`glass_sidebar`) | existe (faltam recolher seção, arrastar largura, esconder) | recuo 8, raio 16, vidro, luzes dentro, seções com título `subhead`, recolher seção, arrastar largura, esconder (⌃⌘S) |
+| Barra de ferramentas (`toolbar`, `toolbar_title`) | existe | 52, sem fundo e sem linha; título à esquerda; grupos à direita |
+| Grupo de botões em cápsula (`toolbar_buttons`) | existe | cápsula de vidro com 1–4 ícones; separador fino entre eles; o selecionado ganha pílula interna |
+| Botão de navegação ‹ › | existe (por `toolbar_buttons`) | par em cápsula |
+| Campo de busca em cápsula (`search_field`) | existe (falta recolher para só a lupa) | cápsula 36, lupa, texto, ✕ para limpar; pode recolher para só a lupa quando falta espaço |
 | Efeito de borda de rolagem | criar | conteúdo some em degradê sob a barra de ferramentas e a de status |
 | Painel à direita (inspetor/prévia) | criar | 270, opaco com divisor, ou flutuante (Visualização Rápida) |
 | Divisão arrastável (split) | criar | divisor invisível de 8 pt com cursor de redimensionar |
-| Barra de abas | criar | abas em cápsulas dentro de uma faixa de vidro; + no fim; arrastar para reordenar; × ao passar o mouse |
-| Barra de status / caminho (`status_bar`, `path_bar`) | ajustar | `footnote`, sem linha dura, dentro do degradê |
+| Barra de abas (`tab_bar`) | existe | abas em cápsulas dentro de uma faixa de vidro; + no fim; arrastar para reordenar; × ao passar o mouse |
+| Barra de status / caminho (`status_bar`, `path_bar`) | existe (falta o degradê da borda de rolagem) | `footnote`, sem linha dura, dentro do degradê |
 | Folha (sheet) | criar | painel que desce do topo da janela, raio 24, vidro, conteúdo atrás escurece |
 
 ### 4.2 Controles
 
 | Componente | Status | Como é no Tahoe |
 |---|---|---|
-| Botão (`button`) | ajustar | cápsula; tamanhos mini a extra; estilos: **com destaque** (azul, texto branco), **com borda** (preenchimento de controle), **sem borda**, **vidro**, **perigo** |
+| Botão (`button_styled`, `ButtonStyle`) | existe (faltam os tamanhos mini a extra) | cápsula; tamanhos mini a extra; estilos: **com destaque** (azul, texto branco), **com borda** (preenchimento de controle), **sem borda**, **vidro**, **perigo** |
 | Botão de ícone (`icon_button`/`icon_toggle`) | ajustar | círculo/cápsula 28–36; ligado = pílula com destaque |
-| Interruptor (`switch`) | ajustar | trilho 38x22 cápsula, botão branco com sombra que estica ao apertar |
-| Caixa de seleção | criar | quadrado 16 raio 5; ligado = destaque com ✓ branco; misto (–) |
-| Botão de opção (rádio) | criar | círculo 16; ligado = destaque com ponto branco |
-| Controle segmentado | criar | cápsula com 2–6 opções (texto ou ícone); pílula de vidro que desliza até a escolhida |
-| Controle deslizante (`slider`) | ajustar | trilho 4 cápsula com a parte preenchida no destaque; botão em cápsula de vidro 22x16 que alonga ao arrastar; marcas opcionais |
-| Passo (stepper) | criar | par ▲▼ em cápsula vertical, com campo numérico |
+| Interruptor (`switch`) | existe | trilho 38x22 cápsula, botão branco com sombra que estica ao apertar |
+| Caixa de seleção (`checkbox`) | existe (falta o misto) | quadrado 16 raio 5; ligado = destaque com ✓ branco; misto (–) |
+| Botão de opção (`radio`) | existe | círculo 16; ligado = destaque com ponto branco |
+| Controle segmentado (`segmented`) | existe | cápsula com 2–6 opções (texto ou ícone); pílula de vidro que desliza até a escolhida |
+| Controle deslizante (`slider`) | existe (faltam as marcas) | trilho 4 cápsula com a parte preenchida no destaque; botão em cápsula de vidro 22x16 que alonga ao arrastar; marcas opcionais |
+| Passo (`stepper`) | existe | par ▲▼ em cápsula vertical, com campo numérico |
 | Lista suspensa (`dropdown`) | ajustar | cápsula com ⌃⌄ à direita; abre um menu com ✓ no item atual |
 | Menu de botão (pull-down) | criar | cápsula com ⌄; abre menu de ações |
 | Campo de texto (`text_input`) | ajustar | raio 8, preenchimento de controle, anel de foco; rótulo à esquerda em formulários |
@@ -231,25 +232,25 @@ Tahoe), **criar** (não existe).
 | Combo (campo + lista) | criar | |
 | Seletor de cor | criar | poço de cor redondo; painel com roda, controles e cores salvas |
 | Seletor de data e hora | criar | campo com partes editáveis + calendário em popover |
-| Barra de progresso | criar | trilho 6 cápsula, destaque; indeterminada com faixa andando |
+| Barra de progresso (`progress_bar`) | existe (falta a indeterminada) | trilho 6 cápsula, destaque; indeterminada com faixa andando |
 | Indicador giratório | criar | 12 raios em gradiente, ou anel |
 | Indicador de nível | criar | barra segmentada (bateria, avaliação ★) |
 | Botão de ajuda (?) | criar | círculo 22 com "?" |
-| Selo (badge) | criar | cápsula vermelha com número (dock, abas, barra lateral) |
-| Bolinha de etiqueta | criar | círculo 10–12 da cor da etiqueta; várias se sobrepondo |
+| Selo (`badge`) | existe | cápsula vermelha com número (dock, abas, barra lateral) |
+| Bolinha de etiqueta (`tag_dots`, `tag_toggle`) | existe | círculo 10–12 da cor da etiqueta; várias se sobrepondo |
 
 ### 4.3 Conteúdo
 
 | Componente | Status | Como é no Tahoe |
 |---|---|---|
-| Lista em colunas / tabela (`list_row`, `list_header`) | ajustar | linhas 30, listras quase invisíveis, seleção em pílula raio 8 com recuo de 8 nas laterais, cabeçalhos com ⌃⌄ da ordem, colunas redimensionáveis e escolhíveis (clique direito no cabeçalho) |
-| Árvore (`tree_row`, `disclosure`) | ajustar | setinha que gira (mola) |
-| Grade de ícones (`tile`) | ajustar | seleção: fundo arredondado raio 10 atrás do ícone + nome em cápsula azul; ícones de 16 a 512 |
-| Colunas (navegação em colunas) | ajustar | colunas com divisor, setinha › nas pastas, seleção em pílula |
+| Lista em colunas / tabela (`list_row`, `list_header`) | existe (faltam colunas redimensionáveis e escolhíveis) | linhas 30, listras quase invisíveis, seleção em pílula raio 8 com recuo de 8 nas laterais, cabeçalhos com ⌃⌄ da ordem, colunas redimensionáveis e escolhíveis (clique direito no cabeçalho) |
+| Árvore (`tree_row`, `disclosure`) | existe | setinha que gira (mola) |
+| Grade de ícones (`tile`) | existe | seleção: fundo arredondado raio 10 atrás do ícone + nome em cápsula azul; ícones de 16 a 512 |
+| Colunas (navegação em colunas) | só no Arquivos (passar para o kit) | colunas com divisor, setinha › nas pastas, seleção em pílula |
 | Galeria | criar | imagem grande no meio, tira de miniaturas embaixo, informações e ações rápidas à direita |
-| Formulário agrupado (Ajustes) | ajustar `card` | cartão raio 14, linhas 44 com rótulo à esquerda e controle à direita, divisores recuados, texto de ajuda embaixo do cartão |
+| Formulário agrupado (Ajustes) | ajustar `card` (faltam linhas 44 e texto de ajuda embaixo) | cartão raio 14, linhas 44 com rótulo à esquerda e controle à direita, divisores recuados, texto de ajuda embaixo do cartão |
 | Cabeçalho de página dos Ajustes | criar | ícone grande, título, descrição e link |
-| Lista de barra lateral com ícones coloridos | criar | ícone em quadrado colorido 22 raio 6 + texto (Ajustes) |
+| Lista de barra lateral com ícones coloridos | existe (Configurações) | ícone em quadrado colorido 22 raio 6 + texto (Ajustes) |
 | Estado vazio | criar | símbolo grande cinza, título e texto no centro |
 | Avatar | criar | círculo com foto ou iniciais |
 | Prévia de imagem (`image_centered`) | existe | |
@@ -259,13 +260,13 @@ Tahoe), **criar** (não existe).
 
 | Componente | Status | Como é no Tahoe |
 |---|---|---|
-| Menu de contexto (`context_menu`) | ajustar | vidro raio 12, itens 24 com **símbolo à esquerda**, atalho à direita em secundário, ✓, submenus ›, seções com título, linha de **bolinhas de etiqueta**, destaque em pílula raio 8 |
+| Menu de contexto (`context_menu`) | existe (faltam seções com título) | vidro raio 12, itens 24 com **símbolo à esquerda**, atalho à direita em secundário, ✓, submenus ›, seções com título, linha de **bolinhas de etiqueta**, destaque em pílula raio 8 |
 | Menus da barra superior | ajustar (barra) | mesmo visual, e a barra superior **sem fundo** (só texto sobre o papel de parede), item aberto em cápsula de vidro |
-| Popover | criar | vidro raio 18 com seta apontando para a origem, fecha ao clicar fora |
-| Dica (tooltip) | criar | aparece após 0,8 s parado; cápsula de vidro pequena com `footnote` |
-| Alerta (`alert`) | ajustar | raio 24, vidro, ícone do app no topo à esquerda, título `title2`, texto, botões em cápsula ocupando a largura (lado a lado, ou empilhados se forem 3) |
+| Popover (`popover`) | existe | vidro raio 18 com seta apontando para a origem, fecha ao clicar fora |
+| Dica (`tooltip`) | existe | aparece após 0,8 s parado; cápsula de vidro pequena com `footnote` |
+| Alerta (`alert`) | ajustar (raio 20 feito; faltam o ícone do app e os botões na largura toda) | raio 24, vidro, ícone do app no topo à esquerda, título `title2`, texto, botões em cápsula ocupando a largura (lado a lado, ou empilhados se forem 3) |
 | Folha | criar | ver 4.1 |
-| Visualização Rápida | ajustar | painel flutuante raio 18 sobre o conteúdo escurecido, barra superior de vidro claro com título e ações |
+| Visualização Rápida | só no Arquivos (passar para o kit) | painel flutuante raio 18 sobre o conteúdo escurecido, barra superior de vidro claro com título e ações |
 | Seletor de arquivos (`FileChooser`) | ajustar | é um mini-Finder: mesma barra lateral, barra de ferramentas e listas |
 
 ### 4.5 Shell do sistema (fora do kit, mesmo visual)
@@ -332,3 +333,40 @@ Tahoe), **criar** (não existe).
    conferir por captura.
 8. **Apps:** Configurações, Arquivos, Editor, Terminal, Calculadora, Captura e os
    outros passam para o visual novo; depois, a reconstrução completa do Finder (B26).
+
+---
+
+## 8. Visual padrão e situação dos apps (2026-10-24)
+
+**O Tahoe é o visual padrão do mide** (decisão do usuário, 2026-10-24). Toda janela nova do
+mide-ui nasce de conteúdo inteiro (`Window::full_size_content`), com as luzes desenhadas pelo
+kit, barra lateral flutuante quando há navegação, barra de ferramentas sem fundo com grupos
+em cápsula, e só os componentes do kit (seção 4). Nada de desenhar controle à mão dentro de
+um app: o que faltar vira componente do kit primeiro, para os outros apps e o framework
+reaproveitarem. Quando os apps da tabela abaixo estiverem migrados, `full_size_content`
+passa a ser o padrão do `Window::new` (com uma saída para quem precisar da barra do
+compositor).
+
+| App | Situação |
+|---|---|
+| Arquivos (`mide-files`) | Tahoe (falta o checklist do Finder, B26) |
+| Configurações (`mide-settings`) | Tahoe na janela e na barra lateral; faltam o cabeçalho de página e as linhas 44 dos cartões |
+| Calculadora | Tahoe |
+| Editor de Texto (`mide-text`) | Tahoe |
+| Editor de Capturas | Tahoe (Marcação) |
+| Sobre este computador | Tahoe |
+| Terminal (`mide-terminal`) | **falta**: barra do compositor; abas e Preferências no visual antigo |
+| Captura (`mide-screenshot`, painel ⌘⇧5) | **falta**: painel flutuante em vidro do Tahoe |
+| Seletor de arquivos (`mide-chooser`, `FileChooser`) | **falta**: virar mini-Finder (barra lateral e barra de ferramentas do Arquivos) |
+| Instalador (`mide-install`), senha (`mide-askpass`, polkit) | **falta**: janela de conteúdo inteiro e botões em cápsula |
+| Escolha da tela (`mide-screencast-picker`) | **falta** |
+| Launcher, busca, notificações, central de controle | parcial: vidro líquido já; faltam os cartões de raio 24 nas notificações e os módulos em cartões na central |
+| Barra superior | **falta**: sem faixa de fundo (texto direto sobre o papel de parede) e item aberto em cápsula de vidro |
+| Dock | Tahoe (escura, ampliação, clique) |
+| Bloqueio de tela (`mide-lock`) | **falta** revisar no Tahoe |
+
+**Componentes do kit que faltam** (seção 4, status "criar"): folha (sheet), divisão
+arrastável, inspetor, borda de rolagem em degradê, menu de botão (pull-down), campo de
+etiquetas, combo, seletor de cor, seletor de data e hora, indicador giratório, indicador de
+nível, botão de ajuda, galeria, estado vazio, avatar, cabeçalho de página dos Ajustes. E
+passar para o kit o que hoje está só no Arquivos: navegação em colunas e Visualização Rápida.
