@@ -1563,3 +1563,16 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
   - `render.rs`: desenho de uma página em qualquer escala (seleção, realce, letras, sublinhado, tachado, imagens, marcadores, cursor, cabeçalho, rodapé e número da página).
   - `rtf.rs`: ler e gravar RTF (o formato do TextEdit e do WordPad), escrito aqui, com imagens PNG/JPEG, papel e margens; lê o RTF do TextEdit (conferido num teste).
 - Falta a tela nova do Editor de Texto usando esse núcleo (etapa 1b).
+
+## Editor de Texto completo, etapa 1b: tela do modo formatado (2026-10-24)
+
+- **Modo formatado (`src/bin/mide-text/rich.rs`):** documento novo e arquivos .rtf abrem formatados (como no TextEdit); .txt e código continuam no modo de texto simples. Formatar → Converter em texto simples/formatado (Ctrl+Shift+T).
+- **Na tela:** páginas A4 (100% = 96 pontos de tela por polegada, como no Word) com sombra, rolagem, zoom (Ctrl+roda, Ctrl+=/−/0), cursor piscando, seleção com o mouse (arrastar, duplo clique na palavra, triplo no parágrafo, Shift+clique) e rodapé com página, palavras, caracteres e zoom.
+- **Teclado:** digitação, Enter, Shift+Enter (quebra de linha), Ctrl+Enter (quebra de página), Backspace/Delete (com Ctrl, palavra), setas (Ctrl: palavra; Shift: seleção), Home/End (Ctrl: documento), PageUp/Down, Tab (nas listas, desce de nível), desfazer/refazer, recortar/copiar/colar (com a formatação dentro do editor), Ctrl+B/I/U, Ctrl+L/E/R/J (alinhamento), Ctrl+Shift+./, (tamanho).
+- **Barra de formatação do TextEdit (Tahoe):** estilo de parágrafo (Corpo, Título, Título 1–3, Citação no padrão ABNT, Legenda, Referência), família da fonte (com busca), tamanho, cor do texto, realce, B/I/U/S, alinhamento, entrelinha e espaço depois, listas (marcadores, travessões, números, letras) e inserir imagem (PNG/JPEG).
+- **Menus:** Arquivo, Editar, Formatar (Fonte, Texto, Lista, imagem, quebra de página, Configurar página, Aplicar normas ABNT), Visualizar (zoom).
+- **Configurar página (Ctrl+Shift+P):** A4/Carta, retrato/paisagem, margens em cm, cabeçalho, rodapé e numeração (posição e "a partir da página N").
+- **Aplicar normas ABNT:** A4, margens 3/2/2/3 cm, Times New Roman ou Arial 12, entrelinha 1,5, recuo de 1,25 cm, justificado, citações com 4 cm e letra 10, números no canto de cima a partir da página escolhida.
+- **mide-ui:** `fixed_label` e `form_row` (formulário com rótulos alinhados); `Text::font_system`, `draw_glyph` e `families`.
+- **Teste:** o `type` dos cenários digita frases inteiras (espaços e maiúsculas).
+- **Falta:** DOCX, ODT, PDF e imprimir (etapa 2); buscar e substituir no modo formatado; régua; tabelas; sumário e notas de rodapé.

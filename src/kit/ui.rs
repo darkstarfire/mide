@@ -1754,6 +1754,25 @@ impl<'a> Ui<'a> {
     }
 
     /// Texto comum (quebrado em linhas se não couber).
+    /// Rótulo de largura fixa numa linha, centrado na altura dos controles (formulários:
+    /// rótulos alinhados à esquerda dos campos).
+    pub fn fixed_label(&mut self, s: &str, width: f32) {
+        let t = self.ctx.theme.clone();
+        let h = t.row.max(30.0);
+        let shown = self.fit(s, t.font, FontWeight::Regular, (width - 6.0).max(10.0));
+        let rect = self.alloc(Some(width), h);
+        self.draw_text(&shown, rect.0, rect.1 + (h - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+    }
+
+    /// Linha de formulário: rótulo de `label_w` à esquerda e os controles de `add` à
+    /// direita, alinhados com as outras linhas.
+    pub fn form_row(&mut self, label: &str, label_w: f32, add: impl FnOnce(&mut Ui)) {
+        self.row(|ui| {
+            ui.fixed_label(label, label_w);
+            add(ui);
+        });
+    }
+
     pub fn label(&mut self, s: &str) {
         let t = self.ctx.theme.clone();
         self.paragraph(s, t.font, t.text);

@@ -1,7 +1,10 @@
-//! Editor de Texto do mide (E2): abre um arquivo de texto, edita e salva.
-//!
-//! Mínimo de propósito: um arquivo por janela, UTF-8, buscar e substituir, desfazer,
-//! e aviso de alterações não salvas. Abre pelo Arquivos ou com `mide-text <arquivo>`.
+//! Editor de Texto do mide (E2 e E2b), como o TextEdit do Mac: documentos formatados
+//! (RTF, com páginas, fontes, cores, alinhamento, listas, imagens e as normas ABNT, em
+//! `rich.rs`) e texto simples (.txt, código: com números de linha, buscar e
+//! substituir). Um documento por janela; abre pelo Arquivos ou com
+//! `mide-text <arquivo>`. Documento novo começa formatado, como no TextEdit.
+
+mod rich;
 
 use std::{
     error::Error,
@@ -24,6 +27,8 @@ struct Find {
 enum Dialog {
     /// "Abrir…": o seletor de arquivos.
     Open(FileChooser),
+    /// "Inserir imagem…" do modo formatado.
+    InsertImage(FileChooser),
     /// "Salvar como…": o seletor no modo salvar (`then_close`: fecha depois de salvar).
     SaveAs { chooser: FileChooser, then_close: bool },
     /// Fechar com alterações não salvas.
@@ -40,11 +45,37 @@ struct Editor {
     dialog: Option<Dialog>,
     /// Primeiro quadro: o foco vai para o texto.
     start: bool,
+    /// Modo formatado (RTF); sem ele, texto simples em `doc`.
+    rich: Option<rich::Rich>,
+}
+
+/// Extensões abertas no modo formatado.
+fn is_rich_path(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("rtf"))
 }
 
 impl Editor {
     fn open(path: Option<PathBuf>) -> Self {
-        let mut editor = Self { path: None, doc: TextDoc::default(), crlf: false, message: None, find: None, dialog: None, start: true };
+        let mut editor = Self { path: None, doc: TextDoc::default(), crlf: false, message: None, find: None, dialog: None, start: true, rich: None };
+        // Sem arquivo: documento formatado novo (como o TextEdit).
+        if path.is_none() {
+            editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new()));
+        }
+        if let Some(path) = path.clone().filter(|p| is_rich_path(p)) {
+            match std::fs::read(&path) {
+                Ok(data) => match mide::richtext::rtf::read(&data) {
+                    Some(doc) => {
+                        tracing::info!("aberto (formatado): {} ({} parágrafos)", path.display(), doc.paras.len());
+                        editor.rich = Some(rich::Rich::new(doc));
+                    }
+                    None => editor.message = Some(format!("\"{}\" não é um RTF válido.", path.display())),
+                },
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new())),
+                Err(err) => editor.message = Some(format!("Não foi possível abrir \"{}\": {err}", path.display())),
+            }
+            editor.path = Some(path);
+            return editor;
+        }
         if let Some(path) = path {
             match read_text(&path) {
                 Ok((text, crlf)) => {
@@ -68,12 +99,35 @@ impl Editor {
             .map_or_else(|| "Sem título".to_string(), |n| n.to_string_lossy().into_owned())
     }
 
+    fn modified(&self) -> bool {
+        match &self.rich {
+            Some(r) => r.modified(),
+            None => self.doc.modified,
+        }
+    }
+
     /// Salva no caminho atual; sem caminho, pede um ("Salvar como").
     fn save(&mut self, then_close: bool) -> bool {
         let Some(path) = self.path.clone() else {
             self.ask_save_as(then_close);
             return false;
         };
+        if let Some(r) = self.rich.as_mut() {
+            // Formatado: RTF (num .txt, o texto simples).
+            let data = if is_rich_path(&path) || path.extension().is_none() { mide::richtext::rtf::write(&r.doc) } else { r.doc.all_plain() };
+            return match mide::files::write_atomic(&path, data.as_bytes()) {
+                Ok(()) => {
+                    tracing::info!("salvo (formatado): {}", path.display());
+                    r.mark_saved();
+                    self.message = None;
+                    true
+                }
+                Err(err) => {
+                    self.message = Some(format!("Não foi possível salvar: {err}"));
+                    false
+                }
+            };
+        }
         let text = if self.crlf { self.doc.text.replace('\n', "\r\n") } else { self.doc.text.clone() };
         match mide::files::write_atomic(&path, text.as_bytes()) {
             Ok(()) => {
@@ -92,7 +146,7 @@ impl Editor {
     fn ask_save_as(&mut self, then_close: bool) {
         let (dir, name) = match &self.path {
             Some(path) => (path.parent().map(Path::to_path_buf), path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
-            None => (Some(default_dir()), "Sem título.txt".to_string()),
+            None => (Some(default_dir()), if self.rich.is_some() { "Sem título.rtf" } else { "Sem título.txt" }.to_string()),
         };
         self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save("Salvar como", dir.as_deref(), &name), then_close });
     }
@@ -105,12 +159,17 @@ impl Editor {
     /// Abre o arquivo escolhido: nesta janela, se ela está sem título e sem nada
     /// digitado; senão, numa janela nova (um documento por janela, como no Mac).
     fn open_chosen(&mut self, path: PathBuf) {
-        if self.path.is_none() && !self.doc.modified && self.doc.text.is_empty() {
+        let empty = match &self.rich {
+            Some(r) => !r.modified() && r.doc.all_plain().is_empty(),
+            None => !self.doc.modified && self.doc.text.is_empty(),
+        };
+        if self.path.is_none() && empty {
             let opened = Editor::open(Some(path));
             self.path = opened.path;
             self.doc = opened.doc;
             self.crlf = opened.crlf;
             self.message = opened.message;
+            self.rich = opened.rich;
             self.start = true;
             return;
         }
@@ -183,7 +242,7 @@ impl Editor {
     /// (com "Editado") e, à direita, as cápsulas de abrir/salvar e de buscar.
     fn toolbar(&mut self, ui: &mut Ui) {
         let mut clicked = None;
-        let title = if self.doc.modified { format!("{} — Editado", self.name()) } else { self.name() };
+        let title = if self.modified() { format!("{} — Editado", self.name()) } else { self.name() };
         let finding = self.find.is_some();
         ui.toolbar(|ui| {
             ui.toolbar_title(&title, 420.0);
@@ -275,6 +334,72 @@ impl Editor {
         }
     }
 
+    /// Tela do modo formatado: barra de ferramentas, a do TextEdit e as páginas.
+    fn rich_view(&mut self, ui: &mut Ui, save: Option<bool>, open: bool) {
+        if self.dialog.is_none() {
+            if open {
+                self.ask_open();
+            }
+            match save {
+                Some(true) => self.ask_save_as(false),
+                Some(false) => {
+                    self.save(false);
+                }
+                None => {}
+            }
+            if ui.input().shortcut_shift("t") == Some(true) {
+                self.to_plain();
+                return;
+            }
+        }
+        self.toolbar(ui);
+        let top = mide::kit::TOOLBAR_HEIGHT;
+        if let Some(r) = self.rich.as_mut() {
+            if self.dialog.is_some() {
+                // Com o seletor aberto, as páginas só aparecem (sem teclado).
+                ui.blur();
+            }
+            r.view(ui, top);
+            if std::mem::take(&mut r.wants_image) {
+                let dir = mide::places::pictures_dir();
+                self.dialog = Some(Dialog::InsertImage(FileChooser::open("Inserir imagem", Some(&dir)).extensions(&["png", "jpg", "jpeg"])));
+            }
+            if let Some(m) = r.message.take() {
+                self.message = Some(m);
+            }
+        }
+        if let Some(message) = self.message.clone() {
+            let (w, h) = ui.window_size();
+            ui.at(16.0, h - rich::STATUS_H - 30.0, w - 32.0, |ui| ui.note(&message));
+        }
+        self.dialog(ui);
+    }
+
+    /// Formatar → Converter em texto simples (perde a formatação).
+    fn to_plain(&mut self) {
+        if let Some(r) = self.rich.take() {
+            self.doc = TextDoc::new(r.doc.all_plain());
+            self.doc.modified = true;
+            self.start = true;
+            if self.path.as_ref().is_some_and(|p| is_rich_path(p)) {
+                self.path = self.path.as_ref().map(|p| p.with_extension("txt"));
+            }
+            tracing::info!("editor: convertido em texto simples");
+        }
+    }
+
+    /// Formatar → Converter em texto formatado.
+    fn to_rich(&mut self) {
+        let doc = mide::richtext::Doc::from_plain(&self.doc.text, mide::richtext::CharStyle::default());
+        let mut r = rich::Rich::new(doc);
+        r.undo_point();
+        self.rich = Some(r);
+        if let Some(p) = &self.path {
+            self.path = Some(p.with_extension("rtf"));
+        }
+        tracing::info!("editor: convertido em texto formatado");
+    }
+
     fn dialog(&mut self, ui: &mut Ui) {
         let Some(dialog) = self.dialog.as_mut() else {
             return;
@@ -285,6 +410,16 @@ impl Editor {
                 Some(Choice::Chosen(path)) => {
                     self.dialog = None;
                     self.open_chosen(path);
+                }
+                Some(Choice::Cancelled) => self.dialog = None,
+                None => {}
+            },
+            Dialog::InsertImage(chooser) => match chooser.show(ui) {
+                Some(Choice::Chosen(path)) => {
+                    self.dialog = None;
+                    if let Some(r) = self.rich.as_mut() {
+                        r.insert_image(&path);
+                    }
                 }
                 Some(Choice::Cancelled) => self.dialog = None,
                 None => {}
@@ -335,13 +470,20 @@ impl Editor {
 
 impl App for Editor {
     fn view(&mut self, ui: &mut Ui) {
-        let title = format!("{}{} — Editor de Texto", if self.doc.modified { "• " } else { "" }, self.name());
+        let title = format!("{}{} — Editor de Texto", if self.modified() { "• " } else { "" }, self.name());
         ui.set_title(&title);
         // Atalhos do app: Ctrl+S salva (com Shift, "Salvar como"), Ctrl+O abre, Ctrl+F
         // busca. Itens dos menus do app na barra superior também.
         let (save, find, open) = (ui.input().shortcut_shift("s"), ui.input().shortcut("f"), ui.input().shortcut("o"));
         for action in ui.input().menu.clone() {
+            if let Some(r) = self.rich.as_mut() {
+                if r.command(&action, ui) {
+                    continue;
+                }
+            }
             match action.as_str() {
+                "texto-simples" if self.rich.is_some() => self.to_plain(),
+                "texto-formatado" if self.rich.is_none() => self.to_rich(),
                 "abrir" if self.dialog.is_none() => self.ask_open(),
                 "salvar" if self.dialog.is_none() => {
                     self.save(false);
@@ -374,6 +516,14 @@ impl App for Editor {
                 self.toggle_find();
             }
         }
+        if self.rich.is_some() {
+            self.rich_view(ui, save, open);
+            return;
+        }
+        if ui.input().shortcut_shift("t") == Some(true) {
+            self.to_rich();
+            return;
+        }
         self.toolbar(ui);
         self.find_bar(ui);
         if let Some(message) = &self.message {
@@ -393,6 +543,37 @@ impl App for Editor {
     }
 
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
+        if let Some(r) = &self.rich {
+            let mut groups = vec![
+                MenuGroup {
+                    title: "Arquivo".into(),
+                    items: vec![
+                        MenuItem::action("nova", "Novo").shortcut("Ctrl+N"),
+                        MenuItem::action("abrir", "Abrir…").shortcut("Ctrl+O"),
+                        MenuItem::Separator,
+                        MenuItem::action("salvar", "Salvar").shortcut("Ctrl+S"),
+                        MenuItem::action("salvar-como", "Salvar como…").shortcut("Ctrl+Shift+S"),
+                        MenuItem::Separator,
+                        MenuItem::action("configurar-pagina", "Configurar página…").shortcut("Ctrl+Shift+P"),
+                    ],
+                },
+                MenuGroup {
+                    title: "Editar".into(),
+                    items: vec![
+                        MenuItem::action("desfazer", "Desfazer").shortcut("Ctrl+Z"),
+                        MenuItem::action("refazer", "Refazer").shortcut("Ctrl+Shift+Z"),
+                        MenuItem::Separator,
+                        MenuItem::action("recortar", "Recortar").shortcut("Ctrl+X"),
+                        MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C"),
+                        MenuItem::action("colar", "Colar").shortcut("Ctrl+V"),
+                        MenuItem::action("selecionar-tudo", "Selecionar tudo").shortcut("Ctrl+A"),
+                    ],
+                },
+            ];
+            groups.extend(r.menus());
+            groups.push(window_menu(Vec::new()));
+            return groups;
+        }
         vec![
             MenuGroup {
                 title: "Arquivo".into(),
@@ -405,12 +586,13 @@ impl App for Editor {
                 ],
             },
             MenuGroup { title: "Editar".into(), items: vec![MenuItem::action("buscar", "Buscar e substituir…").shortcut("Ctrl+F")] },
+            MenuGroup { title: "Formatar".into(), items: vec![MenuItem::action("texto-formatado", "Converter em texto formatado").shortcut("Ctrl+Shift+T")] },
             window_menu(Vec::new()),
         ]
     }
 
     fn close_requested(&mut self) -> bool {
-        if !self.doc.modified {
+        if !self.modified() {
             return true;
         }
         self.dialog = Some(Dialog::ConfirmClose);
@@ -442,7 +624,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     let path = std::env::args().nth(1).map(PathBuf::from);
     let editor = Editor::open(path);
-    let window = Window::new("Editor de Texto").app_id("mide-text").size(860, 620).min_size(520, 320).full_size_content();
+    let window = Window::new("Editor de Texto").app_id("mide-text").size(1040, 660).min_size(560, 360).full_size_content();
     run(window, editor)
 }
 

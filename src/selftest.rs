@@ -102,10 +102,19 @@ fn parse(script: &str) -> Vec<(u32, Step)> {
                 // Segurar e soltar uma tecla (ex.: Ctrl durante um clique no app).
                 Some("keydown") => words.get(2).and_then(|n| input::evdev_code(n)).map(|c| vec![Step::Key(c, true)]),
                 Some("keyup") => words.get(2).and_then(|n| input::evdev_code(n)).map(|c| vec![Step::Key(c, false)]),
-                Some("type") => words.get(2).map(|text| {
-                    text.chars()
-                        .filter_map(|ch| input::evdev_code(&ch.to_string()))
-                        .flat_map(|c| [Step::Key(c, true), Step::Key(c, false)])
+                // O resto da linha, com "_" no lugar do espaço; maiúsculas com Shift.
+                Some("type") => (words.len() > 2).then(|| {
+                    words[2..]
+                        .join("_")
+                        .chars()
+                        .filter_map(|ch| input::evdev_code(&ch.to_lowercase().to_string()).map(|c| (c, ch.is_uppercase())))
+                        .flat_map(|(c, upper)| {
+                            if upper {
+                                vec![Step::Key(42, true), Step::Key(c, true), Step::Key(c, false), Step::Key(42, false)]
+                            } else {
+                                vec![Step::Key(c, true), Step::Key(c, false)]
+                            }
+                        })
                         .collect()
                 }),
                 Some("combo") => words.get(2).and_then(|combo| {
