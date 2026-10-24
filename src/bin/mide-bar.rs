@@ -383,6 +383,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         layout_active: None,
         recording: None,
         native_failed: None,
+        native_failed_at: std::time::Instant::now(),
+        titles_read_at: std::time::Instant::now(),
+        registrar_checked_at: std::time::Instant::now(),
         battery: None,
         names: AppNames::load(),
         status: Status::default(),
@@ -789,7 +792,13 @@ struct Bar {
     /// número da ação). Sem isso, o `native` é um `dbusmenu`.
     native_gtk: Option<(mide::gmenu::GtkMenu, Vec<mide::gmenu::Action>)>,
     /// Menu que não pôde ser lido (não tenta de novo a cada meio segundo).
+    /// Menu que não deu para ler, e quando: tenta de novo depois de alguns segundos.
     native_failed: Option<(String, String)>,
+    native_failed_at: std::time::Instant,
+    /// Última releitura dos títulos do menu do app em foco.
+    titles_read_at: std::time::Instant,
+    /// Última conferência de que o registrar dos menus ainda é da barra.
+    registrar_checked_at: std::time::Instant,
     battery: Option<(u8, bool)>,
     names: AppNames,
     /// Som, Wi-Fi e Bluetooth, lidos numa thread a cada 2 s.
@@ -866,10 +875,11 @@ impl Bar {
             (None, None) => true,
             _ => false,
         };
-        if same || (wanted.is_some() && wanted == self.native_failed) {
+        let recent_failure = self.native_failed_at.elapsed() < std::time::Duration::from_secs(3);
+        if same || (wanted.is_some() && wanted == self.native_failed && recent_failure) {
             return;
         }
-        self.native_failed = None;
+        let previous_failure = self.native_failed.take();
         self.native_gtk = None;
         let failed = &mut self.native_failed;
         let native_gtk = &mut self.native_gtk;
@@ -882,7 +892,10 @@ impl Bar {
                 None => mide::appmenu::layout(conn, &sender, &path, 0),
             };
             let Some(layout) = layout else {
-                tracing::info!("menu do app {}: não foi possível ler", self.focused_id);
+                // A mesma falha de novo (nova tentativa) não enche o log.
+                if previous_failure.as_ref() != Some(&(sender.clone(), path.clone())) {
+                    tracing::info!("menu do app {}: não foi possível ler", self.focused_id);
+                }
                 *failed = Some((sender, path));
                 return None;
             };
@@ -890,6 +903,20 @@ impl Bar {
             tracing::info!("menu do app {}: {}", self.focused_id, top.iter().map(|i| i.label.as_str()).collect::<Vec<_>>().join(", "));
             (!top.is_empty()).then_some((sender, path, top))
         });
+        if self.native_failed.is_some() {
+            self.native_failed_at = std::time::Instant::now();
+            // A conexão com o barramento caiu: todo menu falharia. Conecta de novo,
+            // guardando os registros (os apps continuam com os mesmos nomes).
+            if let Some((registry, conn)) = &self.appmenu {
+                if !mide::appmenu::connection_alive(conn) || !mide::appmenu::owns_registrar(conn) {
+                    tracing::warn!("menus dos apps: a conexão caiu ou o nome do registrar foi tomado; conectando de novo");
+                    let registry = registry.clone();
+                    self.appmenu = None;
+                    self.appmenu = mide::appmenu::start_registrar_with(registry);
+                    self.native_failed = None;
+                }
+            }
+        }
         self.draw_bar();
     }
 
@@ -927,9 +954,11 @@ impl Bar {
     /// Relê os títulos dos menus do app em foco (o app pode ter trocado os menus sem
     /// trocar de janela). Só dbusmenu; os do GTK são lidos ao abrir.
     fn reread_native_titles(&mut self) {
-        if self.native_gtk.is_some() {
+        // Uma vez a cada 1,5 s (cada leitura é uma chamada ao app).
+        if self.native_gtk.is_some() || self.titles_read_at.elapsed() < std::time::Duration::from_millis(1500) {
             return;
         }
+        self.titles_read_at = std::time::Instant::now();
         let (Some((_, conn)), Some((sender, path, top))) = (&self.appmenu, &mut self.native) else {
             return;
         };
@@ -1074,6 +1103,21 @@ impl Bar {
         }
         // O menu do app em foco: ao trocar de app, e enquanto ele não registrou (o
         // registro pode chegar depois da janela).
+        // O nome do registrar é da barra? Outro programa (outra barra, um teste) pode tê-lo
+        // tomado; quando ele sai, a barra pega o nome de volta e os apps se registram de novo.
+        if self.registrar_checked_at.elapsed() >= std::time::Duration::from_secs(5) {
+            self.registrar_checked_at = std::time::Instant::now();
+            let lost = self.appmenu.as_ref().is_none_or(|(_, conn)| !mide::appmenu::owns_registrar(conn));
+            if lost {
+                let registry = self.appmenu.take().map(|(r, _)| r).unwrap_or_default();
+                self.appmenu = mide::appmenu::start_registrar_with(registry);
+                if self.appmenu.as_ref().is_some_and(|(_, c)| mide::appmenu::owns_registrar(c)) {
+                    tracing::info!("menus dos apps: registrar recuperado");
+                    self.native = None;
+                    self.native_failed = None;
+                }
+            }
+        }
         if focus_changed || self.native.is_none() {
             self.refresh_native();
         } else if self.menu.is_none() {

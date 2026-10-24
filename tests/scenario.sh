@@ -11,6 +11,14 @@
 # Saída em $SCENARIO_OUT (padrão /tmp/mide-scenario): mide.log e frame.png.
 # Usa o socket mide-test e encerra só os processos dele; uma sessão aberta do
 # mide (mide-0) não é afetada.
+# Barramento D-Bus próprio do teste: sem ele, a barra e as notificações do teste tomam
+# os nomes do barramento da sessão de verdade (menus dos apps, notificações) e o desktop
+# do usuário perde os menus. Só fica no barramento da sessão com MIDE_TEST_SESSION_BUS=1.
+if [ -z "${MIDE_PRIVATE_BUS:-}" ] && [ -z "${MIDE_TEST_SESSION_BUS:-}" ] && command -v dbus-run-session >/dev/null; then
+    export MIDE_PRIVATE_BUS=1
+    exec dbus-run-session -- "$0" "$@"
+fi
+
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

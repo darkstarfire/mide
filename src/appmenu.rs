@@ -164,7 +164,30 @@ fn sender_short(header: &zbus::message::Header<'_>) -> String {
 /// Atende como registrar no barramento da sessão, numa thread. Sem barramento, ou com
 /// outro registrar já atendendo, não há menus dos apps (fica o menu padrão do mide).
 pub fn start_registrar() -> Option<(Registry, zbus::blocking::Connection)> {
-    let registry = Registry::default();
+    start_registrar_with(Registry::default())
+}
+
+/// A conexão com o barramento ainda responde (uma chamada ao próprio barramento).
+pub fn connection_alive(conn: &zbus::blocking::Connection) -> bool {
+    zbus::blocking::fdo::DBusProxy::new(conn).and_then(|p| p.get_id().map_err(Into::into)).is_ok()
+}
+
+/// Esta conexão ainda é a dona do nome do registrar (outro programa pode ter tomado).
+pub fn owns_registrar(conn: &zbus::blocking::Connection) -> bool {
+    let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(conn) else {
+        return false;
+    };
+    let Ok(name) = zbus::names::BusName::try_from("com.canonical.AppMenu.Registrar") else {
+        return false;
+    };
+    match (proxy.get_name_owner(name), conn.unique_name()) {
+        (Ok(owner), Some(me)) => owner.as_str() == me.as_str(),
+        _ => false,
+    }
+}
+
+/// O registrar de novo, guardando os registros que já existiam (a conexão antiga caiu).
+pub fn start_registrar_with(registry: Registry) -> Option<(Registry, zbus::blocking::Connection)> {
     let service = RegistrarService { registry: registry.clone() };
     // Chamadas aos apps (ler o menu, clicar) desistem em 300 ms: um app travado não
     // trava a barra.

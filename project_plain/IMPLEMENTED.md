@@ -1576,3 +1576,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **mide-ui:** `fixed_label` e `form_row` (formulário com rótulos alinhados); `Text::font_system`, `draw_glyph` e `families`.
 - **Teste:** o `type` dos cenários digita frases inteiras (espaços e maiúsculas).
 - **Falta:** DOCX, ODT, PDF e imprimir (etapa 2); buscar e substituir no modo formatado; régua; tabelas; sumário e notas de rodapé.
+
+## Menus dos apps que sumiam (2026-10-24)
+
+- Causa: os cenários de teste rodavam no D-Bus da sessão de verdade e a barra do teste tomava o registrar dos menus. Os testes agora usam um barramento próprio. A barra recupera o nome do registrar sozinha (conferência a cada 5 s), tenta de novo as leituras que falharam (depois de 3 s) e relê os títulos do app em foco a cada 1,5 s (antes, 450 ms).
