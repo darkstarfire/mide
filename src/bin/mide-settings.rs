@@ -746,6 +746,27 @@ impl Settings {
                     Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
                 }
             }
+            // Ampliação (como no Mac): os ícones crescem sob o ponteiro.
+            let mut magnify = settings_file::flag("dock", "magnification", false);
+            if ui.switch_detail("Ampliação", "Os ícones crescem quando o ponteiro passa sobre eles", &mut magnify).changed() {
+                match settings_file::set("dock", "magnification", magnify.then_some(Value::Bool(true))) {
+                    Ok(()) => tracing::info!("dock: ampliação {}", if magnify { "ligada" } else { "desligada" }),
+                    Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
+                }
+            }
+            if magnify {
+                let mut zoom = match settings_file::get("dock", "magnify_size") {
+                    Some(Value::Int(n)) => n as f32,
+                    _ => 96.0,
+                };
+                if ui.slider("Tamanho da ampliação", &mut zoom, 56.0, 128.0).submitted() {
+                    let n = zoom.round() as i64;
+                    match settings_file::set("dock", "magnify_size", (n != 96).then_some(Value::Int(n))) {
+                        Ok(()) => tracing::info!("dock: ampliação até {n} px"),
+                        Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
+                    }
+                }
+            }
         });
         let mut click_minimize = settings_file::flag("dock", "click_minimize", true);
         ui.card(|ui| {

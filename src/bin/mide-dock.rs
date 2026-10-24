@@ -92,6 +92,20 @@ fn liquid_glass() -> bool {
     on("dock_blur") && on("liquid_glass")
 }
 
+/// Tamanho máximo dos ícones na ampliação (`[dock] magnification` e `magnify_size`,
+/// como a "Ampliação" do Mac; desligada por padrão). `None` sem ampliação.
+fn magnify_size() -> Option<u32> {
+    if !mide::settings_file::flag("dock", "magnification", false) {
+        return None;
+    }
+    let size = match mide::settings_file::get("dock", "magnify_size") {
+        Some(mide::settings_file::Value::Int(n)) => n as u32,
+        _ => 96,
+    };
+    let size = size.clamp(icon_size() + 8, 128);
+    Some(size)
+}
+
 /// Ocultar a dock automaticamente? (`[dock] autohide`, desligado como no macOS.)
 fn configured_autohide() -> bool {
     matches!(mide::settings_file::get("dock", "autohide"), Some(mide::settings_file::Value::Bool(true)))
@@ -150,6 +164,8 @@ struct DockApp {
     name: String,
     exec: String,
     icon: Option<Pixmap>,
+    /// Nomes do ícone no tema (para carregar de novo em outro tamanho: a ampliação).
+    icon_names: Vec<String>,
     /// Ids que podem aparecer como app_id da janela: o id do `.desktop`, a última
     /// parte dele e o `StartupWMClass`. Em minúsculas.
     match_ids: Vec<String>,
@@ -197,6 +213,7 @@ impl Catalog {
                 .unwrap_or_else(|| id.clone()),
             exec: entry.exec().unwrap_or("").to_string(),
             icon,
+            icon_names: entry.icon().map(|n| vec![n.to_string()]).unwrap_or_default(),
             match_ids: match_ids(&entry),
             pinned,
             id,
@@ -206,25 +223,20 @@ impl Catalog {
     /// App sem `.desktop` (como a janela "Sobre" do mide): aparece na dock com o
     /// título da janela e um ícone genérico do tema, para poder focar e restaurar.
     fn fallback(&mut self, app_id: &str, title: &str) -> DockApp {
-        let icon = self
-            .icons
-            .entry(format!("fallback:{app_id}"))
-            .or_insert_with(|| {
-                let names: &[&str] = if app_id == "mide-settings" {
-                    &["mide-settings", "preferences-system", "preferences-desktop", "application-x-executable"]
-                } else if app_id.starts_with("mide-") {
-                    &["mide-about", "computer", "help-about", "application-x-executable"]
-                } else {
-                    &["application-x-executable", "applications-other"]
-                };
-                load_themed_icon(names, icon_size())
-            })
-            .clone();
+        let names: &[&str] = if app_id == "mide-settings" {
+            &["mide-settings", "preferences-system", "preferences-desktop", "application-x-executable"]
+        } else if app_id.starts_with("mide-") {
+            &["mide-about", "computer", "help-about", "application-x-executable"]
+        } else {
+            &["application-x-executable", "applications-other"]
+        };
+        let icon = self.icons.entry(format!("fallback:{app_id}")).or_insert_with(|| load_themed_icon(names, icon_size())).clone();
         DockApp {
             id: app_id.to_string(),
             name: if title.is_empty() { app_id.to_string() } else { title.to_string() },
             exec: String::new(),
             icon,
+            icon_names: names.iter().map(|n| n.to_string()).collect(),
             match_ids: vec![app_id.to_lowercase()],
             pinned: false,
         }
@@ -334,6 +346,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         sliding: false,
         pointer_inside: false,
         covered: false,
+        dark: mide::kit::system_dark(),
+        magnify: magnify_size(),
+        zoom: None,
+        zoom_extra: 0,
+        zoom_slots: Vec::new(),
+        zoom_icons: HashMap::new(),
     };
 
     tracing::info!("dock pronta com {} app(s) fixado(s)", dock.items.len());
@@ -587,6 +605,29 @@ struct Dock {
     pointer_inside: bool,
     /// Há janela onde a dock aparece (só então a dock que se esconde sozinha some).
     covered: bool,
+    /// Tema escuro (Configurações → Aparência): véu, separadores e pontos escuros.
+    dark: bool,
+    /// Ampliação ligada: tamanho máximo dos ícones; e a camada da ampliação aberta.
+    magnify: Option<u32>,
+    zoom: Option<Zoom>,
+    /// Largura que a dock ganhou com a ampliação (a faixa cresce junto, como no Mac) e
+    /// onde cada casa está agora (índice, esquerda e largura, na dock): os cliques
+    /// seguem as posições ampliadas.
+    zoom_extra: u32,
+    zoom_slots: Vec<(usize, f32, f32)>,
+    /// Ícones carregados no tamanho da ampliação (nítidos), pelo id do app ou pilha.
+    zoom_icons: HashMap<String, Option<Pixmap>>,
+}
+
+/// Camada transparente acima da dock com os ícones ampliados (como a Ampliação do
+/// Mac): não recebe cliques; `amount` vai de 0 a 1 (entrando e saindo animada).
+struct Zoom {
+    layer: LayerSurface,
+    pool: SlotPool,
+    size: (u32, u32),
+    amount: f32,
+    target: f32,
+    configured: bool,
 }
 
 impl Dock {
@@ -611,6 +652,22 @@ impl Dock {
         } else {
             mide::ui::draw::glass(&mut pixmap, 0.0, 0.0, w as f32, h as f32, DOCK_RADIUS);
         }
+        // Tema escuro: um véu grafite por cima do vidro (como a dock escura do Mac).
+        if self.dark {
+            if let Some(path) = rounded_rect(0.0, 0.0, w as f32, h as f32, DOCK_RADIUS) {
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(Color::from_rgba8(28, 28, 32, if self.liquid { 120 } else { 150 }));
+                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        // Com a ampliação aberta, os ícones (e o que anda com eles) estão na camada dela.
+        if self.zoom.is_some() {
+            self.present(&pixmap, qh);
+            return;
+        }
+        let line_color = if self.dark { Color::from_rgba8(235, 235, 240, 90) } else { Color::from_rgba8(60, 60, 66, 120) };
+        let pressed = self.press.as_ref().filter(|p| !p.dragged).map(|p| p.index);
 
         // Separador fino entre os fixados e os apps abertos não fixados.
         let pinned_count = self.items.iter().filter(|a| a.pinned).count();
@@ -618,19 +675,22 @@ impl Dock {
             let x = icon_x(&self.items, pinned_count) as f32 - (ICON_GAP + 2 * SEPARATOR_SPACE) as f32 / 2.0;
             if let Some(line) = rounded_rect(x - 0.5, PADDING as f32 + 6.0, 1.0, icon_size() as f32 - 12.0, 0.5) {
                 let mut paint = Paint::default();
-                paint.set_color(Color::from_rgba8(60, 60, 66, 120));
+                paint.set_color(line_color);
                 pixmap.fill_path(&line, &paint, FillRule::Winding, Transform::identity(), None);
             }
         }
 
         draw_launchpad_icon(&mut pixmap, PADDING as f32, PADDING as f32, icon_size() as f32);
+        if pressed == Some(LAUNCHER) {
+            darken(&mut pixmap, PADDING as i32, PADDING as i32, icon_size());
+        }
 
         // Separador antes de Downloads e Lixeira.
         if !self.items.is_empty() {
             let x = icon_x(&self.items, self.items.len()) as f32 - (ICON_GAP + 2 * SEPARATOR_SPACE) as f32 / 2.0;
             if let Some(line) = rounded_rect(x - 0.5, PADDING as f32 + 6.0, 1.0, icon_size() as f32 - 12.0, 0.5) {
                 let mut paint = Paint::default();
-                paint.set_color(Color::from_rgba8(60, 60, 66, 120));
+                paint.set_color(line_color);
                 pixmap.fill_path(&line, &paint, FillRule::Winding, Transform::identity(), None);
             }
         }
@@ -643,6 +703,9 @@ impl Dock {
             };
             if let Some(icon) = icon {
                 pixmap.draw_pixmap(x, PADDING as i32, icon.as_ref(), &Default::default(), Transform::identity(), None);
+                if pressed == Some(self.items.len() + stack) {
+                    darken(&mut pixmap, x, PADDING as i32, icon_size());
+                }
             } else if let Some(path) = rounded_rect(x as f32, PADDING as f32, icon_size() as f32, icon_size() as f32, 10.0) {
                 let mut paint = Paint::default();
                 paint.set_color(Color::from_rgba8(120, 120, 128, 255));
@@ -669,6 +732,10 @@ impl Dock {
                     Transform::identity(),
                     None,
                 );
+                // Apertado: o ícone escurece até soltar (o "clique" visível do Mac).
+                if pressed == Some(i) {
+                    darken(&mut pixmap, x as i32, y as i32, icon_size());
+                }
             } else if let Some(path) = rounded_rect(x, y, icon_size() as f32, icon_size() as f32, 10.0) {
                 // Sem ícone: um bloco neutro no lugar.
                 let mut paint = Paint::default();
@@ -682,7 +749,7 @@ impl Dock {
                 let cy = y + icon_size() as f32 + (PADDING + BOTTOM_EXTRA) as f32 / 2.0;
                 if let Some(dot) = PathBuilder::from_circle(cx, cy, 1.8) {
                     let mut paint = Paint::default();
-                    paint.set_color(Color::from_rgba8(40, 40, 46, 230));
+                    paint.set_color(if self.dark { Color::from_rgba8(235, 235, 240, 230) } else { Color::from_rgba8(40, 40, 46, 230) });
                     paint.anti_alias = true;
                     pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
                 }
@@ -854,7 +921,7 @@ impl Dock {
 
     /// Ajusta a largura da dock ao número de itens; o compositor reconfigura e ela redesenha.
     fn resize(&mut self) {
-        let width = dock_width(&self.items);
+        let width = dock_width(&self.items) + self.zoom_extra;
         self.layer.set_size(width, dock_height());
         // O tamanho dos ícones muda a altura: o espaço reservado acompanha.
         if !self.autohide {
@@ -916,6 +983,12 @@ impl Dock {
 
     /// Índice do ícone sob a coordenada `x`, se houver.
     fn icon_at(&self, x: f64) -> Option<usize> {
+        // Ampliada: pelas posições ampliadas.
+        if self.zoom.is_some() && !self.zoom_slots.is_empty() {
+            let half_gap = (ICON_GAP / 2) as f32;
+            let x = x as f32;
+            return self.zoom_slots.iter().find(|(_, left, w)| x >= left - half_gap && x < left + w + half_gap).map(|(i, _, _)| *i);
+        }
         // Os vãos entre ícones contam para o ícone mais próximo, para não haver
         // pontos mortos na dock.
         let half_gap = (ICON_GAP / 2) as f64;
@@ -1013,6 +1086,30 @@ struct Bounce {
     last_check: std::time::Instant,
 }
 
+/// Escurece um quadrado da imagem (o ícone apertado): só a cor, a transparência fica.
+fn darken(pixmap: &mut Pixmap, x: i32, y: i32, size: u32) {
+    let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+    let data = pixmap.data_mut();
+    for yy in y.max(0)..(y + size as i32).min(ph) {
+        for xx in x.max(0)..(x + size as i32).min(pw) {
+            let i = ((yy * pw + xx) * 4) as usize;
+            for c in 0..3 {
+                data[i + c] = (data[i + c] as u32 * 150 / 255) as u8;
+            }
+        }
+    }
+}
+
+/// Quanto cada ícone cresce na ampliação: 1 longe do ponteiro, até o máximo em cima
+/// dele, numa curva suave que alcança uns dois ícones para cada lado.
+fn magnify_scale(distance: f32, reach: f32, max_scale: f32) -> f32 {
+    if distance >= reach {
+        return 1.0;
+    }
+    let g = (1.0 + (distance / reach * std::f32::consts::PI).cos()) / 2.0;
+    1.0 + (max_scale - 1.0) * g
+}
+
 /// Altura do pulo em `t` segundos: parábolas que sobem e descem, cada uma um pouco
 /// mais baixa (o app demorando, o ícone continua pulando).
 fn bounce_height(t: f32) -> f32 {
@@ -1023,6 +1120,216 @@ fn bounce_height(t: f32) -> f32 {
 }
 
 impl Dock {
+    /// Posições das casas da dock (Launchpad, apps, Downloads e Lixeira): o índice usado
+    /// nos cliques e o x do ícone.
+    fn slots(&self) -> Vec<(usize, f32)> {
+        let mut slots = vec![(LAUNCHER, PADDING as f32)];
+        for i in 0..self.items.len() + STACKS {
+            slots.push((i, icon_x(&self.items, i) as f32));
+        }
+        slots
+    }
+
+    /// Ícone ampliado de uma casa, carregado no tamanho da ampliação (guardado).
+    fn zoom_icon(&mut self, index: usize, size: u32) -> Option<Pixmap> {
+        let (key, names): (String, Vec<String>) = if index == LAUNCHER {
+            return None;
+        } else if index >= self.items.len() {
+            match index - self.items.len() {
+                STACK_DOWNLOADS => ("stack:downloads".into(), vec!["folder-download".into(), "folder-downloads".into(), "folder".into()]),
+                _ if self.trash_items > 0 => ("stack:trash-full".into(), vec!["user-trash-full".into(), "user-trash".into()]),
+                _ => ("stack:trash".into(), vec!["user-trash".into(), "user-trash-empty".into()]),
+            }
+        } else {
+            let app = &self.items[index];
+            (format!("app:{}", app.id), app.icon_names.clone())
+        };
+        let key = format!("{key}@{size}");
+        if !self.zoom_icons.contains_key(&key) {
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let icon = match refs.first() {
+                Some(first) if first.starts_with('/') => load_icon(first, size),
+                Some(_) => load_icon(refs[0], size).or_else(|| load_themed_icon(&refs, size)),
+                None => None,
+            };
+            self.zoom_icons.insert(key.clone(), icon);
+        }
+        self.zoom_icons.get(&key).cloned().flatten()
+    }
+
+    /// O ponteiro entrou ou andou na dock com a ampliação ligada: abre a camada da
+    /// ampliação (se preciso) e anima até o tamanho cheio.
+    fn zoom_in(&mut self) {
+        let Some(max) = self.magnify else {
+            return;
+        };
+        if self.menu.is_some() || self.press.as_ref().is_some_and(|p| p.dragged) {
+            return;
+        }
+        if self.zoom.is_none() {
+            let extra = max - icon_size();
+            let size = (self.width + 4 * extra, dock_height() + extra);
+            let surface = self.compositor.create_surface(&self.qh);
+            let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-zoom"), None);
+            layer.set_anchor(Anchor::BOTTOM);
+            layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.set_size(size.0, size.1);
+            if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+                layer.wl_surface().set_input_region(Some(region.wl_region()));
+            }
+            layer.commit();
+            let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
+                return;
+            };
+            self.zoom = Some(Zoom { layer, pool, size, amount: 0.0, target: 1.0, configured: false });
+            // A dock passa a desenhar só a faixa.
+            let qh = self.qh.clone();
+            self.draw(&qh);
+            if let Some(handle) = self.loop_handle.clone() {
+                let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
+                    if dock.step_zoom() { TimeoutAction::ToDuration(Duration::from_millis(16)) } else { TimeoutAction::Drop }
+                });
+            }
+        }
+        if let Some(zoom) = self.zoom.as_mut() {
+            zoom.target = 1.0;
+        }
+        self.paint_zoom();
+    }
+
+    fn zoom_out(&mut self) {
+        if let Some(zoom) = self.zoom.as_mut() {
+            zoom.target = 0.0;
+        }
+    }
+
+    /// Um passo da animação da ampliação; devolve se continua.
+    fn step_zoom(&mut self) -> bool {
+        let animate = mide::settings_file::effect("animations");
+        let Some(zoom) = self.zoom.as_mut() else {
+            return false;
+        };
+        let diff = zoom.target - zoom.amount;
+        zoom.amount = if !animate || diff.abs() < 0.02 { zoom.target } else { zoom.amount + diff * 0.3 };
+        if zoom.amount <= 0.0 && zoom.target <= 0.0 {
+            self.zoom = None;
+            self.zoom_slots.clear();
+            if self.zoom_extra != 0 {
+                self.zoom_extra = 0;
+                self.resize();
+            }
+            let qh = self.qh.clone();
+            self.draw(&qh);
+            return false;
+        }
+        self.paint_zoom();
+        true
+    }
+
+    /// Desenha os ícones ampliados na camada da ampliação.
+    fn paint_zoom(&mut self) {
+        let Some(max) = self.magnify else {
+            return;
+        };
+        let Some((size, amount, configured)) = self.zoom.as_ref().map(|z| (z.size, z.amount, z.configured)) else {
+            return;
+        };
+        if !configured {
+            return;
+        }
+        let base = icon_size() as f32;
+        let (zw, zh) = (size.0 as f32, size.1 as f32);
+        let Some(mut pixmap) = Pixmap::new(size.0, size.1) else {
+            return;
+        };
+        let bottom = zh - (PADDING + BOTTOM_EXTRA) as f32;
+        let slots = self.slots();
+        let reach = 2.6 * (base + ICON_GAP as f32);
+        let max_scale = max as f32 / base;
+        // O ponteiro nas posições sem ampliação (a dock cresceu `zoom_extra`, metade
+        // de cada lado).
+        let pointer = self.pointer_x as f32 - self.zoom_extra as f32 / 2.0;
+        let scales: Vec<f32> = slots.iter().map(|(_, x)| 1.0 + (magnify_scale((pointer - (x + base / 2.0)).abs(), reach, max_scale) - 1.0) * amount).collect();
+        // Os vizinhos se afastam: cada ícone mantém o espaço até o próximo e o conjunto
+        // cresce para os dois lados.
+        let extra: f32 = scales.iter().map(|s| (s - 1.0) * base).sum();
+        // A dock cresce o que os ícones cresceram (em número par, metade de cada lado).
+        let want = ((extra / 2.0).ceil() as u32) * 2;
+        if want != self.zoom_extra {
+            self.zoom_extra = want;
+            self.resize();
+        }
+        let grown = (dock_width(&self.items) + self.zoom_extra) as f32;
+        // Coordenadas da dock (já crescida) → da camada (centradas na mesma borda).
+        let dx = (zw - grown) / 2.0;
+        let mut left = slots[0].1 + (self.zoom_extra as f32 - extra) / 2.0;
+        let mut placed = Vec::with_capacity(slots.len());
+        for (k, ((index, x), scale)) in slots.iter().zip(&scales).enumerate() {
+            let w = base * scale;
+            placed.push((*index, left, w));
+            let gap = slots.get(k + 1).map_or(0.0, |(_, next)| next - x - base);
+            left += w + gap;
+        }
+        self.zoom_slots = placed.clone();
+        let pressed = self.press.as_ref().filter(|p| !p.dragged).map(|p| p.index);
+        for (index, left, w) in placed {
+            let (x, y) = (dx + left, bottom - w);
+            let px = w.round().max(1.0) as u32;
+            if index == LAUNCHER {
+                draw_launchpad_icon(&mut pixmap, x, y, w);
+            } else {
+                // Perto do tamanho normal, o ícone de sempre; maior, o carregado grande.
+                let icon = if px <= icon_size() + 2 { None } else { self.zoom_icon(index, max) };
+                let fallback = if index >= self.items.len() {
+                    match index - self.items.len() {
+                        STACK_DOWNLOADS => self.downloads_icon.clone(),
+                        _ if self.trash_items > 0 => self.trash_full_icon.clone(),
+                        _ => self.trash_empty_icon.clone(),
+                    }
+                } else {
+                    self.items[index].icon.clone()
+                };
+                if let Some(src) = icon.or(fallback) {
+                    let k = w / src.width().max(1) as f32;
+                    let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+                    pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, Transform::from_scale(k, k).post_translate(x, y), None);
+                } else if let Some(path) = rounded_rect(x, y, w, w, w * 0.22) {
+                    // Sem ícone: o mesmo bloco neutro da dock.
+                    let mut paint = Paint::default();
+                    paint.anti_alias = true;
+                    paint.set_color(Color::from_rgba8(120, 120, 128, 255));
+                    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+            if pressed == Some(index) {
+                darken(&mut pixmap, x as i32, y as i32, px);
+            }
+            // Ponto de app aberto, embaixo do ícone.
+            if index < self.items.len() && self.items[index].match_ids.iter().any(|id| self.running.contains(id)) {
+                if let Some(dot) = PathBuilder::from_circle(x + w / 2.0, bottom + (PADDING + BOTTOM_EXTRA) as f32 / 2.0, 1.8) {
+                    let mut paint = Paint::default();
+                    paint.anti_alias = true;
+                    paint.set_color(if self.dark { Color::from_rgba8(235, 235, 240, 230) } else { Color::from_rgba8(40, 40, 46, 230) });
+                    pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+        }
+        let Some(zoom) = self.zoom.as_mut() else {
+            return;
+        };
+        let Ok((buffer, canvas)) = zoom.pool.create_buffer(size.0 as i32, size.1 as i32, size.0 as i32 * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        mide::ui::draw::to_argb8888(&pixmap, canvas);
+        let surface = zoom.layer.wl_surface();
+        surface.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
+        if buffer.attach_to(surface).is_ok() {
+            zoom.layer.commit();
+        }
+    }
+
     /// Começa o pulo do ícone (com as animações ligadas e o app ainda sem janela).
     fn start_bounce(&mut self, index: usize) {
         if !mide::settings_file::effect("animations") || self.bounce.is_some() {
@@ -1814,6 +2121,22 @@ impl Dock {
             self.layer.commit();
             self.slide();
         }
+        let dark = mide::kit::system_dark();
+        let magnify = magnify_size();
+        if dark != self.dark || magnify != self.magnify {
+            tracing::info!("dock: tema {}, ampliação {:?}", if dark { "escuro" } else { "claro" }, magnify);
+            self.dark = dark;
+            self.magnify = magnify;
+            self.zoom = None;
+            self.zoom_slots.clear();
+            if self.zoom_extra != 0 {
+                self.zoom_extra = 0;
+                self.resize();
+            }
+            self.zoom_icons.clear();
+            let qh = self.qh.clone();
+            self.draw(&qh);
+        }
         let liquid = liquid_glass();
         if liquid != self.liquid {
             tracing::info!("vidro líquido na dock: {}", if liquid { "ligado" } else { "desligado" });
@@ -2071,6 +2394,10 @@ impl OutputHandler for Dock {
 
 impl LayerShellHandler for Dock {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if self.zoom.as_ref().is_some_and(|z| &z.layer == layer) {
+            self.zoom = None;
+            return;
+        }
         if self.bounce.as_ref().is_some_and(|b| &b.layer == layer) {
             self.bounce = None;
             return;
@@ -2090,6 +2417,11 @@ impl LayerShellHandler for Dock {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
+        if let Some(zoom) = self.zoom.as_mut().filter(|z| &z.layer == layer) {
+            zoom.configured = true;
+            self.paint_zoom();
+            return;
+        }
         if self.bounce.as_ref().is_some_and(|b| &b.layer == layer) {
             self.paint_bounce();
             return;
@@ -2186,6 +2518,11 @@ impl PointerHandler for Dock {
                     self.pointer_x = event.position.0;
                     self.drag_to(event.position.0);
                     self.hover_changed(self.icon_at(event.position.0));
+                    if self.press.as_ref().is_some_and(|p| p.dragged) {
+                        self.zoom_out();
+                    } else {
+                        self.zoom_in();
+                    }
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT || button == BTN_RIGHT => {
                     self.hide_previews();
@@ -2204,9 +2541,16 @@ impl PointerHandler for Dock {
                         start_x: event.position.0,
                         dragged: false,
                     });
+                    // O ícone apertado escurece (na dock ou na ampliação).
+                    let qh = self.qh.clone();
+                    self.draw(&qh);
+                    self.paint_zoom();
                 }
                 PointerEventKind::Release { button, .. } if button == BTN_LEFT => {
                     if let Some(press) = self.press.take() {
+                        let qh = self.qh.clone();
+                        self.draw(&qh);
+                        self.paint_zoom();
                         // Clicar num app ou pasta da dock fecha o launcher, como no macOS.
                         if press.index != LAUNCHER && !press.dragged {
                             ask_compositor("launcher close");
@@ -2226,6 +2570,7 @@ impl PointerHandler for Dock {
                 }
                 PointerEventKind::Leave { .. } => {
                     self.press = None;
+                    self.zoom_out();
                     // As prévias somem pelo compositor quando o ponteiro sai da dock e do
                     // painel; aqui só cancela uma espera em andamento.
                     self.hover_index = None;

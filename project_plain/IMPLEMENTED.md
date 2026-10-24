@@ -1502,3 +1502,8 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Compositor respeita os limites de tamanho do app** (`set_min_size`/`set_max_size`): janela com mínimo igual ao máximo não redimensiona pela borda nem maximiza; nas outras, o redimensionamento fica dentro dos limites.
 - **Ícone de texto:** a sombra segue o formato da folha (a sombra retangular aparecia no canto como uma segunda orelha).
 - **Configurações:** símbolos de 16 no centro exato dos quadradinhos de 22.
+
+## Dock do Tahoe: escura, clique e ampliação (2026-10-24)
+- **Variante escura:** com Configurações → Aparência em escuro, a dock ganha um véu grafite sobre o vidro, separadores e pontos de app aberto claros (muda na hora).
+- **Clique visível:** o ícone apertado escurece até soltar, como no Mac.
+- **Ampliação** (Configurações → Dock → Ampliação e Tamanho da ampliação, 56–128; desligada por padrão, como no Mac): os ícones perto do ponteiro crescem numa curva suave, os vizinhos se afastam e a faixa de vidro cresce junto; entra e sai animada (com o interruptor de Animações). Os ícones ampliados são carregados no tamanho grande (nítidos), numa camada própria acima da dock que não recebe cliques; os cliques seguem as posições ampliadas.
