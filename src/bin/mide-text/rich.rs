@@ -74,6 +74,16 @@ struct Snapshot {
 
 /// Altura da barra de busca.
 const FIND_H: f32 = 44.0;
+/// Altura da régua.
+const RULER_H: f32 = 24.0;
+
+/// Marcador da régua sendo arrastado.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum RulerDrag {
+    First,
+    Left,
+    Right,
+}
 
 /// Buscar e substituir.
 #[derive(Default)]
@@ -191,6 +201,9 @@ pub struct Rich {
     speller: Option<mide::spell::Speller>,
     speller_rx: Option<std::sync::mpsc::Receiver<Option<mide::spell::Speller>>>,
     pub spell_on: bool,
+    /// Régua (Visualizar → Mostrar régua) e o marcador sendo arrastado.
+    pub ruler: bool,
+    ruler_drag: Option<RulerDrag>,
     misspelled: std::collections::HashMap<usize, Vec<(usize, usize)>>,
     spell_cache: std::collections::HashMap<String, Vec<(usize, usize)>>,
     spell_version: u64,
@@ -258,6 +271,8 @@ impl Rich {
             speller: None,
             speller_rx: None,
             spell_on: true,
+            ruler: true,
+            ruler_drag: None,
             misspelled: std::collections::HashMap::new(),
             spell_cache: std::collections::HashMap::new(),
             spell_version: u64::MAX,
@@ -1006,6 +1021,120 @@ impl Rich {
         }
     }
 
+    /// A régua: centímetros, as margens e os recuos do parágrafo (arrastáveis).
+    fn ruler_view(&mut self, ui: &mut Ui, y: f32, w: f32, area: (f32, f32, f32, f32), blocked: bool) {
+        let theme = ui.theme().clone();
+        let z = self.z();
+        let page = self.page_doc().page.clone();
+        // Numa célula, a régua mostra a coluna dela.
+        let (origin, width) = match self.cell_origin() {
+            Some((_, cx, _)) => {
+                let o = self.outer.as_ref().expect("célula");
+                let cw = self.page_layout().paras.get(o.table).and_then(|b| b.table.as_ref()).map_or(72.0, |tb| tb.col_w[o.col]) - 2.0 * mide::richtext::layout::CELL_PAD_X;
+                (self.page_x(area) + (page.margins[3] + cx) * z, cw)
+            }
+            None => (self.page_x(area) + page.margins[3] * z, page.content_width()),
+        };
+        let ps = self.current_para();
+        let first_x = origin + (ps.left_indent + ps.first_indent) * z;
+        let left_x = origin + ps.left_indent * z;
+        let right_x = origin + (width - ps.right_indent) * z;
+        // Arrastar os marcadores.
+        let input = ui.input().clone();
+        if !blocked {
+            if let Some(p) = input.pointer {
+                let inside = p.1 >= y && p.1 <= y + RULER_H;
+                if input.pressed && inside {
+                    let near = |x: f32| (p.0 - x).abs() <= 6.0;
+                    self.ruler_drag = if near(first_x) && p.1 < y + RULER_H / 2.0 {
+                        Some(RulerDrag::First)
+                    } else if near(left_x) {
+                        Some(RulerDrag::Left)
+                    } else if near(right_x) {
+                        Some(RulerDrag::Right)
+                    } else if near(first_x) {
+                        Some(RulerDrag::First)
+                    } else {
+                        None
+                    };
+                    if self.ruler_drag.is_some() {
+                        self.begin(None);
+                    }
+                }
+                if let Some(d) = self.ruler_drag.filter(|_| input.down) {
+                    // Em passos de 0,25 cm, como na régua do Word.
+                    let step = mide::richtext::cm(0.25);
+                    let at = (((p.0 - origin) / z) / step).round() * step;
+                    let (a, b) = self.range();
+                    let old = ps.clone();
+                    let doc = &mut self.doc;
+                    match d {
+                        RulerDrag::First => doc.apply_para(a, b, |s| s.first_indent = (at - s.left_indent).clamp(-s.left_indent, width - s.left_indent - s.right_indent - 18.0)),
+                        RulerDrag::Left => {
+                            let first_abs = old.left_indent + old.first_indent;
+                            doc.apply_para(a, b, |s| {
+                                s.left_indent = at.clamp(0.0, width - s.right_indent - 36.0);
+                                s.first_indent = first_abs - s.left_indent;
+                            });
+                        }
+                        RulerDrag::Right => doc.apply_para(a, b, |s| s.right_indent = (width - at).clamp(0.0, width - s.left_indent - 36.0)),
+                    }
+                    self.stale = true;
+                    self.version += 1;
+                    ui.request_repaint();
+                }
+                if input.released || !input.down {
+                    self.ruler_drag = None;
+                }
+            }
+        }
+        let accent = theme.accent;
+        let bg = theme.background;
+        ui.paint_text(|pixmap, text, _| {
+            mide::ui::draw::paint_rounded_solid(pixmap, 0.0, y, w, RULER_H, 0.0, [bg[0], bg[1], bg[2], 255]);
+            // A faixa do texto em branco; as margens em cinza.
+            let page_left = origin - page.margins[3] * z;
+            let band_y = y + 5.0;
+            mide::ui::draw::paint_rounded_solid(pixmap, page_left, band_y, page.width * z, 14.0, 2.0, [222, 222, 226, 255]);
+            mide::ui::draw::paint_rounded_solid(pixmap, origin, band_y, width * z, 14.0, 0.0, [255, 255, 255, 255]);
+            // Marcas a cada 0,5 cm e números a cada centímetro.
+            let mut c = 0.0f32;
+            while c * 72.0 / 2.54 <= width + 0.1 {
+                let x = origin + mide::richtext::cm(c) * z;
+                let whole = (c.fract()).abs() < 0.01;
+                let th = if whole { 5.0 } else { 3.0 };
+                mide::ui::draw::paint_rounded_solid(pixmap, x, band_y + 14.0 - th, 0.8, th, 0.0, [120, 120, 126, 255]);
+                if whole && c > 0.0 {
+                    text.draw(pixmap, &format!("{c:.0}"), x - 3.0, band_y + 0.5, 8.5, mide::ui::text::FontWeight::Regular, [110, 110, 118, 255]);
+                }
+                c += 0.5;
+            }
+            // Marcadores: primeira linha (em cima), recuo esquerdo e direito (embaixo).
+            let tri = |pixmap: &mut tiny_skia::Pixmap, x: f32, down: bool| {
+                let mut pb = tiny_skia::PathBuilder::new();
+                let (top, bottom) = if down { (y + 2.0, y + 9.0) } else { (y + RULER_H - 9.0, y + RULER_H - 2.0) };
+                if down {
+                    pb.move_to(x - 5.0, top);
+                    pb.line_to(x + 5.0, top);
+                    pb.line_to(x, bottom);
+                } else {
+                    pb.move_to(x - 5.0, bottom);
+                    pb.line_to(x + 5.0, bottom);
+                    pb.line_to(x, top);
+                }
+                pb.close();
+                if let Some(path) = pb.finish() {
+                    let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+                    paint.set_color(tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 255));
+                    pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, mide::ui::draw::tf(), None);
+                }
+            };
+            tri(pixmap, first_x, true);
+            tri(pixmap, left_x, false);
+            tri(pixmap, right_x, false);
+        });
+    }
+
     pub fn toggle_find(&mut self) {
         self.find = match self.find.take() {
             Some(_) => None,
@@ -1252,6 +1381,8 @@ impl Rich {
             MenuGroup {
                 title: "Visualizar".into(),
                 items: vec![
+                    MenuItem::action("regua", "Mostrar régua").shortcut("Ctrl+Shift+R").checked(self.ruler),
+                    MenuItem::Separator,
                     MenuItem::action("zoom-mais", "Aumentar zoom").shortcut("Ctrl+="),
                     MenuItem::action("zoom-menos", "Diminuir zoom").shortcut("Ctrl+-"),
                     MenuItem::action("zoom-real", "Tamanho real").shortcut("Ctrl+0"),
@@ -1316,6 +1447,7 @@ impl Rich {
                 self.leave_cell();
                 self.abnt_dialog = Some(AbntDialog { font: 0, numbers_from: "2".into() });
             }
+            "regua" => self.ruler = !self.ruler,
             "zoom-mais" => self.zoom_by(1.1),
             "zoom-menos" => self.zoom_by(1.0 / 1.1),
             "zoom-real" => self.zoom = 1.0,
@@ -1479,7 +1611,7 @@ impl Rich {
         // Atalhos com Ctrl.
         let shortcuts = [("b", "negrito"), ("i", "italico"), ("u", "sublinhado"), ("e", "centralizar"), ("l", "alinhar-esquerda"), ("r", "alinhar-direita"), ("j", "justificar"), ("a", "selecionar-tudo"), ("c", "copiar"), ("x", "recortar"), ("v", "colar"), ("y", "refazer"), ("=", "zoom-mais"), ("+", "zoom-mais"), ("-", "zoom-menos"), ("0", "zoom-real")];
         for (letter, action) in shortcuts {
-            if input.shortcut_plain(letter) {
+            if input.shortcut_plain(letter) && !(letter == "r" && input.shortcut_shift("r") == Some(true)) {
                 self.command(action, ui);
             }
         }
@@ -1492,6 +1624,9 @@ impl Rich {
             self.toggle_find();
         }
         // Títulos como no Word: Ctrl+Alt+1, 2, 3; Ctrl+Alt+0 volta ao corpo.
+        if input.shortcut_shift("r") == Some(true) {
+            self.ruler = !self.ruler;
+        }
         if input.shortcut_alt("t") {
             self.command("tabela", ui);
         }
@@ -1761,7 +1896,8 @@ impl Rich {
     pub fn view(&mut self, ui: &mut Ui, top: f32) {
         let (w, h) = ui.window_size();
         let find_h = if self.find.is_some() { FIND_H } else { 0.0 };
-        let area = (0.0, top + FORMAT_H + find_h, w, (h - top - FORMAT_H - find_h - STATUS_H).max(10.0));
+        let ruler_h = if self.ruler { RULER_H } else { 0.0 };
+        let area = (0.0, top + FORMAT_H + find_h + ruler_h, w, (h - top - FORMAT_H - find_h - ruler_h - STATUS_H).max(10.0));
         let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
@@ -1904,6 +2040,9 @@ impl Rich {
         // Barra de formatação (em cima das páginas) e a de busca.
         self.format_bar(ui, top, w);
         self.find_bar(ui, top + FORMAT_H, w);
+        if self.ruler {
+            self.ruler_view(ui, top + FORMAT_H + find_h, w, area, blocked);
+        }
         // Rodapé.
         let page_now = match self.cell_origin() {
             Some((pg, _, _)) => pg + 1,
