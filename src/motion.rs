@@ -38,6 +38,8 @@ pub const LAUNCHER_PAGE: Duration = Duration::from_millis(320);
 pub const LAUNCHER_POP: Duration = Duration::from_millis(340);
 /// Papel de parede trocando.
 pub const WALLPAPER_FADE: Duration = Duration::from_millis(450);
+/// Pílula do controle segmentado deslizando até a opção nova (Tahoe).
+pub const CONTROL_SLIDE: Duration = Duration::from_millis(200);
 /// Lâmpada (minimizar e restaurar).
 pub const GENIE: Duration = Duration::from_millis(650);
 

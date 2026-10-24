@@ -157,39 +157,111 @@ pub struct Menu<'c> {
     x: f32,
     y: f32,
     w: f32,
-    rows: Vec<(String, u8, bool)>,
+    rows: Vec<MenuRow>,
+}
+
+/// Uma linha do menu: texto, tipo (0 comum, 1 perigo, 2 separador, 3 etiquetas),
+/// se está sob o ponteiro, símbolo, atalho e marca (✓).
+struct MenuRow {
+    label: String,
+    kind: u8,
+    hovered: bool,
+    icon: Option<String>,
+    shortcut: Option<String>,
+    checked: bool,
+    /// Etiquetas: as cores marcadas e a bolinha sob o ponteiro.
+    tags: Vec<bool>,
+    tag_hover: Option<usize>,
 }
 
 impl Menu<'_> {
-    fn row(&mut self, label: &str, kind: u8) -> bool {
+    fn push(&mut self, label: &str, kind: u8, icon: Option<&str>, shortcut: Option<&str>, checked: bool) -> bool {
         let h = if kind == 2 { 9.0 } else { 26.0 };
         let rect = (self.x, self.y, self.w, h);
         self.y += h;
         let hovered = kind != 2 && self.ctx.input.over(rect);
-        self.rows.push((label.to_string(), kind, hovered));
+        self.rows.push(MenuRow {
+            label: label.to_string(),
+            kind,
+            hovered,
+            icon: icon.map(str::to_string),
+            shortcut: shortcut.map(str::to_string),
+            checked,
+            tags: Vec::new(),
+            tag_hover: None,
+        });
         if hovered && self.ctx.input.pressed {
-            // Escolhido: fecha o menu, e o clique não passa para o que está atrás.
-            self.ctx.memory.menu = None;
-            self.ctx.memory.menu_rect = None;
-            self.ctx.repaint = true;
-            self.ctx.input.pressed = false;
+            self.close();
             return true;
         }
         false
     }
 
+    /// Escolhido: fecha o menu, e o clique não passa para o que está atrás.
+    fn close(&mut self) {
+        self.ctx.memory.menu = None;
+        self.ctx.memory.menu_rect = None;
+        self.ctx.repaint = true;
+        self.ctx.input.pressed = false;
+    }
+
     /// Item comum; devolve `true` quando escolhido.
     pub fn item(&mut self, label: &str) -> bool {
-        self.row(label, 0)
+        self.push(label, 0, None, None, false)
+    }
+
+    /// Item com símbolo à esquerda (nome de ícone do tema, de preferência
+    /// `-symbolic`) e, se houver, o atalho à direita, como nos menus do Tahoe.
+    pub fn item_icon(&mut self, icon: &str, label: &str, shortcut: Option<&str>) -> bool {
+        self.push(label, 0, Some(icon), shortcut, false)
+    }
+
+    /// Item que pode estar marcado (✓ à esquerda).
+    pub fn item_checked(&mut self, label: &str, checked: bool) -> bool {
+        self.push(label, 0, None, None, checked)
     }
 
     /// Item que apaga coisas (texto em vermelho).
     pub fn danger(&mut self, label: &str) -> bool {
-        self.row(label, 1)
+        self.push(label, 1, None, None, false)
+    }
+
+    /// Como `danger`, com símbolo à esquerda.
+    pub fn danger_icon(&mut self, icon: &str, label: &str) -> bool {
+        self.push(label, 1, Some(icon), None, false)
     }
 
     pub fn separator(&mut self) {
-        self.row("", 2);
+        self.push("", 2, None, None, false);
+    }
+
+    /// Linha das etiquetas do Finder: as bolinhas de `TAG_COLORS` (marcadas com um
+    /// anel) e o texto embaixo. Devolve a cor clicada.
+    pub fn tags(&mut self, label: &str, marked: &[bool]) -> Option<usize> {
+        let h = 44.0;
+        let rect = (self.x, self.y, self.w, h);
+        self.y += h;
+        let n = TAG_COLORS.len();
+        let step = 24.0;
+        let x0 = self.x + 12.0;
+        let tag_hover = (0..n).find(|i| self.ctx.input.over((x0 + *i as f32 * step - 2.0, rect.1 + 2.0, 22.0, 22.0)));
+        self.rows.push(MenuRow {
+            label: label.to_string(),
+            kind: 3,
+            hovered: false,
+            icon: None,
+            shortcut: None,
+            checked: false,
+            tags: (0..n).map(|i| marked.get(i).copied().unwrap_or(false)).collect(),
+            tag_hover,
+        });
+        if let Some(i) = tag_hover {
+            if self.ctx.input.pressed {
+                self.close();
+                return Some(i);
+            }
+        }
+        None
     }
 }
 
@@ -365,6 +437,9 @@ pub struct Memory {
     modal_drawn: bool,
     /// Último aperto no vazio que arrasta a janela (duplo clique maximiza).
     drag_area_press: Option<std::time::Instant>,
+    /// Controles segmentados: opção mostrada e, se a pílula está deslizando, de onde
+    /// ela saiu e quando.
+    segments: HashMap<u64, (usize, Option<(usize, std::time::Instant)>)>,
 }
 
 /// Pedido de um app de conteúdo inteiro à janela: começar a mover (com o botão
@@ -1000,7 +1075,8 @@ impl<'a> Ui<'a> {
         let width = width.min(ww - 32.0);
         let (x, y) = (((ww - width) / 2.0).round(), (wh * 0.24).round());
         self.ctx.in_modal = true;
-        let rect = self.glass_panel(x, y, width, 14.0, add);
+        // Tahoe: cantos grandes nos diálogos.
+        let rect = self.glass_panel(x, y, width, 20.0, add);
         self.ctx.in_modal = false;
         self.ctx.memory.modal_rect = Some((self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3));
         self.ctx.memory.modal_drawn = true;
@@ -1369,38 +1445,69 @@ impl<'a> Ui<'a> {
         // Desenho na camada de cima.
         let k = crate::ui::draw::scale();
         let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+        // Tahoe: vidro de cantos 12, sem a setinha; destaque em pílula de 8.
+        let radius = 12.0;
         for (grow, alpha) in [(6.0, 12u8), (3.0, 20), (1.0, 32)] {
-            fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, 10.0 + grow, color([0, 0, 0, alpha]));
+            fill_rounded(overlay, x - grow, y0 - grow + 4.0, w + 2.0 * grow, h + 2.0 * grow, radius + grow, color([0, 0, 0, alpha]));
         }
-        fill_rounded(overlay, x, y0, w, h, 10.0, color(t.menu));
-        match side {
-            Some(right) => {
-                let tip_y = state.click.1.clamp(y0 + 18.0, (y0 + h - 18.0).max(y0 + 18.0));
-                crate::ui::draw::menu_arrow_side(overlay, tip_y, if right { x } else { x + w }, right, t.menu);
-            }
-            None => {
-                let tip_x = state.pos.0.clamp(x + 18.0, x + w - 18.0);
-                crate::ui::draw::menu_arrow(overlay, tip_x, if up { y0 + h } else { y0 }, up, t.menu);
-            }
-        }
+        fill_rounded(overlay, x, y0, w, h, radius, color(t.menu));
+        outline(overlay, (x, y0, w, h), radius, if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 16] });
+        let _ = (side, up);
+        // Com algum símbolo ou marca no menu, todos os textos alinham depois deles.
+        let indent = rows.iter().any(|r| r.icon.is_some() || r.checked);
+        let text_x = if indent { x + 36.0 } else { x + 16.0 };
         let mut y = y0 + 5.0;
-        let text = &mut self.ctx.text;
-        for (label, kind, hovered) in rows {
-            if kind == 2 {
-                fill_rounded(overlay, x + 12.0, y + 4.0, w - 24.0, 1.0, 0.0, color(t.shade(30)));
-                y += 9.0;
-                continue;
+        let mut icons = Vec::new();
+        for row in &rows {
+            match row.kind {
+                2 => {
+                    fill_rounded(overlay, x + 12.0, y + 4.0, w - 24.0, 1.0, 0.0, color(t.shade(30)));
+                    y += 9.0;
+                }
+                3 => {
+                    for (i, on) in row.tags.iter().enumerate() {
+                        let cx = x + 12.0 + i as f32 * 24.0;
+                        let r = if row.tag_hover == Some(i) { 10.0 } else { 8.0 };
+                        let c = TAG_COLORS[i];
+                        fill_rounded(overlay, cx + 9.0 - r, y + 13.0 - r, 2.0 * r, 2.0 * r, r, color(c));
+                        if *on {
+                            outline(overlay, (cx - 2.0, y + 2.0, 22.0, 22.0), 11.0, t.text);
+                        }
+                    }
+                    self.ctx.text.draw(overlay, &row.label, x + 14.0, y + 26.0, t.font_small, FontWeight::Regular, t.text_secondary);
+                    y += 44.0;
+                }
+                kind => {
+                    if row.hovered {
+                        fill_rounded(overlay, x + 5.0, y, w - 10.0, 26.0, super::theme::RADIUS_ITEM, color(t.accent));
+                    }
+                    let c = match (kind, row.hovered) {
+                        (_, true) => t.on_accent,
+                        (1, false) => t.danger,
+                        _ => t.text,
+                    };
+                    if row.checked {
+                        self.ctx.text.draw(overlay, "✓", x + 15.0, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Semibold, c);
+                    }
+                    if let Some(icon) = &row.icon {
+                        icons.push((icon.clone(), x + 13.0, y + 5.0, c));
+                    }
+                    self.ctx.text.draw(overlay, &row.label, text_x, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, c);
+                    if let Some(sc) = &row.shortcut {
+                        let sc_c = if row.hovered { t.on_accent } else { t.text_secondary };
+                        let sw = self.ctx.text.measure(sc, t.font, FontWeight::Regular);
+                        self.ctx.text.draw(overlay, sc, x + w - 14.0 - sw, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, sc_c);
+                    }
+                    y += 26.0;
+                }
             }
-            if hovered {
-                fill_rounded(overlay, x + 5.0, y, w - 10.0, 26.0, 6.0, color(t.accent));
+        }
+        for (icon, ix, iy, c) in icons {
+            if let Some(pix) = self.ctx.icon(&[icon.as_str()], 16, false) {
+                if let Some(overlay) = self.ctx.overlay.as_mut() {
+                    crate::ui::draw::blit_tinted(overlay, &pix, ix as i32, iy as i32, [c[0], c[1], c[2]]);
+                }
             }
-            let c = match (kind, hovered) {
-                (_, true) => t.on_accent,
-                (1, false) => t.danger,
-                _ => t.text,
-            };
-            text.draw(overlay, &label, x + 16.0, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, c);
-            y += 26.0;
         }
     }
 
@@ -1569,21 +1676,40 @@ impl<'a> Ui<'a> {
     // ---------------------------------------------------------------- controles
 
     fn button_impl(&mut self, s: &str, accent: bool) -> Response {
+        self.button_styled(s, if accent { ButtonStyle::Prominent } else { ButtonStyle::Bordered })
+    }
+
+    /// Botão em cápsula do Tahoe no estilo pedido (`ButtonStyle`).
+    pub fn button_styled(&mut self, s: &str, style: ButtonStyle) -> Response {
         let t = self.ctx.theme.clone();
         let id = self.ctx.id();
         let w = self.measure(s, t.font, FontWeight::Semibold) + 32.0;
         let rect = self.alloc(Some(w), t.row);
         let r = self.interact(id, rect);
         let pressed = self.ctx.memory.active == Some(id) && r.hovered;
-        let fill = match (accent, r.hovered, pressed) {
-            (true, _, true) => [t.accent[0].saturating_sub(30), t.accent[1].saturating_sub(30), t.accent[2].saturating_sub(30), 255],
-            (true, _, false) => t.accent,
-            (false, _, true) => t.shade(46),
-            (false, true, false) => t.hover,
-            (false, false, false) => t.control,
+        let darker = |c: Rgba, d: u8| [c[0].saturating_sub(d), c[1].saturating_sub(d), c[2].saturating_sub(d), c[3]];
+        let radius = rect.3 / 2.0;
+        let (fill, tc) = match style {
+            ButtonStyle::Prominent => (Some(if pressed { darker(t.accent, 30) } else { t.accent }), t.on_accent),
+            ButtonStyle::Destructive => (Some(if pressed { darker(t.danger, 30) } else { t.danger }), [255, 255, 255, 255]),
+            ButtonStyle::Bordered => (Some(if pressed { t.shade(46) } else if r.hovered { t.hover } else { t.control }), t.text),
+            ButtonStyle::Plain => (if pressed { Some(t.shade(30)) } else if r.hovered { Some(t.control) } else { None }, t.accent),
+            ButtonStyle::Glass => {
+                capsule(self.canvas, rect, &t);
+                (if pressed { Some(t.shade(30)) } else if r.hovered { Some(t.shade(12)) } else { None }, t.text)
+            }
         };
-        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(fill));
-        let tc = if accent { t.on_accent } else { t.text };
+        if let Some(fill) = fill {
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, radius, color(fill));
+        }
+        // Brilho de borda em cima dos botões cheios (vidro líquido).
+        if matches!(style, ButtonStyle::Prominent | ButtonStyle::Destructive) {
+            if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, radius - 0.5) {
+                let mut paint = Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(color([255, 255, 255, 50]));
+                self.canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
+            }
+        }
         let tw = self.measure(s, t.font, FontWeight::Semibold);
         self.draw_text(s, rect.0 + (rect.2 - tw) / 2.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Semibold, tc);
         r
@@ -1630,13 +1756,11 @@ impl<'a> Ui<'a> {
         let (sx, sy) = (rect.0 + rect.2 - 40.0, rect.1 + (rect.3 - 22.0) / 2.0);
         let fill = if *value { t.accent } else { t.shade(40) };
         fill_rounded(self.canvas, sx, sy, 40.0, 22.0, 11.0, color(fill));
-        let kx = if *value { sx + 29.0 } else { sx + 11.0 };
-        if let Some(knob) = PathBuilder::from_circle(kx, sy + 11.0, 9.0) {
-            let mut paint = Paint::default();
-            paint.anti_alias = true;
-            paint.set_color(color([255, 255, 255, 255]));
-            self.canvas.fill_path(&knob, &paint, FillRule::Winding, crate::ui::draw::tf(), None);
-        }
+        // Botão branco em cápsula que estica enquanto é apertado (Tahoe).
+        let pressed = self.ctx.memory.active == Some(id) && self.ctx.input.down;
+        let kw = if pressed { 24.0 } else { 18.0 };
+        let kx = if *value { sx + 40.0 - 2.0 - kw } else { sx + 2.0 };
+        knob(self.canvas, (kx, sy + 2.0, kw, 18.0));
         r
     }
 
@@ -1922,19 +2046,205 @@ impl<'a> Ui<'a> {
         self.draw_text(&label, rect.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
         let k = ((*value - min) / (max - min).max(f32::EPSILON)).clamp(0.0, 1.0);
         let cy = rect.1 + rect.3 / 2.0;
-        fill_rounded(self.canvas, tx, cy - 3.0, tw, 6.0, 3.0, color(t.shade(30)));
-        fill_rounded(self.canvas, tx, cy - 3.0, tw * k, 6.0, 3.0, color(t.accent));
-        if let Some(knob) = PathBuilder::from_circle(tx + tw * k, cy, 9.0) {
-            let mut paint = Paint::default();
-            paint.anti_alias = true;
-            paint.set_color(color([255, 255, 255, 255]));
-            self.canvas.fill_path(&knob, &paint, FillRule::Winding, crate::ui::draw::tf(), None);
-            paint.set_color(color([0, 0, 0, 60]));
-            self.canvas.stroke_path(&knob, &paint, &Stroke::default(), crate::ui::draw::tf(), None);
-        }
+        fill_rounded(self.canvas, tx, cy - 2.0, tw, 4.0, 2.0, color(t.shade(30)));
+        fill_rounded(self.canvas, tx, cy - 2.0, tw * k, 4.0, 2.0, color(t.accent));
+        // Botão de vidro em cápsula, que alonga enquanto é arrastado (Tahoe).
+        let dragging = self.ctx.memory.active == Some(id) && self.ctx.input.down;
+        let kw = if dragging { 30.0 } else { 22.0 };
+        knob(self.canvas, (tx + tw * k - kw / 2.0, cy - 8.0, kw, 16.0));
         let shown = format!("{}", value.round() as i64);
         self.draw_text(&shown, tx + tw + 16.0, rect.1 + (rect.3 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text_secondary);
         r
+    }
+
+    /// Controle segmentado do Tahoe: cápsula com as opções lado a lado e uma pílula
+    /// que desliza até a escolhida. `width` `None` ocupa a linha inteira.
+    pub fn segmented(&mut self, options: &[&str], selected: &mut usize, width: Option<f32>) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let n = options.len().max(1);
+        let natural: f32 = options.iter().map(|o| self.measure(o, t.font, FontWeight::Regular) + 28.0).sum::<f32>() + 4.0;
+        let rect = self.alloc(Some(width.unwrap_or(natural)), t.row);
+        let mut r = Response { rect, id, ..Default::default() };
+        let seg = (rect.2 - 4.0) / n as f32;
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, rect.3 / 2.0, color(t.control));
+        for i in 0..n {
+            let sid = self.ctx.id();
+            let sr = self.interact(sid, (rect.0 + 2.0 + i as f32 * seg, rect.1, seg, rect.3));
+            r.hovered |= sr.hovered;
+            if sr.clicked && *selected != i {
+                *selected = i;
+                r.clicked = true;
+                r.changed = true;
+            }
+        }
+        // De onde a pílula está vindo (a escolha anterior) e quanto já andou.
+        let now = std::time::Instant::now();
+        let slide = crate::settings_file::effect("transitions");
+        let entry = self.ctx.memory.segments.entry(id).or_insert((*selected, None));
+        if entry.0 != *selected {
+            entry.1 = slide.then_some((entry.0, now));
+            entry.0 = *selected;
+        }
+        let pos = match entry.1 {
+            Some((from, at)) => {
+                let p = crate::motion::ease_out(crate::motion::progress(at, crate::motion::CONTROL_SLIDE));
+                if p >= 1.0 {
+                    entry.1 = None;
+                } else {
+                    self.ctx.ticking = true;
+                }
+                from as f32 + (*selected as f32 - from as f32) * p
+            }
+            None => *selected as f32,
+        };
+        let pill = (rect.0 + 2.0 + pos * seg, rect.1 + 2.0, seg, rect.3 - 4.0);
+        knob(self.canvas, pill);
+        for (i, o) in options.iter().enumerate() {
+            let tw = self.measure(o, t.font, FontWeight::Regular);
+            let x = rect.0 + 2.0 + i as f32 * seg + (seg - tw) / 2.0;
+            let tc = if i == *selected { [24, 24, 28, 255] } else { t.text };
+            self.draw_text(o, x, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
+        }
+        r
+    }
+
+    /// Caixa de seleção (quadrado arredondado com ✓) com o texto ao lado.
+    pub fn checkbox(&mut self, label: &str, value: &mut bool) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let w = self.measure(label, t.font, FontWeight::Regular) + 28.0;
+        let rect = self.alloc(Some(w), 24.0);
+        let mut r = self.interact(id, rect);
+        if r.clicked {
+            *value = !*value;
+            r.changed = true;
+        }
+        let (bx, by) = (rect.0, rect.1 + 4.0);
+        if *value {
+            fill_rounded(self.canvas, bx, by, 16.0, 16.0, 5.0, color(t.accent));
+            let mut pb = PathBuilder::new();
+            pb.move_to(bx + 4.0, by + 8.5);
+            pb.line_to(bx + 7.0, by + 11.5);
+            pb.line_to(bx + 12.0, by + 4.5);
+            if let Some(path) = pb.finish() {
+                let mut paint = Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(color(t.on_accent));
+                let stroke = Stroke { width: 2.0, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+                self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+            }
+        } else {
+            fill_rounded(self.canvas, bx, by, 16.0, 16.0, 5.0, color(if t.dark { t.shade(30) } else { [255, 255, 255, 255] }));
+            outline(self.canvas, (bx, by, 16.0, 16.0), 5.0, t.shade(if r.hovered { 90 } else { 60 }));
+        }
+        self.draw_text(label, rect.0 + 24.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        r
+    }
+
+    /// Botão de opção (rádio): círculo com o ponto quando `selected`. Devolve o clique;
+    /// quem chama troca a escolha.
+    pub fn radio(&mut self, label: &str, selected: bool) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let w = self.measure(label, t.font, FontWeight::Regular) + 28.0;
+        let rect = self.alloc(Some(w), 24.0);
+        let r = self.interact(id, rect);
+        let (bx, by) = (rect.0, rect.1 + 4.0);
+        if selected {
+            fill_rounded(self.canvas, bx, by, 16.0, 16.0, 8.0, color(t.accent));
+            fill_rounded(self.canvas, bx + 5.0, by + 5.0, 6.0, 6.0, 3.0, color(t.on_accent));
+        } else {
+            fill_rounded(self.canvas, bx, by, 16.0, 16.0, 8.0, color(if t.dark { t.shade(30) } else { [255, 255, 255, 255] }));
+            outline(self.canvas, (bx, by, 16.0, 16.0), 8.0, t.shade(if r.hovered { 90 } else { 60 }));
+        }
+        self.draw_text(label, rect.0 + 24.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        r
+    }
+
+    /// Passo (▲▼ em cápsula) com o valor ao lado, entre `min` e `max`.
+    pub fn stepper(&mut self, value: &mut i64, min: i64, max: i64) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let shown = value.to_string();
+        let tw = self.measure(&shown, t.font, FontWeight::Regular).max(24.0);
+        let rect = self.alloc(Some(tw + 16.0 + 22.0), t.row);
+        let mut r = Response { rect, id, ..Default::default() };
+        self.draw_text(&shown, rect.0 + 4.0, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+        let caps = (rect.0 + rect.2 - 20.0, rect.1 + 2.0, 20.0, rect.3 - 4.0);
+        fill_rounded(self.canvas, caps.0, caps.1, caps.2, caps.3, 10.0, color(t.control));
+        for (i, step) in [1i64, -1].into_iter().enumerate() {
+            let sid = self.ctx.id();
+            let half = (caps.0, caps.1 + i as f32 * caps.3 / 2.0, caps.2, caps.3 / 2.0);
+            let sr = self.interact(sid, half);
+            if sr.hovered {
+                fill_rounded(self.canvas, half.0 + 1.0, half.1 + 1.0, half.2 - 2.0, half.3 - 2.0, 8.0, color(t.hover));
+            }
+            if sr.clicked {
+                let new = (*value + step).clamp(min, max);
+                if new != *value {
+                    *value = new;
+                    r.changed = true;
+                }
+            }
+            let (cx, cy) = (half.0 + half.2 / 2.0, half.1 + half.3 / 2.0);
+            let d = if step > 0 { -1.5 } else { 1.5 };
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - 3.5, cy - d);
+            pb.line_to(cx, cy + d);
+            pb.line_to(cx + 3.5, cy - d);
+            if let Some(path) = pb.finish() {
+                let mut paint = Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(color(t.text));
+                let stroke = Stroke { width: 1.5, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+                self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+            }
+        }
+        r
+    }
+
+    /// Barra de progresso em cápsula: `Some(0..1)` mostra o andamento; `None`, uma faixa
+    /// que anda (sem saber quanto falta).
+    pub fn progress_bar(&mut self, value: Option<f32>) {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, 14.0);
+        let (x, y, w) = (rect.0, rect.1 + 4.0, rect.2);
+        fill_rounded(self.canvas, x, y, w, 6.0, 3.0, color(t.shade(26)));
+        match value {
+            Some(v) => fill_rounded(self.canvas, x, y, w * v.clamp(0.0, 1.0), 6.0, 3.0, color(t.accent)),
+            None => {
+                let phase = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0) % 1400) as f32 / 1400.0;
+                let bw = w * 0.3;
+                let bx = x - bw + (w + bw) * phase;
+                let (a, b) = (bx.max(x), (bx + bw).min(x + w));
+                if b > a {
+                    fill_rounded(self.canvas, a, y, b - a, 6.0, 3.0, color(t.accent));
+                }
+                self.ctx.ticking = true;
+            }
+        }
+    }
+
+    /// Selo vermelho com um número ou texto curto (abas, barra lateral, dock).
+    pub fn badge(&mut self, text: &str) {
+        let tw = self.measure(text, 11.0, FontWeight::Semibold);
+        let w = (tw + 12.0).max(18.0);
+        let rect = self.alloc(Some(w), 18.0);
+        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 9.0, color([255, 59, 48, 255]));
+        self.draw_text(text, rect.0 + (w - tw) / 2.0, rect.1 + 2.0, 11.0, FontWeight::Semibold, [255, 255, 255, 255]);
+    }
+
+    /// Bolinhas de etiqueta (cores do Finder), uma sobre a outra como no Tahoe.
+    pub fn tag_dots(&mut self, colors: &[Rgba]) {
+        let n = colors.len();
+        if n == 0 {
+            return;
+        }
+        let rect = self.alloc(Some(12.0 + (n as f32 - 1.0) * 8.0), 12.0);
+        for (i, c) in colors.iter().enumerate() {
+            let x = rect.0 + i as f32 * 8.0;
+            fill_rounded(self.canvas, x - 1.0, rect.1 - 1.0, 14.0, 14.0, 7.0, color(self.ctx.theme.background));
+            fill_rounded(self.canvas, x, rect.1, 12.0, 12.0, 6.0, color(*c));
+        }
     }
 
     /// Campo de texto de uma linha. Clique dá o foco; Enter responde `submitted`.
@@ -3507,6 +3817,51 @@ impl<'a> Ui<'a> {
     pub fn sidebar_area(&mut self, items: &[(&str, &str)], selected: usize, content: impl FnOnce(&mut Ui, usize)) -> usize {
         self.sidebar_raw = true;
         self.sidebar(items, selected, content)
+    }
+}
+
+/// Estilos de botão do Tahoe (`Ui::button_styled`): todos em cápsula.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonStyle {
+    /// Cheio na cor de destaque (ação principal).
+    Prominent,
+    /// Preenchimento suave (o botão comum).
+    Bordered,
+    /// Só o texto na cor de destaque; fundo ao passar o ponteiro.
+    Plain,
+    /// Cápsula de vidro (sobre fotos, barras de ferramentas).
+    Glass,
+    /// Cheio em vermelho (apagar).
+    Destructive,
+}
+
+/// Cores das etiquetas do Finder (vermelho, laranja, amarelo, verde, azul, roxo, cinza).
+pub const TAG_COLORS: [Rgba; 7] = [
+    [255, 69, 58, 255],
+    [255, 159, 10, 255],
+    [255, 214, 10, 255],
+    [48, 209, 88, 255],
+    [10, 132, 255, 255],
+    [191, 90, 242, 255],
+    [142, 142, 147, 255],
+];
+
+/// Botão branco dos controles do Tahoe (interruptor, deslizante, segmentado): cápsula
+/// com sombra curta e borda fina.
+fn knob(canvas: &mut Pixmap, rect: (f32, f32, f32, f32)) {
+    let (x, y, w, h) = rect;
+    let r = h.min(w) / 2.0;
+    fill_rounded(canvas, x - 0.5, y + 0.5, w + 1.0, h + 1.5, r + 0.5, color([0, 0, 0, 28]));
+    fill_rounded(canvas, x, y, w, h, r, color([255, 255, 255, 255]));
+    outline(canvas, rect, r, [0, 0, 0, 22]);
+}
+
+/// Contorno fino de 1 pt dentro do retângulo arredondado.
+fn outline(canvas: &mut Pixmap, rect: (f32, f32, f32, f32), radius: f32, c: Rgba) {
+    if let Some(path) = crate::ui::draw::rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, (radius - 0.5).max(0.0)) {
+        let mut paint = Paint { anti_alias: true, ..Default::default() };
+        paint.set_color(color(c));
+        canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
     }
 }
 

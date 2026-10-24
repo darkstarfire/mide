@@ -949,3 +949,7 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Cenários conferidos a olho em 1366x768 (quadro): Arquivos em ícones e em lista, com título curto e longo (os grupos ficam presos à direita, o título encolhe).
 - Cenários de comportamento: arrastar o vazio da barra de ferramentas move a janela (48,76 → 148,176), duplo clique maximiza (0,28 1366x673), o botão vermelho fecha.
 - Bateria: `arquivos`, `arrastar`, `programas`, `instalar`, `01-barra` e `vidro` passando, com as coordenadas novas (lista em (569, 102), ícones em (530, 102), "Modificado" em (555, 164); maximizada sem barra em (0, 28)). `cargo test` passando.
+
+## Controles e menus do Tahoe (D3, 2026-10-24)
+- Galeria `mide-ui-demo` conferida por quadro em 1366x768 (botões, controles, indicadores) e o menu de contexto do Arquivos.
+- Bateria inteira (`tests/ui.sh -j 3`, com teto de memória): 532 ok, 3 falhas que são deste PC (Zorin) e não destas mudanças: a Calculadora do GNOME abre com 497 de altura (a bateria espera 509: versão do GTK) e a grade do terminal não acha os ícones da Nerd Font. Depois dos menus: `vidro`, `configuracoes`, `dock-pastas` passando e `cargo test` passando.

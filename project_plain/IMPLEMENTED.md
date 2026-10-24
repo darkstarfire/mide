@@ -1459,3 +1459,11 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Barra de ferramentas do Tahoe:** sem fundo e sem linha; botões agrupados em cápsulas (`ui.toolbar_buttons`, com o escolhido marcado por uma pílula), título à esquerda que encolhe com reticências (`ui.toolbar_title`) e busca em cápsula com lupa e ✕ (`ui.search_field`). Os grupos ficam presos à direita.
 - **Arquivos** é o primeiro app no visual novo.
 - Compositor: `window_style app:<app_id> radius=N` no canal de controle (cantos por app).
+
+## Controles e menus do Tahoe (D3, etapas 3, 5 e 7, 2026-10-24)
+- **Botões em cápsula** em todos os apps (`button`, `primary_button`) e estilos novos com `ui.button_styled`: principal (azul), comum, só texto, vidro e apagar (vermelho), com brilho de borda nos cheios.
+- **Interruptor e deslizante** com o botão branco do Tahoe, que estica enquanto é apertado ou arrastado; trilho do deslizante mais fino.
+- **Controles novos:** segmentado com a pílula deslizando até a opção (com interruptor em Efeitos → Transições), caixa de seleção, botão de opção, passo (▲▼), barra de progresso (com andamento ou indeterminada), selo vermelho e bolinhas de etiqueta nas cores do Finder.
+- **Menus:** cantos de 12, sem a setinha, destaque em pílula de 8, contorno fino; itens com símbolo à esquerda e atalho à direita, item marcado (✓) e a linha das etiquetas coloridas (para o Finder). As posições das linhas não mudaram.
+- **Diálogos** com cantos de 20.
+- **Galeria** (`cargo run --example mide-ui-demo`): janela do Tahoe com uma página para botões, controles e indicadores.

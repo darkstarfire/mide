@@ -84,6 +84,25 @@ novo.
 | `ui.reveal(resposta.rect)` | Pede que a área que rola em volta (página ou `scroll_area`) role o mínimo para o item ficar à vista (chamar uma vez: o arquivo pedido ao abrir o Arquivos) | — |
 | `ui.dropdown("Texto", &opções, &mut índice)` | Linha com o valor escolhido; o clique abre a lista | `.changed()` |
 
+### Controles do Tahoe (`docs/tahoe.md`)
+
+| Componente | O que faz | Resposta útil |
+|---|---|---|
+| `ui.button_styled("Texto", ButtonStyle::Prominent)` | Botão em cápsula: `Prominent` (azul), `Bordered` (comum), `Plain` (só texto), `Glass` (vidro), `Destructive` (vermelho). `button` e `primary_button` também são cápsulas | `.clicked()` |
+| `ui.segmented(&["A", "B"], &mut índice, Some(largura))` | Controle segmentado: a pílula desliza até a opção escolhida | `.changed()` |
+| `ui.checkbox("Texto", &mut bool)` | Caixa de seleção com ✓ | `.changed()` |
+| `ui.radio("Texto", marcado)` | Botão de opção; quem chama troca a escolha no clique | `.clicked()` |
+| `ui.stepper(&mut i64, min, max)` | Número com ▲▼ em cápsula | `.changed()` |
+| `ui.progress_bar(Some(0.6))` / `ui.progress_bar(None)` | Barra de progresso (com `None`, uma faixa que anda) | — |
+| `ui.badge("3")` | Selo vermelho com número ou texto curto | — |
+| `ui.tag_dots(&[TAG_COLORS[0]])` | Bolinhas de etiqueta (cores do Finder em `TAG_COLORS`) | — |
+| `ui.toolbar_buttons(&[(ícone, reserva, marcado, ativo)])` | Grupo de botões numa cápsula de vidro (barra de ferramentas) | índice clicado |
+| `ui.toolbar_title("Título", largura_máx)` | Título da janela na barra de ferramentas (encolhe com "…") | — |
+| `ui.search_field(&mut String, "Buscar")` | Busca em cápsula, com lupa e ✕ | `.changed()` |
+| `ui.window_controls(x, y)` | Os três botões da janela (só em janela de conteúdo inteiro; a barra lateral e a barra de ferramentas já põem) | — |
+| `ui.window_drag_area(rect)` | O vazio do retângulo arrasta a janela; duplo clique maximiza (chamar depois dos controles da área) | — |
+| `ui.remaining_width()` | Largura que sobra na linha atual (para encolher um título) | — |
+
 Todas as respostas também trazem `.hovered()`, `.double_clicked()`,
 `.secondary_clicked()` (botão direito) e o lugar ocupado (`rect`).
 
@@ -150,6 +169,12 @@ Window::new("Meu App")      // título; o id vira "meu-app"
     .min_size(480, 320)
     .theme(Theme::default())
 ```
+
+**Janela do Tahoe:** `.full_size_content()` tira a barra de título do compositor e
+deixa os cantos com 24. Com `ui.glass_sidebar()` + `ui.sidebar_area(...)` a barra
+lateral vira um painel de vidro flutuante com os botões da janela dentro; sem barra
+lateral, `ui.toolbar(...)` põe os botões no começo. O vazio das duas arrasta a janela.
+O exemplo `mide-ui-demo` é a galeria de tudo isso.
 
 Para o app aparecer no launcher e poder ser fixado na dock, instale um arquivo
 `.desktop` com o mesmo id em `StartupWMClass`.
