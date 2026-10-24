@@ -1587,3 +1587,11 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Imprimir (Ctrl+P, Arquivo → Imprimir…)**, como o do Mac: prévia da página com ‹ ›; destino "Salvar como PDF" ou uma impressora do CUPS (`lpstat`, a padrão primeiro); cópias, páginas (todas, a atual ou um intervalo) e frente e verso. Imprime mandando um PDF temporário ao `lp`. Sem impressora configurada, o diálogo avisa e oferece o PDF.
 - **Arquivo → Exportar como PDF…**
 - **mide-ui:** `columns` (duas colunas lado a lado, como o `NSStackView`).
+
+## Editor de Texto, etapa 2b: DOCX e ODT (2026-10-24)
+
+- **`src/richtext/xml.rs`:** leitor e escritor de XML mínimos, próprios.
+- **`src/richtext/docx.rs` (Word):** ler e gravar. Estilos de parágrafo mapeados (Title, Heading1–3, Quote, Caption, Bibliography); fonte, tamanho, negrito, itálico, sublinhado, tachado, cor, realce, sobrescrito, subscrito; alinhamento, recuos, entrelinha, espaços, quebra de página; listas (`numbering.xml`); imagens (`wp:inline`); papel, margens, cabeçalho e rodapé com o campo PAGE. "Número a partir da página N" vira "primeira página diferente" no Word, e o N exato fica num `docVar` que o mide relê. A leitura entende estilos herdados (`basedOn`), a fonte do tema, links, campos e conteúdos (`sdt`); tabelas viram parágrafos por enquanto.
+- **`src/richtext/odt.rs` (LibreOffice):** o mesmo, com estilos automáticos, listas aninhadas, espaços seguidos (`text:s`), imagens em `Pictures/`, página e cabeçalho/rodapé na página mestra, e a altura do cabeçalho somada à margem (também no modo `dynamic-spacing` do LibreOffice).
+- **Conferido com o LibreOffice nos dois sentidos:** ele abre os nossos .docx e .odt (convertidos para PDF, com o texto, as listas e o realce certos) e o mide lê o que ele grava (margens 3/2/2/3 cm, estilos, listas, cores).
+- **No editor:** .docx, .odt e .rtf abrem formatados; salvar usa a extensão; documento novo sugere .docx. Configurações → Apps padrão ganhou "Documentos" (o Editor de Texto é o padrão da sessão se nada foi escolhido); o `.desktop` do editor declara os tipos.

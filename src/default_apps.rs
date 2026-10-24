@@ -27,6 +27,11 @@ pub const CATEGORIES: &[Category] = &[
     Category { key: "mail", label: "E-mail", mimes: &["x-scheme-handler/mailto"] },
     Category { key: "files", label: "Pastas", mimes: &["inode/directory"] },
     Category { key: "text", label: "Textos", mimes: &["text/plain", "text/markdown", "text/x-log"] },
+    Category {
+        key: "documents",
+        label: "Documentos",
+        mimes: &["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.oasis.opendocument.text", "text/rtf", "application/rtf"],
+    },
     Category { key: "image", label: "Imagens", mimes: &["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/svg+xml"] },
     Category { key: "video", label: "Vídeos", mimes: &["video/mp4", "video/x-matroska", "video/webm", "video/quicktime", "video/x-msvideo"] },
     Category { key: "music", label: "Músicas", mimes: &["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav", "audio/mp4", "audio/x-opus+ogg"] },
@@ -201,7 +206,7 @@ fn write_defaults(path: &Path, mimes: &[&str], desktop_id: &str) -> std::io::Res
 
 /// Apps do mide que são o padrão da sessão: pastas no Arquivos e textos no Editor de
 /// Texto. Imagens, compactados e outros entram quando o mide tiver o app (B23, E4).
-pub const SESSION_DEFAULTS: &[(&str, &str)] = &[("files", "mide-files.desktop"), ("text", "mide-text.desktop")];
+pub const SESSION_DEFAULTS: &[(&str, &str)] = &[("files", "mide-files.desktop"), ("text", "mide-text.desktop"), ("documents", "mide-text.desktop")];
 
 /// Na sessão do mide: grava no `mide-mimeapps.list` os apps do mide para os tipos que
 /// ainda não têm escolha nele (uma escolha feita nas Configurações nunca é trocada).
@@ -378,7 +383,9 @@ mod tests {
         // O usuário já escolheu o Dolphin para pastas no mide e um editor para Markdown.
         fs::write(&path, "[Default Applications]\ninode/directory=org.kde.dolphin.desktop\ntext/markdown=x.desktop\n").unwrap();
         let written = ensure_defaults_in(&path).unwrap();
-        assert_eq!(written, ["text/plain", "text/x-log"]);
+        assert_eq!(&written[..2], ["text/plain", "text/x-log"]);
+        // Documentos (DOCX, ODT, RTF) também vão para o Editor de Texto.
+        assert!(written.iter().any(|m| m == "application/vnd.oasis.opendocument.text"));
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(default_in_text(&text, "inode/directory").as_deref(), Some("org.kde.dolphin.desktop"));
         assert_eq!(default_in_text(&text, "text/markdown").as_deref(), Some("x.desktop"));

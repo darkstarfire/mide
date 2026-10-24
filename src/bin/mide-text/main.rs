@@ -53,7 +53,20 @@ struct Editor {
 
 /// Extensões abertas no modo formatado.
 fn is_rich_path(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("rtf"))
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["rtf", "docx", "odt"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+fn ext_of(path: &Path) -> String {
+    path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase()
+}
+
+/// Lê um documento formatado pela extensão.
+fn read_rich(path: &Path, data: &[u8]) -> Option<mide::richtext::Doc> {
+    match ext_of(path).as_str() {
+        "docx" => mide::richtext::docx::read(data),
+        "odt" => mide::richtext::odt::read(data),
+        _ => mide::richtext::rtf::read(data),
+    }
 }
 
 impl Editor {
@@ -65,12 +78,12 @@ impl Editor {
         }
         if let Some(path) = path.clone().filter(|p| is_rich_path(p)) {
             match std::fs::read(&path) {
-                Ok(data) => match mide::richtext::rtf::read(&data) {
+                Ok(data) => match read_rich(&path, &data) {
                     Some(doc) => {
                         tracing::info!("aberto (formatado): {} ({} parágrafos)", path.display(), doc.paras.len());
                         editor.rich = Some(rich::Rich::new(doc));
                     }
-                    None => editor.message = Some(format!("\"{}\" não é um RTF válido.", path.display())),
+                    None => editor.message = Some(format!("Não foi possível ler \"{}\" (arquivo danificado ou de outro formato).", path.display())),
                 },
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new())),
                 Err(err) => editor.message = Some(format!("Não foi possível abrir \"{}\": {err}", path.display())),
@@ -115,9 +128,14 @@ impl Editor {
             return false;
         };
         if let Some(r) = self.rich.as_mut() {
-            // Formatado: RTF (num .txt, o texto simples).
-            let data = if is_rich_path(&path) || path.extension().is_none() { mide::richtext::rtf::write(&r.doc) } else { r.doc.all_plain() };
-            return match mide::files::write_atomic(&path, data.as_bytes()) {
+            // Formatado: pela extensão (DOCX, ODT, RTF; num .txt, o texto simples).
+            let data: Vec<u8> = match ext_of(&path).as_str() {
+                "docx" => mide::richtext::docx::write(&r.doc),
+                "odt" => mide::richtext::odt::write(&r.doc),
+                "rtf" | "" => mide::richtext::rtf::write(&r.doc).into_bytes(),
+                _ => r.doc.all_plain().into_bytes(),
+            };
+            return match mide::files::write_atomic(&path, &data) {
                 Ok(()) => {
                     tracing::info!("salvo (formatado): {}", path.display());
                     r.mark_saved();
@@ -148,7 +166,7 @@ impl Editor {
     fn ask_save_as(&mut self, then_close: bool) {
         let (dir, name) = match &self.path {
             Some(path) => (path.parent().map(Path::to_path_buf), path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
-            None => (Some(default_dir()), if self.rich.is_some() { "Sem título.rtf" } else { "Sem título.txt" }.to_string()),
+            None => (Some(default_dir()), if self.rich.is_some() { "Sem título.docx" } else { "Sem título.txt" }.to_string()),
         };
         self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save("Salvar como", dir.as_deref(), &name), then_close });
     }
@@ -402,7 +420,7 @@ impl Editor {
         r.undo_point();
         self.rich = Some(r);
         if let Some(p) = &self.path {
-            self.path = Some(p.with_extension("rtf"));
+            self.path = Some(p.with_extension("docx"));
         }
         tracing::info!("editor: convertido em texto formatado");
     }

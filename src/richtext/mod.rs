@@ -10,8 +10,11 @@
 
 pub mod layout;
 pub mod render;
+pub mod docx;
+pub mod odt;
 pub mod pdf;
 pub mod rtf;
+pub mod xml;
 
 use std::rc::Rc;
 
@@ -840,5 +843,27 @@ mod tests {
         assert_eq!(d.next_word(Pos::new(0, 0)), Pos::new(0, 3));
         assert_eq!(d.prev_word(Pos::new(0, 7)), Pos::new(0, 4));
         assert_eq!(d.counts().0, 5);
+    }
+}
+
+#[cfg(test)]
+mod external_files {
+    /// Lê arquivos feitos por outros programas (`MIDE_READ_IN=a.docx:b.odt`) e mostra
+    /// o texto e os estilos, para conferir a compatibilidade à mão.
+    #[test]
+    #[ignore]
+    fn ler_arquivos_externos() {
+        let Ok(list) = std::env::var("MIDE_READ_IN") else {
+            return;
+        };
+        for path in list.split(':') {
+            let data = std::fs::read(path).expect("arquivo");
+            let doc = if path.ends_with(".docx") { super::docx::read(&data) } else { super::odt::read(&data) }.expect("documento");
+            println!("== {path}: margens {:?}, números {:?}, cabeçalho {:?}", doc.page.margins.map(super::to_cm), doc.page.numbers, doc.page.header);
+            for p in &doc.paras {
+                let s = &p.spans[0].style;
+                println!("[{}|{:?}|{:?}|{:.2}] {} ({} {} b={} i={} u={} cor={:?})", p.style.name, p.style.align, p.style.list, p.style.line_spacing, p.text, s.family, s.size, s.bold, s.italic, s.underline, s.color);
+            }
+        }
     }
 }
