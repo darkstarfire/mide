@@ -296,12 +296,46 @@ fn simplify(points: &[(f32, f32)], eps: f32) -> Vec<(f32, f32)> {
     left
 }
 
-fn path_length(points: &[(f32, f32)]) -> f32 {
-    points.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum()
+
+/// Maior distância de um ponto de `points` à reta de `a` a `b`.
+fn deviation(points: &[(f32, f32)], a: (f32, f32), b: (f32, f32)) -> f32 {
+    let len = (b.0 - a.0).hypot(b.1 - a.1).max(1e-3);
+    points.iter().map(|p| ((b.0 - a.0) * (a.1 - p.1) - (a.0 - p.0) * (b.1 - a.1)).abs() / len).fold(0.0, f32::max)
 }
 
-/// O que o traço `points` parece: linha, seta, retângulo, triângulo ou oval (com os
-/// pontos da forma); `None` se não parece nenhum (fica o desenho livre).
+/// Área do polígono fechado pelos pontos (fórmula do laço).
+fn polygon_area(points: &[(f32, f32)]) -> f32 {
+    let n = points.len();
+    (0..n).map(|i| {
+        let (p, q) = (points[i], points[(i + 1) % n]);
+        p.0 * q.1 - q.0 * p.1
+    }).sum::<f32>().abs() / 2.0
+}
+
+/// Quanto o traço gira em volta do centro (radianos, com sinal).
+fn winding(points: &[(f32, f32)], c: (f32, f32)) -> f32 {
+    let mut total = 0.0;
+    for w in points.windows(2) {
+        let a0 = (w[0].1 - c.1).atan2(w[0].0 - c.0);
+        let a1 = (w[1].1 - c.1).atan2(w[1].0 - c.0);
+        let mut d = a1 - a0;
+        if d > std::f32::consts::PI {
+            d -= std::f32::consts::TAU;
+        } else if d < -std::f32::consts::PI {
+            d += std::f32::consts::TAU;
+        }
+        total += d;
+    }
+    total
+}
+
+/// Reconhece um traço à mão (pontos da tela, na ordem do desenho), como o Esboço da
+/// Marcação do Mac: linha, seta, retângulo, oval, triângulo ou estrela, com os pontos da
+/// forma (as pontas, ou a caixa). `None`: fica desenho livre.
+///
+/// A mão treme: "reto" é medido pelo desvio máximo da reta (não pelo comprimento do
+/// caminho, que cresce com o tremor), e as formas fechadas pela parte da caixa que o
+/// traço cobre (retângulo ≈ 1, oval ≈ π/4, triângulo ≈ 1/2, estrela menos).
 pub fn recognize(points: &[(f32, f32)]) -> Option<(ShapeKind, Vec<(f32, f32)>)> {
     if points.len() < 2 {
         return None;
@@ -317,57 +351,117 @@ pub fn recognize(points: &[(f32, f32)]) -> Option<(ShapeKind, Vec<(f32, f32)>)> 
     if diag < 12.0 {
         return None;
     }
-    let length = path_length(points);
     let (first, last) = (points[0], points[points.len() - 1]);
-    let closed = (first.0 - last.0).hypot(first.1 - last.1) < diag * 0.22;
-    let simple = simplify(points, diag * 0.06);
+    let center = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let turn = winding(points, center).abs();
+    let gap = (first.0 - last.0).hypot(first.1 - last.1);
+    // Fechado: o fim volta perto do começo, ou o traço dá a volta inteira (passando do
+    // começo ou deixando uma fresta pequena).
+    let closed = gap < diag * 0.25 || (turn > std::f32::consts::TAU * 0.85 && gap < diag * 0.45);
     if !closed {
-        // Quase reto: linha.
-        if simple.len() == 2 || length < (first.0 - last.0).hypot(first.1 - last.1) * 1.12 {
-            return Some((ShapeKind::Line, vec![first, last]));
-        }
-        // Seta: vai até a ponta (o ponto mais longe do começo) e depois faz a cabeça
-        // perto dela (o resto do traço fica em volta da ponta).
-        let start = first;
-        // A primeira vez que chega na ponta (a cabeça passa por ela de novo).
-        let mut tip_i = 0;
-        let mut far = -1.0f32;
-        for (i, p) in points.iter().enumerate() {
-            let d = (p.0 - start.0).hypot(p.1 - start.1);
-            if d > far + 0.5 {
-                far = d;
-                tip_i = i;
-            }
-        }
-        let tip = &points[tip_i];
-        let shaft = (tip.0 - start.0).hypot(tip.1 - start.1);
-        let after = &points[tip_i..];
-        let head_len = path_length(after);
-        let stays_near = after.iter().all(|p| (p.0 - tip.0).hypot(p.1 - tip.1) < shaft * 0.45);
-        let shaft_straight = path_length(&points[..=tip_i]) < shaft * 1.15;
-        if shaft_straight && head_len > shaft * 0.12 && stays_near {
-            return Some((ShapeKind::Arrow, vec![start, *tip]));
-        }
-        return None;
+        return open_shape(points, diag);
     }
-    // Fechado: polígono com poucos cantos ou uma curva redonda.
-    let mut corners = simple.clone();
-    if corners.len() > 2 && (corners[0].0 - corners[corners.len() - 1].0).hypot(corners[0].1 - corners[corners.len() - 1].1) < diag * 0.22 {
-        corners.pop();
+    // Só uma volta: o que passa do começo não conta.
+    let mut acc = 0.0;
+    let mut end = points.len();
+    for (i, w) in points.windows(2).enumerate() {
+        let a0 = (w[0].1 - center.1).atan2(w[0].0 - center.0);
+        let a1 = (w[1].1 - center.1).atan2(w[1].0 - center.0);
+        let mut d = a1 - a0;
+        if d > std::f32::consts::PI {
+            d -= std::f32::consts::TAU;
+        } else if d < -std::f32::consts::PI {
+            d += std::f32::consts::TAU;
+        }
+        acc += d;
+        if acc.abs() >= std::f32::consts::TAU {
+            end = i + 2;
+            break;
+        }
+    }
+    let loop_pts = &points[..end.min(points.len())];
+    let fill = polygon_area(loop_pts) / ((x1 - x0) * (y1 - y0)).max(1.0);
+    let mut corners = simplify(loop_pts, diag * 0.07);
+    if corners.len() > 2 {
+        let (a, b) = (corners[0], corners[corners.len() - 1]);
+        if (a.0 - b.0).hypot(a.1 - b.1) < diag * 0.25 {
+            corners.pop();
+        }
     }
     let boxed = vec![(x0, y0), (x1, y1)];
-    // Redondo: a distância ao centro (normalizada pela caixa) varia pouco.
-    let (cx, cy, rx, ry) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, ((x1 - x0) / 2.0).max(1.0), ((y1 - y0) / 2.0).max(1.0));
-    let radii: Vec<f32> = points.iter().map(|p| ((p.0 - cx) / rx).hypot((p.1 - cy) / ry)).collect();
-    let mean = radii.iter().sum::<f32>() / radii.len() as f32;
-    let spread = (radii.iter().map(|r| (r - mean).powi(2)).sum::<f32>() / radii.len() as f32).sqrt();
-    match corners.len() {
-        3 => Some((ShapeKind::Triangle, boxed)),
-        4 if spread > 0.07 => Some((ShapeKind::Rect, boxed)),
-        _ if spread < 0.12 => Some((ShapeKind::Oval, boxed)),
-        4 | 5 => Some((ShapeKind::Rect, boxed)),
-        _ => None,
+    // Estrela: muitas pontas, alternando longe e perto do centro, e pouco da caixa.
+    if (8..=12).contains(&corners.len()) && fill < 0.6 {
+        let r: Vec<f32> = corners.iter().map(|p| ((p.0 - center.0) / (x1 - x0).max(1.0)).hypot((p.1 - center.1) / (y1 - y0).max(1.0))).collect();
+        let alternating = (0..r.len()).filter(|&i| {
+            let (a, b, c) = (r[(i + r.len() - 1) % r.len()], r[i], r[(i + 1) % r.len()]);
+            (b > a && b > c) || (b < a && b < c)
+        }).count();
+        if alternating as f32 >= r.len() as f32 * 0.7 {
+            return Some((ShapeKind::Star, boxed));
+        }
     }
+    if corners.len() == 3 && fill < 0.68 {
+        return Some((ShapeKind::Triangle, boxed));
+    }
+    if fill >= 0.86 && corners.len() <= 6 {
+        return Some((ShapeKind::Rect, boxed));
+    }
+    if (0.6..0.9).contains(&fill) {
+        return Some((ShapeKind::Oval, boxed));
+    }
+    if (0.4..0.68).contains(&fill) && corners.len() <= 4 {
+        return Some((ShapeKind::Triangle, boxed));
+    }
+    None
+}
+
+/// Traço aberto: linha (quase reta) ou seta (reta até a ponta e a cabeça em volta dela).
+fn open_shape(points: &[(f32, f32)], diag: f32) -> Option<(ShapeKind, Vec<(f32, f32)>)> {
+    let (first, last) = (points[0], points[points.len() - 1]);
+    let straight = (first.0 - last.0).hypot(first.1 - last.1);
+    if straight > diag * 0.85 && deviation(points, first, last) < straight * 0.07 {
+        return Some((ShapeKind::Line, vec![first, last]));
+    }
+    // A ponta: o ponto mais longe do começo (a primeira vez que chega lá).
+    let mut tip_i = 0;
+    let mut far = -1.0f32;
+    for (i, p) in points.iter().enumerate() {
+        let d = (p.0 - first.0).hypot(p.1 - first.1);
+        if d > far {
+            far = d;
+            tip_i = i;
+        }
+    }
+    let tip = points[tip_i];
+    let shaft = far;
+    if shaft < 16.0 || tip_i == 0 {
+        return None;
+    }
+    // A haste é reta (desvio pequeno) e a cabeça fica perto da ponta, voltando para trás.
+    if deviation(&points[..=tip_i], first, tip) > shaft * 0.12 {
+        return None;
+    }
+    let head = &points[tip_i..];
+    let near = head.iter().all(|p| (p.0 - tip.0).hypot(p.1 - tip.1) < shaft * 0.6 + 6.0);
+    let size = head.iter().map(|p| (p.0 - tip.0).hypot(p.1 - tip.1)).fold(0.0, f32::max);
+    // A cabeça sai para o lado (não é só a haste tremendo na ponta).
+    let side = deviation(head, first, tip);
+    if near && size > (shaft * 0.08).max(5.0) && side > (shaft * 0.04).max(3.0) {
+        return Some((ShapeKind::Arrow, vec![first, tip]));
+    }
+    None
+}
+
+/// A cabeça de seta desenhada num segundo traço: o traço `points` (tela) é pequeno e
+/// fica perto de uma das pontas da linha `a`–`b` (tela). Devolve a ponta (0 ou 1).
+pub fn head_for_line(points: &[(f32, f32)], a: (f32, f32), b: (f32, f32)) -> Option<usize> {
+    let len = (b.0 - a.0).hypot(b.1 - a.1);
+    if points.len() < 2 || len < 16.0 {
+        return None;
+    }
+    let size = |e: (f32, f32)| points.iter().map(|p| (p.0 - e.0).hypot(p.1 - e.1)).fold(0.0, f32::max);
+    let touch = |e: (f32, f32)| points.iter().map(|p| (p.0 - e.0).hypot(p.1 - e.1)).fold(f32::MAX, f32::min);
+    [a, b].iter().enumerate().filter(|(_, e)| touch(**e) < len * 0.2 + 10.0 && size(**e) < len * 0.6 + 10.0).min_by(|x, y| touch(*x.1).total_cmp(&touch(*y.1))).map(|(i, _)| i)
 }
 
 /// A caixa `orig` com a alça `h` arrastada de `delta` (sem limites; vira ao passar do
@@ -434,6 +528,57 @@ mod tests {
             (150.0 + a.cos() * 120.0, 100.0 + a.sin() * 70.0)
         }).collect();
         assert_eq!(recognize(&oval).map(|r| r.0), Some(ShapeKind::Oval));
+    }
+
+    /// Tremor de mão: ±2 pontos alternados em cada ponto.
+    fn shaky(points: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+        points.into_iter().enumerate().map(|(i, (x, y))| (x + if i % 2 == 0 { 2.0 } else { -2.0 }, y + if i % 3 == 0 { 2.0 } else { -1.5 })).collect()
+    }
+
+    #[test]
+    fn seta_tremida_e_curta() {
+        let mut pts: Vec<(f32, f32)> = (0..=60).map(|i| (10.0 + i as f32, 50.0)).collect();
+        pts.extend(line((70.0, 50.0), (60.0, 42.0), 5));
+        pts.extend(line((60.0, 42.0), (70.0, 50.0), 5));
+        pts.extend(line((70.0, 50.0), (60.0, 58.0), 5));
+        assert_eq!(recognize(&shaky(pts)).map(|r| r.0), Some(ShapeKind::Arrow));
+        // Cabeça de uma asa só, voltando para trás.
+        let mut pts = line((0.0, 0.0), (120.0, 40.0), 80);
+        pts.extend(line((120.0, 40.0), (100.0, 50.0), 10));
+        assert_eq!(recognize(&shaky(pts)).map(|r| r.0), Some(ShapeKind::Arrow));
+    }
+
+    #[test]
+    fn circulo_que_passa_do_comeco_e_com_fresta() {
+        let circle = |from: f32, to: f32| -> Vec<(f32, f32)> {
+            (0..=80).map(|i| {
+                let a = from + (to - from) * i as f32 / 80.0;
+                (100.0 + a.cos() * 40.0, 100.0 + a.sin() * 50.0)
+            }).collect()
+        };
+        assert_eq!(recognize(&shaky(circle(0.0, 7.2))).map(|r| r.0), Some(ShapeKind::Oval));
+        assert_eq!(recognize(&shaky(circle(0.0, 5.7))).map(|r| r.0), Some(ShapeKind::Oval));
+    }
+
+    #[test]
+    fn estrela() {
+        let pts: Vec<(f32, f32)> = (0..=10).map(|i| {
+            let a = i as f32 * std::f32::consts::PI / 5.0 - std::f32::consts::FRAC_PI_2;
+            let r = if i % 2 == 0 { 100.0 } else { 40.0 };
+            (150.0 + a.cos() * r, 150.0 + a.sin() * r)
+        }).collect();
+        let mut dense = Vec::new();
+        for w in pts.windows(2) {
+            dense.extend(line(w[0], w[1], 10));
+        }
+        assert_eq!(recognize(&dense).map(|r| r.0), Some(ShapeKind::Star));
+    }
+
+    #[test]
+    fn cabeca_em_outro_traco() {
+        let head = vec![(190.0, 90.0), (200.0, 100.0), (190.0, 110.0)];
+        assert_eq!(head_for_line(&head, (10.0, 100.0), (200.0, 100.0)), Some(1));
+        assert_eq!(head_for_line(&head, (10.0, 300.0), (200.0, 300.0)), None);
     }
 
     #[test]

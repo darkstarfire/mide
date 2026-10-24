@@ -1528,3 +1528,11 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Fechava ao trocar de modo:** no primeiro quadro depois da troca, a janela ainda tem o tamanho do modo anterior, as teclas ficavam mais estreitas que o mínimo e o `clamp` do tamanho caía (mínimo maior que o máximo). Agora o tamanho das teclas aceita a janela pequena até o compositor mudar o tamanho.
 - **Luzes por cima do conteúdo:** o visor ganhou uma faixa de cima (`TITLE_H`, 36 pontos) para os botões da janela. As bases e os bits do Programador, as linhas do conversor, Rad/M, a pilha do RPN e a conta pequena ficam abaixo dela. O Programador ficou 40 pontos mais alto.
 - **Luzes duplicadas nas Notas:** a barra lateral do Tahoe já desenha os botões da janela. O mide-ui agora desenha as luzes uma vez por quadro (o segundo pedido no mesmo quadro é ignorado).
+
+## Esboço: reconhecimento mais tolerante (2026-10-24)
+
+- Pedido do usuário: o quadrado convertia bem, o círculo às vezes falhava e a seta era muito difícil.
+- **Reto:** passa a ser medido pelo desvio máximo da reta. Antes era o comprimento do caminho, que cresce com o tremor da mão e recusava quase toda seta.
+- **Seta:** a haste reta até a ponta e a cabeça perto dela, saindo para o lado (uma asa basta). Também em dois traços: uma linha e, logo depois, a cabeça perto de uma ponta transformam a linha em seta.
+- **Formas fechadas:** contam como fechadas também quando o traço dá a volta e passa do começo, ou deixa uma fresta pequena. A forma é escolhida pela parte da caixa que o traço cobre (retângulo ≈ 1, oval ≈ 0,79, triângulo ≈ 0,5). Estrela nova (8 a 12 pontas alternando longe e perto do centro).
+- O aviso do editor ("Imagem copiada…") ganhou recuo à esquerda.

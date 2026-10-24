@@ -1066,6 +1066,26 @@ impl Editor {
         } else {
             None
         };
+        // Cabeça de seta num segundo traço, perto da ponta da linha que acabou de ser
+        // feita: a linha vira seta (como no Mac).
+        if self.tool == Tool::Sketch && !matches!(recognized, Some((ShapeKind::Line | ShapeKind::Rect | ShapeKind::Oval | ShapeKind::Star, _))) {
+            let screen: Vec<(f32, f32)> = points.iter().map(|p| map.to_screen(*p)).collect();
+            if let Some(doc) = self.doc.as_mut() {
+                let last = doc.state.shapes.len().checked_sub(1);
+                let line = last.and_then(|i| doc.state.shapes.get(i).filter(|s| s.kind == ShapeKind::Line).map(|s| (i, s.points[0], s.points[s.points.len() - 1])));
+                if let Some((i, a, b)) = line
+                    && let Some(end) = annotate::head_for_line(&screen, map.to_screen(a), map.to_screen(b))
+                {
+                    doc.checkpoint();
+                    let shape = &mut doc.state.shapes[i];
+                    shape.kind = ShapeKind::Arrow;
+                    shape.points = if end == 1 { vec![a, b] } else { vec![b, a] };
+                    self.selected = Some(i);
+                    tracing::info!("editor: cabeça desenhada: a linha virou seta");
+                    return;
+                }
+            }
+        }
         let shape = match recognized {
             Some((kind, pts)) => {
                 tracing::info!("editor: esboço reconhecido como {kind:?}");
@@ -1236,7 +1256,10 @@ impl App for Editor {
         }
         self.toolbar(ui);
         if let Some(message) = &self.message {
-            ui.note(message);
+            ui.row(|ui| {
+                ui.space_x(20.0);
+                ui.note(message);
+            });
         }
         let (w, h) = ui.window_size();
         let top = h - ui.remaining_height();
