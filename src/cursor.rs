@@ -33,6 +33,8 @@ struct Image {
     hotspot: Point<i32, Logical>,
     pixels: Vec<u8>,
     size: (u32, u32),
+    /// Tamanho nominal no tema (24, 32, 48...).
+    nominal: u32,
 }
 
 /// O cursor a mostrar agora (para o plano de cursor da placa, no DRM).
@@ -79,9 +81,16 @@ impl Cursors {
             (CursorShape::Default, CursorImageStatus::Named(icon)) => icon.name().to_string(),
             (shape, _) => shape_name(shape).to_string(),
         };
-        let image = self.image(&name);
-        let location = crate::clip::phys(pointer - image.hotspot).to_f64();
-        match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, None, Kind::Cursor) {
+        // Ponteiro agitado: o cursor grande (imagem do tema no tamanho mais próximo,
+        // ajustada até o tamanho pedido).
+        let grow = state.shake.scale(std::time::Instant::now());
+        let base = self.size;
+        let image = if grow > 1.001 { self.image_at(&name, (base as f32 * grow).round() as u32) } else { self.image(&name) };
+        let k = if grow > 1.001 { base as f32 * grow / image.nominal.max(1) as f32 } else { 1.0 };
+        let hotspot = Point::<i32, Logical>::from(((image.hotspot.x as f32 * k).round() as i32, (image.hotspot.y as f32 * k).round() as i32));
+        let size = (grow > 1.001).then(|| smithay::utils::Size::<i32, Logical>::from(((image.size.0 as f32 * k).round() as i32, (image.size.1 as f32 * k).round() as i32)));
+        let location = crate::clip::phys(pointer - hotspot).to_f64();
+        match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, size, Kind::Cursor) {
             Ok(element) => vec![MideRenderElement::Title(element)],
             Err(err) => {
                 tracing::warn!("cursor não desenhado: {err}");
@@ -92,6 +101,10 @@ impl Cursors {
 
     /// Qual cursor mostrar agora (o mesmo que `elements` desenharia).
     pub fn plan(&mut self, state: &State) -> Plan<'_> {
+        // Cursor crescido (ponteiro agitado): maior que o plano da placa; a cena desenha.
+        if state.shake.scale(std::time::Instant::now()) > 1.001 {
+            return Plan::Surface;
+        }
         let name = match (state.cursor, &state.cursor_status) {
             (CursorShape::Default, CursorImageStatus::Hidden) => return Plan::Hidden,
             (CursorShape::Default, CursorImageStatus::Surface(_)) => return Plan::Surface,
@@ -100,6 +113,18 @@ impl Cursors {
         };
         let image = self.image(&name);
         Plan::Image { name, pixels: &image.pixels, size: image.size, hotspot: (image.hotspot.x, image.hotspot.y) }
+    }
+
+    /// Como `image`, num tamanho pedido (o cursor crescido ao agitar o ponteiro).
+    fn image_at(&mut self, name: &str, size: u32) -> &Image {
+        // Tamanhos em degraus de 8: poucas imagens no cache durante a animação.
+        let size = size.div_ceil(8) * 8;
+        let key = format!("{name}@{size}");
+        if !self.images.contains_key(&key) {
+            let loaded = names_for(name).iter().find_map(|n| load(&self.theme, n, size));
+            self.images.insert(key.clone(), loaded);
+        }
+        self.images.get(&key).and_then(Option::as_ref).unwrap_or(&self.fallback)
     }
 
     /// Imagem do tema pelo nome, com nomes antigos de reserva; a seta própria se faltar.
@@ -157,7 +182,7 @@ fn load(theme: &xcursor::CursorTheme, name: &str, size: u32) -> Option<Image> {
         Transform::Normal,
         None,
     );
-    Some(Image { buffer, hotspot: (image.xhot as i32, image.yhot as i32).into(), pixels: image.pixels_rgba.clone(), size: (image.width, image.height) })
+    Some(Image { buffer, hotspot: (image.xhot as i32, image.yhot as i32).into(), pixels: image.pixels_rgba.clone(), size: (image.width, image.height), nominal: image.size })
 }
 
 /// Seta do próprio mide (preta com contorno branco), para quando não há tema.
@@ -183,7 +208,7 @@ fn arrow() -> Image {
         pixmap.stroke_path(&path, &paint, &stroke, tiny_skia::Transform::identity(), None);
     }
     let buffer = MemoryRenderBuffer::from_slice(pixmap.data(), Fourcc::Abgr8888, (W as i32, H as i32), 1, Transform::Normal, None);
-    Image { buffer, hotspot: (1, 1).into(), pixels: pixmap.data().to_vec(), size: (W, H) }
+    Image { buffer, hotspot: (1, 1).into(), pixels: pixmap.data().to_vec(), size: (W, H), nominal: H }
 }
 
 #[cfg(test)]

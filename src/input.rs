@@ -637,6 +637,12 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     };
     state.pointer_location = pos;
     state.activity();
+    // Agitar o ponteiro faz o cursor crescer (o quadro precisa ser desenhado).
+    let enabled = state.config.effects.shake_cursor;
+    state.shake.feed(pos.x, std::time::Instant::now(), enabled);
+    if state.shake.active(std::time::Instant::now()) {
+        state.redraw = true;
+    }
     // Tela bloqueada: o ponteiro só vê a tela de bloqueio da tela onde está.
     if state.lock.locked {
         let under = lock_surface_under(state, pos);

@@ -100,7 +100,8 @@ impl Scene {
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela
     /// fechando): o backend continua pedindo quadros.
     pub fn moving(&self, state: &State) -> bool {
-        !state.animations.is_empty()
+        state.shake.scale(std::time::Instant::now()) > 1.001
+            || !state.animations.is_empty()
             || state.launcher_anim.is_some()
             || self.wallpapers.values().any(|w| w.busy())
             || !state.ghosts.is_empty()

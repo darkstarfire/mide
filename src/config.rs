@@ -178,6 +178,8 @@ pub struct Effects {
     /// Transições suaves: prévias da dock e alternador entram esmaecendo, pastas do
     /// launcher e do Arquivos com transição.
     pub transitions: bool,
+    /// Agitar o ponteiro faz o cursor crescer por um instante (para achar onde está).
+    pub shake_cursor: bool,
 }
 
 impl Default for Effects {
@@ -193,6 +195,7 @@ impl Default for Effects {
             panel_glass: true,
             menu_animation: true,
             transitions: true,
+            shake_cursor: true,
         }
     }
 }

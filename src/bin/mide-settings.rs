@@ -80,6 +80,7 @@ const EFFECTS: &[(&str, &str, &str)] = &[
     ("panel_glass", "Vidro em barras e menus", "Barra superior, menus, notificações e prévias das janelas com vidro"),
     ("menu_animation", "Animação dos menus", "Menus e listas aparecem com um esmaecer curto"),
     ("transitions", "Transições suaves", "Prévias da dock e Alt+Tab, páginas e pastas do launcher, pastas do Arquivos, troca entre ícones e lista e a miniatura da captura"),
+    ("shake_cursor", "Agitar o ponteiro para localizá-lo", "Mexer o mouse rápido de um lado para o outro deixa o ponteiro grande por um instante"),
 ];
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela.

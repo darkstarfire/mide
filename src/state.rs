@@ -243,6 +243,8 @@ pub struct State {
     pub appearing: Vec<(WlSurface, Instant)>,
     /// Cursor pedido pelo app sob o ponteiro (desenhado pelo mide no DRM).
     pub cursor_status: smithay::input::pointer::CursorImageStatus,
+    /// Ponteiro agitado (cursor crescendo para ser achado).
+    pub shake: crate::shake::Shake,
     /// Ícone de um arrasto entre apps (o app que arrasta manda a superfície) e o
     /// deslocamento dele em relação ao ponteiro.
     pub dnd_icon: Option<(WlSurface, smithay::utils::Point<i32, smithay::utils::Logical>)>,
@@ -415,6 +417,7 @@ impl State {
             input_waker: None,
             shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
+            shake: Default::default(),
             dnd_icon: None,
             session: None,
             shortcut_capture: None,

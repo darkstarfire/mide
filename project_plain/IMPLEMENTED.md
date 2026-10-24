@@ -1507,3 +1507,6 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Variante escura:** com Configurações → Aparência em escuro, a dock ganha um véu grafite sobre o vidro, separadores e pontos de app aberto claros (muda na hora).
 - **Clique visível:** o ícone apertado escurece até soltar, como no Mac.
 - **Ampliação** (Configurações → Dock → Ampliação e Tamanho da ampliação, 56–128; desligada por padrão, como no Mac): os ícones perto do ponteiro crescem numa curva suave, os vizinhos se afastam e a faixa de vidro cresce junto; entra e sai animada (com o interruptor de Animações). Os ícones ampliados são carregados no tamanho grande (nítidos), numa camada própria acima da dock que não recebe cliques; os cliques seguem as posições ampliadas.
+
+## Agitar o ponteiro para localizá-lo (2026-10-24)
+- Como no Mac: quatro vaivéns rápidos do mouse (de pelo menos 30 pontos, em 0,7 s) fazem o cursor crescer até 4 vezes, com animação de crescer (180 ms), segurar enquanto agita (+0,5 s) e voltar (320 ms). A imagem vem do tema de cursores no tamanho mais próximo (nítida) e, enquanto cresce, a cena desenha o cursor no lugar do plano de cursor da placa. Interruptor em Configurações → Efeitos ("Agitar o ponteiro para localizá-lo", `[effects] shake_cursor`). Módulo `src/shake.rs`, com testes.
