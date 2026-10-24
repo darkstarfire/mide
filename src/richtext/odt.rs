@@ -237,7 +237,11 @@ fn write_paras(paras: &[Paragraph], content_width: f32, doc: &Doc, ctx: &mut Wri
                         n
                     }
                 };
-                inner.push_str(&format!("<text:span text:style-name=\"{tname}\">{}</text:span>", odf_text(&p.text[a..b])));
+                let span = format!("<text:span text:style-name=\"{tname}\">{}</text:span>", odf_text(&p.text[a..b]));
+                match &s.link {
+                    Some(url) => inner.push_str(&format!("<text:a xlink:type=\"simple\" xlink:href=\"{}\">{span}</text:a>", escape(url))),
+                    None => inner.push_str(&span),
+                }
             }
         }
         let para = format!("<text:p text:style-name=\"{pname}\">{inner}</text:p>");
@@ -918,6 +922,7 @@ mod tests {
         d.page.numbers.show = true;
         d.page.numbers.position = NumberPosition::BottomRight;
         d.page.header = "Universidade do mide".into();
+        d.apply_char(Pos::new(3, 0), Pos::new(3, 7), |s| s.link = Some("https://libreoffice.org".into()));
         d.insert_note(Pos::new(0, d.paras[0].text.len()), "Nota do LibreOffice.");
         let after = d.insert_table(d.end(), 2, 2);
         if let Some(t) = d.paras[after.para - 1].table.as_mut() {
@@ -948,6 +953,7 @@ mod tests {
         assert_eq!(back.page.header, "Universidade do mide");
         assert_eq!(back.page.numbers.position, NumberPosition::BottomRight);
         assert_eq!(back.notes, vec![(1, "Nota do LibreOffice.".to_string())]);
+        assert!(back.paras.iter().any(|p| p.spans.iter().any(|s| s.style.link.as_deref() == Some("https://libreoffice.org"))), "link");
         assert!(back.paras[0].text.ends_with(crate::richtext::NOTE));
         if let Ok(dir) = std::env::var("MIDE_DOCX_OUT") {
             let _ = std::fs::write(format!("{dir}/teste.odt"), &bytes);

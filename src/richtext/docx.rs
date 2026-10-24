@@ -245,7 +245,15 @@ fn write_paras(paras: &[Paragraph], content_width: f32, ctx: &mut WriteCtx) -> S
                     notes.push(id);
                     continue;
                 }
-                body.push_str(&format!("<w:r>{}{}</w:r>", run_props(s), run_text(&p.text[a..b])));
+                let run = format!("<w:r>{}{}</w:r>", run_props(s), run_text(&p.text[a..b]));
+                match &s.link {
+                    Some(url) => {
+                        let rid = format!("rIdLink{}", rels.len() + 1);
+                        rels.push((rid.clone(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink".into(), escape(url)));
+                        body.push_str(&format!("<w:hyperlink r:id=\"{rid}\">{run}</w:hyperlink>"));
+                    }
+                    None => body.push_str(&run),
+                }
             }
         }
         body.push_str("</w:p>");
@@ -384,7 +392,13 @@ pub fn write(doc: &Doc) -> Vec<u8> {
     footnotes.push_str("</w:footnotes>");
     rels.push(("rIdFootnotes".into(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes".into(), "footnotes.xml".into()));
     parts.push(("footnotes.xml".into(), footnotes));
-    let doc_rels: String = rels.iter().map(|(id, t, target)| format!("<Relationship Id=\"{id}\" Type=\"{t}\" Target=\"{target}\"/>")).collect();
+    let doc_rels: String = rels
+        .iter()
+        .map(|(id, t, target)| {
+            let external = if t.ends_with("/hyperlink") { " TargetMode=\"External\"" } else { "" };
+            format!("<Relationship Id=\"{id}\" Type=\"{t}\" Target=\"{target}\"{external}/>")
+        })
+        .collect();
     let content_types = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/><Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/><Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>{}</Types>",
         parts
@@ -1088,6 +1102,7 @@ mod tests {
         d.page.numbers.position = NumberPosition::TopRight;
         d.page.numbers.show_from = 3;
         d.page.footer = "Rodapé".into();
+        d.apply_char(Pos::new(1, 9), Pos::new(1, 14), |s| s.link = Some("https://mide.dev".into()));
         let end = Pos::new(1, d.paras[1].text.len());
         d.insert_note(end, "Nota do Word.");
         // Tabela no fim.
@@ -1124,6 +1139,7 @@ mod tests {
         assert!(table.rows[0][1].doc.paras[0].spans[0].style.bold);
         assert_eq!(table.rows[1][2].shade, Some([200, 220, 255]));
         assert!(table.borders);
+        assert!(back.paras[1].spans.iter().any(|s| s.style.link.as_deref() == Some("https://mide.dev")), "link");
         assert_eq!(back.notes.len(), 1);
         assert_eq!(back.notes[0].1, "Nota do Word.");
         assert!(back.paras[1].text.ends_with(crate::richtext::NOTE));

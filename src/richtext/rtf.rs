@@ -148,7 +148,16 @@ fn write_paras(paras: &[Paragraph], doc: &Doc, fonts: &mut Vec<String>, colors: 
                     body.push_str(&format!("\\cb{c}\\highlight{c}"));
                 }
                 body.push(' ');
-                escape(&mut body, &p.text[a..b]);
+                match &s.link {
+                    Some(url) => {
+                        body.push_str("{\\field{\\*\\fldinst HYPERLINK \"");
+                        escape(&mut body, url);
+                        body.push_str("\"}{\\fldrslt ");
+                        escape(&mut body, &p.text[a..b]);
+                        body.push_str("}}");
+                    }
+                    None => escape(&mut body, &p.text[a..b]),
+                }
                 body.push('}');
             }
         }
@@ -273,6 +282,7 @@ enum Dest {
     MideStyle,
     MidePageNum,
     Footnote,
+    FieldInst,
     Skip,
 }
 
@@ -313,6 +323,9 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     // Profundidade do grupo da nota de rodapé aberta (o fim dele cria a nota).
     let mut footnote_depth: Option<usize> = None;
     let mut footnote_text = String::new();
+    // Campo (\field): a instrução (HYPERLINK "endereço") e o endereço para o resultado.
+    let mut field_inst = String::new();
+    let mut field_url: Option<String> = None;
     // O parágrafo de fora (o `\pard` de dentro da nota não vale para ele).
     let mut footnote_saved: Option<ParaStyle> = None;
     // Tabela sendo lida (\trowd, \cellx, \intbl, \cell, \row).
@@ -431,6 +444,12 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     }
                     _ => {}
                 }
+                if st.dest == Dest::FieldInst {
+                    let inst = std::mem::take(&mut field_inst);
+                    if let Some(rest) = inst.trim().strip_prefix("HYPERLINK") {
+                        field_url = rest.trim().split('"').nth(1).map(str::to_string).filter(|u| !u.is_empty());
+                    }
+                }
                 let leaving = st.dest;
                 if let Some(prev) = stack.pop() {
                     st = prev;
@@ -468,6 +487,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                             let rest = &src[i..];
                             let word: String = rest.trim_start_matches('\\').chars().take_while(|c| c.is_ascii_alphabetic()).collect();
                             st.dest = match word.as_str() {
+                                "fldinst" => Dest::FieldInst,
                                 "midelist" => Dest::MideList,
                                 "midestyle" => Dest::MideStyle,
                                 "midepagenum" => Dest::MidePageNum,
@@ -475,6 +495,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                             };
                             if st.dest != Dest::Skip {
                                 side_text.clear();
+                                field_inst.clear();
                                 i += 1 + word.len();
                                 if bytes.get(i) == Some(&b' ') {
                                     i += 1;
@@ -537,6 +558,12 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                         footnote_text.clear();
                     }
                     "chftn" => {}
+                    "fldrslt" => {
+                        // O texto do campo: com o endereço do HYPERLINK lido antes.
+                        if let Some(url) = field_url.take() {
+                            st.ch.link = Some(url);
+                        }
+                    }
                     "header" | "headerr" | "headerf" => {
                         st.dest = Dest::Header;
                         side_text.clear();
@@ -545,7 +572,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                         st.dest = Dest::Footer;
                         side_text.clear();
                     }
-                    "info" | "stylesheet" | "listtable" | "listoverridetable" | "generator" | "xmlnstbl" | "rsidtbl" | "themedata" | "colorschememapping" | "latentstyles" | "datastore" | "fldinst" | "bkmkstart" | "bkmkend" | "object" | "nonshppict" | "expandedcolortbl" | "listtext" | "pntext" | "pntxtb" | "pntxta" => st.dest = Dest::Skip,
+                    "info" | "stylesheet" | "listtable" | "listoverridetable" | "generator" | "xmlnstbl" | "rsidtbl" | "themedata" | "colorschememapping" | "latentstyles" | "datastore" | "bkmkstart" | "bkmkend" | "object" | "nonshppict" | "expandedcolortbl" | "listtext" | "pntext" | "pntxtb" | "pntxta" if st.dest != Dest::FieldInst => st.dest = Dest::Skip,
                     "red" if st.dest == Dest::ColorTable => rgb[0] = p as u8,
                     "green" if st.dest == Dest::ColorTable => rgb[1] = p as u8,
                     "blue" if st.dest == Dest::ColorTable => rgb[2] = p as u8,
@@ -739,6 +766,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     Dest::Pict => pict_hex.extend(chunk.chars().filter(|c| c.is_ascii_hexdigit())),
                     Dest::Header | Dest::Footer | Dest::MideList | Dest::MideStyle | Dest::MidePageNum => side_text.push_str(chunk),
                     Dest::Footnote => footnote_text.push_str(chunk),
+                    Dest::FieldInst => field_inst.push_str(chunk),
                     Dest::Skip => {}
                 }
             }
@@ -792,6 +820,7 @@ mod tests {
         d.page.numbers.position = NumberPosition::TopRight;
         d.page.numbers.show_from = 3;
         d.page.header = "Cabeçalho".into();
+        d.apply_char(Pos::new(1, 0), Pos::new(1, 4), |s| s.link = Some("https://exemplo.com.br/a?b=1".into()));
         d.insert_note(Pos::new(0, "Título".len()), "Nota em RTF, com vírgula.");
         let after = d.insert_table(d.end(), 2, 2);
         if let Some(t) = d.paras[after.para - 1].table.as_mut() {
@@ -822,6 +851,8 @@ mod tests {
         assert_eq!(back.page.numbers.show_from, 3);
         assert_eq!(back.page.header, "Cabeçalho");
         assert_eq!(back.notes, vec![(1, "Nota em RTF, com vírgula.".to_string())]);
+        assert_eq!(back.paras[1].spans[0].style.link.as_deref(), Some("https://exemplo.com.br/a?b=1"));
+        assert_eq!(back.paras[1].text, "Olá, “mundo” — ção {x}\\");
         assert!(back.paras[0].text.contains(crate::richtext::NOTE));
         assert!((back.page.width - d.page.width).abs() < 0.1);
     }

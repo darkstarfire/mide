@@ -149,6 +149,12 @@ struct Outer {
     col: usize,
 }
 
+/// Link: o endereço para o texto escolhido.
+struct LinkDialog {
+    url: String,
+    focus: bool,
+}
+
 /// Inserir tabela: linhas e colunas.
 struct TableDialog {
     rows: i64,
@@ -196,6 +202,7 @@ pub struct Rich {
     print_dialog: Option<PrintDialog>,
     note_dialog: Option<NoteDialog>,
     table_dialog: Option<TableDialog>,
+    link_dialog: Option<LinkDialog>,
     /// Ortografia: o dicionário (carregado em segundo plano), ligado ou não, as palavras
     /// erradas de cada parágrafo e o que foi verificado (texto → erros).
     speller: Option<mide::spell::Speller>,
@@ -267,6 +274,7 @@ impl Rich {
             print_dialog: None,
             note_dialog: None,
             table_dialog: None,
+            link_dialog: None,
             pending_cell: None,
             speller: None,
             speller_rx: None,
@@ -1348,6 +1356,7 @@ impl Rich {
                     MenuItem::Separator,
                     MenuItem::action("inserir-imagem", "Inserir imagem…"),
                     MenuItem::action("quebra-pagina", "Inserir quebra de página").shortcut("Ctrl+Enter"),
+                    MenuItem::action("link", "Adicionar link…").shortcut("Ctrl+K"),
                     MenuItem::action("nota", "Inserir nota de rodapé…").shortcut("Ctrl+Alt+F"),
                     MenuItem::action("sumario", "Inserir sumário"),
                     MenuItem::action("atualizar-sumario", "Atualizar sumário"),
@@ -1457,6 +1466,16 @@ impl Rich {
             "recortar" => self.copy(ui, true),
             "colar" => self.paste(ui),
             "selecionar-tudo" => self.select_all(),
+            "link" => {
+                if self.sel().is_none() {
+                    // Sem seleção: a palavra sob o cursor.
+                    let (a, b) = self.doc.word_at(self.cursor);
+                    self.anchor = a;
+                    self.cursor = b;
+                }
+                let url = self.current_style().link.unwrap_or_default();
+                self.link_dialog = Some(LinkDialog { url, focus: true });
+            }
             "sumario" => {
                 self.leave_cell();
                 self.insert_toc();
@@ -1626,6 +1645,9 @@ impl Rich {
         // Títulos como no Word: Ctrl+Alt+1, 2, 3; Ctrl+Alt+0 volta ao corpo.
         if input.shortcut_shift("r") == Some(true) {
             self.ruler = !self.ruler;
+        }
+        if input.shortcut_plain("k") {
+            self.command("link", ui);
         }
         if input.shortcut_alt("t") {
             self.command("tabela", ui);
@@ -1840,6 +1862,14 @@ impl Rich {
             self.goal_x = None;
             self.last_kind = None;
             self.blink = now;
+            // Ctrl+clique num link: abre no navegador.
+            if input.ctrl && count == 1 {
+                if let Some(url) = self.doc.paras.get(pos.para).and_then(|p| p.runs().find(|(a, b, st)| st.link.is_some() && pos.off >= *a && pos.off <= *b).and_then(|(_, _, st)| st.link.clone())) {
+                    tracing::info!("editor: abrindo o link {url}");
+                    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                    return;
+                }
+            }
             match count {
                 // Duplo clique no número de uma nota: edita a nota.
                 2 if self.doc.note_near(pos).is_some() => {
@@ -1898,7 +1928,7 @@ impl Rich {
         let find_h = if self.find.is_some() { FIND_H } else { 0.0 };
         let ruler_h = if self.ruler { RULER_H } else { 0.0 };
         let area = (0.0, top + FORMAT_H + find_h + ruler_h, w, (h - top - FORMAT_H - find_h - ruler_h - STATUS_H).max(10.0));
-        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
+        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
         }
@@ -2059,7 +2089,7 @@ impl Rich {
         });
         // O menu de contexto é desenhado a cada quadro enquanto está aberto (só os
         // diálogos o impedem).
-        let dialog = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
+        let dialog = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         if !dialog {
             self.context_menu(ui, area);
         }
@@ -2293,10 +2323,10 @@ impl Rich {
     }
 
     fn dialogs(&mut self, ui: &mut Ui) {
-        let had = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
+        let had = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         self.dialogs_inner(ui);
         // Diálogo fechado: o teclado volta para o texto (o campo dele sumiu).
-        let has = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some();
+        let has = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         if had && !has {
             ui.blur();
         }
@@ -2381,6 +2411,49 @@ impl Rich {
         }
         if self.print_dialog.is_some() {
             self.print_dialog_view(ui);
+        }
+        if let Some(d) = self.link_dialog.as_mut() {
+            let (mut ok, mut cancel, mut remove) = (false, false, false);
+            let had = !d.url.is_empty();
+            ui.modal(460.0, |ui| {
+                ui.title("Link");
+                ui.note("Ctrl+clique no texto abre o endereço no navegador.");
+                if std::mem::take(&mut d.focus) {
+                    ui.focus_next_input();
+                }
+                ok = ui.text_input(&mut d.url, "https://exemplo.com.br").submitted();
+                ui.row(|ui| {
+                    if had {
+                        ui.sized(130.0, |ui| remove = ui.button_styled("Remover link", ButtonStyle::Bordered).clicked());
+                    }
+                    ui.push_right(2.0 * 110.0 + 8.0);
+                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
+                    ui.sized(110.0, |ui| ok |= ui.primary_button("OK").clicked());
+                });
+            });
+            if cancel || ui.input().key(Key::Escape) {
+                self.link_dialog = None;
+            } else if ok || remove {
+                let d = self.link_dialog.take().expect("diálogo");
+                let url = d.url.trim().to_string();
+                let url = if url.is_empty() || remove {
+                    None
+                } else if url.contains("://") || url.starts_with("mailto:") {
+                    Some(url)
+                } else if url.contains('@') && !url.contains('/') {
+                    Some(format!("mailto:{url}"))
+                } else {
+                    Some(format!("https://{url}"))
+                };
+                if let Some((a, b)) = self.sel() {
+                    self.begin(None);
+                    let on = url.is_some();
+                    self.doc.apply_char(a, b, |s| {
+                        s.link = url.clone();
+                        s.color = if on { [0, 102, 204] } else { [0, 0, 0] };
+                    });
+                }
+            }
         }
         if let Some(d) = self.table_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
