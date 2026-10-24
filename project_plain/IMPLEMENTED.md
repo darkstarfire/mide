@@ -1471,3 +1471,10 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 ## Configurações no visual do Tahoe (D3, etapa 8, 2026-10-24)
 - As Configurações viraram janela de conteúdo inteiro, como os Ajustes do Sistema: barra lateral flutuante de vidro com os botões da janela, busca em cápsula e cada seção com um símbolo branco no quadradinho colorido; a faixa do título da página arrasta a janela. O conteúdo das páginas ficou no mesmo lugar.
 - Corrigido junto: os ícones da barra lateral das Configurações não apareciam (os nomes coloridos só têm tamanhos de contorno no tema do mide, recusados desde o B24); agora são símbolos.
+
+## Abas, dica, popover e seleção do Tahoe (D3, 2026-10-24)
+- **Barra de abas** (`ui.tab_bar`): abas de largura igual numa faixa em cápsula, a escolhida em destaque, × ao passar o ponteiro e + no fim (para as abas do Finder).
+- **Dica** (`ui.tooltip`): cápsula pequena embaixo do componente depois de o ponteiro parar 0,8 s.
+- **Popover** (`ui.popover`): painel de vidro com ponta, preso a um botão; fecha com clique fora ou Esc. `ui.to_window` converte o retângulo de uma área que rola para a janela.
+- **Seleção** das listas, da árvore e da grade em pílula de cantos 8, cinza quando a janela perde o foco, como no Mac.
+- Tudo na galeria `mide-ui-demo` (página Indicadores).

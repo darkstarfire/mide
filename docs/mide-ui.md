@@ -102,6 +102,13 @@ novo.
 | `ui.window_controls(x, y)` | Os três botões da janela (só em janela de conteúdo inteiro; a barra lateral e a barra de ferramentas já põem) | — |
 | `ui.window_drag_area(rect)` | O vazio do retângulo arrasta a janela; duplo clique maximiza (chamar depois dos controles da área) | — |
 | `ui.remaining_width()` | Largura que sobra na linha atual (para encolher um título) | — |
+| `ui.tab_bar(&títulos, escolhida)` | Barra de abas em cápsula, × ao passar o ponteiro e + no fim | `TabAction::Select/Close/New` |
+| `ui.tooltip(&resposta, "texto")` | Dica que aparece depois de o ponteiro parar 0,8 s sobre o componente | — |
+| `ui.popover(&mut aberto, ui.to_window(resposta.rect), largura, \|ui\| ...)` | Painel de vidro com ponta, preso a um botão; fecha com clique fora ou Esc (chamar no fim do `view`) | — |
+| `ui.to_window(rect)` | Retângulo de uma área (que rola) nas coordenadas da janela | — |
+
+A seleção das listas, da árvore e da grade é uma pílula de cantos 8 na cor de destaque,
+e fica cinza quando a janela perde o foco (como no Mac).
 
 Todas as respostas também trazem `.hovered()`, `.double_clicked()`,
 `.secondary_clicked()` (botão direito) e o lugar ocupado (`rect`).

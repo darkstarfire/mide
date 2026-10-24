@@ -48,4 +48,4 @@ pub use picker::{ListPicker, PickGroup, PickItem, Picked};
 pub use screens::Screen;
 pub use textarea::{Decorations, TextDoc};
 pub use theme::{system_dark, Rgba, Theme};
-pub use ui::{ArrangedScreen, ButtonStyle, Menu, Response, TextAreaLook, TextAreaResponse, Tile, Ui, WindowRequest, TAG_COLORS};
+pub use ui::{ArrangedScreen, ButtonStyle, Menu, Response, TextAreaLook, TextAreaResponse, TabAction, Tile, Ui, WindowRequest, TAG_COLORS};

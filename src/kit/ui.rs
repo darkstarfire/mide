@@ -437,9 +437,20 @@ pub struct Memory {
     modal_drawn: bool,
     /// Último aperto no vazio que arrasta a janela (duplo clique maximiza).
     drag_area_press: Option<std::time::Instant>,
+    /// Dica (`Ui::tooltip`): componente sob o ponteiro e desde quando.
+    tooltip_hover: Option<(u64, std::time::Instant)>,
     /// Controles segmentados: opção mostrada e, se a pílula está deslizando, de onde
     /// ela saiu e quando.
     segments: HashMap<u64, (usize, Option<(usize, std::time::Instant)>)>,
+}
+
+/// O que aconteceu na barra de abas (`Ui::tab_bar`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabAction {
+    None,
+    Select(usize),
+    Close(usize),
+    New,
 }
 
 /// Pedido de um app de conteúdo inteiro à janela: começar a mover (com o botão
@@ -954,6 +965,12 @@ impl<'a> Ui<'a> {
         }
     }
 
+    /// Cor da seleção: o destaque com a janela em foco e cinza sem foco, como no Mac.
+    fn selection_fill(&self) -> Rgba {
+        let t = &self.ctx.theme;
+        if self.ctx.input.focused { t.accent } else { t.shade(if t.dark { 50 } else { 30 }) }
+    }
+
     /// Os três botões da janela (fechar, minimizar, maximizar), com o canto de cima à
     /// esquerda do primeiro em (`x`, `y`), para apps de conteúdo inteiro
     /// (`Window::full_size_content`): no Tahoe ficam dentro da barra lateral ou no
@@ -1291,6 +1308,12 @@ impl<'a> Ui<'a> {
 
     /// Numa linha (`row`, `toolbar`), pula para que os próximos `width` pixels
     /// terminem na borda direita.
+    /// Retângulo desta área (de um `Response`) nas coordenadas da janela: para ancorar
+    /// um `popover` desenhado no fim do `view`.
+    pub fn to_window(&self, rect: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+        (rect.0 + self.offset.0, rect.1 + self.offset.1, rect.2, rect.3)
+    }
+
     /// Largura que ainda sobra na linha atual (numa `row`/`toolbar`), a partir do
     /// próximo item.
     pub fn remaining_width(&self) -> f32 {
@@ -2247,6 +2270,142 @@ impl<'a> Ui<'a> {
         }
     }
 
+    /// Barra de abas do Tahoe: abas de largura igual numa faixa em cápsula, a escolhida
+    /// em destaque, × ao passar o ponteiro e + no fim para abrir outra.
+    pub fn tab_bar(&mut self, titles: &[String], selected: usize) -> TabAction {
+        let t = self.ctx.theme.clone();
+        let rect = self.alloc(None, 32.0);
+        let mut action = TabAction::None;
+        let plus = 28.0;
+        let track = (rect.0, rect.1 + 1.0, rect.2 - plus - 8.0, 30.0);
+        fill_rounded(self.canvas, track.0, track.1, track.2, track.3, 15.0, color(t.control));
+        let n = titles.len().max(1);
+        let tw = (track.2 - 4.0) / n as f32;
+        for (i, title) in titles.iter().enumerate() {
+            let id = self.ctx.id();
+            let tab = (track.0 + 2.0 + i as f32 * tw, track.1 + 2.0, tw, track.3 - 4.0);
+            let r = self.interact(id, tab);
+            let close = (tab.0 + 6.0, tab.1 + (tab.3 - 16.0) / 2.0, 16.0, 16.0);
+            if i == selected {
+                knob(self.canvas, tab);
+            } else if r.hovered {
+                fill_rounded(self.canvas, tab.0, tab.1, tab.2, tab.3, tab.3 / 2.0, color(t.hover));
+            }
+            if r.hovered && n > 1 {
+                let over_close = self.over(close);
+                if over_close {
+                    fill_rounded(self.canvas, close.0, close.1, 16.0, 16.0, 8.0, color(t.shade(30)));
+                }
+                let (cx, cy) = (close.0 + 8.0, close.1 + 8.0);
+                let mut pb = PathBuilder::new();
+                pb.move_to(cx - 3.0, cy - 3.0);
+                pb.line_to(cx + 3.0, cy + 3.0);
+                pb.move_to(cx + 3.0, cy - 3.0);
+                pb.line_to(cx - 3.0, cy + 3.0);
+                if let Some(path) = pb.finish() {
+                    let mut paint = Paint { anti_alias: true, ..Default::default() };
+                    paint.set_color(color(if i == selected { [60, 60, 66, 255] } else { t.text }));
+                    let stroke = Stroke { width: 1.4, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+                    self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+                }
+                if r.clicked && over_close {
+                    action = TabAction::Close(i);
+                    continue;
+                }
+            }
+            if r.clicked && i != selected {
+                action = TabAction::Select(i);
+            }
+            let room = tab.2 - 48.0;
+            let shown = self.fit(title, t.font_small, FontWeight::Regular, room.max(20.0));
+            let sw = self.measure(&shown, t.font_small, FontWeight::Regular);
+            let tc = if i == selected { [24, 24, 28, 255] } else { t.text_secondary };
+            self.draw_text(&shown, tab.0 + (tab.2 - sw) / 2.0, tab.1 + (tab.3 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, tc);
+        }
+        // + no fim.
+        let id = self.ctx.id();
+        let add = (rect.0 + rect.2 - plus, rect.1 + 2.0, plus, plus);
+        let r = self.interact(id, add);
+        fill_rounded(self.canvas, add.0, add.1, plus, plus, plus / 2.0, color(if r.hovered { t.hover } else { t.control }));
+        let (cx, cy) = (add.0 + plus / 2.0, add.1 + plus / 2.0);
+        fill_rounded(self.canvas, cx - 5.0, cy - 0.75, 10.0, 1.5, 0.75, color(t.text));
+        fill_rounded(self.canvas, cx - 0.75, cy - 5.0, 1.5, 10.0, 0.75, color(t.text));
+        if r.clicked {
+            action = TabAction::New;
+        }
+        action
+    }
+
+    /// Dica do Tahoe: depois de o ponteiro parar 0,8 s sobre o componente da
+    /// `response`, uma cápsula pequena com `text` aparece embaixo dele.
+    pub fn tooltip(&mut self, response: &Response, text: &str) {
+        let now = std::time::Instant::now();
+        if !response.hovered {
+            if self.ctx.memory.tooltip_hover.is_some_and(|(id, _)| id == response.id) {
+                self.ctx.memory.tooltip_hover = None;
+            }
+            return;
+        }
+        let since = match self.ctx.memory.tooltip_hover {
+            Some((id, at)) if id == response.id => at,
+            _ => {
+                self.ctx.memory.tooltip_hover = Some((response.id, now));
+                now
+            }
+        };
+        let wait = std::time::Duration::from_millis(800);
+        if now.duration_since(since) < wait {
+            self.ctx.wake_at = Some(since + wait);
+            return;
+        }
+        let t = self.ctx.theme.clone();
+        let (ww, wh) = (self.ctx.window.0 as f32, self.ctx.window.1 as f32);
+        let tw = self.ctx.text.measure(text, t.font_small, FontWeight::Regular) + 16.0;
+        let r = response.rect;
+        let x = (self.offset.0 + r.0 + (r.2 - tw) / 2.0).clamp(4.0, (ww - tw - 4.0).max(4.0));
+        let mut y = self.offset.1 + r.1 + r.3 + 6.0;
+        if y + 22.0 > wh {
+            y = self.offset.1 + r.1 - 28.0;
+        }
+        let k = crate::ui::draw::scale();
+        let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
+        fill_rounded(overlay, x - 1.0, y + 1.0, tw + 2.0, 24.0, 12.0, color([0, 0, 0, 30]));
+        fill_rounded(overlay, x, y, tw, 22.0, 11.0, color(t.menu));
+        outline(overlay, (x, y, tw, 22.0), 11.0, if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 18] });
+        self.ctx.text.draw(overlay, text, x + 8.0, y + (22.0 - t.font_small * 1.25) / 2.0, t.font_small, FontWeight::Regular, t.text);
+    }
+
+    /// Popover do Tahoe: painel de vidro com ponta, embaixo de `anchor` (na janela:
+    /// use `ui.to_window(resposta.rect)` onde o botão foi desenhado),
+    /// com o conteúdo do `add`. Chamar no fim do `view` (por cima de tudo); fecha
+    /// (`*open = false`) com clique fora ou Esc.
+    pub fn popover(&mut self, open: &mut bool, anchor: (f32, f32, f32, f32), width: f32, add: impl FnOnce(&mut Ui)) {
+        if !*open {
+            return;
+        }
+        let t = self.ctx.theme.clone();
+        let ww = self.ctx.window.0 as f32;
+        let arrow = crate::ui::draw::ARROW_H;
+        let x = (anchor.0 + anchor.2 / 2.0 - width / 2.0).clamp(8.0, (ww - width - 8.0).max(8.0));
+        let y = anchor.1 + anchor.3 + arrow + 2.0;
+        // O clique deste quadro: dentro do painel (último quadro) vale; fora fecha.
+        let last = self.ctx.memory.modal_rect;
+        let pressed_outside = self.ctx.input.pressed && last.is_some_and(|r| !self.ctx.input.over(r)) && !self.ctx.input.over(anchor);
+        if pressed_outside || self.ctx.input.key(super::input::Key::Escape) {
+            *open = false;
+            self.ctx.memory.modal_rect = None;
+            self.ctx.repaint = true;
+            return;
+        }
+        self.ctx.in_modal = true;
+        let rect = self.glass_panel(x, y, width, super::theme::RADIUS_ITEM + 10.0, add);
+        self.ctx.in_modal = false;
+        let fill = if t.dark { t.card } else { [248, 248, 250, 255] };
+        crate::ui::draw::menu_arrow(self.canvas, anchor.0 + anchor.2 / 2.0, y, false, fill);
+        self.ctx.memory.modal_rect = Some((self.offset.0 + rect.0, self.offset.1 + rect.1, rect.2, rect.3));
+        self.ctx.memory.modal_drawn = true;
+    }
+
     /// Campo de texto de uma linha. Clique dá o foco; Enter responde `submitted`.
     pub fn text_input(&mut self, value: &mut String, placeholder: &str) -> Response {
         use super::textedit::Edit;
@@ -2967,9 +3126,10 @@ impl<'a> Ui<'a> {
         let lw = self.measure(&shown, t.font_small, FontWeight::Regular);
         let (lx, ly) = (rect.0 + (w - lw) / 2.0, iy + fh + 10.0);
         if selected {
-            fill_rounded(self.canvas, lx - 5.0, ly - 1.0, lw + 10.0, t.font_small * 1.4, 5.0, color(t.accent));
+            let h = t.font_small * 1.4;
+            fill_rounded(self.canvas, lx - 6.0, ly - 1.0, lw + 12.0, h, h / 2.0, color(self.selection_fill()));
         }
-        let c = if selected { t.on_accent } else { t.tile_text };
+        let c = if selected && self.ctx.input.focused { t.on_accent } else { t.tile_text };
         // Nome claro (sobre o papel de parede): sombra escura embaixo para ler bem.
         let light = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
         if light && !selected {
@@ -3057,11 +3217,12 @@ impl<'a> Ui<'a> {
             return (r, toggled);
         }
         if selected {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 5.0, color(t.accent));
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(self.selection_fill()));
         } else if striped {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 0.0, color(t.shade(10)));
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(t.shade(10)));
         }
-        let (main, side) = if selected { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
+        let on = selected && self.ctx.input.focused;
+        let (main, side) = if on { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         if expandable {
             // Triângulo: para a direita fechado, para baixo aberto.
             let (cx, cy) = (indent + 6.0, rect.1 + 13.0);
@@ -3079,7 +3240,7 @@ impl<'a> Ui<'a> {
             if let Some(path) = pb.finish() {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
-                paint.set_color(color(if selected { t.on_accent } else { t.text_secondary }));
+                paint.set_color(color(if on { t.on_accent } else { t.text_secondary }));
                 self.canvas.fill_path(&path, &paint, FillRule::Winding, crate::ui::draw::tf(), None);
             }
         }
@@ -3110,9 +3271,9 @@ impl<'a> Ui<'a> {
             return r;
         }
         if selected {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 6.0, color(t.accent));
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(self.selection_fill()));
         } else if r.hovered {
-            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 6.0, color(t.hover));
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(t.hover));
         }
         let pix = self.ctx.icon(&[icon, "text-x-generic"], 20, false);
         if let Some(pix) = pix {
@@ -3120,7 +3281,7 @@ impl<'a> Ui<'a> {
         }
         let cols: f32 = columns.iter().map(|c| c.1).sum();
         let ty = rect.1 + (28.0 - t.font * 1.25) / 2.0;
-        let (main, side) = if selected { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
+        let (main, side) = if selected && self.ctx.input.focused { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         let shown = self.fit(label, t.font, FontWeight::Regular, (rect.2 - 40.0 - cols).max(0.0));
         self.draw_text(&shown, rect.0 + 36.0, ty, t.font, FontWeight::Regular, main);
         let mut cx = rect.0 + rect.2 - cols;

@@ -4,7 +4,7 @@
 //!
 //! Rodar dentro do mide: `cargo run --example mide-ui-demo`
 
-use mide::kit::{run, App, ButtonStyle, Ui, Window, TAG_COLORS};
+use mide::kit::{run, App, ButtonStyle, TabAction, Ui, Window, TAG_COLORS};
 
 struct Demo {
     secao: usize,
@@ -20,6 +20,11 @@ struct Demo {
     opcao: usize,
     copias: i64,
     nome: String,
+    // Abas e popover
+    abas: Vec<String>,
+    aba: usize,
+    popover: bool,
+    popover_ancora: (f32, f32, f32, f32),
     // Tarefas
     tarefas: Vec<(String, bool)>,
     nova: String,
@@ -40,6 +45,10 @@ impl Default for Demo {
             opcao: 0,
             copias: 2,
             nome: String::new(),
+            abas: vec!["Documentos".into(), "Downloads".into(), "Projetos".into()],
+            aba: 0,
+            popover: false,
+            popover_ancora: (0.0, 0.0, 0.0, 0.0),
             tarefas: vec![("Testar o mide-ui".into(), true), ("Criar meu primeiro app".into(), false)],
             nova: String::new(),
         }
@@ -84,10 +93,18 @@ impl App for Demo {
             ui.page(|ui| match secao {
                 1 => self.botoes(ui),
                 2 => self.controles(ui),
-                3 => indicadores(ui),
+                3 => self.indicadores(ui),
                 5 => self.lista(ui),
                 _ => sobre(ui),
             });
+        });
+        // Popover por cima de tudo (no fim do `view`).
+        let ancora = self.popover_ancora;
+        ui.popover(&mut self.popover, ancora, 260.0, |ui| {
+            ui.strong("Popover");
+            ui.note("Painel de vidro preso ao botão; fecha com clique fora ou Esc.");
+            let mut ligado = true;
+            ui.switch("Opção", &mut ligado);
         });
     }
 }
@@ -169,7 +186,31 @@ impl Demo {
     }
 }
 
-fn indicadores(ui: &mut Ui) {
+impl Demo {
+    fn indicadores(&mut self, ui: &mut Ui) {
+    ui.heading("Abas");
+    match ui.tab_bar(&self.abas, self.aba) {
+        TabAction::Select(i) => self.aba = i,
+        TabAction::Close(i) => {
+            self.abas.remove(i);
+            self.aba = self.aba.min(self.abas.len().saturating_sub(1));
+        }
+        TabAction::New => {
+            self.abas.push(format!("Aba {}", self.abas.len() + 1));
+            self.aba = self.abas.len() - 1;
+        }
+        TabAction::None => {}
+    }
+    ui.heading("Popover e dica");
+    ui.row(|ui| {
+        let r = ui.button("Abrir popover");
+        if r.clicked() {
+            self.popover = !self.popover;
+        }
+        self.popover_ancora = ui.to_window(r.rect);
+        let d = ui.button_styled("Passe o ponteiro", ButtonStyle::Glass);
+        ui.tooltip(&d, "Uma dica do Tahoe");
+    });
     ui.heading("Progresso");
     ui.progress_bar(Some(0.62));
     ui.progress_bar(None);
@@ -181,6 +222,7 @@ fn indicadores(ui: &mut Ui) {
         ui.tag_dots(&TAG_COLORS[..3]);
         ui.tag_dots(&[TAG_COLORS[4]]);
     });
+    }
 }
 
 fn sobre(ui: &mut Ui) {
