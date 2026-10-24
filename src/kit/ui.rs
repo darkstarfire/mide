@@ -363,7 +363,25 @@ pub struct Memory {
     /// Modal aberto (retângulo do quadro anterior, na janela) e se foi desenhado agora.
     modal_rect: Option<(f32, f32, f32, f32)>,
     modal_drawn: bool,
+    /// Último aperto no vazio que arrasta a janela (duplo clique maximiza).
+    drag_area_press: Option<std::time::Instant>,
 }
+
+/// Pedido de um app de conteúdo inteiro à janela: começar a mover (com o botão
+/// segurado), minimizar, maximizar ou restaurar, fechar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowRequest {
+    Move,
+    Minimize,
+    ToggleMaximize,
+    Close,
+}
+
+/// Botões da janela no estilo do Tahoe: diâmetro, distância entre os centros e as
+/// cores (fechar, minimizar, maximizar).
+pub const LIGHT_SIZE: f32 = 14.0;
+pub const LIGHT_STEP: f32 = 20.0;
+const LIGHT_COLORS: [[u8; 4]; 3] = [[255, 95, 87, 255], [254, 188, 46, 255], [40, 200, 64, 255]];
 
 /// Tudo que os componentes compartilham num quadro.
 pub struct Ctx {
@@ -413,6 +431,13 @@ pub struct Ctx {
     /// Arrasto para fora pedido pelo app (`Ui::start_drag`): endereços `file://` e o
     /// ícone que segue o ponteiro.
     pub drag_out: Option<(Vec<String>, Option<Pixmap>)>,
+    /// Pedido à janela (`Ui::window_controls`, `Ui::window_drag_area`).
+    pub window_request: Option<WindowRequest>,
+    /// Janela de conteúdo inteiro (`Window::full_size_content`): o app desenha os
+    /// botões da janela e as áreas de arrastar.
+    pub content_window: bool,
+    /// A janela está maximizada (ou presa a um lado da tela).
+    pub maximized: bool,
     /// Acorda a janela de outra thread (`Ui::waker`).
     pub waker: Option<super::app::Waker>,
     /// Área que recebe cliques neste quadro (`Ui::input_area`; `None`: a superfície toda).
@@ -483,6 +508,9 @@ impl Ctx {
             clipboard_out: None,
             paste_requested: false,
             drag_out: None,
+            window_request: None,
+            content_window: false,
+            maximized: false,
             waker: None,
             input_region: None,
             hide_request: None,
@@ -701,6 +729,8 @@ pub struct Ui<'a> {
     next_width: Option<f32>,
     /// O próximo `icon_button` aparece marcado (usado por `icon_toggle`).
     toggled: bool,
+    /// O próximo `text_input` é um campo de busca em cápsula (`Ui::search_field`).
+    search_look: bool,
 }
 
 impl<'a> Ui<'a> {
@@ -727,6 +757,7 @@ impl<'a> Ui<'a> {
             sidebar_glass: false,
             next_width: None,
             toggled: false,
+            search_look: false,
         }
     }
 
@@ -738,6 +769,11 @@ impl<'a> Ui<'a> {
     /// Largura disponível nesta área.
     pub fn available_width(&self) -> f32 {
         self.width
+    }
+
+    /// Numa linha (`row`, `toolbar`): quanto ainda cabe até o fim da linha.
+    pub fn row_remaining(&self) -> f32 {
+        (self.x + self.width - self.row_x).max(0.0)
     }
 
     /// Pede para desenhar de novo (por exemplo, depois de mudar o estado fora de um clique).
@@ -841,6 +877,104 @@ impl<'a> Ui<'a> {
             id,
             ..Default::default()
         }
+    }
+
+    /// Os três botões da janela (fechar, minimizar, maximizar), com o canto de cima à
+    /// esquerda do primeiro em (`x`, `y`), para apps de conteúdo inteiro
+    /// (`Window::full_size_content`): no Tahoe ficam dentro da barra lateral ou no
+    /// canto da barra de ferramentas. Sem foco, ficam cinza; com o ponteiro sobre o
+    /// grupo, mostram os símbolos. Devolve a largura ocupada.
+    pub fn window_controls(&mut self, x: f32, y: f32) -> f32 {
+        let t = self.ctx.theme.clone();
+        let width = LIGHT_STEP * 2.0 + LIGHT_SIZE;
+        let group = (x - 4.0, y - 4.0, width + 8.0, LIGHT_SIZE + 8.0);
+        let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
+        let group_hover = !blocked && self.ctx.input.over(group);
+        let focused = self.ctx.input.focused;
+        for (i, request) in [WindowRequest::Close, WindowRequest::Minimize, WindowRequest::ToggleMaximize].into_iter().enumerate() {
+            let id = self.ctx.id();
+            let cx = x + i as f32 * LIGHT_STEP;
+            let rect = (cx - 3.0, y - 3.0, LIGHT_SIZE + 6.0, LIGHT_SIZE + 6.0);
+            let r = self.interact(id, rect);
+            if r.clicked {
+                self.ctx.window_request = Some(request);
+            }
+            let fill = if focused || group_hover { LIGHT_COLORS[i] } else { t.shade(if t.dark { 60 } else { 38 }) };
+            fill_rounded(self.canvas, cx, y, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE / 2.0, color(fill));
+            // Contorno fino (mais escuro que a cor), como uma lente.
+            if let Some(path) = crate::ui::draw::rounded_rect(cx + 0.25, y + 0.25, LIGHT_SIZE - 0.5, LIGHT_SIZE - 0.5, LIGHT_SIZE / 2.0) {
+                let mut paint = tiny_skia::Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(color([0, 0, 0, 30]));
+                self.canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 0.5, ..Default::default() }, crate::ui::draw::tf(), None);
+            }
+            if group_hover {
+                let mut pb = tiny_skia::PathBuilder::new();
+                let (mx, my) = (cx + LIGHT_SIZE / 2.0, y + LIGHT_SIZE / 2.0);
+                let k = 3.4;
+                match request {
+                    WindowRequest::Close => {
+                        pb.move_to(mx - k, my - k);
+                        pb.line_to(mx + k, my + k);
+                        pb.move_to(mx + k, my - k);
+                        pb.line_to(mx - k, my + k);
+                    }
+                    WindowRequest::Minimize => {
+                        pb.move_to(mx - k - 0.6, my);
+                        pb.line_to(mx + k + 0.6, my);
+                    }
+                    _ => {
+                        pb.move_to(mx - k - 0.4, my);
+                        pb.line_to(mx + k + 0.4, my);
+                        pb.move_to(mx, my - k - 0.4);
+                        pb.line_to(mx, my + k + 0.4);
+                    }
+                }
+                if let Some(path) = pb.finish() {
+                    let mut paint = tiny_skia::Paint::default();
+                    paint.anti_alias = true;
+                    paint.set_color(color([0, 0, 0, 150]));
+                    let stroke = tiny_skia::Stroke { width: 1.4, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+                    self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+                }
+            }
+        }
+        if group_hover {
+            self.ctx.hover_claimed = true;
+        }
+        width
+    }
+
+    /// Vazio que arrasta a janela (barra de ferramentas, topo da barra lateral) num app
+    /// de conteúdo inteiro: chamar **depois** de desenhar os controles da área, que têm
+    /// prioridade. Apertar e arrastar move a janela; duplo clique maximiza ou restaura.
+    pub fn window_drag_area(&mut self, rect: (f32, f32, f32, f32)) {
+        if !self.ctx.content_window {
+            return;
+        }
+        let r = self.background(rect);
+        if !r.clicked {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let double = self.ctx.memory.drag_area_press.is_some_and(|at| now.duration_since(at) < std::time::Duration::from_millis(450));
+        if double {
+            self.ctx.memory.drag_area_press = None;
+            self.ctx.window_request = Some(WindowRequest::ToggleMaximize);
+        } else {
+            self.ctx.memory.drag_area_press = Some(now);
+            self.ctx.window_request = Some(WindowRequest::Move);
+        }
+    }
+
+    /// A janela é de conteúdo inteiro (`Window::full_size_content`).
+    pub fn content_window(&self) -> bool {
+        self.ctx.content_window
+    }
+
+    /// A janela está maximizada.
+    pub fn maximized(&self) -> bool {
+        self.ctx.maximized
     }
 
     /// Janela modal (diálogo): escurece a janela e mostra um painel de vidro branco no
@@ -1081,6 +1215,16 @@ impl<'a> Ui<'a> {
 
     /// Numa linha (`row`, `toolbar`), pula para que os próximos `width` pixels
     /// terminem na borda direita.
+    /// Largura que ainda sobra na linha atual (numa `row`/`toolbar`), a partir do
+    /// próximo item.
+    pub fn remaining_width(&self) -> f32 {
+        if self.flow == Flow::Column {
+            self.width
+        } else {
+            (self.x + self.width - self.row_x).max(0.0)
+        }
+    }
+
     pub fn push_right(&mut self, width: f32) {
         if self.flow != Flow::Column {
             let end = self.x + self.width - width;
@@ -1797,11 +1941,15 @@ impl<'a> Ui<'a> {
     pub fn text_input(&mut self, value: &mut String, placeholder: &str) -> Response {
         use super::textedit::Edit;
         let t = self.ctx.theme.clone();
+        let search = std::mem::take(&mut self.search_look);
         let id = self.ctx.id();
-        let rect = self.alloc(None, t.row);
+        let rect = self.alloc(None, if search { super::theme::TOOLBAR_ITEM } else { t.row });
+        // Busca: o ✕ que limpa fica à direita, fora da área do texto.
+        let clear_rect = (rect.0 + rect.2 - 30.0, rect.1, 30.0, rect.3);
+        let clear_hit = search && !value.is_empty() && self.ctx.input.pressed && self.over(clear_rect);
         let mut r = self.interact(id, rect);
         // Posição do texto no campo e onde o ponteiro está nele (para o cursor).
-        let inner = (rect.0 + 10.0, rect.2 - 20.0);
+        let inner = if search { (rect.0 + 32.0, rect.2 - 62.0) } else { (rect.0 + 10.0, rect.2 - 20.0) };
         let pointer_x = self.ctx.input.pointer.map(|(px, _)| px - self.offset.0 - inner.0 + self.ctx.memory.text_scroll);
         if std::mem::take(&mut self.ctx.memory.focus_next) {
             self.ctx.memory.focus = Some(id);
@@ -1885,9 +2033,47 @@ impl<'a> Ui<'a> {
             }
             self.ctx.memory.edit = edit;
         }
-        fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
+        if clear_hit {
+            value.clear();
+            self.ctx.memory.edit = super::textedit::Edit::at_end(value);
+            r.changed = true;
+            self.ctx.repaint = true;
+        }
+        if search {
+            // Cápsula de vidro com a lupa; o anel de foco segue a cápsula.
+            capsule(self.canvas, rect, &t);
+            if focused {
+                if let Some(path) = rounded_rect(rect.0 - 1.5, rect.1 - 1.5, rect.2 + 3.0, rect.3 + 3.0, (rect.3 + 3.0) / 2.0) {
+                    let mut paint = Paint { anti_alias: true, ..Default::default() };
+                    paint.set_color(color([t.accent[0], t.accent[1], t.accent[2], 128]));
+                    self.canvas.stroke_path(&path, &paint, &Stroke { width: 3.0, ..Default::default() }, crate::ui::draw::tf(), None);
+                }
+            }
+            if let Some(pix) = self.ctx.icon(&["system-search-symbolic", "edit-find-symbolic"], 16, false) {
+                let c = t.text_secondary;
+                crate::ui::draw::blit_tinted(self.canvas, &pix, (rect.0 + 11.0) as i32, (rect.1 + (rect.3 - 16.0) / 2.0) as i32, [c[0], c[1], c[2]]);
+            }
+            if !value.is_empty() {
+                let (cx, cy) = (clear_rect.0 + 15.0, clear_rect.1 + rect.3 / 2.0);
+                fill_rounded(self.canvas, cx - 7.0, cy - 7.0, 14.0, 14.0, 7.0, color(t.shade(70)));
+                let mut pb = tiny_skia::PathBuilder::new();
+                pb.move_to(cx - 3.0, cy - 3.0);
+                pb.line_to(cx + 3.0, cy + 3.0);
+                pb.move_to(cx + 3.0, cy - 3.0);
+                pb.line_to(cx - 3.0, cy + 3.0);
+                if let Some(path) = pb.finish() {
+                    let mut paint = Paint { anti_alias: true, ..Default::default() };
+                    paint.set_color(color(t.background));
+                    let stroke = Stroke { width: 1.5, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
+                    self.canvas.stroke_path(&path, &paint, &stroke, crate::ui::draw::tf(), None);
+                }
+            }
+        } else {
+            fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.card));
+        }
         let border = if focused { t.accent } else { t.shade(40) };
-        if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, t.control_radius) {
+        if search {
+        } else if let Some(path) = rounded_rect(rect.0 + 0.5, rect.1 + 0.5, rect.2 - 1.0, rect.3 - 1.0, t.control_radius) {
             let mut paint = Paint { anti_alias: true, ..Default::default() };
             paint.set_color(color(border));
             let width = if focused { 2.0 } else { 1.0 };
@@ -2683,20 +2869,33 @@ impl<'a> Ui<'a> {
     }
 
     /// Barra de ferramentas no topo da área: faixa com os itens lado a lado,
-    /// centralizados na altura, e uma linha fina embaixo.
+    /// centralizados na altura, e uma linha fina embaixo. Numa janela de conteúdo
+    /// inteiro (Tahoe), sem fundo nem linha, com itens de 36 (`toolbar_buttons`,
+    /// `toolbar_title`, `search_field`), os botões da janela no começo quando a barra
+    /// encosta na borda esquerda, e o vazio arrasta a janela.
     pub fn toolbar(&mut self, add: impl FnOnce(&mut Ui)) {
         let t = self.ctx.theme.clone();
-        let (x, y0, w, h) = (self.x, self.cursor_y, self.width, 52.0);
-        fill_rounded(self.canvas, x, y0 + h - 1.0, w, 1.0, 0.0, color(t.line));
+        let tahoe = self.ctx.content_window;
+        let (x, y0, w, h) = (self.x, self.cursor_y, self.width, super::theme::TOOLBAR_HEIGHT);
+        if !tahoe {
+            fill_rounded(self.canvas, x, y0 + h - 1.0, w, 1.0, 0.0, color(t.line));
+        }
         let (old_flow, old_x, old_w, old_h) = (self.flow, self.row_x, self.x, self.row_h);
         self.flow = Flow::Row;
-        self.x = x + 12.0;
-        self.row_x = x + 12.0;
+        let mut start = x + 12.0;
+        // Sem barra lateral à esquerda: os botões da janela abrem a barra.
+        if tahoe && self.offset.0 + x < 1.0 {
+            let lights_y = y0 + (h - LIGHT_SIZE) / 2.0;
+            start += 8.0 + self.window_controls(x + 20.0, lights_y) + 8.0;
+        }
+        self.x = start;
+        self.row_x = start;
         self.row_h = 0.0;
         let old_y = self.cursor_y;
-        self.cursor_y = y0 + (h - 28.0) / 2.0;
+        let item_h = if tahoe { super::theme::TOOLBAR_ITEM } else { 28.0 };
+        self.cursor_y = y0 + (h - item_h) / 2.0;
         let old_width = self.width;
-        self.width = w - 24.0;
+        self.width = w - (start - x) - 12.0;
         add(self);
         self.flow = old_flow;
         self.row_x = old_x;
@@ -2704,6 +2903,62 @@ impl<'a> Ui<'a> {
         self.row_h = old_h;
         self.width = old_width;
         self.cursor_y = old_y + h;
+        // O vazio da barra arrasta a janela (depois dos itens, que têm prioridade).
+        self.window_drag_area((x, y0, w, h));
+    }
+
+    /// Grupo de botões de ícone numa cápsula de vidro, para a barra de ferramentas do
+    /// Tahoe: cada item é (ícone, texto de reserva, marcado, ativo); o marcado ganha
+    /// uma pílula dentro da cápsula. Devolve o índice clicado.
+    pub fn toolbar_buttons(&mut self, items: &[(&str, &str, bool, bool)]) -> Option<usize> {
+        let t = self.ctx.theme.clone();
+        let seg = 40.0;
+        let h = super::theme::TOOLBAR_ITEM;
+        let rect = self.alloc(Some(seg * items.len() as f32 + 4.0), h);
+        capsule(self.canvas, rect, &t);
+        let mut clicked = None;
+        for (i, (icon, fallback, on, enabled)) in items.iter().enumerate() {
+            let id = self.ctx.id();
+            let r_rect = (rect.0 + 2.0 + i as f32 * seg, rect.1, seg, h);
+            let r = self.interact(id, r_rect);
+            if r.clicked && *enabled {
+                clicked = Some(i);
+            }
+            let pill = (r_rect.0 + 3.0, r_rect.1 + 4.0, r_rect.2 - 6.0, r_rect.3 - 8.0);
+            if *on {
+                fill_rounded(self.canvas, pill.0, pill.1, pill.2, pill.3, pill.3 / 2.0, color(t.shade(if t.dark { 40 } else { 22 })));
+            } else if r.hovered && *enabled {
+                fill_rounded(self.canvas, pill.0, pill.1, pill.2, pill.3, pill.3 / 2.0, color(t.shade(if t.dark { 24 } else { 12 })));
+            }
+            let size = 18;
+            let (ix, iy) = ((r_rect.0 + (seg - size as f32) / 2.0) as i32, (r_rect.1 + (h - size as f32) / 2.0) as i32);
+            let c = if *enabled { t.text } else { t.shade(70) };
+            match self.ctx.icon(&[icon], size, false) {
+                Some(pix) if icon.ends_with("-symbolic") => crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [c[0], c[1], c[2]]),
+                Some(pix) => crate::ui::draw::blit(self.canvas, &pix, ix, iy, if *enabled { 1.0 } else { 0.35 }),
+                None => {
+                    let fw = self.measure(fallback, 16.0, FontWeight::Semibold);
+                    self.draw_text(fallback, r_rect.0 + (seg - fw) / 2.0, r_rect.1 + 8.0, 16.0, FontWeight::Semibold, c);
+                }
+            }
+        }
+        clicked
+    }
+
+    /// Título da janela na barra de ferramentas do Tahoe (à esquerda, semibold 15),
+    /// cortado com reticências em `max_width`.
+    pub fn toolbar_title(&mut self, title: &str, max_width: f32) {
+        let t = self.ctx.theme.clone();
+        let shown = self.fit(title, 15.0, FontWeight::Semibold, max_width);
+        let w = self.measure(&shown, 15.0, FontWeight::Semibold);
+        let rect = self.alloc(Some(w + 8.0), super::theme::TOOLBAR_ITEM);
+        self.draw_text(&shown, rect.0 + 4.0, rect.1 + (rect.3 - 15.0 * 1.25) / 2.0, 15.0, FontWeight::Semibold, t.text);
+    }
+
+    /// Campo de busca em cápsula (Tahoe): lupa à esquerda, ✕ para limpar.
+    pub fn search_field(&mut self, value: &mut String, placeholder: &str) -> Response {
+        self.search_look = true;
+        self.text_input(value, placeholder)
     }
 
     /// Imagem grande centralizada numa faixa de `size` de altura (prévia do Arquivos):
@@ -2898,6 +3153,7 @@ impl<'a> Ui<'a> {
             sidebar_glass: false,
                 next_width: None,
                 toggled: false,
+                search_look: false,
             };
             add(&mut child);
             child.cursor_y - first
@@ -3079,28 +3335,58 @@ impl<'a> Ui<'a> {
         let side_w = 220.0;
         let (x, y0) = (self.x, self.cursor_y);
         let h = self.visible.1 - y0;
+        // Tahoe (janela de conteúdo inteiro): painel de vidro solto da borda, com os
+        // botões da janela dentro, seleção em pílula e o vazio arrastando a janela.
+        let tahoe = self.ctx.content_window;
+        let inset = if tahoe { super::theme::INSET_FLOAT } else { 0.0 };
+        let panel = (x + inset, y0 + inset, side_w - inset, h - 2.0 * inset);
+        let panel_r = if tahoe { super::theme::RADIUS_SIDEBAR } else { 0.0 };
+        let glass = std::mem::take(&mut self.sidebar_glass);
+        if tahoe {
+            fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.background));
+        }
         // Barra lateral de vidro (como o acesso rápido do Finder): o mesmo véu dos
         // menus da barra, com o compositor desfocando o que está atrás da janela.
         // Com o vidro desligado nas Configurações, fica opaca.
-        if std::mem::take(&mut self.sidebar_glass) {
+        if glass {
             self.ctx.glass_capable = true;
             if crate::control_client::panel_glass() {
-                crate::ui::draw::paint_rounded_solid(self.canvas, x, y0, side_w, h, 0.0, t.sidebar_glass);
-                self.ctx.glass.push((self.offset.0 + x, self.offset.1 + y0, side_w, h, 0.0));
+                if tahoe {
+                    crate::ui::draw::clear_rounded(self.canvas, panel.0, panel.1, panel.2, panel.3, panel_r);
+                }
+                crate::ui::draw::paint_rounded_solid(self.canvas, panel.0, panel.1, panel.2, panel.3, panel_r, t.sidebar_glass);
+                self.ctx.glass.push((self.offset.0 + panel.0, self.offset.1 + panel.1, panel.2, panel.3, panel_r));
             } else {
-                fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));
+                fill_rounded(self.canvas, panel.0, panel.1, panel.2, panel.3, panel_r, color(t.sidebar));
             }
         } else {
-            fill_rounded(self.canvas, x, y0, side_w, h, 0.0, color(t.sidebar));
+            fill_rounded(self.canvas, panel.0, panel.1, panel.2, panel.3, panel_r, color(t.sidebar));
         }
-        fill_rounded(self.canvas, x + side_w - 1.0, y0, 1.0, h, 0.0, color(t.line));
-        let mut row_y = y0 + 16.0;
+        if tahoe {
+            // Borda de luz do vidro e uma sombra curta embaixo.
+            if let Some(path) = rounded_rect(panel.0 + 0.5, panel.1 + 0.5, panel.2 - 1.0, panel.3 - 1.0, panel_r - 0.5) {
+                let mut paint = Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(color(if t.dark { [255, 255, 255, 34] } else { [0, 0, 0, 20] }));
+                self.canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
+            }
+            self.window_controls(x + 20.0, y0 + (super::theme::TOOLBAR_HEIGHT - LIGHT_SIZE) / 2.0);
+        } else {
+            fill_rounded(self.canvas, x + side_w - 1.0, y0, 1.0, h, 0.0, color(t.line));
+        }
+        // Medidas das linhas: (ícone, título de grupo, espaço, primeiro título).
+        let (row_icon, row_h_icon, title_h, first_title_h) = if tahoe { (28.0, 30.0, 28.0, 22.0) } else { (30.0, 34.0, 32.0, 24.0) };
+        let heights: Vec<f32> = items
+            .iter()
+            .enumerate()
+            .map(|(i, (name, icon, _))| if !icon.is_empty() { row_h_icon } else if name.is_empty() { 12.0 } else if i > 0 { title_h } else { first_title_h })
+            .collect();
+        let mut row_y = if tahoe { y0 + super::theme::TOOLBAR_HEIGHT } else { y0 + 16.0 };
         if let Some((query, placeholder)) = search {
             // Campo de busca no topo da barra lateral.
             let (old_x, old_w, old_y) = (self.x, self.width, self.cursor_y);
-            self.x = x + 10.0;
-            self.width = side_w - 20.0;
-            self.cursor_y = y0 + 12.0;
+            self.x = panel.0 + 10.0;
+            self.width = panel.2 - 20.0;
+            self.cursor_y = if tahoe { row_y } else { y0 + 12.0 };
             self.text_input(query, placeholder);
             row_y = self.cursor_y + 4.0;
             self.x = old_x;
@@ -3110,22 +3396,14 @@ impl<'a> Ui<'a> {
         // Itens que não cabem: a lista rola com a roda do mouse sobre a barra lateral
         // (o campo de busca fica parado), e o item escolhido aparece ao abrir.
         let list_top = row_y;
-        let list_bottom = y0 + h - 8.0;
-        let total: f32 = items
-            .iter()
-            .enumerate()
-            .map(|(i, (name, icon, _))| if !icon.is_empty() { 34.0 } else if name.is_empty() { 12.0 } else if i > 0 { 32.0 } else { 24.0 })
-            .sum();
+        let list_bottom = panel.1 + panel.3 - 8.0;
+        let total: f32 = heights.iter().sum();
         let scroll_id = self.ctx.id();
         let max_scroll = (total - (list_bottom - list_top)).max(0.0);
         let mut scroll = self.ctx.memory.scroll.get(&scroll_id).copied().unwrap_or_else(|| {
             // Primeira vez: rola até o item escolhido, se ele estiver fora.
-            let before: f32 = items[..selected.min(items.len())]
-                .iter()
-                .enumerate()
-                .map(|(i, (name, icon, _))| if !icon.is_empty() { 34.0 } else if name.is_empty() { 12.0 } else if i > 0 { 32.0 } else { 24.0 })
-                .sum();
-            (before + 34.0 - (list_bottom - list_top)).max(0.0)
+            let before: f32 = heights[..selected.min(items.len())].iter().sum();
+            (before + row_h_icon - (list_bottom - list_top)).max(0.0)
         });
         // Com um modal aberto, a roda é dele (a lista atrás não rola).
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
@@ -3136,9 +3414,12 @@ impl<'a> Ui<'a> {
         let scroll = scroll.clamp(0.0, max_scroll);
         self.ctx.memory.scroll.insert(scroll_id, scroll);
         row_y -= scroll;
+        // Seleção: pílula de destaque (Configurações, com quadradinhos coloridos, e o
+        // Big Sur); no Finder do Tahoe, pílula cinza com o ícone na cor de destaque.
+        let accent_pill = !tahoe || items.iter().any(|(_, _, tint)| tint.is_some());
         for (i, (name, icon, tint)) in items.iter().enumerate() {
             // Fora da faixa da lista (rolada): só conta o lugar.
-            let row_h = if !icon.is_empty() { 34.0 } else if name.is_empty() { 12.0 } else if i > 0 { 32.0 } else { 24.0 };
+            let row_h = heights[i];
             if row_y < list_top - 0.5 || row_y + row_h - 4.0 > list_bottom + 0.5 {
                 if !icon.is_empty() {
                     let _ = self.ctx.id();
@@ -3155,43 +3436,52 @@ impl<'a> Ui<'a> {
                 if i > 0 {
                     row_y += 8.0;
                 }
-                self.draw_text(name, x + 20.0, row_y + 4.0, t.font_small, FontWeight::Semibold, t.text_secondary);
-                row_y += 24.0;
+                let (fx, fs) = if tahoe { (panel.0 + 14.0, 11.0) } else { (x + 20.0, t.font_small) };
+                self.draw_text(name, fx, row_y + 4.0, fs, FontWeight::Semibold, t.text_secondary);
+                row_y += row_h - 8.0 * (i > 0) as u8 as f32;
                 continue;
             }
             let id = self.ctx.id();
-            let rect = (x + 10.0, row_y, side_w - 20.0, 30.0);
-            row_y += 34.0;
+            let rect = if tahoe { (panel.0 + 8.0, row_y, panel.2 - 16.0, row_icon) } else { (x + 10.0, row_y, side_w - 20.0, row_icon) };
+            row_y += row_h;
             let r = self.interact(id, rect);
             if r.clicked && selected != i {
                 selected = i;
                 self.ctx.repaint = true;
             }
             let is_sel = selected == i;
+            let radius = if tahoe { super::theme::RADIUS_ITEM } else { t.control_radius };
+            let on_accent = is_sel && accent_pill;
             if is_sel {
-                fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.accent));
+                let fill = if accent_pill { t.accent } else { t.shade(if t.dark { 40 } else { 22 }) };
+                fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, radius, color(fill));
             } else if r.hovered {
-                fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, t.control_radius, color(t.control));
+                fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, radius, color(t.control));
             }
             if let Some([r_, g, b]) = tint {
-                fill_rounded(self.canvas, rect.0 + 8.0, rect.1 + 3.0, 24.0, 24.0, 6.0, color([*r_, *g, *b, 255]));
+                fill_rounded(self.canvas, rect.0 + 6.0, rect.1 + (rect.3 - 22.0) / 2.0, 22.0, 22.0, 6.0, color([*r_, *g, *b, 255]));
             }
-            // Ícones "symbolic" (de uma cor só) ficam na cor do texto, como os da
-            // barra superior; na linha escolhida, brancos.
+            // Ícones "symbolic" (de uma cor só) na cor do texto (no Tahoe sem
+            // quadradinho, na cor de destaque); na linha em destaque, brancos.
             let symbolic = icon.ends_with("-symbolic");
-            let size = if symbolic { 18 } else { 20 };
+            let size = if symbolic { if tahoe { 17 } else { 18 } } else { 20 };
             let pix = self.ctx.icon(&[icon], size, false);
             if let Some(pix) = pix {
-                let (ix, iy) = ((rect.0 + 10.0) as i32, (rect.1 + (30.0 - size as f32) / 2.0) as i32);
+                let (ix, iy) = ((rect.0 + if tahoe && tint.is_none() { 8.0 } else { 10.0 }) as i32, (rect.1 + (rect.3 - size as f32) / 2.0) as i32);
                 if symbolic {
-                    let tint = if is_sel { t.on_accent } else { t.text };
-                    crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [tint[0], tint[1], tint[2]]);
+                    let tint_c = if on_accent { t.on_accent } else if tahoe && tint.is_none() { t.accent } else if tint.is_some() { [255, 255, 255, 255] } else { t.text };
+                    crate::ui::draw::blit_tinted(self.canvas, &pix, ix, iy, [tint_c[0], tint_c[1], tint_c[2]]);
                 } else {
                     crate::ui::draw::blit(self.canvas, &pix, ix, iy, 1.0);
                 }
             }
-            let tc = if is_sel { t.on_accent } else { t.text };
-            self.draw_text(name, rect.0 + 42.0, rect.1 + (30.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
+            let tc = if on_accent { t.on_accent } else { t.text };
+            let tx = if tahoe { rect.0 + 34.0 } else { rect.0 + 42.0 };
+            self.draw_text(name, tx, rect.1 + (rect.3 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, tc);
+        }
+        // O vazio da barra lateral arrasta a janela (os itens têm prioridade).
+        if tahoe {
+            self.window_drag_area(panel);
         }
         // Conteúdo à direita.
         let (old_x, old_w) = (self.x, self.width);
@@ -3217,6 +3507,22 @@ impl<'a> Ui<'a> {
     pub fn sidebar_area(&mut self, items: &[(&str, &str)], selected: usize, content: impl FnOnce(&mut Ui, usize)) -> usize {
         self.sidebar_raw = true;
         self.sidebar(items, selected, content)
+    }
+}
+
+/// Cápsula de vidro do Tahoe (barra de ferramentas, busca): véu claro, borda de luz e
+/// sombra curta. Dentro da janela o fundo é o próprio conteúdo do app.
+fn capsule(canvas: &mut Pixmap, rect: (f32, f32, f32, f32), t: &Theme) {
+    let (x, y, w, h) = rect;
+    let r = h / 2.0;
+    // Sombra curta (duas camadas finas, mais barato que desfocar).
+    fill_rounded(canvas, x - 0.5, y + 1.0, w + 1.0, h + 1.0, r + 0.5, color(t.shade(if t.dark { 40 } else { 10 })));
+    let fill = if t.dark { [58, 58, 62, 235] } else { [255, 255, 255, 235] };
+    fill_rounded(canvas, x, y, w, h, r, color(fill));
+    if let Some(path) = crate::ui::draw::rounded_rect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, r - 0.5) {
+        let mut paint = Paint { anti_alias: true, ..Default::default() };
+        paint.set_color(color(if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 18] }));
+        canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, crate::ui::draw::tf(), None);
     }
 }
 

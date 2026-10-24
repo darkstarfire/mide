@@ -160,6 +160,9 @@ pub struct State {
     /// Regiões de vidro pedidas pelas camadas (`glass` no canal de controle): pelo
     /// nome da camada, retângulos relativos a ela e o raio dos cantos.
     pub glass: std::collections::HashMap<String, Vec<(smithay::utils::Rectangle<i32, smithay::utils::Logical>, f32, f32)>>,
+    /// Canto das janelas de um app (`window_style app:<app_id> radius=N` no canal de
+    /// controle): os apps de conteúdo inteiro do mide-ui pedem o raio do Tahoe.
+    pub window_radius: std::collections::HashMap<String, i32>,
     pub input_mark: Option<(Instant, &'static str, smithay::reexports::wayland_server::backend::ClientId)>,
     /// Posição atual do cursor, em coordenadas globais.
     pub pointer_location: Point<f64, Logical>,
@@ -379,6 +382,7 @@ impl State {
             start_time: Instant::now(),
             input_mark: None,
             glass: std::collections::HashMap::new(),
+            window_radius: std::collections::HashMap::new(),
             pointer_location: (0.0, 0.0).into(),
             press_location: None,
             move_grab: None,

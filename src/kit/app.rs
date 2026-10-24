@@ -107,6 +107,8 @@ pub struct Window {
     pub every_output: bool,
     /// Camada pequena no canto de baixo à direita da tela principal (`Window::corner`).
     pub corner: bool,
+    /// Janela de conteúdo inteiro, no estilo do Tahoe (`Window::full_size_content`).
+    pub full_size: bool,
 }
 
 impl Window {
@@ -126,7 +128,18 @@ impl Window {
             native_scale: true,
             every_output: false,
             corner: false,
+            full_size: false,
         }
+    }
+
+    /// Janela de conteúdo inteiro, como no Tahoe (`docs/tahoe.md`): sem a barra de
+    /// título do compositor e com cantos de 24. O app desenha os botões da janela
+    /// (`Ui::window_controls`, normalmente dentro da barra lateral) e diz onde o vazio
+    /// arrasta a janela (`Ui::window_drag_area`); a barra lateral flutuante e a barra de
+    /// ferramentas do mide-ui fazem isso sozinhas.
+    pub fn full_size_content(mut self) -> Self {
+        self.full_size = true;
+        self
     }
 
     /// Junto com [`Window::overlay`]: uma camada em cada tela, e não só na principal
@@ -300,7 +313,15 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         }
         None => {
             let xdg_shell = XdgShell::bind(&globals, &qh)?;
-            let xdg = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &qh);
+            let decorations = if window.full_size { WindowDecorations::ClientOnly } else { WindowDecorations::RequestServer };
+            let xdg = xdg_shell.create_window(surface, decorations, &qh);
+            if window.full_size {
+                // Cantos do Tahoe para esta janela (o compositor recorta e faz a sombra).
+                let command = format!("window_style app:{} radius={}", window.app_id, super::theme::RADIUS_WINDOW as i32);
+                std::thread::spawn(move || {
+                    let _ = crate::control_client::ask_compositor(&command);
+                });
+            }
             xdg.set_title(window.title.clone());
             xdg.set_app_id(window.app_id.clone());
             xdg.set_min_size(Some(window.min_size));
@@ -348,13 +369,18 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app_id: window.app_id.clone(),
         last_frame: None,
         pointer: None,
+        seat: None,
         keyboard: None,
         size: window.size,
         min_size: window.min_size,
         configured: false,
         dirty: false,
         exit: false,
-        ctx: Ctx::new(window.theme.clone()),
+        ctx: {
+            let mut ctx = Ctx::new(window.theme.clone());
+            ctx.content_window = window.full_size;
+            ctx
+        },
         follow_theme: !window.theme_fixed,
         native_scale: window.native_scale,
         scale: 1.0,
@@ -432,6 +458,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             runner.frame();
             runner.clipboard();
             runner.start_drag();
+            runner.window_request();
         }
     }
     // O desbloqueio (e o resto) precisa chegar ao compositor antes de sair.
@@ -510,6 +537,7 @@ struct Runner {
     /// Último quadro enviado (para não reenviar um igual).
     last_frame: Option<Pixmap>,
     pointer: Option<wl_pointer::WlPointer>,
+    seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     size: (u32, u32),
     min_size: (u32, u32),
@@ -1047,6 +1075,40 @@ impl Runner {
     }
 }
 
+impl Runner {
+    /// Atende o que o app de conteúdo inteiro pediu à janela neste quadro.
+    fn window_request(&mut self) {
+        let Some(request) = self.ctx.window_request.take() else {
+            return;
+        };
+        let Shell::Xdg(xdg) = &self.shell else {
+            return;
+        };
+        match request {
+            super::ui::WindowRequest::Move => {
+                if let Some(seat) = &self.seat {
+                    xdg.move_(seat, self.press_serial);
+                }
+            }
+            super::ui::WindowRequest::Minimize => xdg.set_minimized(),
+            super::ui::WindowRequest::ToggleMaximize => {
+                if self.maximized {
+                    xdg.unset_maximized()
+                } else {
+                    xdg.set_maximized()
+                }
+            }
+            super::ui::WindowRequest::Close => {
+                if self.app.close_requested() {
+                    self.exit = true;
+                } else {
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+}
+
 impl WindowHandler for Runner {
     fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow) {
         if self.app.close_requested() {
@@ -1058,6 +1120,7 @@ impl WindowHandler for Runner {
 
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow, configure: WindowConfigure, _: u32) {
         self.maximized = configure.is_maximized();
+        self.ctx.maximized = configure.is_maximized();
         let constrained = configure.is_maximized()
             || configure.is_fullscreen()
             || configure.is_tiled_left()
@@ -1168,6 +1231,7 @@ impl SeatHandler for Runner {
     }
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
+        self.seat.get_or_insert_with(|| seat.clone());
         if capability == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
         }

@@ -57,7 +57,7 @@ prog_check "atalho executável não confiável pergunta antes" 'perguntar antes 
 prog_check "Enter logo que o diálogo aparece não confirma" 'editor.desktop: Enter ignorado' "executar \(teste\)|confiado" "$DOUBLE; 412 key enter; 470 list" "$D"
 prog_check "Abrir confia no atalho e roda o app do Exec" 'confiado: .*/editor.desktop @@ executar \(teste\): /opt/Meu Editor/editor --novo \(pasta /tmp\)' "" "$DOUBLE; 460 key enter; 500 list" "$D"
 prog_check "atalho confiado aparece com o nome do app" 'atalho .*/editor.desktop: "Meu Editor" \(ícone accessories-text-editor\)' "" "400 list" "$D"
-prog_check "lista: o atalho também mostra o app" 'atalho .*/editor.desktop: "Meu Editor"' "" "400 click 694 106; 440 list" "$D"
+prog_check "lista: o atalho também mostra o app" 'atalho .*/editor.desktop: "Meu Editor"' "" "400 click 569 102; 440 list" "$D"
 prog_check "duplo clique no .desktop confiado abre o app do Exec" 'executar \(teste\): /opt/Meu Editor/editor --novo \(pasta /tmp\)' "perguntar" "$DOUBLE; 460 list" "$D"
 prog_check "Enter no .desktop escolhido abre o app" 'executar \(teste\): /opt/Meu Editor/editor --novo' "perguntar" "400 click 345 190; 430 key enter; 460 list" "$D"
 

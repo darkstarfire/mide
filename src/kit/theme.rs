@@ -3,6 +3,19 @@
 
 use tiny_skia::Color;
 
+/// Medidas do Tahoe (`docs/tahoe.md`, seção 2).
+/// Janela com barra lateral ou barra de ferramentas.
+pub const RADIUS_WINDOW: f32 = 24.0;
+/// Recuo dos painéis flutuantes (barra lateral) até a borda da janela.
+pub const INSET_FLOAT: f32 = 8.0;
+/// Barra lateral flutuante (raio da janela menos o recuo).
+pub const RADIUS_SIDEBAR: f32 = RADIUS_WINDOW - INSET_FLOAT;
+/// Seleção dentro de menus e da barra lateral, linhas de lista.
+pub const RADIUS_ITEM: f32 = 8.0;
+/// Barra de ferramentas e as cápsulas dela.
+pub const TOOLBAR_HEIGHT: f32 = 52.0;
+pub const TOOLBAR_ITEM: f32 = 36.0;
+
 /// Cor em RGBA (0 a 255).
 pub type Rgba = [u8; 4];
 

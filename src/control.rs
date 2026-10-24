@@ -405,6 +405,19 @@ pub fn handle(state: &mut State, command: &str) -> String {
             }
             "ok\n".into()
         }
+        // Aparência das janelas de um app: `window_style app:<app_id> radius=N` (cantos).
+        Some("window_style") => {
+            let Some(app) = words.next().and_then(|w| w.strip_prefix("app:")) else {
+                return "erro: falta app:<app_id>\n".into();
+            };
+            for word in words {
+                if let Some(r) = word.strip_prefix("radius=").and_then(|r| r.parse::<i32>().ok()) {
+                    state.window_radius.insert(app.to_string(), r.clamp(0, 40));
+                }
+            }
+            state.redraw = true;
+            "ok\n".into()
+        }
         // Forçar encerrar o app em foco (menu do mide).
         Some("force_quit") => {
             if focused_window_action(state, "kill") { "ok\n".into() } else { "none\n".into() }

@@ -60,15 +60,15 @@ file_check "Cancelar no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ]' "
 file_check "Criar sem mudar o nome: Nova pasta, depois Nova pasta (1)" '[ -d "$FDIR/Nova pasta" ] && [ -d "$FDIR/Nova pasta (1)" ]' "400 rclick 600 450; 430 click 650 311; 460 key enter; 500 rclick 600 450; 530 click 650 311; 560 key enter; 600 list"
 # Menu de um arquivo (não pasta): "Abrir com…" logo depois de "Abrir"; com "Obter
 # informações" (B25) o menu sobe para caber: "Mover para a Lixeira" em y=567.
-file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 694 106; 430 rclick 500 293; 460 click 550 567; 500 list"
+file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 569 102; 430 rclick 500 293; 460 click 550 567; 500 list"
 file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 220; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
 file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 281; 500 list"
 # Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
 # dentro aparece na linha seguinte (y=241).
 # Fechar a pasta na lista (sanfona, A20): depois de fechar, a linha y=241 volta a ser
 # Projetos (a de dentro de Fotos sumiu), e Delete leva Projetos.
-file_check "lista: setinha fecha a pasta (as linhas de dentro saem)" '[ -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/Projetos" ]' "400 click 694 106; 430 click 303 215; 480 click 303 215; 540 click 500 241; 560 key delete; 600 list"
-file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 694 106; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
+file_check "lista: setinha fecha a pasta (as linhas de dentro saem)" '[ -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/Projetos" ]' "400 click 569 102; 430 click 303 215; 480 click 303 215; 540 click 500 241; 560 key delete; 600 list"
+file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 569 102; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
 # Fundo em (600, 450): o menu abre para cima (não cabe embaixo), com "Nova pasta" em
 # y=311 e "Novo arquivo" em y=337. O nome vem todo selecionado e
 # digitar define a extensão.

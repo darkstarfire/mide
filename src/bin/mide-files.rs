@@ -930,27 +930,32 @@ impl Files {
         let mut empty_trash = false;
         let mut search = std::mem::take(&mut self.search);
         ui.toolbar(|ui| {
-            back = ui.icon_button("go-previous-symbolic", "‹", can_back).clicked();
-            forward = ui.icon_button("go-next-symbolic", "›", can_forward).clicked();
-            ui.space(4.0);
-            ui.strong(&title);
-            // Cada botão ocupa 32 pontos mais o espaçamento da barra.
-            let step = 32.0 + ui.theme().spacing;
-            let right = if in_trash { step + 110.0 } else { 5.0 * step + 200.0 };
+            // Tahoe: ‹ › numa cápsula, título, visualizações e ações em grupos, busca.
+            match ui.toolbar_buttons(&[("go-previous-symbolic", "‹", false, can_back), ("go-next-symbolic", "›", false, can_forward)]) {
+                Some(0) => back = true,
+                Some(1) => forward = true,
+                _ => {}
+            }
+            let spacing = ui.theme().spacing;
+            // Larguras à direita: grupos de 40 por botão (+4) e a busca.
+            let right = if in_trash { 44.0 + spacing + 110.0 } else { 124.0 + spacing + 84.0 + spacing + 200.0 };
+            // O título encolhe (com reticências); os grupos ficam presos à direita.
+            let title_room = (ui.row_remaining() - right - spacing * 2.0 - 8.0).max(40.0);
+            ui.toolbar_title(&title, title_room);
             ui.push_right(right);
             if in_trash {
-                preview = ui.icon_toggle("view-dual-symbolic", "◨", preview_on).clicked();
+                preview = ui.toolbar_buttons(&[("view-dual-symbolic", "◨", preview_on, true)]).is_some();
                 ui.sized(110.0, |ui| empty_trash = has_items && ui.button("Esvaziar").clicked());
             } else {
-                for (i, (icon, fallback)) in [("view-grid-symbolic", "▦"), ("view-list-symbolic", "☰"), ("view-column-symbolic", "▥")].into_iter().enumerate() {
-                    if ui.icon_toggle(icon, fallback, current == i).clicked() {
-                        mode = Some(i);
-                    }
+                let views = [("view-grid-symbolic", "▦", current == 0, true), ("view-list-symbolic", "☰", current == 1, true), ("view-column-symbolic", "▥", current == 2, true)];
+                mode = ui.toolbar_buttons(&views);
+                match ui.toolbar_buttons(&[("view-dual-symbolic", "◨", preview_on, true), ("folder-new-symbolic", "+", false, true)]) {
+                    Some(0) => preview = true,
+                    Some(1) => new_folder = true,
+                    _ => {}
                 }
-                preview = ui.icon_toggle("view-dual-symbolic", "◨", preview_on).clicked();
-                new_folder = ui.icon_button("folder-new-symbolic", "+", true).clicked();
                 ui.sized(200.0, |ui| {
-                    ui.text_input(&mut search, "Buscar");
+                    ui.search_field(&mut search, "Buscar");
                 });
             }
         });
@@ -2120,7 +2125,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(path) = start.info {
         app.show_info(&path);
     }
-    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360);
+    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360).full_size_content();
     run(window, app)
 }
 

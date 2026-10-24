@@ -3,8 +3,8 @@ echo "== Arquivos: visualização lembrada por pasta (B21)"
 # O estado (files-view.toml) fica numa pasta própria que dura a seção inteira: cada
 # cenário abre o Arquivos de novo, como depois de fechar ou reiniciar. O log do app vai
 # para um arquivo (os cenários mandam o dos apps para /dev/null).
-# Janela em (48, 76): botão de lista em (694, 106), de ícones em (662, 106); na lista,
-# o cabeçalho "Modificado" em (600, 164).
+# Janela de conteúdo inteiro (Tahoe) em (48, 76): botão de lista em (569, 102), de ícones em (530, 102); na lista,
+# o cabeçalho "Modificado" em (555, 164).
 FILES="$PWD/target/debug/mide-files"
 VBASE="$(mktemp -d)"
 export XDG_STATE_HOME="$VBASE/state"
@@ -29,13 +29,13 @@ view_check() {
 }
 
 view_check "sem nada guardado, abre em ícones" "visualização de $VDIR/Fotos: ícones, ordem nome crescente" "400 list" "$VDIR/Fotos"
-view_check "trocar para lista guarda a escolha" "visualização guardada para $VDIR/Fotos: lista" "400 click 694 106; 440 list" "$VDIR/Fotos"
+view_check "trocar para lista guarda a escolha" "visualização guardada para $VDIR/Fotos: lista" "400 click 569 102; 440 list" "$VDIR/Fotos"
 view_check "abrir de novo: a pasta volta em lista" "visualização de $VDIR/Fotos: lista, ordem nome crescente" "400 list" "$VDIR/Fotos"
 view_check "pasta nunca aberta usa o padrão (a última escolha: lista)" "visualização de $VDIR/Nova: lista" "400 list" "$VDIR/Nova"
 # Projetos: ordena por Modificado e depois inverte (decrescente), e volta para ícones.
-view_check "ordenação guardada (Modificado, decrescente)" "visualização guardada para $VDIR/Projetos: lista, ordem modificado decrescente" "400 click 600 164; 440 click 600 164; 480 list" "$VDIR/Projetos"
+view_check "ordenação guardada (Modificado, decrescente)" "visualização guardada para $VDIR/Projetos: lista, ordem modificado decrescente" "400 click 555 164; 440 click 555 164; 480 list" "$VDIR/Projetos"
 view_check "abrir de novo: ordenação lembrada" "visualização de $VDIR/Projetos: lista, ordem modificado decrescente" "400 list" "$VDIR/Projetos"
-view_check "Projetos volta para ícones" "visualização guardada para $VDIR/Projetos: ícones, ordem modificado decrescente" "400 click 662 106; 440 list" "$VDIR/Projetos"
+view_check "Projetos volta para ícones" "visualização guardada para $VDIR/Projetos: ícones, ordem modificado decrescente" "400 click 530 102; 440 list" "$VDIR/Projetos"
 view_check "Fotos continua em lista (escolha da pasta)" "visualização de $VDIR/Fotos: lista, ordem nome crescente" "400 list" "$VDIR/Fotos"
 view_check "pasta nova segue o novo padrão (ícones)" "visualização de $VDIR/Nova: ícones, ordem modificado decrescente" "400 list" "$VDIR/Nova"
 # Pasta apagada e criada de novo com outro nome: nada quebra; a nova segue o padrão.
@@ -46,7 +46,7 @@ view_check "pasta apagada não quebra (a renomeada usa o padrão)" "visualizaç�
 mkdir -p "$VDIR/Fotos"
 view_check "pasta que sumiu e voltou continua em lista" "visualização de $VDIR/Fotos: lista, ordem nome crescente" "400 list" "$VDIR/Fotos"
 # Barra no fim (como vem de lançadores) é a mesma pasta.
-view_check "barra no fim guarda na mesma chave" "visualização guardada para $VDIR/Fotos2: lista" "400 click 694 106; 440 list" "$VDIR/Fotos2/"
+view_check "barra no fim guarda na mesma chave" "visualização guardada para $VDIR/Fotos2: lista" "400 click 569 102; 440 list" "$VDIR/Fotos2/"
 view_check "sem a barra: a escolha volta" "visualização de $VDIR/Fotos2: lista" "400 list" "$VDIR/Fotos2"
 if [ -f "$XDG_STATE_HOME/mide/files-view.toml" ] && ! ls "$XDG_STATE_HOME/mide/" | grep -q tmp; then
     echo "ok    estado em XDG_STATE_HOME/mide/files-view.toml, sem temporários"; PASS=$((PASS + 1))

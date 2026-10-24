@@ -171,10 +171,12 @@ cápsula). Tab percorre os controles; Espaço aperta; setas mudam segmentado e l
 ```
 
 - **Sem barra de título do compositor** nos apps do mide-ui ("janela de conteúdo
-  inteiro"). O compositor continua com: cantos (raio 24/16), sombra, redimensionar pelas
-  bordas, lâmpada, maximizar e as **luzes** (fechar/minimizar/maximizar), desenhadas
-  por ele no lugar que o app pede (dentro da barra lateral ou no canto da barra de
-  ferramentas). O app pede pelo canal de controle (`window app:<app_id> …`).
+  inteiro", `Window::full_size_content`). O compositor continua com: cantos (raio
+  pedido pelo app, `window_style app:<app_id> radius=24` no canal de controle; 16 nos
+  apps de terceiros), contorno, sombra, redimensionar pelas bordas, lâmpada e
+  maximizar. As **luzes** (fechar/minimizar/maximizar) são desenhadas pelo mide-ui
+  (`ui.window_controls`), dentro da barra lateral ou no começo da barra de ferramentas:
+  cinza sem foco, com os símbolos ao passar o ponteiro sobre o grupo.
 - **Arrastar a janela:** pelo vazio da barra de ferramentas e da barra lateral (o app
   chama o `move` do xdg com o serial do clique); duplo clique no vazio maximiza.
 - **Título:** na barra de ferramentas, à esquerda, depois dos botões de navegação

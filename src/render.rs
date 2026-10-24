@@ -522,13 +522,13 @@ fn window_elements(
         let effects = state.config.effects;
         if decorated && effects.rounded_corners {
             elements.push(MideRenderElement::from(decorations::outline_element(
-                shaders, p.frame, p.focused,
+                shaders, p.frame, p.focused, corner_radius(state, &p.window),
             )));
         }
         // Recorte arredondado pela moldura: vale para a barra e para o conteúdo, e os
         // cantos mostram o que está de fato atrás (desktop com sombra ou outra janela).
         let radius = if decorated && effects.rounded_corners {
-            decorations::CORNER_RADIUS as f32
+            corner_radius(state, &p.window)
         } else {
             0.0
         };
@@ -586,7 +586,7 @@ fn window_elements(
                 overlays.push(part);
             }
             let corner = if state.config.effects.rounded_corners {
-                decorations::CORNER_RADIUS as f32
+                corner_radius(state, &p.window)
             } else {
                 0.0
             };
@@ -998,6 +998,12 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
     state.space.refresh();
     state.display_handle.flush_clients()?;
     Ok(())
+}
+
+/// Raio dos cantos de uma janela: o pedido pelo app (`window_style app:<id> radius=N`, os
+/// apps de conteúdo inteiro do mide-ui) ou o padrão.
+fn corner_radius(state: &State, window: &Window) -> f32 {
+    state.window_radius.get(&app_id_of(window)).copied().unwrap_or(decorations::CORNER_RADIUS) as f32
 }
 
 /// Título da janela (vazio se o app não definiu um).

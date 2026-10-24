@@ -30,7 +30,7 @@ check_last "clique não atravessa para a barra de título de trás" 'janela "Ter
 # Menus padrão do mide (o Arquivos não publica menus): "Editar" em x=213, "Janela" em 268.
 FILES_APP="$PWD/target/debug/mide-files"
 check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 213 14; 440 list" "$FILES_APP"
-check "Janela > Zoom maximiza" 'janela "Pasta pessoal" popups=0 posição=\(0, 58\) visível=1366x643' "400 click 268 14; 430 click 280 73; 480 list" "$FILES_APP"
+check "Janela > Zoom maximiza" 'janela "Pasta pessoal" popups=0 posição=\(0, 28\) visível=1366x673' "400 click 268 14; 430 click 280 73; 480 list" "$FILES_APP"
 # Menus do próprio Terminal (dbusmenu, num barramento de teste): Shell em x=140,
 # Editar 194, Janela 382; no menu, a primeira linha em y=55 e a segunda em y=79.
 RUST_LOG="mide=debug,mide_bar=info" SCEN=tests/scenario-dbus.sh check "a barra mostra os menus do Terminal" "menu do app mide-terminal: Shell, Editar, Visualizar, Perfis, Janela" "500 list" "$TERMINAL"

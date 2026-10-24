@@ -123,7 +123,7 @@ use stable::pixel;
 pub const BAR_HEIGHT: i32 = 30;
 
 /// Raio dos cantos da janela, em pixels.
-pub const CORNER_RADIUS: i32 = 10;
+pub const CORNER_RADIUS: i32 = 16;
 
 const BUTTON_SIZE: i32 = 12;
 const BUTTON_GAP: i32 = 8;
@@ -612,14 +612,14 @@ pub const SHADOW_MARGIN: i32 = 24;
 pub const SHADOW_OFFSET: i32 = 8;
 
 /// Traço de 1 px em volta da janela inteira, seguindo os cantos arredondados.
-pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool) -> PixelShaderElement {
+pub fn outline_element(shaders: &Shaders, frame: Rect, focused: bool, radius: f32) -> PixelShaderElement {
     let alpha = if focused { 0.22 } else { 0.12 };
     pixel(&shaders.outline, 1, frame, vec![
             Uniform::new(
                 "half_size",
                 (frame.size.w as f32 / 2.0, frame.size.h as f32 / 2.0),
             ),
-            Uniform::new("radius", CORNER_RADIUS as f32),
+            Uniform::new("radius", radius),
             Uniform::new("width", 1.0f32),
             Uniform::new("fill", [0.0, 0.0, 0.0, alpha]),
         ])

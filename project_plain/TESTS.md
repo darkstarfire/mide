@@ -944,3 +944,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh arrastar` (seção 33): duas janelas do Arquivos; arrastar o `nota.txt` para fora da janela de cima começa o arrasto entre apps com ícone, e soltar na janela de baixo copia o arquivo (o original fica). Quadro conferido a olho: ícone centrado no ponteiro, na frente das janelas.
 - `cargo test` (369 + 54...), com o teste novo de `parse_uri_list` (espaços em `%20`, comentários, endereços que não são `file://`).
 - Falta na sessão de verdade: soltar no WhatsApp Web/Telegram (Chrome e Firefox no Wayland) e receber do Nautilus/navegador.
+
+## Janela no estilo do Tahoe (D3, 2026-10-24)
+- Cenários conferidos a olho em 1366x768 (quadro): Arquivos em ícones e em lista, com título curto e longo (os grupos ficam presos à direita, o título encolhe).
+- Cenários de comportamento: arrastar o vazio da barra de ferramentas move a janela (48,76 → 148,176), duplo clique maximiza (0,28 1366x673), o botão vermelho fecha.
+- Bateria: `arquivos`, `arrastar`, `programas`, `instalar`, `01-barra` e `vidro` passando, com as coordenadas novas (lista em (569, 102), ícones em (530, 102), "Modificado" em (555, 164); maximizada sem barra em (0, 28)). `cargo test` passando.

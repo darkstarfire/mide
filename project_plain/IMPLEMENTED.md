@@ -1452,3 +1452,10 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Outros apps → Arquivos:** arquivos soltos na janela vão para a pasta sob o ponteiro (destacada) ou para a pasta aberta; de outro app, copia; voltando do próprio Arquivos, move (com Ctrl, copia).
 - **mide-ui:** `ui.start_drag(caminhos, ícone)`, `input().drop_hover`, `input().dropped` e `input().drag_ended`, valendo para qualquer app; `mide::kit::parse_uri_list` e `mide::thumbnails::file_uri`.
 - **Compositor:** desenha o ícone do arrasto junto do ponteiro (com o deslocamento pedido pelo app), na frente de tudo e fora das capturas de tela.
+
+## Janela no estilo do Tahoe (D3, etapas 2 e 4, 2026-10-24)
+- **Janela de conteúdo inteiro** (`Window::full_size_content`): o app do mide-ui abre sem a barra de título do compositor e com cantos de 24; os três botões da janela são desenhados pelo próprio app (cinza sem foco, com ×, − e + ao passar o ponteiro sobre o grupo). Arrastar o vazio da barra de ferramentas ou da barra lateral move a janela; duplo clique maximiza e restaura. Apps de terceiros continuam com a barra do mide, agora com cantos de 16.
+- **Barra lateral flutuante:** painel de vidro solto 8 pontos da borda, raio 16, com os botões da janela dentro, títulos de seção pequenos, linhas de 28, seleção em pílula cinza e ícones na cor de destaque (nas Configurações, com os quadradinhos coloridos, a pílula é azul).
+- **Barra de ferramentas do Tahoe:** sem fundo e sem linha; botões agrupados em cápsulas (`ui.toolbar_buttons`, com o escolhido marcado por uma pílula), título à esquerda que encolhe com reticências (`ui.toolbar_title`) e busca em cápsula com lupa e ✕ (`ui.search_field`). Os grupos ficam presos à direita.
+- **Arquivos** é o primeiro app no visual novo.
+- Compositor: `window_style app:<app_id> radius=N` no canal de controle (cantos por app).
