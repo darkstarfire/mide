@@ -2,6 +2,7 @@
 //! próprias como "Sobre este computador").
 
 pub mod annotate;
+pub mod richtext;
 pub mod apps;
 pub mod appimage;
 pub mod appearance;

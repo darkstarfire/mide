@@ -367,6 +367,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         focused_name: String::new(),
         focused_id: String::new(),
         focused_pid: 0,
+        dark_seen: mide::kit::system_dark(),
         titles: Vec::new(),
         over_launcher: false,
         launcher_k: 0.0,
@@ -757,6 +758,8 @@ struct Bar {
     focused_id: String,
     /// Processo da janela em foco (dos menus registrados, vale o dele).
     focused_pid: u32,
+    /// Tema escuro da última conferência (a troca nas Configurações redesenha sozinha).
+    dark_seen: bool,
     /// Títulos desenhados na barra: menu e faixa x (início, fim), para o clique.
     titles: Vec<(MenuId, f32, f32)>,
     /// Launcher aberto: barra transparente sobre ele, com texto branco.
@@ -993,6 +996,18 @@ impl Bar {
         if ask_compositor("bar_request").and_then(|r| r.into_iter().next()).as_deref() == Some("confirm-shutdown") {
             tracing::info!("botão de ligar: confirmação de desligar");
             self.open_menu(MenuId::ConfirmShutdown);
+        }
+        // Claro/escuro trocado nas Configurações: barra e menu aberto mudam sem esperar o
+        // ponteiro passar por cima.
+        let dark = mide::kit::system_dark();
+        if dark != self.dark_seen {
+            self.dark_seen = dark;
+            tracing::info!("barra: tema {}", if dark { "escuro" } else { "claro" });
+            refresh_palette();
+            self.draw_bar();
+            if self.menu.is_some() {
+                self.draw_menu();
+            }
         }
         let clock = clock_text();
         let battery = battery();

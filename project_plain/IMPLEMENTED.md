@@ -1550,3 +1550,16 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 - **Menu vazio:** os números dos itens dos menus publicados pelo mide-ui dependem da posição. Ao trocar de modo, a Calculadora muda os menus, o "Editar" ganha outro número e a barra abria um menu vazio. Agora a barra relê a raiz ao abrir um menu e o acha pelo título. Os títulos do app em foco também são relidos a cada volta da barra, então menus que entram ou saem aparecem sem trocar de janela.
 - **Janela maximizava com um clique (Notas):** a área de arrastar da barra lateral e a da Calculadora se sobrepunham, e o mesmo clique contava duas vezes, como duplo clique. Agora o mide-ui trata um clique de arrastar por quadro.
+
+## Tema claro/escuro sem esperar o ponteiro (2026-10-24)
+
+- A barra superior só relia as cores ao se redesenhar por outro motivo (o ponteiro passando). Agora ela confere o tema a cada volta (450 ms; o arquivo só é lido quando muda) e se redesenha sozinha, com o menu aberto junto. Os apps do mide-ui (a cada segundo) e a dock já faziam isso; conferido por captura com a troca feita no meio do cenário.
+
+## Editor de Texto completo, etapa 1a: núcleo do texto formatado (2026-10-24)
+
+- `src/richtext/` (biblioteca, com testes):
+  - `mod.rs`: documento em parágrafos com trechos de estilo (fonte, tamanho, negrito, itálico, sublinhado, tachado, cor, realce, sobrescrito/subscrito, link) e estilo de parágrafo (alinhamento, recuos, entrelinha, espaços, listas, nome do estilo, quebra de página antes), imagens num parágrafo delas e a página (tamanho, margens, cabeçalho, rodapé e numeração com "mostrar a partir da página N", como a ABNT pede). Edição: digitar, Enter, apagar intervalos entre parágrafos, aplicar estilo de texto e de parágrafo, palavras (Ctrl+setas, duplo clique), copiar e colar com formatação (`fragment`/`insert_fragment`) e contagem de palavras.
+  - `layout.rs`: o cosmic-text dá forma às letras; a quebra em linhas (palavra a palavra, recuo da primeira linha, tabulações de meia polegada, justificado, centralizado, à direita), os marcadores de lista e a paginação são daqui, com cache por parágrafo (digitar num livro só refaz o parágrafo mexido). Fontes de métricas iguais para as que faltam no Linux (Times New Roman → Liberation Serif/Tinos, Arial → Liberation Sans/Arimo, Calibri → Carlito...).
+  - `render.rs`: desenho de uma página em qualquer escala (seleção, realce, letras, sublinhado, tachado, imagens, marcadores, cursor, cabeçalho, rodapé e número da página).
+  - `rtf.rs`: ler e gravar RTF (o formato do TextEdit e do WordPad), escrito aqui, com imagens PNG/JPEG, papel e margens; lê o RTF do TextEdit (conferido num teste).
+- Falta a tela nova do Editor de Texto usando esse núcleo (etapa 1b).

@@ -153,6 +153,32 @@ impl Default for Text {
 }
 
 impl Text {
+    /// As fontes do sistema (para quem dá forma ao próprio texto, como o Editor de Texto).
+    pub fn font_system(&mut self) -> &mut FontSystem {
+        &mut self.fonts
+    }
+
+    /// Desenha uma letra já posicionada (`key` com a posição em subpixel; `(x, y)` em
+    /// pixels inteiros, na linha de base) na cor `rgba`.
+    pub fn draw_glyph(&mut self, pixmap: &mut Pixmap, key: cosmic_text::CacheKey, (x, y): (i32, i32), rgba: [u8; 4]) {
+        if let Some(image) = self.swash.get_image(&mut self.fonts, key).as_ref() {
+            composite(pixmap, image, (x + image.placement.left, y - image.placement.top), rgba);
+        }
+    }
+
+    /// Famílias de fonte instaladas (os nomes, em ordem alfabética, sem repetir).
+    pub fn families(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.fonts.db().faces().filter_map(|f| f.families.first().map(|(n, _)| n.clone())).collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup();
+        names
+    }
+
+    /// A família existe no sistema?
+    pub fn has_font_family(&self, name: &str) -> bool {
+        self.has_family(name)
+    }
+
     pub fn new() -> Self {
         Self {
             fonts: FontSystem::new(),
