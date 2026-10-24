@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use mide::kit::{run, textarea::TextDoc, textedit::Edit, window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, Ui, Window};
+use mide::kit::{run, textarea::TextDoc, textedit::Edit, window_menu, App, ButtonStyle, Choice, FileChooser, Key, MenuGroup, MenuItem, Ui, Window};
 
 /// Arquivos maiores que isso não são abertos (o editor mínimo guarda cópias do texto
 /// para desfazer).
@@ -179,31 +179,41 @@ impl Editor {
         self.message = Some(format!("{count} substituição(ões)."));
     }
 
+    /// Barra de ferramentas do Tahoe, como a do TextEdit: luzes, o nome do documento
+    /// (com "Editado") e, à direita, as cápsulas de abrir/salvar e de buscar.
     fn toolbar(&mut self, ui: &mut Ui) {
-        let (mut open, mut save, mut save_as, mut find) = (false, false, false, false);
+        let mut clicked = None;
+        let title = if self.doc.modified { format!("{} — Editado", self.name()) } else { self.name() };
+        let finding = self.find.is_some();
         ui.toolbar(|ui| {
-            ui.sized(90.0, |ui| open = ui.button("Abrir…").clicked());
-            ui.sized(90.0, |ui| save = ui.button("Salvar").clicked());
-            ui.sized(130.0, |ui| save_as = ui.button("Salvar como…").clicked());
-            ui.sized(90.0, |ui| find = ui.button("Buscar").clicked());
-            let starts = self.doc.line_starts();
-            let line = mide::kit::textarea::line_of(&starts, self.doc.edit.cursor);
-            let column = self.doc.text[starts[line]..self.doc.edit.cursor].chars().count() + 1;
-            let state = if self.doc.modified { " · editado" } else { "" };
-            ui.label(&format!("Linha {}, coluna {column}{state}", line + 1));
+            ui.toolbar_title(&title, 420.0);
+            ui.push_right(2.0 * 40.0 + 4.0 + 10.0 + 40.0 + 4.0);
+            match ui.toolbar_buttons(&[("document-open-symbolic", "↥", false, true), ("document-save-symbolic", "↓", false, true)]) {
+                Some(0) => clicked = Some("abrir"),
+                Some(1) => clicked = Some("salvar"),
+                _ => {}
+            }
+            if ui.toolbar_buttons(&[("edit-find-symbolic", "⌕", finding, true)]).is_some() {
+                clicked = Some("buscar");
+            }
         });
-        if open {
-            self.ask_open();
+        match clicked {
+            Some("abrir") => self.ask_open(),
+            Some("salvar") => {
+                self.save(false);
+            }
+            Some("buscar") => self.toggle_find(),
+            _ => {}
         }
-        if save {
-            self.save(false);
-        }
-        if save_as {
-            self.ask_save_as(false);
-        }
-        if find {
-            self.toggle_find();
-        }
+    }
+
+    /// Rodapé com a linha e a coluna do cursor.
+    fn status(&self, ui: &mut Ui) {
+        let starts = self.doc.line_starts();
+        let line = mide::kit::textarea::line_of(&starts, self.doc.edit.cursor);
+        let column = self.doc.text[starts[line]..self.doc.edit.cursor].chars().count() + 1;
+        let lines = starts.len();
+        ui.status_bar(&format!("Linha {}, coluna {column} · {lines} {}", line + 1, if lines == 1 { "linha" } else { "linhas" }));
     }
 
     fn toggle_find(&mut self) {
@@ -224,18 +234,27 @@ impl Editor {
         let focus = std::mem::take(&mut find.focus);
         let (mut query, mut replace) = (find.query.clone(), find.replace.clone());
         let (mut next, mut prev, mut one, mut all, mut close) = (false, false, false, false, false);
-        ui.toolbar(|ui| {
+        // Barra de busca do Tahoe: busca em cápsula, anterior/próxima numa cápsula,
+        // substituir e "OK" para fechar.
+        ui.space(4.0);
+        ui.row(|ui| {
+            ui.space_x(12.0);
             if focus {
                 ui.focus_next_input();
             }
-            ui.sized(220.0, |ui| next = ui.text_input(&mut query, "Buscar").submitted());
-            ui.sized(90.0, |ui| prev = ui.button("Anterior").clicked());
-            ui.sized(90.0, |ui| next |= ui.button("Próxima").clicked());
-            ui.sized(220.0, |ui| one = ui.text_input(&mut replace, "Substituir por").submitted());
-            ui.sized(110.0, |ui| one |= ui.button("Substituir").clicked());
-            ui.sized(130.0, |ui| all = ui.button("Substituir tudo").clicked());
-            ui.sized(80.0, |ui| close = ui.button("Fechar").clicked());
+            ui.sized(240.0, |ui| next = ui.search_field(&mut query, "Buscar").submitted());
+            match ui.toolbar_buttons(&[("go-up-symbolic", "‹", false, true), ("go-down-symbolic", "›", false, true)]) {
+                Some(0) => prev = true,
+                Some(1) => next = true,
+                _ => {}
+            }
+            ui.space_x(8.0);
+            ui.sized(220.0, |ui| one = ui.search_field(&mut replace, "Substituir por").submitted());
+            ui.sized(100.0, |ui| one |= ui.button_styled("Substituir", ButtonStyle::Bordered).clicked());
+            ui.sized(70.0, |ui| all = ui.button_styled("Tudo", ButtonStyle::Bordered).clicked());
+            ui.sized(60.0, |ui| close = ui.button_styled("OK", ButtonStyle::Prominent).clicked());
         });
+        ui.space(6.0);
         if let Some(find) = self.find.as_mut() {
             find.query = query;
             find.replace = replace;
@@ -358,13 +377,18 @@ impl App for Editor {
         self.toolbar(ui);
         self.find_bar(ui);
         if let Some(message) = &self.message {
-            ui.note(message);
+            ui.row(|ui| {
+                ui.space_x(16.0);
+                ui.note(message);
+            });
         }
         if std::mem::take(&mut self.start) {
             ui.focus_next_input();
         }
-        let height = ui.remaining_height();
+        // O rodapé (26) e o espaço entre a área de texto e ele.
+        let height = ui.remaining_height() - 26.0 - ui.theme().spacing;
         ui.text_area(&mut self.doc, height);
+        self.status(ui);
         self.dialog(ui);
     }
 
@@ -418,7 +442,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     let path = std::env::args().nth(1).map(PathBuf::from);
     let editor = Editor::open(path);
-    let window = Window::new("Editor de Texto").app_id("mide-text").size(860, 620).min_size(480, 320);
+    let window = Window::new("Editor de Texto").app_id("mide-text").size(860, 620).min_size(520, 320).full_size_content();
     run(window, editor)
 }
 

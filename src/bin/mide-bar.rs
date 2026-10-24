@@ -366,6 +366,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         text: Text::new(),
         focused_name: String::new(),
         focused_id: String::new(),
+        focused_pid: 0,
         titles: Vec::new(),
         over_launcher: false,
         launcher_k: 0.0,
@@ -754,6 +755,8 @@ struct Bar {
     focused_name: String,
     /// app_id da janela em foco (vazio sem janela em foco).
     focused_id: String,
+    /// Processo da janela em foco (dos menus registrados, vale o dele).
+    focused_pid: u32,
     /// Títulos desenhados na barra: menu e faixa x (início, fim), para o clique.
     titles: Vec<(MenuId, f32, f32)>,
     /// Launcher aberto: barra transparente sobre ele, com texto branco.
@@ -843,7 +846,7 @@ impl Bar {
         // Pelo registrar (Qt no X11, apps com dbusmenu); senão, o que o app disse ao
         // compositor pelo Wayland (GTK pelo `gtk_shell1`, Qt pelo menu do KDE).
         let mut gtk = None;
-        let wanted = registry.menu_for_app(&self.focused_id).or_else(|| {
+        let wanted = registry.menu_for_app(&self.focused_id, self.focused_pid).or_else(|| {
             let line = ask_compositor("appmenu")?.into_iter().next()?;
             let fields: Vec<&str> = line.split('\t').collect();
             match fields.as_slice() {
@@ -962,22 +965,23 @@ impl Bar {
         }
         let clock = clock_text();
         let battery = battery();
-        let (focused_id, focused) = ask_compositor("list")
+        let (focused_id, focused, focused_pid) = ask_compositor("list")
             .and_then(|lines| {
                 lines.into_iter().find_map(|line| {
                     let mut parts = line.split('\t');
                     let (app_id, title, status) = (parts.next()?, parts.next()?, parts.next()?);
+                    let pid = parts.next().and_then(|p| p.trim().parse().ok()).unwrap_or(0);
                     (status == "focused").then(|| {
                         let name = self
                             .names
                             .name_for(app_id)
                             .or_else(|| (!title.is_empty()).then(|| title.to_string()))
                             .unwrap_or_else(|| app_id.to_string());
-                        (app_id.to_string(), name)
+                        (app_id.to_string(), name, pid)
                     })
                 })
             })
-            .unwrap_or_else(|| (String::new(), "mide".to_string()));
+            .unwrap_or_else(|| (String::new(), "mide".to_string(), 0));
         let items: Vec<bool> = mide::settings_file::BAR_ITEMS.iter().map(|(key, ..)| mide::settings_file::bar_item(key)).collect();
         if items != self.items {
             // Um item sumiu da barra: o painel dele (se aberto) fecha junto.
@@ -1006,7 +1010,8 @@ impl Bar {
             self.recording = recording;
             self.draw_bar();
         }
-        let focus_changed = focused_id != self.focused_id;
+        let focus_changed = focused_id != self.focused_id || focused_pid != self.focused_pid;
+        self.focused_pid = focused_pid;
         // Bateria fraca: ao passar de 10% descarregando, som e aviso (uma vez).
         if let (Some((was, _)), Some((now, false))) = (self.battery, battery) {
             if was > 10 && now <= 10 {

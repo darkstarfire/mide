@@ -492,7 +492,12 @@ fn list(state: &State) -> String {
         let (app_id, title) = identity(window);
         let focused = window.toplevel().map(|t| t.wl_surface().clone()) == focus;
         let status = if focused { "focused" } else { "normal" };
-        out.push_str(&format!("{app_id}\t{title}\t{status}\n"));
+        // O processo da janela (a barra acha os menus registrados por ele).
+        let pid = {
+            use smithay::reexports::wayland_server::Resource;
+            window.toplevel().and_then(|t| t.wl_surface().client()).and_then(|c| c.get_credentials(&state.display_handle).ok()).map_or(0, |c| c.pid)
+        };
+        out.push_str(&format!("{app_id}\t{title}\t{status}\t{pid}\n"));
     }
     for minimized in &state.minimized {
         let (app_id, title) = identity(&minimized.window);

@@ -26,6 +26,8 @@ pub struct Registration {
     pub path: String,
     /// Nomes do processo (comando e executável), em minúsculas, para achar o app.
     pub names: Vec<String>,
+    /// Processo que registrou (0 se não deu para saber).
+    pub pid: u32,
 }
 
 /// Registros, compartilhados entre o serviço e a barra.
@@ -34,12 +36,20 @@ pub struct Registry(Arc<Mutex<Vec<Registration>>>);
 
 impl Registry {
     /// Menu (nome no barramento e objeto) do app com este `app_id`, o registro mais novo.
-    pub fn menu_for_app(&self, app_id: &str) -> Option<(String, String)> {
+    pub fn menu_for_app(&self, app_id: &str, pid: u32) -> Option<(String, String)> {
         let app = app_id.to_lowercase();
         if app.is_empty() {
             return None;
         }
         let list = self.0.lock().ok()?;
+        // O registro do próprio processo da janela primeiro: com dois processos do mesmo
+        // app (o terminal de atalho e o comum, por exemplo), o mais novo pode não ser o
+        // da janela em foco.
+        if pid > 0
+            && let Some(r) = list.iter().rev().find(|r| r.pid == pid)
+        {
+            return Some((r.sender.clone(), r.path.clone()));
+        }
         list.iter()
             .rev()
             .find(|r| r.names.iter().any(|n| matches_app(n, &app)))
@@ -120,12 +130,14 @@ impl RegistrarService {
             None => None,
         };
         let names = pid.map(process_names).unwrap_or_default();
+        let pid = pid.unwrap_or(0);
         tracing::info!("menu do app registrado: janela {window_id} de {} ({})", sender_short(&header), names.join(", "));
         self.registry.register(Registration {
             window: window_id,
             sender: header.sender().map(|s| s.to_string()).unwrap_or_default(),
             path: menu_object_path.to_string(),
             names,
+            pid,
         });
     }
 

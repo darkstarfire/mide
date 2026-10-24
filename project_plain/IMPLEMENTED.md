@@ -1536,3 +1536,12 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Seta:** a haste reta até a ponta e a cabeça perto dela, saindo para o lado (uma asa basta). Também em dois traços: uma linha e, logo depois, a cabeça perto de uma ponta transformam a linha em seta.
 - **Formas fechadas:** contam como fechadas também quando o traço dá a volta e passa do começo, ou deixa uma fresta pequena. A forma é escolhida pela parte da caixa que o traço cobre (retângulo ≈ 1, oval ≈ 0,79, triângulo ≈ 0,5). Estrela nova (8 a 12 pontas alternando longe e perto do centro).
 - O aviso do editor ("Imagem copiada…") ganhou recuo à esquerda.
+
+## Editor de Texto no Tahoe e menus pelo processo da janela (2026-10-24)
+
+- **Editor de Texto (`mide-text`), como o TextEdit:**
+  - janela de conteúdo inteiro, com as luzes e o nome do documento ("— Editado") na barra de ferramentas;
+  - cápsulas de Abrir/Salvar e de Buscar à direita;
+  - barra de busca com campos em cápsula, anterior/próxima numa cápsula, Substituir, Tudo e OK;
+  - rodapé com linha, coluna e o total de linhas.
+- **Menus do app na barra:** o `list` do compositor manda o processo (PID) de cada janela, como quarto campo. A barra prefere os menus registrados por esse processo. Antes valia o registro mais novo com o mesmo nome, e com dois processos do mesmo app (o Terminal comum e o de atalho, F12) a barra podia mostrar os menus genéricos ou os do outro processo. Pedido do usuário: o Terminal mostrava Arquivo/Editar/Janela e não dava para abrir as Preferências.
