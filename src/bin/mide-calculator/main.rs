@@ -64,8 +64,8 @@ impl Mode {
     /// Tamanho da janela (sem o histórico) e o mínimo.
     fn size(self) -> ((u32, u32), (u32, u32)) {
         match self {
-            Mode::Basic => ((250, 380), (220, 320)),
-            Mode::Scientific => ((620, 380), (560, 320)),
+            Mode::Basic => ((300, 490), (260, 430)),
+            Mode::Scientific => ((680, 470), (600, 420)),
             Mode::Programmer => ((520, 560), (480, 500)),
             Mode::Notes => ((720, 480), (520, 320)),
         }
@@ -96,14 +96,17 @@ enum Kind {
     Science,
 }
 
-const BACKGROUND: Rgba = [36, 36, 40, 255];
-const NUMBER: Rgba = [78, 78, 84, 255];
-const FUNCTION: Rgba = [150, 150, 158, 255];
-const SCIENCE: Rgba = [56, 56, 62, 255];
-const OPERATION: Rgba = [10, 110, 235, 255];
-const PAD: f32 = 10.0;
-const GAP: f32 = 8.0;
-const DISPLAY_H: f32 = 86.0;
+// Cores da Calculadora do Tahoe: fundo grafite, números em cinza escuro, funções em
+// cinza mais claro e as operações em laranja.
+const BACKGROUND: Rgba = [30, 30, 32, 255];
+const NUMBER: Rgba = [66, 66, 70, 255];
+const FUNCTION: Rgba = [108, 108, 112, 255];
+const SCIENCE: Rgba = [50, 50, 54, 255];
+const OPERATION: Rgba = [255, 159, 10, 255];
+const PAD: f32 = 14.0;
+const GAP: f32 = 10.0;
+/// Visor (com os botões da janela por cima, no canto).
+const DISPLAY_H: f32 = 132.0;
 const HISTORY_W: f32 = 230.0;
 /// Fileira a mais do Básico com RPN (x↔y, R↓, R↑ e LASTx): altura de uma tecla e o vão.
 const RPN_ROW: u32 = 58;
@@ -587,12 +590,13 @@ impl Calculator {
         let s = self.second;
         let k = |b: Btn, l: &str, kind: Kind| Some((b, l.to_string(), kind));
         let equals = if self.rpn_on { k(Btn::Enter, "↩", Kind::Operation) } else { k(Btn::K(EKey::Equals), "=", Kind::Operation) };
+        // Como a Calculadora do Tahoe: ⌫ AC % ÷ em cima e ± 0 , = embaixo.
         let basic: Vec<Vec<Option<(Btn, String, Kind)>>> = vec![
-            vec![k(Btn::K(EKey::Clear), clear, Kind::Function), k(un(Unary::Negate), "±", Kind::Function), k(un(Unary::Percent), "%", Kind::Function), k(op(Binary::Div), "÷", Kind::Operation)],
+            vec![k(Btn::K(EKey::Backspace), "⌫", Kind::Function), k(Btn::K(EKey::Clear), clear, Kind::Function), k(un(Unary::Percent), "%", Kind::Function), k(op(Binary::Div), "÷", Kind::Operation)],
             vec![k(digit(7), "7", Kind::Number), k(digit(8), "8", Kind::Number), k(digit(9), "9", Kind::Number), k(op(Binary::Mul), "×", Kind::Operation)],
             vec![k(digit(4), "4", Kind::Number), k(digit(5), "5", Kind::Number), k(digit(6), "6", Kind::Number), k(op(Binary::Sub), "−", Kind::Operation)],
             vec![k(digit(1), "1", Kind::Number), k(digit(2), "2", Kind::Number), k(digit(3), "3", Kind::Number), k(op(Binary::Add), "+", Kind::Operation)],
-            vec![k(digit(0), "0", Kind::Number), None, k(Btn::K(EKey::Comma), ",", Kind::Number), equals],
+            vec![k(un(Unary::Negate), "±", Kind::Number), k(digit(0), "0", Kind::Number), k(Btn::K(EKey::Comma), ",", Kind::Number), equals],
         ];
         match self.mode {
             // Com RPN, uma fileira a mais com as teclas da pilha.
@@ -902,6 +906,9 @@ impl App for Calculator {
         if self.mode == Mode::Notes {
             self.picker = None;
             self.notes_view(ui);
+            let (_, _, total_w, _) = ui.region();
+            ui.window_controls(16.0, 16.0);
+            ui.window_drag_area((0.0, 0.0, total_w, 40.0));
             return;
         }
         // O conversor sumiu (Programador, desligado): o seletor dele fecha junto.
@@ -938,7 +945,11 @@ impl App for Calculator {
             _ => DISPLAY_H,
         };
         let bw = (w - 2.0 * PAD - (cols - 1.0) * GAP) / cols;
-        let bh = ((h - top - PAD - (rows - 1.0) * GAP) / rows).max(20.0);
+        // Teclas redondas (quadradas por dentro), como no Tahoe: no máximo a largura.
+        let bh = ((h - top - PAD - (rows - 1.0) * GAP) / rows).clamp(20.0, bw);
+        // O que sobra de altura vai para o visor (as teclas ficam embaixo).
+        let top = h - PAD - rows * bh - (rows - 1.0) * GAP;
+        let keys_top = if self.mode == Mode::Programmer || converting { top } else { top };
         let mut pressed = None;
         let mut keys = Vec::new();
         for (row, line) in grid.iter().enumerate() {
@@ -977,7 +988,10 @@ impl App for Calculator {
             _ if converting => converter::erase_rect(w, self.conv.active, self.conv_label_w[self.conv.active]),
             _ => (PAD, DISPLAY_H - GAP - 30.0, 30.0, 24.0),
         };
-        if typing && ui.background(erase).clicked {
+        // Na Básica e na Científica, o ⌫ é uma tecla (como no Tahoe); a do visor fica
+        // para o Programador e o conversor.
+        let erase_on_screen = typing && (self.mode == Mode::Programmer || converting);
+        if erase_on_screen && ui.background(erase).clicked {
             self.press(if self.mode == Mode::Programmer { Btn::P(programmer::Key::Backspace) } else { Btn::K(EKey::Backspace) });
         }
         // Conversor: o nome da unidade abre o seletor; a outra linha usa a conversão; o
@@ -1163,18 +1177,23 @@ impl App for Calculator {
                 let (screen, size) = fit_display(text, &screen, w - 2.0 * PAD - 8.0 - room, mode == Mode::Programmer, 48.0);
                 let tw = text.measure(&screen, size, FontWeight::Regular);
                 // Pela base: no Programador, logo acima da fileira de bits.
-                let display_y = if mode == Mode::Programmer { DISPLAY_H + 8.0 - size * 1.3 } else { DISPLAY_H - GAP - size * 1.3 };
+                // Pela base, logo acima das teclas (no Programador, acima dos bits).
+                let display_y = if mode == Mode::Programmer { DISPLAY_H + 8.0 - size * 1.3 } else { keys_top - GAP - size * 1.3 };
                 text.draw(pixmap, &screen, ox + w - PAD - 4.0 - tw, oy + display_y, size, FontWeight::Regular, [255, 255, 255, 255]);
             }
             // Indicadores pequenos à esquerda da tela: Rad, memória, RPN (Y Z T).
             // A conta em andamento, pequena, acima do número.
             if !expression.is_empty() {
+                // Como no Tahoe: a conta em cinza, logo acima do número (no Programador e no
+                // conversor, pequena no alto).
+                let big = mode != Mode::Programmer && conv_view.is_none();
+                let (es, ey) = if big { (24.0, keys_top - GAP - 48.0 * 1.3 - 24.0 * 1.2) } else { (13.0, 8.0) };
                 let x0 = if mode == Mode::Scientific { PAD + 70.0 } else { PAD + 4.0 };
-                let shown = fit_terms(text, &expression, 13.0, w - x0 - PAD - 4.0);
-                let ew = text.measure(&shown, 13.0, FontWeight::Regular);
-                text.draw(pixmap, &shown, ox + w - PAD - 4.0 - ew, oy + 8.0, 13.0, FontWeight::Regular, small);
+                let shown = fit_terms(text, &expression, es, w - x0 - PAD - 4.0);
+                let ew = text.measure(&shown, es, FontWeight::Regular);
+                text.draw(pixmap, &shown, ox + w - PAD - 4.0 - ew, oy + ey, es, FontWeight::Regular, [152, 152, 158, 255]);
             }
-            if typing {
+            if erase_on_screen {
                 let (x, y, ew, eh) = erase;
                 fill_rounded(pixmap, ox + x, oy + y, ew, eh, eh / 2.0, bg(SCIENCE));
                 let lw = text.measure("⌫", 14.0, FontWeight::Regular);
@@ -1224,7 +1243,7 @@ impl App for Calculator {
                 let (mut fill, fg) = match kind {
                     _ if marked => ([255, 255, 255, 255], OPERATION),
                     Kind::Operation => (OPERATION, [255, 255, 255, 255]),
-                    Kind::Function => (FUNCTION, [20, 20, 24, 255]),
+                    Kind::Function => (FUNCTION, [255, 255, 255, 255]),
                     Kind::Science => (SCIENCE, [235, 235, 240, 255]),
                     Kind::Number => (NUMBER, [255, 255, 255, 255]),
                 };
@@ -1235,12 +1254,17 @@ impl App for Calculator {
                 }
                 let fg = if *enabled { fg } else { [120, 120, 126, 255] };
                 let radius = bh.min(*bw) / 2.0;
+                // Redonda: o círculo no meio da casa (a casa larga vira cápsula).
+                let (x, bw) = if *wide { (*x, *bw) } else { (*x + (*bw - bh.min(*bw)) / 2.0, bh.min(*bw)) };
+                let (x, bw) = (&x, &bw);
                 fill_rounded(pixmap, ox + x, oy + y, *bw, *bh, radius, bg(if *enabled { fill } else { SCIENCE }));
                 let fs = match kind {
                     Kind::Science | Kind::Function if label.chars().count() > 3 => 13.0,
                     Kind::Science => 16.0,
-                    Kind::Number => 22.0,
-                    _ => 20.0,
+                    Kind::Number => 24.0,
+                    // Sinais das operações grandes, como no Tahoe.
+                    Kind::Operation if label.chars().count() == 1 => 28.0,
+                    _ => 22.0,
                 };
                 let lw = text.measure(label, fs, FontWeight::Regular);
                 // O 0 largo tem o algarismo alinhado com a coluna da esquerda.
@@ -1287,6 +1311,9 @@ impl App for Calculator {
             self.money_dialogs(ui);
         }
         self.notes_dialogs(ui);
+        // Tahoe: os botões da janela por cima do visor, e o alto do visor arrasta.
+        ui.window_controls(16.0, 16.0);
+        ui.window_drag_area((0.0, 0.0, total_w, 44.0));
     }
 
     fn close_requested(&mut self) -> bool {
@@ -1455,7 +1482,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // A janela já nasce no tamanho do modo lembrado.
     let calculator = Calculator::new();
     let ((w, h), (mw, mh)) = calculator.window_size();
-    let window = Window::new("Calculadora").app_id("mide-calculator").size(w, h).min_size(mw, mh);
+    let window = Window::new("Calculadora").app_id("mide-calculator").size(w, h).min_size(mw, mh).full_size_content();
     run(window, calculator)
 }
 

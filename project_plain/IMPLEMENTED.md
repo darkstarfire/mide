@@ -1510,3 +1510,6 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 ## Agitar o ponteiro para localizá-lo (2026-10-24)
 - Como no Mac: quatro vaivéns rápidos do mouse (de pelo menos 30 pontos, em 0,7 s) fazem o cursor crescer até 4 vezes, com animação de crescer (180 ms), segurar enquanto agita (+0,5 s) e voltar (320 ms). A imagem vem do tema de cursores no tamanho mais próximo (nítida) e, enquanto cresce, a cena desenha o cursor no lugar do plano de cursor da placa. Interruptor em Configurações → Efeitos ("Agitar o ponteiro para localizá-lo", `[effects] shake_cursor`). Módulo `src/shake.rs`, com testes.
+
+## Calculadora no visual do Tahoe (D3, etapa 8, 2026-10-24)
+- Janela de conteúdo inteiro (cantos de 24) com os botões da janela por cima do visor (o alto do visor arrasta a janela), fundo grafite, teclas redondas: números em cinza escuro, funções em cinza mais claro com texto branco e operações em laranja; disposição do Tahoe na Básica: ⌫ AC % ÷ em cima e ± 0 , = embaixo (o ⌫ do visor fica só no Programador e no conversor); a conta em andamento em cinza logo acima do número; sinais das operações maiores. Tamanho padrão da Básica 300x490.
