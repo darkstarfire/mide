@@ -34,6 +34,9 @@ pub struct Glyph {
     pub width: f32,
     /// Índice do trecho de estilo (para cor, sublinhado...).
     pub span: usize,
+    /// O texto que a letra desenha (bytes no parágrafo), para o PDF saber o caractere.
+    pub start: usize,
+    pub end: usize,
 }
 
 /// Uma linha do parágrafo.
@@ -311,7 +314,7 @@ impl Layouter {
             for word in &span.words {
                 for g in &word.glyphs {
                     let w = g.width(size);
-                    glyphs.push(Glyph { x: x + g.x_offset * size, dy: -g.y_offset * size, font_id: g.font_id, glyph_id: g.glyph_id, size, weight: g.font_weight, flags: g.cache_key_flags, width: w, span: 0 });
+                    glyphs.push(Glyph { x: x + g.x_offset * size, dy: -g.y_offset * size, font_id: g.font_id, glyph_id: g.glyph_id, size, weight: g.font_weight, flags: g.cache_key_flags, width: w, span: 0, start: g.start, end: g.end });
                     x += w;
                 }
             }
@@ -478,7 +481,7 @@ impl Layouter {
                         };
                     let is_break = cluster.contains(LINE_BREAK) || cluster == "\t" || cluster.contains(OBJECT);
                     if !is_break {
-                        glyphs.push(Glyph { x: pen + g.x_offset * size, dy, font_id: g.font_id, glyph_id: g.glyph_id, size: *size, weight: g.font_weight, flags: g.cache_key_flags, width: gw, span: g.metadata });
+                        glyphs.push(Glyph { x: pen + g.x_offset * size, dy, font_id: g.font_id, glyph_id: g.glyph_id, size: *size, weight: g.font_weight, flags: g.cache_key_flags, width: gw, span: g.metadata, start: g.start, end: g.end });
                     }
                     ascent = ascent.max(g.ascent * size);
                     descent = descent.max(g.descent * size);

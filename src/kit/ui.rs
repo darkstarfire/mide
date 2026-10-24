@@ -3367,6 +3367,26 @@ impl<'a> Ui<'a> {
 
     /// Monta componentes num lugar escolhido (`x`, `y`) desta área, com `width` de
     /// largura, em coluna (para posições livres, como os ícones da área de trabalho).
+    /// Duas colunas lado a lado a partir daqui: a da esquerda com `left_width`, a da
+    /// direita com o resto (menos `gap`). O que vem depois começa abaixo da mais alta.
+    /// (No Mac, um `NSStackView` horizontal com duas pilhas verticais.)
+    pub fn columns(&mut self, left_width: f32, gap: f32, left: impl FnOnce(&mut Ui), right: impl FnOnce(&mut Ui)) {
+        let saved = (self.x, self.width, self.cursor_y, self.flow, self.row_x, self.row_h);
+        let (x, w, y) = (self.x, self.width, self.cursor_y);
+        self.flow = Flow::Column;
+        self.width = left_width.min(w);
+        left(self);
+        let left_end = self.cursor_y;
+        self.x = x + left_width + gap;
+        self.width = (w - left_width - gap).max(10.0);
+        self.cursor_y = y;
+        self.flow = Flow::Column;
+        right(self);
+        let right_end = self.cursor_y;
+        (self.x, self.width, self.cursor_y, self.flow, self.row_x, self.row_h) = saved;
+        self.cursor_y = left_end.max(right_end);
+    }
+
     pub fn at(&mut self, x: f32, y: f32, width: f32, add: impl FnOnce(&mut Ui)) {
         let saved = (self.x, self.width, self.cursor_y, self.flow, self.row_x, self.row_h);
         self.x = x;

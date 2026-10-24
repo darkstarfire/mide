@@ -1580,3 +1580,10 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 ## Menus dos apps que sumiam (2026-10-24)
 
 - Causa: os cenários de teste rodavam no D-Bus da sessão de verdade e a barra do teste tomava o registrar dos menus. Os testes agora usam um barramento próprio. A barra recupera o nome do registrar sozinha (conferência a cada 5 s), tenta de novo as leituras que falharam (depois de 3 s) e relê os títulos do app em foco a cada 1,5 s (antes, 450 ms).
+
+## Editor de Texto, etapa 2a: PDF e imprimir (2026-10-24)
+
+- **`src/richtext/pdf.rs`, gravador de PDF próprio:** as letras saem nas posições do layout da tela (o que se vê é o que se imprime). Fontes TrueType e OpenType/CFF embutidas inteiras; as de coleções .ttc são separadas num arquivo próprio. Mapa para o Unicode, então copiar e buscar no leitor de PDF funciona (conferido com o `pdftotext`). Também cores, realce, sublinhado, tachado, itálico imitado, imagens (JPEG como veio, PNG com transparência), marcadores de lista, cabeçalho, rodapé, números de página e intervalo de páginas. Conteúdo compactado com o `flate2` (já vinha com o `zip`).
+- **Imprimir (Ctrl+P, Arquivo → Imprimir…)**, como o do Mac: prévia da página com ‹ ›; destino "Salvar como PDF" ou uma impressora do CUPS (`lpstat`, a padrão primeiro); cópias, páginas (todas, a atual ou um intervalo) e frente e verso. Imprime mandando um PDF temporário ao `lp`. Sem impressora configurada, o diálogo avisa e oferece o PDF.
+- **Arquivo → Exportar como PDF…**
+- **mide-ui:** `columns` (duas colunas lado a lado, como o `NSStackView`).

@@ -1447,6 +1447,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-text",
+ "flate2",
  "freedesktop-desktop-entry",
  "freedesktop-icons",
  "image",

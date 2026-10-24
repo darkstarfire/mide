@@ -452,6 +452,7 @@ O mide-ui segue os conceitos do AppKit do macOS, para que uma camada de compatib
 | `copy`, `request_paste`, `start_drag` | `NSPasteboard`, arrastar e soltar |
 | `button_styled` (`ButtonStyle`), `switch`, `segmented`, `checkbox`, `radio`, `stepper`, `slider`, `progress_bar` | `NSButton` (bezel styles), `NSSwitch`, `NSSegmentedControl`, `NSStepper`, `NSSlider`, `NSProgressIndicator` |
 | `list_row`, `tree_row`, `tile` | `NSTableView`, `NSOutlineView`, `NSCollectionView` |
-| `richtext` (trechos de estilo, RTF) | `NSAttributedString`, `NSTextView`, RTF |
+| `richtext` (trechos de estilo, RTF, PDF) | `NSAttributedString`, `NSTextView`, RTF, `NSPrintOperation` |
+| `columns`, `form_row`, `fixed_label` | `NSStackView`, `NSGridView` (formulário com rótulos alinhados) |
 
 Regra: todo componente novo do kit ganha aqui a linha do equivalente no AppKit.

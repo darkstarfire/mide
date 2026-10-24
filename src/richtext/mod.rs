@@ -10,6 +10,7 @@
 
 pub mod layout;
 pub mod render;
+pub mod pdf;
 pub mod rtf;
 
 use std::rc::Rc;

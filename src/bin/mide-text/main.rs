@@ -29,6 +29,8 @@ enum Dialog {
     Open(FileChooser),
     /// "Inserir imagem…" do modo formatado.
     InsertImage(FileChooser),
+    /// "Exportar como PDF…" e "Salvar PDF…" do Imprimir (com as páginas).
+    ExportPdf(FileChooser, Option<(usize, usize)>),
     /// "Salvar como…": o seletor no modo salvar (`then_close`: fecha depois de salvar).
     SaveAs { chooser: FileChooser, then_close: bool },
     /// Fechar com alterações não salvas.
@@ -364,6 +366,11 @@ impl Editor {
                 let dir = mide::places::pictures_dir();
                 self.dialog = Some(Dialog::InsertImage(FileChooser::open("Inserir imagem", Some(&dir)).extensions(&["png", "jpg", "jpeg"])));
             }
+            if let Some(range) = r.wants_pdf_path.take() {
+                let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
+                let stem = self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "Sem título".to_string(), |n| n.to_string_lossy().into_owned());
+                self.dialog = Some(Dialog::ExportPdf(FileChooser::save("Exportar como PDF", Some(&dir), &format!("{stem}.pdf")), range));
+            }
             if let Some(m) = r.message.take() {
                 self.message = Some(m);
             }
@@ -414,6 +421,20 @@ impl Editor {
                 Some(Choice::Cancelled) => self.dialog = None,
                 None => {}
             },
+            Dialog::ExportPdf(chooser, range) => {
+                let range = *range;
+                match chooser.show(ui) {
+                    Some(Choice::Chosen(path)) => {
+                        self.dialog = None;
+                        let path = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) { path } else { path.with_extension("pdf") };
+                        if let Some(r) = self.rich.as_mut() {
+                            r.pdf_request = Some((path, range));
+                        }
+                    }
+                    Some(Choice::Cancelled) => self.dialog = None,
+                    None => {}
+                }
+            }
             Dialog::InsertImage(chooser) => match chooser.show(ui) {
                 Some(Choice::Chosen(path)) => {
                     self.dialog = None;
@@ -553,8 +574,10 @@ impl App for Editor {
                         MenuItem::Separator,
                         MenuItem::action("salvar", "Salvar").shortcut("Ctrl+S"),
                         MenuItem::action("salvar-como", "Salvar como…").shortcut("Ctrl+Shift+S"),
+                        MenuItem::action("exportar-pdf", "Exportar como PDF…"),
                         MenuItem::Separator,
                         MenuItem::action("configurar-pagina", "Configurar página…").shortcut("Ctrl+Shift+P"),
+                        MenuItem::action("imprimir", "Imprimir…").shortcut("Ctrl+P"),
                     ],
                 },
                 MenuGroup {

@@ -31,6 +31,8 @@ xkbcommon = "0.8"
 zbus = "5"
 # Compactar e extrair .zip no Arquivos, sem programa externo.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Compactar o conteúdo do PDF do Editor de Texto (já vem com o zip).
+flate2 = "1"
 
 # Em desenvolvimento, as dependências (desenho de SVG, imagens, texto, shaders)
 # são compiladas otimizadas: sem isso, abrir o launcher ou a dock leva segundos.

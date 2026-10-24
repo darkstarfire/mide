@@ -84,6 +84,31 @@ struct PageDialog {
     from: String,
 }
 
+/// Imprimir: destino (0 = Salvar como PDF; os outros, as impressoras), cópias, páginas
+/// (0 todas, 1 a atual, 2 o intervalo), frente e verso e a página da prévia.
+struct PrintDialog {
+    printers: Vec<String>,
+    dest: usize,
+    copies: i64,
+    pages: usize,
+    from: String,
+    to: String,
+    duplex: bool,
+    preview: usize,
+}
+
+/// Impressoras do sistema (CUPS), com a padrão primeiro.
+fn printers() -> Vec<String> {
+    let run = |args: &[&str]| std::process::Command::new("lpstat").args(args).env("LC_ALL", "C").output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let mut list: Vec<String> = run(&["-e"]).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    let default = run(&["-d"]).split(':').nth(1).map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
+    if let Some(d) = default {
+        list.retain(|p| *p != d);
+        list.insert(0, d);
+    }
+    list
+}
+
 /// Diálogo das normas ABNT.
 struct AbntDialog {
     font: usize,
@@ -115,6 +140,13 @@ pub struct Rich {
     font_query: String,
     families: Vec<String>,
     page_dialog: Option<PageDialog>,
+    print_dialog: Option<PrintDialog>,
+    /// Pedido ao app: escolher onde salvar o PDF (com as páginas).
+    pub wants_pdf_path: Option<Option<(usize, usize)>>,
+    /// PDF a gravar (caminho e páginas), feito no próximo quadro (precisa das fontes).
+    pub pdf_request: Option<(std::path::PathBuf, Option<(usize, usize)>)>,
+    /// Impressão a mandar: impressora, cópias, páginas e frente e verso.
+    print_job: Option<(String, i64, Option<(usize, usize)>, bool)>,
     abnt_dialog: Option<AbntDialog>,
     reveal: bool,
     blink: Instant,
@@ -154,6 +186,10 @@ impl Rich {
             font_query: String::new(),
             families: Vec::new(),
             page_dialog: None,
+            print_dialog: None,
+            wants_pdf_path: None,
+            pdf_request: None,
+            print_job: None,
             abnt_dialog: None,
             reveal: false,
             blink: Instant::now(),
@@ -572,6 +608,8 @@ impl Rich {
             "inserir-imagem" => self.wants_image = true,
             "quebra-pagina" => self.page_break(),
             "configurar-pagina" => self.open_page_dialog(),
+            "imprimir" => self.open_print_dialog(),
+            "exportar-pdf" => self.wants_pdf_path = Some(None),
             "abnt" => self.abnt_dialog = Some(AbntDialog { font: 0, numbers_from: "2".into() }),
             "zoom-mais" => self.zoom_by(1.1),
             "zoom-menos" => self.zoom_by(1.0 / 1.1),
@@ -586,6 +624,44 @@ impl Rich {
         }
         ui.request_repaint();
         true
+    }
+
+    fn open_print_dialog(&mut self) {
+        let pages = self.layout.pages.max(1);
+        let current = self.layout.line_of(self.cursor).map_or(0, |p| p.page);
+        self.print_dialog = Some(PrintDialog { printers: printers(), dest: 0, copies: 1, pages: 0, from: "1".into(), to: pages.to_string(), duplex: false, preview: current });
+        self.pop = None;
+    }
+
+    /// Grava o PDF (páginas de 0) no caminho.
+    fn write_pdf(&mut self, fonts: &mut cosmic_text::FontSystem, path: &std::path::Path, range: Option<(usize, usize)>) -> Result<(), String> {
+        let data = mide::richtext::pdf::write(&self.doc, &self.layout, &mut self.layouter, fonts, range);
+        mide::files::write_atomic(path, &data).map_err(|e| e.to_string())
+    }
+
+    /// Manda para a impressora pelo CUPS (`lp`), com um PDF temporário.
+    fn print(&mut self, fonts: &mut cosmic_text::FontSystem, printer: &str, copies: i64, range: Option<(usize, usize)>, duplex: bool) {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        let tmp = runtime.join(format!("mide-imprimir-{}.pdf", std::process::id()));
+        if let Err(err) = self.write_pdf(fonts, &tmp, range) {
+            self.message = Some(format!("Não foi possível preparar a impressão: {err}"));
+            return;
+        }
+        let mut cmd = std::process::Command::new("lp");
+        cmd.arg("-d").arg(printer).arg("-n").arg(copies.max(1).to_string());
+        if duplex {
+            cmd.args(["-o", "sides=two-sided-long-edge"]);
+        }
+        cmd.arg(&tmp).env("LC_ALL", "C");
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                tracing::info!("editor: impressão enviada para {printer}: {}", String::from_utf8_lossy(&out.stdout).trim());
+                self.message = Some(format!("Enviado para a impressora {printer}."));
+            }
+            Ok(out) => self.message = Some(format!("A impressora recusou: {}", String::from_utf8_lossy(&out.stderr).trim())),
+            Err(err) => self.message = Some(format!("Não foi possível imprimir (o CUPS está instalado?): {err}")),
+        }
+        let _ = std::fs::remove_file(&tmp);
     }
 
     fn open_page_dialog(&mut self) {
@@ -683,8 +759,10 @@ impl Rich {
             Some(false) => self.undo(false),
             None => {}
         }
-        if input.shortcut_shift("p") == Some(true) {
-            self.open_page_dialog();
+        match input.shortcut_shift("p") {
+            Some(true) => self.open_page_dialog(),
+            Some(false) => self.open_print_dialog(),
+            None => {}
         }
         if input.shortcut_shift(".") == Some(true) || input.shortcut_shift(">") == Some(true) {
             self.command("maior", ui);
@@ -861,7 +939,7 @@ impl Rich {
     pub fn view(&mut self, ui: &mut Ui, top: f32) {
         let (w, h) = ui.window_size();
         let area = (0.0, top + FORMAT_H, w, (h - top - FORMAT_H - STATUS_H).max(10.0));
-        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some();
+        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
         }
@@ -881,6 +959,29 @@ impl Rich {
             self.anchor = self.doc.clamp(self.anchor);
         }
         let _ = relaid;
+        // PDF e impressão pedidos (precisam das fontes do sistema).
+        if self.pdf_request.is_some() || self.print_job.is_some() {
+            let pdf = self.pdf_request.take();
+            let job = self.print_job.take();
+            let mut result = None;
+            ui.paint_text(|_, text, _| {
+                if let Some((path, range)) = &pdf {
+                    result = Some((path.clone(), self.write_pdf(text.font_system(), path, *range)));
+                }
+                if let Some((printer, copies, range, duplex)) = &job {
+                    self.print(text.font_system(), printer, *copies, *range, *duplex);
+                }
+            });
+            if let Some((path, r)) = result {
+                self.message = Some(match r {
+                    Ok(()) => {
+                        tracing::info!("editor: PDF salvo em {}", path.display());
+                        format!("PDF salvo: {}", path.display())
+                    }
+                    Err(err) => format!("Não foi possível salvar o PDF: {err}"),
+                });
+            }
+        }
         if std::mem::take(&mut self.reveal) {
             if let Some(placed) = self.layout.line_of(self.cursor).copied() {
                 let line = &self.layout.paras[self.cursor.para].lines[placed.line];
@@ -1263,6 +1364,9 @@ impl Rich {
                 tracing::info!("editor: página {:.1}x{:.1} cm", to_cm(page.width), to_cm(page.height));
             }
         }
+        if self.print_dialog.is_some() {
+            self.print_dialog_view(ui);
+        }
         if let Some(d) = self.abnt_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
             ui.modal(460.0, |ui| {
@@ -1289,6 +1393,120 @@ impl Rich {
             } else if ok {
                 let d = self.abnt_dialog.take().expect("diálogo");
                 self.apply_abnt(d.font, d.numbers_from.trim().parse().unwrap_or(2));
+            }
+        }
+    }
+}
+
+impl Rich {
+    /// Diálogo de imprimir, como o do Mac: prévia da página à esquerda e as opções.
+    fn print_dialog_view(&mut self, ui: &mut Ui) {
+        let pages = self.layout.pages.max(1);
+        let Some(d) = self.print_dialog.as_mut() else {
+            return;
+        };
+        d.preview = d.preview.min(pages - 1);
+        let (mut ok, mut cancel, mut prev, mut next) = (false, false, false, false);
+        let mut dests = vec!["Salvar como PDF".to_string()];
+        dests.extend(d.printers.iter().cloned());
+        let mut thumb = (0.0, 0.0, 0.0, 0.0);
+        let (pw, ph) = (self.doc.page.width, self.doc.page.height);
+        ui.modal(600.0, |ui| {
+            ui.title("Imprimir");
+            let tw = 180.0;
+            let th = tw * ph / pw;
+            ui.columns(tw + 16.0, 16.0, |ui| {
+                // Prévia (a página é desenhada depois, no lugar reservado).
+                ui.custom(th + 6.0, |_, _| {});
+                thumb = ui.last_rect();
+                ui.row(|ui| {
+                    if ui.button_styled("‹", ButtonStyle::Plain).clicked() {
+                        prev = true;
+                    }
+                    ui.fixed_label(&format!("{} de {pages}", d.preview + 1), 70.0);
+                    if ui.button_styled("›", ButtonStyle::Plain).clicked() {
+                        next = true;
+                    }
+                });
+            }, |ui| {
+                ui.form_row("Destino", 80.0, |ui| {
+                    ui.dropdown("", &dests, &mut d.dest);
+                });
+                if d.printers.is_empty() {
+                    ui.note("Nenhuma impressora configurada: salve em PDF. Para adicionar uma impressora, use as configurações de impressoras do sistema.");
+                }
+                if d.dest > 0 {
+                    ui.form_row("Cópias", 80.0, |ui| {
+                        ui.stepper(&mut d.copies, 1, 999);
+                    });
+                }
+                ui.form_row("Páginas", 80.0, |ui| {
+                    ui.segmented(&["Todas", "Atual", "Intervalo"], &mut d.pages, None);
+                });
+                if d.pages == 2 {
+                    ui.form_row("De", 80.0, |ui| {
+                        ui.sized(64.0, |ui| {
+                            ui.text_input(&mut d.from, "1");
+                        });
+                        ui.fixed_label("até", 36.0);
+                        ui.sized(64.0, |ui| {
+                            ui.text_input(&mut d.to, &pages.to_string());
+                        });
+                    });
+                }
+                if d.dest > 0 {
+                    ui.switch("Frente e verso", &mut d.duplex);
+                }
+            });
+            ui.row(|ui| {
+                ui.push_right(110.0 + 130.0 + 8.0);
+                ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
+                ui.sized(130.0, |ui| ok = ui.primary_button(if d.dest == 0 { "Salvar PDF…" } else { "Imprimir" }).clicked());
+            });
+        });
+        if prev {
+            d.preview = d.preview.saturating_sub(1);
+        }
+        if next {
+            d.preview = (d.preview + 1).min(pages - 1);
+        }
+        // A prévia: a página no tamanho pequeno.
+        if thumb.2 > 0.0 {
+            let k = mide::ui::draw::scale();
+            let tw = 180.0;
+            let scale = tw / pw;
+            let (x, y) = (thumb.0 + 2.0, thumb.1 + 2.0);
+            let page = d.preview;
+            let doc = &self.doc;
+            let layout = &self.layout;
+            let layouter = &mut self.layouter;
+            ui.paint_text(|pixmap, text, _| {
+                mide::ui::draw::soft_shadow(pixmap, x, y, tw, ph * scale, 0.0, 6.0, 1.0, 50);
+                mide::ui::draw::paint_rounded_solid(pixmap, x, y, tw, ph * scale, 0.0, [255, 255, 255, 255]);
+                let view = render::View { page, origin: (x * k, y * k), scale: scale * k, selection: None, caret: None, selection_color: [0; 4], caret_color: [0; 4], visible: (y * k, (y + ph * scale) * k) };
+                render::draw_page(text, layouter, pixmap, doc, layout, &view);
+            });
+        }
+        if cancel || ui.input().key(Key::Escape) {
+            self.print_dialog = None;
+            return;
+        }
+        if ok {
+            let d = self.print_dialog.take().expect("diálogo");
+            let current = self.layout.line_of(self.cursor).map_or(0, |p| p.page);
+            let range = match d.pages {
+                1 => Some((current, current)),
+                2 => {
+                    let a = d.from.trim().parse::<usize>().unwrap_or(1).max(1) - 1;
+                    let b = d.to.trim().parse::<usize>().unwrap_or(pages).max(1) - 1;
+                    Some((a.min(b), a.max(b)))
+                }
+                _ => None,
+            };
+            if d.dest == 0 {
+                self.wants_pdf_path = Some(range);
+            } else {
+                self.print_job = Some((d.printers[d.dest - 1].clone(), d.copies, range, d.duplex));
             }
         }
     }
