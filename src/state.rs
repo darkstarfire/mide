@@ -240,6 +240,9 @@ pub struct State {
     pub appearing: Vec<(WlSurface, Instant)>,
     /// Cursor pedido pelo app sob o ponteiro (desenhado pelo mide no DRM).
     pub cursor_status: smithay::input::pointer::CursorImageStatus,
+    /// Ícone de um arrasto entre apps (o app que arrasta manda a superfície) e o
+    /// deslocamento dele em relação ao ponteiro.
+    pub dnd_icon: Option<(WlSurface, smithay::utils::Point<i32, smithay::utils::Logical>)>,
     /// Sessão do backend DRM (trocar de console com Ctrl+Alt+F1…F12).
     pub session: Option<smithay::backend::session::libseat::LibSeatSession>,
     /// Gravação de atalho em andamento (tela Teclado das Configurações).
@@ -408,6 +411,7 @@ impl State {
             input_waker: None,
             shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
+            dnd_icon: None,
             session: None,
             shortcut_capture: None,
             test_ctrl: false,
@@ -575,6 +579,18 @@ impl CompositorHandler for State {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
+        // Ícone do arrasto: o deslocamento do `attach` move o ícone em relação ao ponteiro.
+        if let Some((icon, offset)) = &mut self.dnd_icon {
+            if icon == surface {
+                let delta = smithay::wayland::compositor::with_states(surface, |s| {
+                    s.cached_state.get::<smithay::wayland::compositor::SurfaceAttributes>().current().buffer_delta.take()
+                });
+                if let Some(delta) = delta {
+                    *offset += delta;
+                }
+                self.redraw = true;
+            }
+        }
         if self.config.effects.animations {
             if let Some(window) = self.window_for(surface) {
                 self.commits.insert(window_id(&window), Instant::now());
@@ -947,7 +963,26 @@ impl DataDeviceHandler for State {
     }
 }
 
-impl ClientDndGrabHandler for State {}
+impl ClientDndGrabHandler for State {
+    /// Arrasto entre apps começou: guarda o ícone para desenhar junto do ponteiro.
+    fn started(&mut self, _: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>, icon: Option<WlSurface>, _: smithay::input::Seat<Self>) {
+        tracing::info!("arrasto entre apps começou (ícone: {})", icon.is_some());
+        // O app já mandou a imagem do ícone (com o deslocamento) antes de começar.
+        self.dnd_icon = icon.map(|s| {
+            let delta = smithay::wayland::compositor::with_states(&s, |st| {
+                st.cached_state.get::<smithay::wayland::compositor::SurfaceAttributes>().current().buffer_delta.take()
+            });
+            (s, delta.unwrap_or_default())
+        });
+        self.redraw = true;
+    }
+
+    fn dropped(&mut self, _: Option<WlSurface>, validated: bool, _: smithay::input::Seat<Self>) {
+        tracing::info!("arrasto entre apps terminou (aceito: {validated})");
+        self.dnd_icon = None;
+        self.redraw = true;
+    }
+}
 impl ServerDndGrabHandler for State {}
 
 delegate_data_device!(State);

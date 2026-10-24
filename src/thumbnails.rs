@@ -270,9 +270,19 @@ fn system_thumbnail(path: &Path, meta: &std::fs::Metadata, size: u32) -> Option<
     }
 }
 
+/// Endereço `file://` de um caminho (bytes fora do ASCII seguro em `%XX`).
+pub fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    format!("file://{}", encode_bytes(path.as_os_str().as_bytes()))
+}
+
 fn encode_uri(path: &str) -> String {
+    encode_bytes(path.as_bytes())
+}
+
+fn encode_bytes(path: &[u8]) -> String {
     let mut out = String::new();
-    for b in path.bytes() {
+    for &b in path {
         if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
             out.push(b as char);
         } else {

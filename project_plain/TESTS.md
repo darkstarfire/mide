@@ -939,3 +939,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh instalar` (22 verificações): `HOME` e `XDG_CACHE_HOME` da seção; pasta da extração no cache, 0700, sem sobras.
 - Também rodadas: `vidro`, `area-de-trabalho`, `launcher`, `25-arquivos-visualizacao`, `26-arquivos-servico`: tudo passando.
 - Manual (sessão): pendrive exFAT com um `.desktop` e um programa: o atalho aparece com o nome do arquivo e pergunta; o programa pergunta "num pendrive ou em outro disco"; segurar Enter no diálogo de um AppImage baixado não abre nada.
+
+## Arrastar arquivos entre apps (B26, 2026-10-24)
+- `tests/ui.sh arrastar` (seção 33): duas janelas do Arquivos; arrastar o `nota.txt` para fora da janela de cima começa o arrasto entre apps com ícone, e soltar na janela de baixo copia o arquivo (o original fica). Quadro conferido a olho: ícone centrado no ponteiro, na frente das janelas.
+- `cargo test` (369 + 54...), com o teste novo de `parse_uri_list` (espaços em `%20`, comentários, endereços que não são `file://`).
+- Falta na sessão de verdade: soltar no WhatsApp Web/Telegram (Chrome e Firefox no Wayland) e receber do Nautilus/navegador.

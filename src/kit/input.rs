@@ -71,6 +71,14 @@ pub struct Input {
     pub focused: bool,
     /// Alguma tecla deste quadro veio da repetição de uma tecla segurada.
     pub repeat: bool,
+    /// Um arrasto com arquivos (de outro app ou desta janela) está sobre a janela; o
+    /// ponteiro dele fica em `pointer`.
+    pub drop_hover: bool,
+    /// Arquivos soltos na janela neste quadro (caminhos), onde o ponteiro está.
+    pub dropped: Option<Vec<std::path::PathBuf>>,
+    /// O arrasto que esta janela começou terminou neste quadro (solto em algum lugar
+    /// ou cancelado).
+    pub drag_ended: bool,
 }
 
 impl Input {
@@ -89,6 +97,8 @@ impl Input {
         self.menu.clear();
         self.paste = None;
         self.repeat = false;
+        self.dropped = None;
+        self.drag_ended = false;
     }
 
     /// Teclas deste quadro com o Ctrl e o Shift de quando cada uma foi apertada.
@@ -122,5 +132,46 @@ impl Input {
     /// O ponteiro está dentro do retângulo (x, y, largura, altura)?
     pub fn over(&self, rect: (f32, f32, f32, f32)) -> bool {
         self.pointer.is_some_and(|(px, py)| px >= rect.0 && px <= rect.0 + rect.2 && py >= rect.1 && py <= rect.1 + rect.3)
+    }
+}
+
+/// Caminhos de uma lista `text/uri-list` (só `file://`; comentários e outros
+/// endereços ficam de fora), com os `%XX` decodificados.
+pub fn parse_uri_list(text: &str) -> Vec<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.strip_prefix("file://"))
+        .map(|rest| rest.find('/').map_or("", |i| &rest[i..]))
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let b = p.as_bytes();
+            let mut out = Vec::with_capacity(b.len());
+            let mut i = 0;
+            while i < b.len() {
+                // `%XX` (pelos bytes: o texto pode ter acentos logo depois do `%`).
+                let hex = (b[i] == b'%' && i + 2 < b.len())
+                    .then(|| std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+                    .flatten();
+                if let Some(v) = hex {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+                out.push(b[i]);
+                i += 1;
+            }
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(out))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lista_de_enderecos() {
+        let paths = super::parse_uri_list("# comentário\r\nfile:///home/a/Meu%20Arquivo.txt\r\nhttps://x.com/\r\nfile://host/tmp/b\n");
+        assert_eq!(paths, vec![std::path::PathBuf::from("/home/a/Meu Arquivo.txt"), std::path::PathBuf::from("/tmp/b")]);
     }
 }

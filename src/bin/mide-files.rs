@@ -117,6 +117,9 @@ struct Files {
     /// pouco, vira um arrasto com os itens escolhidos.
     press: Option<(PathBuf, (f32, f32))>,
     drag: Option<Vec<PathBuf>>,
+    /// Arrasto que saiu da janela (para outro app, um site ou de volta para cá): os
+    /// itens, até o compositor avisar que acabou.
+    drag_out: Option<Vec<PathBuf>>,
     /// Arquivo do "Abrir com…" (a lista dos apps aparece por cima).
     open_with: Option<PathBuf>,
     /// Compactar e extrair rodam numa thread: o resultado chega aqui.
@@ -189,6 +192,7 @@ impl Files {
             }),
             press: None,
             drag: None,
+            drag_out: None,
             open_with: None,
             jobs_tx,
             jobs_rx,
@@ -703,6 +707,38 @@ impl Files {
 
     /// Miniatura de um arquivo no tamanho `size`, pedindo o carregamento na primeira
     /// vez (enquanto não chega, o ícone do tipo fica no lugar).
+    /// Imagem que segue o ponteiro num arrasto para fora: a miniatura (ou o ícone) do
+    /// primeiro item e, com vários, a contagem num selo.
+    fn drag_icon(&mut self, paths: &[PathBuf]) -> Option<Pixmap> {
+        const SIZE: u32 = 72;
+        let first = paths.first()?;
+        let entry = self.entries.iter().find(|e| &e.path == first).cloned();
+        let base = self
+            .thumbs
+            .iter()
+            .find(|((p, _), img)| p == first && img.is_some())
+            .and_then(|(_, img)| img.clone())
+            .or_else(|| {
+                let name = entry.as_ref().map(|e| e.icon_name()).unwrap_or(if first.is_dir() { "folder" } else { "text-x-generic" });
+                mide::icons::load_icon(name, 64)
+            })?;
+        let mut canvas = Pixmap::new(SIZE, SIZE)?;
+        let scale = (60.0 / base.width().max(base.height()) as f32).min(1.0);
+        let (w, h) = (base.width() as f32 * scale, base.height() as f32 * scale);
+        let paint = tiny_skia::PixmapPaint { opacity: 0.85, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate((SIZE as f32 - w) / 2.0, (SIZE as f32 - h) / 2.0);
+        canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tf, None);
+        if paths.len() > 1 {
+            let label = paths.len().to_string();
+            let mut text = mide::ui::text::Text::new();
+            let tw = text.measure(&label, 12.0, mide::ui::text::FontWeight::Semibold).max(8.0) + 12.0;
+            let x = SIZE as f32 - tw - 1.0;
+            mide::ui::draw::fill_rounded(&mut canvas, x, 1.0, tw, 20.0, 10.0, tiny_skia::Color::from_rgba8(255, 59, 48, 255));
+            text.draw(&mut canvas, &label, x + 6.0, 3.5, 12.0, mide::ui::text::FontWeight::Semibold, [255, 255, 255, 255]);
+        }
+        Some(canvas)
+    }
+
     fn thumb(&mut self, path: &Path, size: u32) -> Option<&Pixmap> {
         let key = (path.to_path_buf(), size);
         if !self.thumbs.contains_key(&key) && self.waiting.insert(key.clone()) {
@@ -1210,7 +1246,8 @@ impl Files {
         let clipboard = !self.clipboard.is_empty();
         let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
         let (pressed, pointer) = (ui.input().pressed, ui.input().pointer);
-        let dragging = self.drag.clone();
+        // Arrasto de dentro ou chegando de outro app (arquivos sobre a janela).
+        let dragging = self.drag.clone().or_else(|| ui.input().drop_hover.then(|| self.drag_out.clone().unwrap_or_default()));
         let mut press = None;
         let mut drop_target: Option<PathBuf> = None;
         let in_trash = self.place == Place::Trash;
@@ -1643,6 +1680,37 @@ impl Files {
                 tracing::info!("arrastando {} item(ns)", self.selection.len());
                 self.drag = Some(self.selection.clone());
             }
+        }
+        // Arrastando para fora da janela: vira um arrasto entre apps (outro app, um site
+        // no navegador, a área de trabalho), com os arquivos como `text/uri-list`.
+        let (win_w, win_h) = ui.window_size();
+        let outside = pointer.is_none_or(|(x, y)| x < 0.0 || y < 0.0 || x >= win_w || y >= win_h);
+        if down && outside && self.drag.is_some() {
+            if let Some(paths) = self.drag.take() {
+                tracing::info!("arrastando {} item(ns) para fora da janela", paths.len());
+                let icon = self.drag_icon(&paths);
+                ui.start_drag(&paths, icon);
+                self.drag_out = Some(paths);
+                self.press = None;
+            }
+        }
+        if ui.input().drag_ended {
+            self.drag_out = None;
+        }
+        // Arquivos soltos na janela: numa pasta da lista ou na pasta aberta. Do próprio
+        // Arquivos, move (com Ctrl, copia), como dentro da janela; de outro app, copia.
+        if let Some(paths) = ui.input().dropped.clone() {
+            let own = self.drag_out.as_ref().is_some_and(|out| *out == paths);
+            let dir = drop_target.clone().or_else(|| match &self.place {
+                Place::Dir(dir) => Some(dir.clone()),
+                _ => None,
+            });
+            match dir {
+                Some(dir) if own && paths.iter().all(|p| p.parent() == Some(dir.as_path())) => {}
+                Some(dir) => self.drop_into(&paths, &dir, !own || ctrl_now),
+                None => self.message = Some("Solte os arquivos numa pasta.".into()),
+            }
+            ui.request_repaint();
         }
         if self.drag.is_some() {
             ui.request_repaint();

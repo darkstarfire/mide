@@ -8,7 +8,7 @@ use smithay_client_toolkit::{
     data_device_manager::{
         data_device::{DataDevice, DataDeviceHandler},
         data_offer::{DataOfferHandler, DragOffer},
-        data_source::{CopyPasteSource, DataSourceHandler},
+        data_source::{CopyPasteSource, DataSourceHandler, DragSource},
         DataDeviceManagerState, WritePipe,
     },
     delegate_registry,
@@ -332,6 +332,8 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         data_device: None,
         copied: None,
         serial: 0,
+        press_serial: 0,
+        drag: None,
         qh: qh.clone(),
         loop_handle: event_loop.handle(),
         registry_state: RegistryState::new(&globals),
@@ -429,6 +431,7 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         if runner.dirty && runner.configured {
             runner.frame();
             runner.clipboard();
+            runner.start_drag();
         }
     }
     // O desbloqueio (e o resto) precisa chegar ao compositor antes de sair.
@@ -476,6 +479,11 @@ struct Runner {
     data_device: Option<DataDevice>,
     copied: Option<(CopyPasteSource, String)>,
     serial: u32,
+    /// Serial do último clique do botão esquerdo (o arrasto entre apps começa com ele).
+    press_serial: u32,
+    /// Arrasto que esta janela começou: a origem, os endereços e o ícone (superfície e
+    /// a imagem, que precisa viver até o fim).
+    drag: Option<(DragSource, Vec<String>, Option<(wl_surface::WlSurface, smithay_client_toolkit::shm::slot::Buffer)>)>,
     qh: QueueHandle<Runner>,
     loop_handle: LoopHandle<'static, Runner>,
     registry_state: RegistryState,
@@ -1218,6 +1226,7 @@ impl PointerHandler for Runner {
                 }
                 PointerEventKind::Press { button, serial, .. } if button == BTN_LEFT => {
                     self.serial = serial;
+                    self.press_serial = serial;
                     input.pointer = Some(pos);
                     input.pressed = true;
                     input.down = true;
@@ -1386,12 +1395,134 @@ impl Runner {
     }
 }
 
+/// Tipos oferecidos num arrasto de arquivos: a lista de endereços (o padrão) e o
+/// mesmo texto para quem só aceita texto.
+const DRAG_MIMES: [&str; 2] = ["text/uri-list", "text/plain;charset=utf-8"];
+
+impl Runner {
+    /// Começa o arrasto pedido pelo app (`Ui::start_drag`) com o serial do clique.
+    fn start_drag(&mut self) {
+        let Some((uris, icon)) = self.ctx.drag_out.take() else {
+            return;
+        };
+        let (Some(manager), Some(device)) = (&self.data_devices, &self.data_device) else {
+            return;
+        };
+        let source = manager.create_drag_and_drop_source(&self.qh, DRAG_MIMES, DndAction::Copy);
+        let icon = icon.and_then(|pixmap| {
+            let (w, h) = (pixmap.width(), pixmap.height());
+            let (buffer, canvas) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888).ok()?;
+            to_argb8888(&pixmap, canvas);
+            let surface = self.compositor.create_surface(&self.qh);
+            use smithay_client_toolkit::reexports::client::Proxy;
+            // Ícone centrado no ponteiro (antes da versão 5, pelo próprio `attach`).
+            let (dx, dy) = (-(w as i32) / 2, -(h as i32) / 2);
+            if surface.version() >= 5 {
+                buffer.attach_to(&surface).ok()?;
+                surface.offset(dx, dy);
+            } else {
+                surface.attach(Some(buffer.wl_buffer()), dx, dy);
+            }
+            surface.damage_buffer(0, 0, w as i32, h as i32);
+            surface.commit();
+            Some((surface, buffer))
+        });
+        source.start_drag(device, self.shell.wl_surface(), icon.as_ref().map(|(s, _)| s), self.press_serial);
+        tracing::debug!("arrasto entre apps: {} item(ns)", uris.len());
+        // O compositor fica com o ponteiro até soltar: para o app, o botão foi solto.
+        self.ctx.input.down = false;
+        self.drag = Some((source, uris, icon));
+    }
+
+    fn end_drag(&mut self, source: &WlDataSource) {
+        if self.drag.as_ref().is_some_and(|(d, _, _)| d.inner() == source) {
+            if let Some((_, _, Some((surface, _)))) = self.drag.take() {
+                surface.destroy();
+            }
+            self.ctx.input.drag_ended = true;
+            self.dirty = true;
+        }
+    }
+
+    /// Posição de um arrasto sobre a janela, nas coordenadas do app.
+    fn drag_position(&mut self, x: f64, y: f64) {
+        self.ctx.input.pointer = Some((x as f32, y as f32));
+        self.dirty = true;
+    }
+}
+
 impl DataDeviceHandler for Runner {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64, _: &wl_surface::WlSurface) {}
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
-    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64) {}
+    /// Um arrasto entrou na janela: aceita se trouxer arquivos.
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, device: &WlDataDevice, x: f64, y: f64, _: &wl_surface::WlSurface) {
+        let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == device).and_then(|d| d.data().drag_offer()) else {
+            return;
+        };
+        let files = offer.with_mime_types(|m| m.iter().any(|t| t == "text/uri-list"));
+        if files {
+            offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+            offer.set_actions(DndAction::Copy | DndAction::Move, DndAction::Copy);
+            self.ctx.input.drop_hover = true;
+        } else {
+            offer.accept_mime_type(offer.serial, None);
+        }
+        self.drag_position(x, y);
+    }
+
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {
+        self.ctx.input.drop_hover = false;
+        self.ctx.input.pointer = None;
+        self.dirty = true;
+    }
+
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, x: f64, y: f64) {
+        self.drag_position(x, y);
+    }
+
     fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
-    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+
+    /// Arquivos soltos na janela: lê a lista (do próprio app, direto) e entrega ao app.
+    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, device: &WlDataDevice) {
+        self.ctx.input.drop_hover = false;
+        let Some(offer) = self.data_device.as_ref().filter(|d| d.inner() == device).and_then(|d| d.data().drag_offer()) else {
+            return;
+        };
+        self.drag_position(offer.x, offer.y);
+        if let Some((_, uris, _)) = &self.drag {
+            self.ctx.input.dropped = Some(super::input::parse_uri_list(&uris.join("\n")));
+            offer.finish();
+            offer.destroy();
+            return;
+        }
+        let Ok(pipe) = offer.receive("text/uri-list".into()) else {
+            offer.destroy();
+            return;
+        };
+        let mut bytes = Vec::new();
+        let _ = self.loop_handle.insert_source(pipe, move |_, file, runner| {
+            use std::io::Read;
+            let mut chunk = [0u8; 4096];
+            loop {
+                // SAFETY: o arquivo não é fechado aqui (o calloop é dono dele).
+                match unsafe { file.get_mut() }.read(&mut chunk) {
+                    Ok(0) => {
+                        let paths = super::input::parse_uri_list(&String::from_utf8_lossy(&bytes));
+                        tracing::debug!("arrasto entre apps: {} arquivo(s) recebido(s)", paths.len());
+                        runner.ctx.input.dropped = Some(paths);
+                        runner.dirty = true;
+                        offer.finish();
+                        offer.destroy();
+                        return PostAction::Remove;
+                    }
+                    Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return PostAction::Continue,
+                    Err(_) => {
+                        offer.destroy();
+                        return PostAction::Remove;
+                    }
+                }
+            }
+        });
+    }
 }
 
 impl DataOfferHandler for Runner {
@@ -1405,6 +1536,15 @@ impl DataSourceHandler for Runner {
     /// Outro app (ou este) quer o texto copiado: escreve no canal que ele mandou.
     fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource, _: String, mut fd: WritePipe) {
         use std::io::Write;
+        // Arrasto: a lista de endereços, uma por linha (CRLF, como pede o padrão).
+        if let Some((drag, uris, _)) = &self.drag {
+            if drag.inner() == source {
+                let mut text = uris.join("\r\n");
+                text.push_str("\r\n");
+                let _ = fd.write_all(text.as_bytes());
+                return;
+            }
+        }
         if let Some((copied, text)) = &self.copied {
             if copied.inner() == source {
                 tracing::debug!("área de transferência: entregando o texto copiado");
@@ -1415,13 +1555,16 @@ impl DataSourceHandler for Runner {
 
     /// Outro app copiou algo: o texto deste deixa de ser o da área de transferência.
     fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource) {
+        self.end_drag(source);
         if self.copied.as_ref().is_some_and(|(copied, _)| copied.inner() == source) {
             self.copied = None;
         }
     }
 
     fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
-    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource) {
+        self.end_drag(source);
+    }
     fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
 }
 

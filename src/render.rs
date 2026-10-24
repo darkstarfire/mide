@@ -157,6 +157,11 @@ impl Scene {
             Some(cursors) if !capturing && *draw_cursor => cursors.elements(renderer, state, origin),
             _ => Vec::new(),
         };
+        // Ícone de um arrasto entre apps, logo atrás do cursor.
+        if let Some((icon, offset)) = state.dnd_icon.as_ref().filter(|_| !capturing) {
+            let at = crate::clip::phys(state.pointer_location.to_i32_round::<i32>() - origin + *offset);
+            custom.extend(render_elements_from_surface_tree(renderer, icon, at, crate::clip::scale(), 1.0, Kind::Unspecified));
+        }
         // Tela apagada (no DRM o monitor desliga; aqui, preto).
         if state.blanked {
             state.screencopy.fail_outputs(|o| o == output);
@@ -982,6 +987,9 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
     // Tela de bloqueio desta saída.
     if let Some(surface) = state.lock.surface_for(output) {
         send_frames_surface_tree(surface.wl_surface(), output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
+    }
+    if let Some((icon, _)) = &state.dnd_icon {
+        send_frames_surface_tree(icon, output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
     }
     // Cursor pedido por um app (desenhado pelo mide no DRM): também pode ser animado.
     if let smithay::input::pointer::CursorImageStatus::Surface(surface) = &state.cursor_status {

@@ -1446,3 +1446,9 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Rodapé do Finder:** barra de caminho clicável (Computador › … › item) e barra de status com itens, escolhidos e espaço livre.
 - **mide-ui:** `path_bar`, `status_bar`, `mini_slider`, `image_centered`, `page_sized`, `scroll_area_padded` e `take_scroll`.
 - **Regra forte no CONTEXT.md:** o visual de referência é o macOS Tahoe.
+
+## Arrastar arquivos entre apps (B26, 2026-10-24)
+- **Arquivos → outros apps:** arrastar itens para fora da janela vira um arrasto do Wayland com a lista de arquivos (`text/uri-list`): soltar num site no navegador (WhatsApp Web, Telegram Web), no Telegram, no Nautilus ou em outra janela do Arquivos entrega os arquivos (cópia). O ícone que segue o ponteiro é a miniatura do primeiro item, com um selo vermelho com a contagem quando são vários.
+- **Outros apps → Arquivos:** arquivos soltos na janela vão para a pasta sob o ponteiro (destacada) ou para a pasta aberta; de outro app, copia; voltando do próprio Arquivos, move (com Ctrl, copia).
+- **mide-ui:** `ui.start_drag(caminhos, ícone)`, `input().drop_hover`, `input().dropped` e `input().drag_ended`, valendo para qualquer app; `mide::kit::parse_uri_list` e `mide::thumbnails::file_uri`.
+- **Compositor:** desenha o ícone do arrasto junto do ponteiro (com o deslocamento pedido pelo app), na frente de tudo e fora das capturas de tela.

@@ -410,6 +410,9 @@ pub struct Ctx {
     pub clipboard_out: Option<String>,
     /// Ctrl+V num campo: a janela lê a área de transferência e entrega em `input.paste`.
     pub paste_requested: bool,
+    /// Arrasto para fora pedido pelo app (`Ui::start_drag`): endereços `file://` e o
+    /// ícone que segue o ponteiro.
+    pub drag_out: Option<(Vec<String>, Option<Pixmap>)>,
     /// Acorda a janela de outra thread (`Ui::waker`).
     pub waker: Option<super::app::Waker>,
     /// Área que recebe cliques neste quadro (`Ui::input_area`; `None`: a superfície toda).
@@ -479,6 +482,7 @@ impl Ctx {
             layer: false,
             clipboard_out: None,
             paste_requested: false,
+            drag_out: None,
             waker: None,
             input_region: None,
             hide_request: None,
@@ -1527,6 +1531,15 @@ impl<'a> Ui<'a> {
     /// Põe o texto na área de transferência.
     pub fn copy(&mut self, text: &str) {
         self.ctx.clipboard_out = Some(text.to_string());
+    }
+
+    /// Começa um arrasto entre apps (só com o botão segurado): os arquivos vão como
+    /// `text/uri-list` para quem receber (outro app, um site no navegador ou esta mesma
+    /// janela, que recebe em `input().dropped`). O `icon` segue o ponteiro, centrado.
+    /// Enquanto o arrasto dura, o ponteiro é do compositor: o botão é dado como solto.
+    pub fn start_drag(&mut self, paths: &[std::path::PathBuf], icon: Option<Pixmap>) {
+        let uris = paths.iter().map(|p| crate::thumbnails::file_uri(p)).collect();
+        self.ctx.drag_out = Some((uris, icon));
     }
 
     /// Pede o texto da área de transferência: chega num dos próximos quadros em
