@@ -53,6 +53,7 @@ const STYLES: [&str; 8] = ["Corpo", "Título", "Título 1", "Título 2", "Títul
 enum Pop {
     Styles,
     Fonts,
+    FontFace,
     Size,
     Color,
     Highlight,
@@ -75,7 +76,96 @@ struct Snapshot {
 /// Altura da barra de busca.
 const FIND_H: f32 = 44.0;
 /// Altura da régua.
-const RULER_H: f32 = 24.0;
+const RULER_H: f32 = 34.0;
+
+/// Parte do seletor de cor sendo arrastada.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum WheelDrag {
+    Wheel,
+    Value,
+}
+
+/// Diâmetro da roda de cores e altura da barra de brilho (pontos).
+const WHEEL: f32 = 148.0;
+const VALUE_H: f32 = 18.0;
+
+/// Desenha a roda (matiz pelo ângulo, saturação pelo raio, no brilho `v`) em `rect`.
+fn paint_wheel(pixmap: &mut tiny_skia::Pixmap, rect: (f32, f32, f32, f32), hsv: [f32; 3]) {
+    let k = mide::ui::draw::scale();
+    let (cx, cy, r) = (rect.0 + rect.2 / 2.0, rect.1 + rect.3 / 2.0, rect.2.min(rect.3) / 2.0);
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    let (x0, x1) = (((cx - r) * k).floor().max(0.0) as i32, (((cx + r) * k).ceil() as i32).min(w));
+    let (y0, y1) = (((cy - r) * k).floor().max(0.0) as i32, (((cy + r) * k).ceil() as i32).min(h));
+    let data = pixmap.data_mut();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (px, py) = ((x as f32 + 0.5) / k, (y as f32 + 0.5) / k);
+            let (hue, sat) = wheel_hit(cx, cy, r, px, py);
+            let dist = (px - cx).hypot(py - cy);
+            // Borda suave de 1 pixel.
+            let cover = ((r - dist) * k + 0.5).clamp(0.0, 1.0);
+            if cover <= 0.0 {
+                continue;
+            }
+            let [cr, cg, cb] = hsv_to_rgb([hue, sat, hsv[2]]);
+            let i = ((y * w + x) * 4) as usize;
+            let a = (cover * 255.0).round() as u32;
+            data[i] = (cr as u32 * a / 255) as u8;
+            data[i + 1] = (cg as u32 * a / 255) as u8;
+            data[i + 2] = (cb as u32 * a / 255) as u8;
+            data[i + 3] = a as u8;
+        }
+    }
+    // Contorno fino e a alça na cor escolhida.
+    if let Some(path) = mide::ui::draw::rounded_rect(cx - r + 0.5, cy - r + 0.5, 2.0 * r - 1.0, 2.0 * r - 1.0, r) {
+        let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+        paint.set_color(tiny_skia::Color::from_rgba8(0, 0, 0, 40));
+        pixmap.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, mide::ui::draw::tf(), None);
+    }
+    let (hx, hy) = wheel_point(cx, cy, r, hsv[0], hsv[1]);
+    let [cr, cg, cb] = hsv_to_rgb(hsv);
+    mide::ui::draw::paint_rounded_solid(pixmap, hx - 8.0, hy - 8.0, 16.0, 16.0, 8.0, [0, 0, 0, 70]);
+    mide::ui::draw::paint_rounded_solid(pixmap, hx - 7.0, hy - 7.0, 14.0, 14.0, 7.0, [255, 255, 255, 255]);
+    mide::ui::draw::paint_rounded_solid(pixmap, hx - 5.0, hy - 5.0, 10.0, 10.0, 5.0, [cr, cg, cb, 255]);
+}
+
+/// Desenha a barra de brilho (do preto à cor cheia) com a alça.
+fn paint_value_bar(pixmap: &mut tiny_skia::Pixmap, rect: (f32, f32, f32, f32), hsv: [f32; 3]) {
+    let k = mide::ui::draw::scale();
+    let full = hsv_to_rgb([hsv[0], hsv[1], 1.0]);
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    let (x0, x1) = ((rect.0 * k).round() as i32, (((rect.0 + rect.2) * k).round() as i32).min(w));
+    let (y0, y1) = ((rect.1 * k).round() as i32, (((rect.1 + rect.3) * k).round() as i32).min(h));
+    let radius = rect.3 / 2.0;
+    let data = pixmap.data_mut();
+    for y in y0.max(0)..y1 {
+        for x in x0.max(0)..x1 {
+            let t = ((x - x0) as f32 / (x1 - x0).max(1) as f32).clamp(0.0, 1.0);
+            // As pontas redondas: some o que passa do semicírculo.
+            let (px, py) = ((x as f32 + 0.5) / k - rect.0, (y as f32 + 0.5) / k - rect.1);
+            let inside = if px < radius {
+                (px - radius).hypot(py - radius) <= radius
+            } else if px > rect.2 - radius {
+                (px - (rect.2 - radius)).hypot(py - radius) <= radius
+            } else {
+                true
+            };
+            if !inside {
+                continue;
+            }
+            let i = ((y * w + x) * 4) as usize;
+            for (n, c) in full.iter().enumerate() {
+                data[i + n] = (*c as f32 * t).round() as u8;
+            }
+            data[i + 3] = 255;
+        }
+    }
+    let kx = rect.0 + radius + hsv[2] * (rect.2 - 2.0 * radius);
+    mide::ui::draw::paint_rounded_solid(pixmap, kx - 9.0, rect.1 - 1.0, 18.0, rect.3 + 2.0, 9.0, [0, 0, 0, 60]);
+    mide::ui::draw::paint_rounded_solid(pixmap, kx - 8.0, rect.1, 16.0, rect.3, 8.0, [255, 255, 255, 255]);
+    let [cr, cg, cb] = hsv_to_rgb(hsv);
+    mide::ui::draw::paint_rounded_solid(pixmap, kx - 5.0, rect.1 + 3.0, 10.0, rect.3 - 6.0, 5.0, [cr, cg, cb, 255]);
+}
 
 /// Marcador da régua sendo arrastado.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,6 +173,7 @@ enum RulerDrag {
     First,
     Left,
     Right,
+    Tab(f32),
 }
 
 /// Buscar e substituir.
@@ -105,6 +196,15 @@ struct PageDialog {
     numbers: bool,
     position: usize,
     from: String,
+}
+
+struct ImageDialog {
+    para: usize,
+    width: String,
+    height: String,
+    ratio: f32,
+    keep_ratio: bool,
+    focus: bool,
 }
 
 /// Imprimir: destino (0 = Salvar como PDF; os outros, as impressoras), cópias, páginas
@@ -197,8 +297,14 @@ pub struct Rich {
     pop: Option<Pop>,
     pop_anchor: (f32, f32, f32, f32),
     font_query: String,
+    /// Texto do campo "Cor personalizada" dos popovers de cor.
+    custom_color: String,
+    /// Cor escolhida na roda (matiz, saturação, brilho) e o que está sendo arrastado.
+    hsv: [f32; 3],
+    wheel_drag: Option<WheelDrag>,
     families: Vec<String>,
     page_dialog: Option<PageDialog>,
+    image_dialog: Option<ImageDialog>,
     print_dialog: Option<PrintDialog>,
     note_dialog: Option<NoteDialog>,
     table_dialog: Option<TableDialog>,
@@ -245,6 +351,27 @@ fn same_style_name(a: &str, b: &str) -> bool {
     a == b || (a.is_empty() && b == "Corpo")
 }
 
+fn font_face_label(style: &CharStyle) -> &'static str {
+    match (style.bold, style.italic) {
+        (false, false) => "Regular",
+        (true, false) => "Bold",
+        (false, true) => "Italic",
+        (true, true) => "Bold Italic",
+    }
+}
+
+fn set_tab_stop(stops: &mut Vec<f32>, old: Option<f32>, new: Option<f32>) {
+    if let Some(old) = old
+        && let Some(i) = stops.iter().position(|stop| (*stop - old).abs() < 1.0) {
+            stops.remove(i);
+        }
+    if let Some(new) = new.filter(|stop| stop.is_finite() && *stop > 0.0) {
+        stops.push(new);
+    }
+    stops.sort_by(f32::total_cmp);
+    stops.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+}
+
 impl Rich {
     pub fn new(doc: Doc) -> Self {
         Self {
@@ -269,8 +396,12 @@ impl Rich {
             pop: None,
             pop_anchor: (0.0, 0.0, 0.0, 0.0),
             font_query: String::new(),
+            custom_color: String::new(),
+            hsv: [0.0, 0.0, 1.0],
+            wheel_drag: None,
             families: Vec::new(),
             page_dialog: None,
+            image_dialog: None,
             print_dialog: None,
             note_dialog: None,
             table_dialog: None,
@@ -621,11 +752,10 @@ impl Rich {
             }
             Some(o) => {
                 let mut doc = o.doc.clone();
-                if let Some(t) = doc.paras.get_mut(o.table).and_then(|p| p.table.as_mut()) {
-                    if let Some(cell) = t.rows.get_mut(o.row).and_then(|r| r.get_mut(o.col)) {
+                if let Some(t) = doc.paras.get_mut(o.table).and_then(|p| p.table.as_mut())
+                    && let Some(cell) = t.rows.get_mut(o.row).and_then(|r| r.get_mut(o.col)) {
                         cell.doc = self.doc.clone();
                     }
-                }
                 let full = self.layouter.layout(fonts, &doc);
                 self.layout = full.paras.get(o.table).and_then(|b| b.table.as_ref()).and_then(|tb| tb.rows.get(o.row)).and_then(|r| r.get(o.col)).map(|c| c.layout.clone()).unwrap_or_default();
                 self.full = Some((doc, full));
@@ -898,8 +1028,8 @@ impl Rich {
             });
             self.speller_rx = Some(rx);
         }
-        if let Some(rx) = &self.speller_rx {
-            if let Ok(s) = rx.try_recv() {
+        if let Some(rx) = &self.speller_rx
+            && let Ok(s) = rx.try_recv() {
                 if let Some(s) = &s {
                     tracing::info!("editor: dicionário de ortografia {}", s.language);
                 }
@@ -907,7 +1037,6 @@ impl Rich {
                 self.speller_rx = None;
                 self.spell_version = u64::MAX;
             }
-        }
         if self.speller.is_none() {
             self.misspelled.clear();
             return;
@@ -1047,25 +1176,47 @@ impl Rich {
         let first_x = origin + (ps.left_indent + ps.first_indent) * z;
         let left_x = origin + ps.left_indent * z;
         let right_x = origin + (width - ps.right_indent) * z;
+        let tab_stops = ps.tab_stops.clone();
         // Arrastar os marcadores.
         let input = ui.input().clone();
-        if !blocked {
-            if let Some(p) = input.pointer {
+        if !blocked
+            && let Some(p) = input.pointer {
                 let inside = p.1 >= y && p.1 <= y + RULER_H;
                 if input.pressed && inside {
                     let near = |x: f32| (p.0 - x).abs() <= 6.0;
-                    self.ruler_drag = if near(first_x) && p.1 < y + RULER_H / 2.0 {
+                    let upper = p.1 < y + RULER_H / 2.0;
+                    let tab = tab_stops.iter().copied().find(|stop| near(origin + stop * z));
+                    self.ruler_drag = if near(first_x) && upper {
                         Some(RulerDrag::First)
+                    } else if near(right_x) && upper {
+                        Some(RulerDrag::Right)
                     } else if near(left_x) {
                         Some(RulerDrag::Left)
-                    } else if near(right_x) {
-                        Some(RulerDrag::Right)
                     } else if near(first_x) {
                         Some(RulerDrag::First)
+                    } else if near(right_x) {
+                        Some(RulerDrag::Right)
+                    } else if let Some(tab) = tab {
+                        Some(RulerDrag::Tab(tab))
+                    } else if (origin..=origin + width * z).contains(&p.0) {
+                        let step = mide::richtext::cm(0.25);
+                        let at = (((p.0 - origin) / z) / step).round() * step;
+                        if at > 0.0 && at < width {
+                            self.begin(None);
+                            let (a, b) = self.range();
+                            self.doc.apply_para(a, b, |s| set_tab_stop(&mut s.tab_stops, None, Some(at)));
+                            self.stale = true;
+                            self.version += 1;
+                            Some(RulerDrag::Tab(at))
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     };
-                    if self.ruler_drag.is_some() {
+                    if self.ruler_drag.is_some() && tab.is_some() {
+                        self.begin(None);
+                    } else if matches!(self.ruler_drag, Some(RulerDrag::First | RulerDrag::Left | RulerDrag::Right)) {
                         self.begin(None);
                     }
                 }
@@ -1086,6 +1237,11 @@ impl Rich {
                             });
                         }
                         RulerDrag::Right => doc.apply_para(a, b, |s| s.right_indent = (width - at).clamp(0.0, width - s.left_indent - 36.0)),
+                        RulerDrag::Tab(old) => {
+                            let target = if p.1 < y || p.1 > y + RULER_H || at <= 0.0 || at >= width { None } else { Some(at) };
+                            doc.apply_para(a, b, |s| set_tab_stop(&mut s.tab_stops, Some(old), target));
+                            self.ruler_drag = target.map(RulerDrag::Tab);
+                        }
                     }
                     self.stale = true;
                     self.version += 1;
@@ -1095,14 +1251,15 @@ impl Rich {
                     self.ruler_drag = None;
                 }
             }
-        }
         let accent = theme.accent;
         let bg = theme.background;
+        let ink = if theme.dark { [190, 190, 196, 255] } else { [70, 70, 76, 255] };
+        let defaults = default_tab_stops(width, ps.right_indent, tab_stops.last().copied().unwrap_or(0.0));
         ui.paint_text(|pixmap, text, _| {
             mide::ui::draw::paint_rounded_solid(pixmap, 0.0, y, w, RULER_H, 0.0, [bg[0], bg[1], bg[2], 255]);
             // A faixa do texto em branco; as margens em cinza.
             let page_left = origin - page.margins[3] * z;
-            let band_y = y + 5.0;
+            let band_y = y + 9.0;
             mide::ui::draw::paint_rounded_solid(pixmap, page_left, band_y, page.width * z, 14.0, 2.0, [222, 222, 226, 255]);
             mide::ui::draw::paint_rounded_solid(pixmap, origin, band_y, width * z, 14.0, 0.0, [255, 255, 255, 255]);
             // Marcas a cada 0,5 cm e números a cada centímetro.
@@ -1113,9 +1270,25 @@ impl Rich {
                 let th = if whole { 5.0 } else { 3.0 };
                 mide::ui::draw::paint_rounded_solid(pixmap, x, band_y + 14.0 - th, 0.8, th, 0.0, [120, 120, 126, 255]);
                 if whole && c > 0.0 {
-                    text.draw(pixmap, &format!("{c:.0}"), x - 3.0, band_y + 0.5, 8.5, mide::ui::text::FontWeight::Regular, [110, 110, 118, 255]);
+                    text.draw(pixmap, &format!("{c:.0}"), x - 3.0, band_y + 0.5, 9.5, mide::ui::text::FontWeight::Regular, [90, 90, 98, 255]);
                 }
                 c += 0.5;
+            }
+            // Triangulo deitado (parada de tabulação), com a ponta para a direita.
+            let tab_tri = |pixmap: &mut tiny_skia::Pixmap, x: f32, rgba: [u8; 4]| {
+                let mut pb = tiny_skia::PathBuilder::new();
+                pb.move_to(x - 3.0, y + RULER_H - 11.0);
+                pb.line_to(x - 3.0, y + RULER_H - 3.0);
+                pb.line_to(x + 4.0, y + RULER_H - 7.0);
+                pb.close();
+                if let Some(path) = pb.finish() {
+                    let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+                    paint.set_color(tiny_skia::Color::from_rgba8(rgba[0], rgba[1], rgba[2], rgba[3]));
+                    pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, mide::ui::draw::tf(), None);
+                }
+            };
+            for stop in &defaults {
+                tab_tri(pixmap, origin + stop * z, ink);
             }
             // Marcadores: primeira linha (em cima), recuo esquerdo e direito (embaixo).
             let tri = |pixmap: &mut tiny_skia::Pixmap, x: f32, down: bool| {
@@ -1139,7 +1312,10 @@ impl Rich {
             };
             tri(pixmap, first_x, true);
             tri(pixmap, left_x, false);
-            tri(pixmap, right_x, false);
+            tri(pixmap, right_x, true);
+            for stop in &tab_stops {
+                tab_tri(pixmap, origin + stop * z, [accent[0], accent[1], accent[2], 255]);
+            }
         });
     }
 
@@ -1355,6 +1531,7 @@ impl Rich {
                     },
                     MenuItem::Separator,
                     MenuItem::action("inserir-imagem", "Inserir imagem…"),
+                    MenuItem::action("imagem-tamanho", "Tamanho da imagem…").enabled(self.doc.paras.get(self.cursor.para).is_some_and(|p| p.image.is_some())),
                     MenuItem::action("quebra-pagina", "Inserir quebra de página").shortcut("Ctrl+Enter"),
                     MenuItem::action("link", "Adicionar link…").shortcut("Ctrl+K"),
                     MenuItem::action("nota", "Inserir nota de rodapé…").shortcut("Ctrl+Alt+F"),
@@ -1439,6 +1616,7 @@ impl Rich {
             "lista-numeros" => self.para_style(|p| p.list = Some(ListKind::Number)),
             "lista-letras" => self.para_style(|p| p.list = Some(ListKind::Letter)),
             "inserir-imagem" => self.wants_image = true,
+            "imagem-tamanho" => self.open_image_dialog(),
             "quebra-pagina" => self.page_break(),
             "configurar-pagina" => {
                 self.leave_cell();
@@ -1565,6 +1743,20 @@ impl Rich {
         });
     }
 
+    fn open_image_dialog(&mut self) {
+        let Some(image) = self.doc.paras.get(self.cursor.para).and_then(|p| p.image.as_ref()) else {
+            return;
+        };
+        self.image_dialog = Some(ImageDialog {
+            para: self.cursor.para,
+            width: format!("{:.2}", to_cm(image.width)).replace('.', ","),
+            height: format!("{:.2}", to_cm(image.height)).replace('.', ","),
+            ratio: image.height / image.width,
+            keep_ratio: true,
+            focus: true,
+        });
+    }
+
     /// Aplica as normas ABNT (NBR 14724) ao documento todo.
     fn apply_abnt(&mut self, font: usize, from: usize) {
         self.begin(None);
@@ -1660,10 +1852,7 @@ impl Rich {
                 self.apply_named(name);
             }
         }
-        match input.shortcut_shift("g") {
-            Some(back) => self.find_next(back),
-            None => {}
-        }
+        if let Some(back) = input.shortcut_shift("g") { self.find_next(back) }
         match input.shortcut_shift("p") {
             Some(true) => self.open_page_dialog(),
             Some(false) => self.open_print_dialog(),
@@ -1818,7 +2007,7 @@ impl Rich {
             return;
         };
         let inside = p.0 >= area.0 && p.0 <= area.0 + area.2 && p.1 >= area.1 && p.1 <= area.1 + area.3;
-        if inside && input.scroll != 0.0 {
+        if inside && input.scroll != 0.0 && self.pop.is_none() {
             let s = ui.take_scroll();
             if input.ctrl {
                 self.zoom_by(if s < 0.0 { 1.1 } else { 1.0 / 1.1 });
@@ -1863,13 +2052,12 @@ impl Rich {
             self.last_kind = None;
             self.blink = now;
             // Ctrl+clique num link: abre no navegador.
-            if input.ctrl && count == 1 {
-                if let Some(url) = self.doc.paras.get(pos.para).and_then(|p| p.runs().find(|(a, b, st)| st.link.is_some() && pos.off >= *a && pos.off <= *b).and_then(|(_, _, st)| st.link.clone())) {
+            if input.ctrl && count == 1
+                && let Some(url) = self.doc.paras.get(pos.para).and_then(|p| p.runs().find(|(a, b, st)| st.link.is_some() && pos.off >= *a && pos.off <= *b).and_then(|(_, _, st)| st.link.clone())) {
                     tracing::info!("editor: abrindo o link {url}");
                     let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
                     return;
                 }
-            }
             match count {
                 // Duplo clique no número de uma nota: edita a nota.
                 2 if self.doc.note_near(pos).is_some() => {
@@ -1928,7 +2116,7 @@ impl Rich {
         let find_h = if self.find.is_some() { FIND_H } else { 0.0 };
         let ruler_h = if self.ruler { RULER_H } else { 0.0 };
         let area = (0.0, top + FORMAT_H + find_h + ruler_h, w, (h - top - FORMAT_H - find_h - ruler_h - STATUS_H).max(10.0));
-        let blocked = ui.menu_open().is_some() || self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
+        let blocked = ui.menu_open().is_some() || self.pop.is_some() || self.page_dialog.is_some() || self.image_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         if !blocked && self.pop.is_none() && !ui.typing() {
             self.keys(ui);
         }
@@ -2014,7 +2202,7 @@ impl Rich {
         let k = mide::ui::draw::scale();
         let (pw, ph) = (self.page_doc().page.width * self.z(), self.page_doc().page.height * self.z());
         let px = self.page_x(area);
-        let blink_on = (Instant::now().duration_since(self.blink).as_millis() / 530) % 2 == 0;
+        let blink_on = (Instant::now().duration_since(self.blink).as_millis() / 530).is_multiple_of(2);
         let focused = ui.input().focused && !ui.typing();
         let caret_on = focused && blink_on && !blocked;
         // Numa célula, o cursor e a seleção são desenhados dentro dela.
@@ -2035,6 +2223,13 @@ impl Rich {
         let layouter = &mut self.layouter;
         let accent = theme.accent;
         ui.paint_text(|pixmap, text, _| {
+            // As páginas rolam por baixo das barras: o que sai da área do documento volta como estava.
+            let stride = pixmap.width() as usize * 4;
+            let rows = pixmap.height() as usize;
+            let top_px = ((area.1 * k).round() as usize).min(rows);
+            let bottom_px = (((area.1 + area.3) * k).round() as usize).clamp(top_px, rows);
+            let saved_top = pixmap.data()[..top_px * stride].to_vec();
+            let saved_bottom = pixmap.data()[bottom_px * stride..].to_vec();
             mide::ui::draw::paint_rounded_solid(pixmap, area.0, area.1, area.2, area.3, 0.0, bg);
             for (i, t) in &tops {
                 mide::ui::draw::soft_shadow(pixmap, px, *t, pw, ph, 0.0, 10.0, 2.0, 40);
@@ -2062,6 +2257,8 @@ impl Rich {
                 mide::ui::draw::paint_rounded_solid(pixmap, area.0 + area.2 - 10.0, ty, 6.0, thumb, 3.0, [128, 128, 132, 150]);
             }
             let _ = accent;
+            pixmap.data_mut()[..top_px * stride].copy_from_slice(&saved_top);
+            pixmap.data_mut()[bottom_px * stride..].copy_from_slice(&saved_bottom);
         });
         // Cursor piscando.
         if focused && !blocked {
@@ -2089,7 +2286,7 @@ impl Rich {
         });
         // O menu de contexto é desenhado a cada quadro enquanto está aberto (só os
         // diálogos o impedem).
-        let dialog = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
+        let dialog = self.page_dialog.is_some() || self.image_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         if !dialog {
             self.context_menu(ui, area);
         }
@@ -2109,40 +2306,57 @@ impl Rich {
         let mut pop: Option<(Pop, (f32, f32, f32, f32))> = None;
         let mut action: Option<&str> = None;
         let open = self.pop;
+        let (show_face, style_w, family_w, size_w) = bar_widths(w);
         ui.at(12.0, top + 4.0, w - 24.0, |ui| {
             ui.row(|ui| {
                 // Estilo de parágrafo (¶) e fonte.
                 let style_name = if ps.name.is_empty() { "Corpo".to_string() } else { ps.name.clone() };
-                ui.sized(118.0, |ui| {
+                ui.sized(style_w, |ui| {
                     if ui.button_styled(&format!("¶ {style_name}"), ButtonStyle::Bordered).clicked() {
                         pop = Some((Pop::Styles, ui.last_rect()));
                     }
                 });
-                ui.sized(170.0, |ui| {
+                ui.sized(family_w, |ui| {
                     if ui.button_styled(&format!("{}  ⌄", st.family), ButtonStyle::Bordered).clicked() {
                         pop = Some((Pop::Fonts, ui.last_rect()));
                     }
                 });
-                ui.sized(64.0, |ui| {
+                if show_face {
+                    ui.sized(112.0, |ui| {
+                        if ui.button_styled(&format!("{}  ⌄", font_face_label(&st)), ButtonStyle::Bordered).clicked() {
+                            pop = Some((Pop::FontFace, ui.last_rect()));
+                        }
+                    });
+                }
+                ui.sized(size_w, |ui| {
                     let size = if st.size.fract() == 0.0 { format!("{:.0}", st.size) } else { format!("{:.1}", st.size) };
                     if ui.button_styled(&format!("{size} ⌄"), ButtonStyle::Bordered).clicked() {
                         pop = Some((Pop::Size, ui.last_rect()));
                     }
                 });
-                // Cor do texto e realce.
-                match ui.toolbar_buttons(&[("", "A", open == Some(Pop::Color), true), ("", "▌", open == Some(Pop::Highlight), true)]) {
+                // Cor do texto e realce: os ícones são desenhados aqui, sem o texto de reserva.
+                match ui.toolbar_buttons(&[("", " ", open == Some(Pop::Color), true), ("", " ", open == Some(Pop::Highlight), true)]) {
                     Some(0) => pop = Some((Pop::Color, seg(ui.last_rect(), 0))),
                     Some(1) => pop = Some((Pop::Highlight, seg(ui.last_rect(), 1))),
                     _ => {}
                 }
                 let colors = ui.last_rect();
                 let (tc, hc) = (st.color, st.highlight);
-                ui.paint(|pixmap, _| {
+                let ink = theme.text;
+                ui.paint_text(|pixmap, text, _| {
                     let a = seg(colors, 0);
-                    mide::ui::draw::paint_rounded_solid(pixmap, a.0 + 11.0, a.1 + a.3 - 11.0, 18.0, 4.0, 2.0, [tc[0], tc[1], tc[2], 255]);
+                    text.draw(pixmap, "A", a.0 + 14.0, a.1 + 5.0, 17.0, mide::ui::text::FontWeight::Semibold, [ink[0], ink[1], ink[2], 255]);
+                    mide::ui::draw::paint_rounded_solid(pixmap, a.0 + 11.0, a.1 + a.3 - 10.0, 18.0, 4.0, 2.0, [tc[0], tc[1], tc[2], 255]);
                     let b = seg(colors, 1);
-                    let c = hc.unwrap_or([200, 200, 204]);
-                    mide::ui::draw::paint_rounded_solid(pixmap, b.0 + 11.0, b.1 + 9.0, 18.0, b.3 - 18.0, 4.0, [c[0], c[1], c[2], if hc.is_some() { 255 } else { 90 }]);
+                    let (bx, by) = (b.0 + 11.0, b.1 + 8.0);
+                    match hc {
+                        Some(c) => mide::ui::draw::paint_rounded_solid(pixmap, bx, by, 18.0, 18.0, 5.0, [c[0], c[1], c[2], 255]),
+                        None => {
+                            mide::ui::draw::paint_rounded_solid(pixmap, bx, by, 18.0, 18.0, 5.0, [ink[0], ink[1], ink[2], 70]);
+                            mide::ui::draw::paint_rounded_solid(pixmap, bx + 1.5, by + 1.5, 15.0, 15.0, 3.5, [255, 255, 255, 255]);
+                        }
+                    }
+                    text.draw(pixmap, "a", bx + 5.0, by + 0.5, 14.0, mide::ui::text::FontWeight::Semibold, [ink[0], ink[1], ink[2], 255]);
                 });
                 match ui.toolbar_buttons(&[
                     ("", "B", st.bold, true),
@@ -2183,6 +2397,12 @@ impl Rich {
         if let Some((p, anchor)) = pop {
             self.pop = if self.pop == Some(p) { None } else { Some(p) };
             self.pop_anchor = anchor;
+            if matches!(p, Pop::Color | Pop::Highlight) {
+                let now = if p == Pop::Color { Some(st.color) } else { st.highlight };
+                self.custom_color = now.map(hex_color).unwrap_or_default();
+                self.hsv = now.map_or([0.0, 0.0, 1.0], rgb_to_hsv);
+                self.wheel_drag = None;
+            }
             if p == Pop::Fonts && self.families.is_empty() {
                 ui.paint_text(|_, text, _| self.families = text.families());
             }
@@ -2199,6 +2419,7 @@ impl Rich {
         let mut open = true;
         let mut chosen_style: Option<&str> = None;
         let mut chosen_font: Option<String> = None;
+        let mut chosen_face: Option<(bool, bool)> = None;
         let mut chosen_size: Option<f32> = None;
         let mut chosen_color: Option<[u8; 3]> = None;
         let mut chosen_highlight: Option<Option<[u8; 3]>> = None;
@@ -2209,12 +2430,20 @@ impl Rich {
         let ps = self.current_para();
         let width = match pop {
             Pop::Fonts => 280.0,
+            Pop::FontFace => 150.0,
             Pop::Color | Pop::Highlight => 236.0,
             Pop::Size => 110.0,
             _ => 220.0,
         };
         let families = &self.families;
         let query = &mut self.font_query;
+        let custom = &mut self.custom_color;
+        let hsv = &mut self.hsv;
+        let drag = &mut self.wheel_drag;
+        let (win_w, win_h) = ui.window_size();
+        let show_wheel = win_h - (self.pop_anchor.1 + self.pop_anchor.3) >= 470.0;
+        let above_list = if pop == Pop::Fonts { 44.0 + if win_w < 1000.0 { 190.0 } else { 0.0 } } else { 0.0 };
+        let list_h = popover_list_height(win_h, self.pop_anchor.1 + self.pop_anchor.3, above_list);
         ui.popover(&mut open, self.pop_anchor, width, |ui| match pop {
             Pop::Styles => {
                 for name in STYLES {
@@ -2225,10 +2454,20 @@ impl Rich {
                 }
             }
             Pop::Fonts => {
+                if ui.window_size().0 < 1000.0 {
+                    ui.heading("Face");
+                    for (bold, italic, label) in [(false, false, "Regular"), (true, false, "Bold"), (false, true, "Italic"), (true, true, "Bold Italic")] {
+                        let mark = if (cur.bold, cur.italic) == (bold, italic) { "✓ " } else { "   " };
+                        if ui.button_styled(&format!("{mark}{label}"), ButtonStyle::Plain).clicked() {
+                            chosen_face = Some((bold, italic));
+                        }
+                    }
+                    ui.separator();
+                }
                 ui.search_field(query, "Buscar fonte");
                 let q = query.to_lowercase();
                 let list: Vec<&String> = families.iter().filter(|f| q.is_empty() || f.to_lowercase().contains(&q)).take(400).collect();
-                ui.scroll_area(300.0, |ui| {
+                ui.scroll_area(list_h, |ui| {
                     for f in list {
                         let label = if *f == cur.family { format!("✓  {f}") } else { format!("    {f}") };
                         if ui.button_styled(&label, ButtonStyle::Plain).clicked() {
@@ -2237,8 +2476,16 @@ impl Rich {
                     }
                 });
             }
+            Pop::FontFace => {
+                for (bold, italic, label) in [(false, false, "Regular"), (true, false, "Bold"), (false, true, "Italic"), (true, true, "Bold Italic")] {
+                    let mark = if (cur.bold, cur.italic) == (bold, italic) { "✓ " } else { "   " };
+                    if ui.button_styled(&format!("{mark}{label}"), ButtonStyle::Plain).clicked() {
+                        chosen_face = Some((bold, italic));
+                    }
+                }
+            }
             Pop::Size => {
-                ui.scroll_area(300.0, |ui| {
+                ui.scroll_area(list_h, |ui| {
                     for s in SIZES {
                         let label = if s == cur.size { format!("✓ {s:.0}") } else { format!("   {s:.0}") };
                         if ui.button_styled(&label, ButtonStyle::Plain).clicked() {
@@ -2267,6 +2514,74 @@ impl Rich {
                 if pop == Pop::Highlight && ui.button_styled("Sem realce", ButtonStyle::Plain).clicked() {
                     chosen_highlight = Some(None);
                 }
+                ui.separator();
+                ui.heading("Cor personalizada");
+                // O texto digitado (válido e diferente do que a roda mostra) move a roda.
+                let typed = parse_hex_color(custom);
+                if drag.is_none() && typed.is_some_and(|c| c != hsv_to_rgb(*hsv)) {
+                    *hsv = rgb_to_hsv(typed.unwrap_or_default());
+                }
+                if show_wheel {
+                    let pointer = ui.pointer();
+                    let held = ui.input().down;
+                    let pressed = ui.input().pressed;
+                    let mut wheel_rect = (0.0, 0.0, 0.0, 0.0);
+                    ui.custom(WHEEL + 6.0, |_, rect| {
+                        wheel_rect = ((rect.0 + (rect.2 - WHEEL) / 2.0).round(), rect.1 + 3.0, WHEEL, WHEEL);
+                    });
+                    ui.space(2.0);
+                    let mut bar_rect = (0.0, 0.0, 0.0, 0.0);
+                    ui.custom(VALUE_H + 2.0, |_, rect| {
+                        bar_rect = (rect.0 + 4.0, rect.1 + 1.0, rect.2 - 8.0, VALUE_H);
+                    });
+                    let inside = |r: (f32, f32, f32, f32), p: (f32, f32)| p.0 >= r.0 - 6.0 && p.0 <= r.0 + r.2 + 6.0 && p.1 >= r.1 - 6.0 && p.1 <= r.1 + r.3 + 6.0;
+                    if pressed && let Some(p) = pointer {
+                        *drag = if inside(wheel_rect, p) { Some(WheelDrag::Wheel) } else if inside(bar_rect, p) { Some(WheelDrag::Value) } else { None };
+                        // Preto puro esconde a roda: ao escolher um matiz o brilho sobe ao máximo.
+                        if *drag == Some(WheelDrag::Wheel) && hsv[2] < 0.05 {
+                            hsv[2] = 1.0;
+                        }
+                    }
+                    if !held {
+                        *drag = None;
+                    }
+                    if let (Some(d), Some(p)) = (*drag, pointer) {
+                        match d {
+                            WheelDrag::Wheel => {
+                                let (h, s) = wheel_hit(wheel_rect.0 + WHEEL / 2.0, wheel_rect.1 + WHEEL / 2.0, WHEEL / 2.0, p.0, p.1);
+                                (hsv[0], hsv[1]) = (h, s);
+                            }
+                            WheelDrag::Value => {
+                                let r = VALUE_H / 2.0;
+                                hsv[2] = ((p.0 - bar_rect.0 - r) / (bar_rect.2 - 2.0 * r)).clamp(0.0, 1.0);
+                            }
+                        }
+                        *custom = hex_color(hsv_to_rgb(*hsv));
+                    }
+                    let state = *hsv;
+                    ui.paint(|pixmap, _| {
+                        paint_wheel(pixmap, wheel_rect, state);
+                        paint_value_bar(pixmap, bar_rect, state);
+                    });
+                }
+                let shown = parse_hex_color(custom);
+                ui.row(|ui| {
+                    ui.sized(96.0, |ui| {
+                        ui.text_input(custom, "#RRGGBB");
+                    });
+                    let sw = shown.unwrap_or([200, 200, 204]);
+                    ui.tag_toggle([sw[0], sw[1], sw[2], if shown.is_some() { 255 } else { 90 }], false);
+                    ui.sized(76.0, |ui| {
+                        if ui.button_styled("Aplicar", ButtonStyle::Prominent).clicked()
+                            && let Some(c) = shown {
+                                if pop == Pop::Color {
+                                    chosen_color = Some(c);
+                                } else {
+                                    chosen_highlight = Some(Some(c));
+                                }
+                            }
+                    });
+                });
             }
             Pop::Spacing => {
                 ui.heading("Entrelinha");
@@ -2301,6 +2616,11 @@ impl Rich {
             self.apply_named(name);
         } else if let Some(f) = chosen_font {
             self.char_style(|s| s.family = f.clone());
+        } else if let Some((bold, italic)) = chosen_face {
+            self.char_style(|s| {
+                s.bold = bold;
+                s.italic = italic;
+            });
         } else if let Some(sz) = chosen_size {
             self.char_style(|s| s.size = sz);
         } else if let Some(c) = chosen_color {
@@ -2323,10 +2643,10 @@ impl Rich {
     }
 
     fn dialogs(&mut self, ui: &mut Ui) {
-        let had = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
+        let had = self.page_dialog.is_some() || self.image_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         self.dialogs_inner(ui);
         // Diálogo fechado: o teclado volta para o texto (o campo dele sumiu).
-        let has = self.page_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
+        let has = self.page_dialog.is_some() || self.image_dialog.is_some() || self.abnt_dialog.is_some() || self.print_dialog.is_some() || self.note_dialog.is_some() || self.table_dialog.is_some() || self.link_dialog.is_some();
         if had && !has {
             ui.blur();
         }
@@ -2407,6 +2727,58 @@ impl Rich {
                 page.numbers.position = [NumberPosition::TopRight, NumberPosition::BottomCenter, NumberPosition::BottomRight][d.position.min(2)];
                 page.numbers.show_from = d.from.trim().parse().unwrap_or(1).max(1);
                 tracing::info!("editor: página {:.1}x{:.1} cm", to_cm(page.width), to_cm(page.height));
+            }
+        }
+        if let Some(d) = self.image_dialog.as_mut() {
+            let (mut ok, mut cancel) = (false, false);
+            ui.modal(400.0, |ui| {
+                ui.title("Tamanho da imagem");
+                ui.switch("Manter proporção", &mut d.keep_ratio);
+                if std::mem::take(&mut d.focus) {
+                    ui.focus_next_input();
+                }
+                ui.form_row("Largura (cm)", 100.0, |ui| {
+                    ui.text_input(&mut d.width, "10,0");
+                });
+                if d.keep_ratio {
+                    let height = d.width.trim().replace(',', ".").parse::<f32>().ok().filter(|w| w.is_finite() && *w > 0.0).map(|w| format!("{:.2} cm", w * d.ratio)).unwrap_or_else(|| "—".into());
+                    ui.form_row("Altura", 100.0, |ui| ui.fixed_label(&height, 100.0));
+                } else {
+                    ui.form_row("Altura (cm)", 100.0, |ui| {
+                        ui.text_input(&mut d.height, "10,0");
+                    });
+                }
+                ui.row(|ui| {
+                    ui.push_right(2.0 * 110.0 + 8.0);
+                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
+                    ui.sized(110.0, |ui| ok = ui.primary_button("Aplicar").clicked());
+                });
+            });
+            if cancel || ui.input().key(Key::Escape) {
+                self.image_dialog = None;
+            } else if ok || ui.input().key(Key::Enter) {
+                let d = self.image_dialog.take().expect("diálogo");
+                let parse_cm = |s: &str| s.trim().replace(',', ".").parse::<f32>().ok().filter(|v| v.is_finite() && (0.1..=1000.0).contains(v)).map(cm);
+                let width = parse_cm(&d.width);
+                let height = if d.keep_ratio { width.map(|w| w * d.ratio) } else { parse_cm(&d.height) };
+                match (width, height, self.doc.paras.get(d.para).and_then(|p| p.image.as_ref())) {
+                    (Some(width), Some(height), Some(_)) if height.is_finite() && height > 0.0 => {
+                        self.begin(None);
+                        if let Some(image) = self.doc.paras.get_mut(d.para).and_then(|p| p.image.as_mut()) {
+                            if d.keep_ratio {
+                                image.resize_to_width(width);
+                            } else {
+                                image.width = width;
+                                image.height = height;
+                            }
+                        }
+                        tracing::info!("editor: imagem redimensionada para {:.2} x {:.2} cm", to_cm(width), to_cm(height));
+                    }
+                    _ => {
+                        self.message = Some("Informe dimensões válidas entre 0,1 e 1000 cm.".into());
+                        self.image_dialog = Some(d);
+                    }
+                }
             }
         }
         if self.print_dialog.is_some() {
@@ -2695,13 +3067,202 @@ fn seg(group: (f32, f32, f32, f32), i: usize) -> (f32, f32, f32, f32) {
     (group.0 + 2.0 + i as f32 * 40.0, group.1, 40.0, group.3)
 }
 
+/// Altura da lista rolável de um popover: o que cabe abaixo do botão na janela, entre 80 e 300.
+fn popover_list_height(window_h: f32, anchor_bottom: f32, fixed: f32) -> f32 {
+    (window_h - anchor_bottom - 8.0 - 20.0 - 12.0 - fixed).clamp(80.0, 300.0)
+}
+
+/// Larguras da barra de formatação pela largura da janela: (face visível, estilo, família, tamanho).
+fn bar_widths(w: f32) -> (bool, f32, f32, f32) {
+    let room = w - 24.0;
+    let fixed = 84.0 + 164.0 + 164.0 + 124.0;
+    if room >= fixed + 118.0 + 170.0 + 112.0 + 64.0 + 80.0 {
+        (true, 118.0, 170.0, 64.0)
+    } else if room >= fixed + 118.0 + 170.0 + 64.0 + 70.0 {
+        (false, 118.0, 170.0, 64.0)
+    } else {
+        (false, 96.0, 120.0, 56.0)
+    }
+}
+
+/// Paradas padrão que a régua mostra: depois da última personalizada e do recuo, antes do recuo direito.
+fn default_tab_stops(width: f32, right_indent: f32, after: f32) -> Vec<f32> {
+    let step = mide::richtext::layout::TAB_STOP;
+    (1..).map(|k| k as f32 * step).take_while(|p| *p < width - right_indent).filter(|p| *p > after).collect()
+}
+
+/// `#rrggbb`, `rrggbb` ou `#rgb`.
+fn parse_hex_color(s: &str) -> Option<[u8; 3]> {
+    let s = s.trim().trim_start_matches('#');
+    if !s.is_ascii() {
+        return None;
+    }
+    let full = match s.len() {
+        3 => s.chars().flat_map(|c| [c, c]).collect::<String>(),
+        6 => s.to_string(),
+        _ => return None,
+    };
+    let v = u32::from_str_radix(&full, 16).ok()?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
+}
+
+fn hex_color(c: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
+}
+
+/// HSV (matiz em graus, saturação e brilho de 0 a 1) para RGB.
+fn hsv_to_rgb([h, s, v]: [f32; 3]) -> [u8; 3] {
+    let h = h.rem_euclid(360.0) / 60.0;
+    let (s, v) = (s.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+    let c = v * s;
+    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    [r, g, b].map(|p| ((p + m) * 255.0).round().clamp(0.0, 255.0) as u8)
+}
+
+fn rgb_to_hsv(c: [u8; 3]) -> [f32; 3] {
+    let [r, g, b] = c.map(|p| p as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let d = max - r.min(g).min(b);
+    let h = if d == 0.0 {
+        0.0
+    } else if max == r {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    [h, if max == 0.0 { 0.0 } else { d / max }, max]
+}
+
+/// Matiz e saturação do ponto `(px, py)` na roda de centro `(cx, cy)` e raio `r`: o ângulo
+/// (0° à direita, crescendo no sentido horário) é o matiz e a distância, a saturação.
+fn wheel_hit(cx: f32, cy: f32, r: f32, px: f32, py: f32) -> (f32, f32) {
+    let (dx, dy) = (px - cx, py - cy);
+    (dy.atan2(dx).to_degrees().rem_euclid(360.0), (dx.hypot(dy) / r).clamp(0.0, 1.0))
+}
+
+/// O ponto da roda para um matiz e uma saturação (o inverso de `wheel_hit`).
+fn wheel_point(cx: f32, cy: f32, r: f32, hue: f32, sat: f32) -> (f32, f32) {
+    let a = hue.to_radians();
+    (cx + a.cos() * sat * r, cy + a.sin() * sat * r)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
 
     fn relayout(r: &mut Rich, fs: &mut cosmic_text::FontSystem) {
         r.layout = r.layouter.layout(fs, &r.doc);
         r.stale = false;
+    }
+
+    #[test]
+    fn roda_de_cores_converte_e_aponta() {
+        assert_eq!(hsv_to_rgb([0.0, 1.0, 1.0]), [255, 0, 0]);
+        assert_eq!(hsv_to_rgb([120.0, 1.0, 1.0]), [0, 255, 0]);
+        assert_eq!(hsv_to_rgb([240.0, 1.0, 1.0]), [0, 0, 255]);
+        assert_eq!(hsv_to_rgb([0.0, 0.0, 1.0]), [255, 255, 255]);
+        assert_eq!(hsv_to_rgb([200.0, 0.7, 0.0]), [0, 0, 0]);
+        // Ida e volta por cores variadas: sai a mesma cor (até 1 de diferença por arredondamento).
+        for c in [[255, 136, 0], [12, 200, 90], [60, 60, 200], [128, 128, 128], [255, 255, 0], [3, 7, 11]] {
+            let back = hsv_to_rgb(rgb_to_hsv(c));
+            assert!(c.iter().zip(back).all(|(a, b)| (*a as i32 - b as i32).abs() <= 1), "{c:?} -> {back:?}");
+        }
+        // Direita = vermelho, embaixo = verde-azulado (90°, sentido horário), centro = branco.
+        let (h, s) = wheel_hit(50.0, 50.0, 40.0, 90.0, 50.0);
+        assert!(h.abs() < 0.01 && (s - 1.0).abs() < 0.01);
+        let (h, _) = wheel_hit(50.0, 50.0, 40.0, 50.0, 90.0);
+        assert!((h - 90.0).abs() < 0.01);
+        assert_eq!(wheel_hit(50.0, 50.0, 40.0, 50.0, 50.0).1, 0.0);
+        // Arrastar para fora da roda prende na borda.
+        assert_eq!(wheel_hit(50.0, 50.0, 40.0, 500.0, 50.0).1, 1.0);
+        // `wheel_point` desfaz `wheel_hit`.
+        let (x, y) = wheel_point(50.0, 50.0, 40.0, 200.0, 0.5);
+        let (h, s) = wheel_hit(50.0, 50.0, 40.0, x, y);
+        assert!((h - 200.0).abs() < 0.01 && (s - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn cor_hexadecimal_e_paradas_padrao_e_barra() {
+        assert_eq!(parse_hex_color("#FF8800"), Some([255, 136, 0]));
+        assert_eq!(parse_hex_color("ff8800"), Some([255, 136, 0]));
+        assert_eq!(parse_hex_color(" #f80 "), Some([255, 136, 0]));
+        assert_eq!(parse_hex_color("#12345"), None);
+        assert_eq!(parse_hex_color("xyzxyz"), None);
+        assert_eq!(hex_color([255, 136, 0]), "#FF8800");
+        assert_eq!(default_tab_stops(100.0, 0.0, 0.0), vec![36.0, 72.0]);
+        assert_eq!(default_tab_stops(100.0, 0.0, 40.0), vec![72.0]);
+        assert_eq!(default_tab_stops(100.0, 40.0, 0.0), vec![36.0]);
+        // Em qualquer largura a partir do mínimo da janela, a barra inteira cabe.
+        for w in [920.0, 1000.0, 1040.0, 1104.0, 1400.0] {
+            let (face, a, b, c) = bar_widths(w);
+            let total = a + b + c + if face { 112.0 } else { 0.0 } + 84.0 + 164.0 + 164.0 + 124.0 + 70.0;
+            assert!(total <= w - 24.0, "{w}: {total}");
+        }
+    }
+
+    #[test]
+    fn lista_do_popover_cabe_na_janela() {
+        assert_eq!(popover_list_height(660.0, 100.0, 0.0), 300.0);
+        assert_eq!(popover_list_height(300.0, 100.0, 0.0), 160.0);
+        assert_eq!(popover_list_height(300.0, 100.0, 44.0), 116.0);
+        assert_eq!(popover_list_height(200.0, 150.0, 0.0), 80.0);
+    }
+
+    #[test]
+    fn face_da_fonte_reflete_negrito_e_italico() {
+        let regular = CharStyle::default();
+        let bold = CharStyle { bold: true, ..regular.clone() };
+        let italic = CharStyle { italic: true, ..regular.clone() };
+        let bold_italic = CharStyle { bold: true, italic: true, ..regular };
+
+        assert_eq!(font_face_label(&CharStyle::default()), "Regular");
+        assert_eq!(font_face_label(&bold), "Bold");
+        assert_eq!(font_face_label(&italic), "Italic");
+        assert_eq!(font_face_label(&bold_italic), "Bold Italic");
+    }
+
+    #[test]
+    fn parada_de_tabulacao_pode_ser_criada_mover_e_removida() {
+        let mut stops = vec![mide::richtext::cm(2.0), mide::richtext::cm(4.0)];
+        set_tab_stop(&mut stops, Some(mide::richtext::cm(2.0)), Some(mide::richtext::cm(3.0)));
+        assert_eq!(stops, vec![mide::richtext::cm(3.0), mide::richtext::cm(4.0)]);
+        set_tab_stop(&mut stops, Some(mide::richtext::cm(3.0)), None);
+        assert_eq!(stops, vec![mide::richtext::cm(4.0)]);
+    }
+
+    #[test]
+    fn dialogo_de_imagem_carrega_tamanho_e_proporcao() {
+        let image = Image {
+            data: Rc::new(Vec::new()),
+            format: "png",
+            pixmap: Rc::new(tiny_skia::Pixmap::new(28, 14).unwrap()),
+            width: mide::richtext::cm(10.0),
+            height: mide::richtext::cm(5.0),
+        };
+        let mut doc = Doc::new();
+        doc.paras[0] = Paragraph::image(image, CharStyle::default(), ParaStyle::default());
+        let mut rich = Rich::new(doc);
+
+        rich.open_image_dialog();
+
+        let dialog = rich.image_dialog.expect("diálogo da imagem");
+        assert_eq!(dialog.width, "10,00");
+        assert_eq!(dialog.height, "5,00");
+        assert!((dialog.ratio - 0.5).abs() < 0.001);
+        assert!(dialog.keep_ratio);
+        assert!(dialog.focus);
     }
 
     #[test]

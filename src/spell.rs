@@ -427,8 +427,8 @@ impl Speller {
 
     /// "Aprender ortografia": a palavra passa a valer (e fica no arquivo do usuário).
     pub fn learn(&mut self, word: &str) {
-        if self.learned.insert(word.to_string()) {
-            if let Some(f) = &self.user_file {
+        if self.learned.insert(word.to_string())
+            && let Some(f) = &self.user_file {
                 if let Some(dir) = f.parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
@@ -437,7 +437,6 @@ impl Speller {
                 let text: String = list.iter().map(|w| format!("{w}\n")).collect();
                 let _ = std::fs::write(f, text);
             }
-        }
     }
 
     /// "Ignorar": vale até fechar o app.

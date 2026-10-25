@@ -83,6 +83,9 @@ fn write_paras(paras: &[Paragraph], doc: &Doc, fonts: &mut Vec<String>, colors: 
         if st.page_break_before {
             body.push_str("\\pagebb");
         }
+        for stop in st.tab_stops.iter().copied().filter(|stop| stop.is_finite() && *stop > 0.0) {
+            body.push_str(&format!("\\tx{}", twips(stop)));
+        }
         if st.leader {
             body.push_str(&format!("\\tqr\\tldot\\tx{}", twips(content_width - st.right_indent)));
         }
@@ -312,6 +315,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     let mut para = Paragraph::new("", st.ch.clone(), ParaStyle::default());
     para.spans.clear();
     let mut pstyle = ParaStyle::default();
+    let mut right_tab = false;
     let mut pict_hex = String::new();
     let mut pict_png = true;
     let mut pict_goal = (0.0f32, 0.0f32);
@@ -657,6 +661,7 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                         let keep_list = std::mem::take(&mut pstyle.list);
                         let keep_level = pstyle.level;
                         pstyle = ParaStyle::default();
+                        right_tab = false;
                         let _ = (keep_list, keep_level);
                     }
                     "ql" => pstyle.align = Align::Left,
@@ -674,6 +679,17 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     }
                     "pagebb" => pstyle.page_break_before = true,
                     "tldot" => pstyle.leader = true,
+                    "tql" => right_tab = false,
+                    "tqr" | "tqc" | "tqdec" => right_tab = true,
+                    "tx" => {
+                        if !right_tab {
+                            let stop = pt(p);
+                            if stop.is_finite() && stop > 0.0 {
+                                pstyle.tab_stops.push(stop);
+                            }
+                        }
+                        right_tab = false;
+                    }
                     "page" if st.dest == Dest::Text => {
                         if !para.text.is_empty() {
                             finish(&mut doc, &mut para, &pstyle, &st.ch, &mut next_page_break);
@@ -815,6 +831,7 @@ mod tests {
             p.first_indent = crate::richtext::cm(1.25);
             p.line_spacing = 1.5;
             p.list = Some(ListKind::Number);
+            p.tab_stops = vec![crate::richtext::cm(2.0), crate::richtext::cm(4.0)];
         });
         d.page.numbers.show = true;
         d.page.numbers.position = NumberPosition::TopRight;
@@ -848,6 +865,9 @@ mod tests {
         assert!((back.paras[1].style.line_spacing - 1.5).abs() < 0.01);
         assert!((back.paras[1].style.first_indent - crate::richtext::cm(1.25)).abs() < 0.1);
         assert_eq!(back.paras[1].style.list, Some(ListKind::Number));
+        assert_eq!(back.paras[1].style.tab_stops.len(), 2);
+        assert!((back.paras[1].style.tab_stops[0] - crate::richtext::cm(2.0)).abs() < 0.1);
+        assert!((back.paras[1].style.tab_stops[1] - crate::richtext::cm(4.0)).abs() < 0.1);
         assert_eq!(back.page.numbers.show_from, 3);
         assert_eq!(back.page.header, "Cabeçalho");
         assert_eq!(back.notes, vec![(1, "Nota em RTF, com vírgula.".to_string())]);

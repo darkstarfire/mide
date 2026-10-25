@@ -1626,3 +1626,48 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 - **`src/spell.rs` (biblioteca, reaproveitável por outros apps):** verificador próprio que lê os dicionários do sistema no formato Hunspell (`/usr/share/hunspell/pt_BR.aff` e `.dic`, os mesmos do LibreOffice e do Firefox). Entende sufixos e prefixos com condições, prefixo com sufixo, sufixos em duas camadas (afixo com continuação), palavras proibidas, maiúsculas e palavras com hífen. Sugestões: trocas do dicionário (REP), letras parecidas (MAP: acentos), uma letra a mais, a menos, trocada ou de lugar, e duas palavras juntas. Palavras aprendidas em `~/.local/share/mide/spelling-words.txt`. O dicionário de português (312 mil palavras, 26 mil regras) carrega em 0,25 s, em segundo plano; conferido com palavras certas e erradas ("metodolojia" → "metodologia", "intrudução" → "introdução").
 - **No editor:** ondulado vermelho nas palavras erradas (a que está sendo digitada só depois de terminar), com cache por parágrafo. Clique direito: sugestões, Aprender ortografia, Ignorar, e Recortar/Copiar/Colar. Editar → Verificar ortografia ao digitar liga e desliga. Idioma pelo `LANG` (reserva em pt_BR e en_US).
+
+## Editor de Texto, etapa 4e: redimensionar imagens (2026-10-24)
+
+- **Formatar → Tamanho da imagem…** permite alterar a largura em centímetros e manter a proporção ligada por padrão; ao desligá-la, largura e altura podem ser ajustadas separadamente.
+- O diálogo começa com as dimensões atuais, dá foco ao campo de largura e rejeita valores inválidos. Aplicar é uma única operação de desfazer. O alinhamento já usa os comandos de parágrafo do editor.
+- `Image::resize_to_width` atualiza o tamanho lógico sem recomprimir a imagem original; os gravadores de RTF, DOCX, ODT e PDF usam essas dimensões.
+- Testes: proporção e rejeição de largura inválida no modelo; diálogo inicial carrega largura, altura e proporção. `cargo test --bin mide-text`.
+
+## Editor de Texto, etapa 4f: rolagem isolada nos popovers (2026-10-24)
+
+- Com um popover aberto, a página de trás não recebe roda nem cliques; as listas internas dos popovers de fonte e tamanho continuam roláveis. Isso também impede que escolher uma cor mova o cursor do documento.
+- Causa: a página processava a entrada antes do popover desenhar seu conteúdo. O editor agora bloqueia a interação de fundo até o popover fechar.
+- Verificado com `cargo test --bin mide-text` (5 testes).
+
+## Editor de Texto, etapa 4g: face da fonte na barra (2026-10-24)
+
+- A barra ganhou o seletor Regular, Bold, Italic e Bold Italic, sincronizado com os controles B/I. Em janelas estreitas, as opções ficam dentro do seletor de família para a barra não crescer para fora da tela.
+- As quatro faces usam os campos negrito/itálico que já são salvos em RTF, DOCX e ODT.
+- Testes: `cargo test --bin mide-text` (6 testes), incluindo os nomes apresentados para cada combinação.
+
+## Editor de Texto, etapa 4h: paradas de tabulação na régua (2026-10-24)
+
+- A régua agora mostra triângulos de tabulação além dos marcadores de recuo existentes. Clique na escala cria uma parada; arrastar move em passos de 0,25 cm; arrastar para fora da régua remove. As alterações entram no histórico de desfazer.
+- `Tab` avança para a próxima parada personalizada do parágrafo; se não houver outra à frente, continua usando o intervalo padrão de 36 pt. A régua de uma célula de tabela mostra e altera as paradas daquela célula.
+- As posições são lidas e gravadas em RTF, DOCX e ODT. Testes de layout e ida e volta nos três formatos passaram.
+- RTF conserva tabulações alinhadas à direita separadas das paradas esquerdas; assim o líder pontilhado do sumário não vira marcador de régua.
+- Os triângulos das paradas de tabulação **personalizadas** apontam para a direita, deitados; os três marcadores de recuo continuam verticais. **Atenção:** as paradas padrão (a cada 36 pt) ainda não têm triângulo na régua; é o pendente 3 da etapa 4i.
+
+## Editor de Texto, etapa 4i: correções visuais e pendências (2026-10-24, feito pelo Copilot)
+
+Feito e conferido em quadro de teste (visual, sem teste automatizado):
+- **Folha por cima da barra de título e das cápsulas:** `ui.paint_text` pinta na janela inteira, sem recorte; ao rolar, a página (e a sombra) cobria a barra de título e a de formatação. Em `Rich::view` (`src/bin/mide-text/rich.rs`) o desenho das páginas agora guarda as faixas de pixels acima e abaixo da área do documento e as restaura no fim.
+- **Clique/rolagem atravessando popovers:** `blocked` em `Rich::view` inclui `self.pop.is_some()`; com um popover aberto a página não recebe clique, seleção nem roda (as listas de Fonte e Tamanho rolam pelo `scroll_area` delas).
+- **Triângulos de tabulação personalizada** deitados (ver 4h). Um patch ruim colocou esse desenho dentro de `format_bar`; já corrigido, `cargo test --bin mide-text` passa.
+
+Ainda **não feito** (pedido do usuário em 2026-10-24, a próxima coisa a fazer):
+0. **Atualização (mesma sessão, depois de comparar com o TextEdit):** os itens 1, 2 e 3 abaixo foram feitos e conferidos em quadro de teste (`/tmp/ed-shot*/frame.png`, 1366x768): ícone do Realce e da cor do texto desenhados à mão (sem o texto de reserva); campo `#RRGGBB` com amostra e botão Aplicar nos popovers de Cor do texto e Realce (`parse_hex_color`/`hex_color`, abre já com a cor atual); régua com 34 pt (números em cima, triângulos deitados embaixo), triângulos cinza nas paradas padrão (`default_tab_stops`) e azuis nas personalizadas, recuo direito para cima apontando para baixo como no Mac (o clique segue o desenho); barra de formatação com larguras pela janela (`bar_widths`) e lista dos popovers limitada ao espaço abaixo do botão (`popover_list_height`, é o que cortava a barra de rolagem). 9 testes de `cargo test --bin mide-text` passam.
+   **Ainda aberto:** (a) na janela mínima (560 pt) a barra de formatação continua não cabendo: `bar_widths` só foi conferida em quadro a 1040 pt, e o teste de unidade cobre 920 pt ou mais; (b) o Aplicar do popover fica rente à borda direita; (c) arrastar os triângulos com o mouse e a cor `#RRGGBB` aplicada ao texto não foram exercitados (só vistos desenhados); (d) o desenho do recuo direito e das paradas padrão não tem teste, só quadro; (e) o usuário quer o visual do TextEdit: comparar de novo lado a lado; (f) `src/kit/chooser.rs` tem um aviso `pretty_dir` sem uso que não é desta sessão.
+
+Lista original dos pendências:
+1. **Ícone do Realce bugado:** o botão usa `toolbar_buttons` com texto de reserva `▌`, que é desenhado e, por cima, o retângulo colorido pintado em `format_bar`. Trocar o reserva por vazio e desenhar o ícone inteiro à mão (amostra do realce, ou quadriculado cinza sem realce). A letra `A` da cor do texto usa o mesmo mecanismo: conferir.
+2. **Cor personalizada** nos popovers de Cor do texto e de Realce (`Pop::Color`, `Pop::Highlight`, em `Rich::popovers`): hoje só há as amostras fixas `COLORS` e `HIGHLIGHTS`. Pôr um campo `#rrggbb` com amostra (e/ou três deslizantes RGB) e aplicar com `chosen_color`/`chosen_highlight`. O mide-ui não tem seletor de cor; `parse_hex` existe só como função privada em `richtext/docx.rs`.
+3. **Triângulos clássicos do TextEdit na régua:** o Mac mostra triângulos pretos deitados em cada parada padrão (a cada 0,5 in, aqui `TAB_STOP` = 36 pt em `richtext/layout.rs`) ao longo da régua. Hoje só desenhamos as personalizadas. Desenhar as padrão, em cinza escuro, depois do recuo da primeira linha e antes da margem direita; no Mac definir uma parada remove as padrão à esquerda dela (alinhar `tab_width` a isso). Imagens de referência: as que o usuário mandou (TextEdit com régua e triângulos).
+
+Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado que o Claude deixou (docx, layout, mod, odt, pdf, render, spell, main) com as alterações desta sessão (imagem, face da fonte, tabulações, popovers, recorte).

@@ -210,12 +210,11 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
                         }
                     }
                     let base = oy + cpl.y + cline.baseline;
-                    if cpl.line == 0 {
-                        if let Some((glyphs, mx)) = &cell_box.layout.paras[cpl.para].marker {
+                    if cpl.line == 0
+                        && let Some((glyphs, mx)) = &cell_box.layout.paras[cpl.para].marker {
                             let col = cstyles.first().map_or([0, 0, 0], |s| s.color);
                             glyph_ops(&mut pg.ops, glyphs, "", ox + mx, base, &|_| col, &mut font_uses);
                         }
-                    }
                     glyph_ops(&mut pg.ops, &cline.glyphs, &cpara.text, ox, base, &|g| cstyle_of(g).color, &mut font_uses);
                     for g in &cline.glyphs {
                         let st = cstyle_of(g);
@@ -257,13 +256,12 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
                 rect(&mut pg.ops, ml + g.x, placed.y, g.width, line.height, hl);
             }
         }
-        if placed.line == 0 {
-            if let Some((glyphs, mx)) = &layout.paras[placed.para].marker {
+        if placed.line == 0
+            && let Some((glyphs, mx)) = &layout.paras[placed.para].marker {
                 let c = styles.first().map_or([0, 0, 0], |s| s.color);
                 let marker_text: String = String::new();
                 glyph_ops(&mut pg.ops, glyphs, &marker_text, ml + mx, base, &|_| c, &mut font_uses);
             }
-        }
         glyph_ops(&mut pg.ops, &line.glyphs, &para.text, ml, base, &|g| style_of(g).color, &mut font_uses);
         if let Some((a, b)) = line.leader {
             let c = styles.first().map_or([0, 0, 0], |s| s.color);
@@ -399,7 +397,7 @@ fn write_font(w: &mut Writer, fonts: &mut FontSystem, f: &FontUse) -> Option<usi
     let face = fonts.db().face(f.id)?;
     let name = pdf_name(&face.post_script_name);
     let (italic, bold) = (face.style != fontdb::Style::Normal, face.weight.0 >= 600);
-    let data = fonts.db().with_face_data(f.id, |data, index| single_font(data, index))??;
+    let data = fonts.db().with_face_data(f.id, single_font)??;
     let cff = data.get(0..4) == Some(b"OTTO");
     let file = w.reserve();
     if cff {

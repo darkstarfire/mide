@@ -20,6 +20,13 @@ pub const NOTE_SEPARATOR: f32 = 10.0;
 
 /// Distância entre as tabulações padrão (meia polegada).
 pub const TAB_STOP: f32 = 36.0;
+
+fn tab_width(style: &ParaStyle, position: f32) -> f32 {
+    let position = position.max(0.0);
+    let custom = style.tab_stops.iter().copied().filter(|stop| stop.is_finite() && *stop > position + 0.01).min_by(f32::total_cmp);
+    let next = custom.unwrap_or_else(|| ((position / TAB_STOP).floor() + 1.0) * TAB_STOP);
+    (next - position).max(1.0)
+}
 /// Recuo de cada nível de lista.
 pub const LIST_INDENT: f32 = 18.0;
 
@@ -205,11 +212,10 @@ impl Layout {
         let last = placed.line + 1 == self.paras[p.para].lines.len();
         // No fim de uma linha quebrada, o cursor fica antes do espaço que quebrou.
         let mut end = line.end;
-        if !last {
-            if let Some(&(off, _)) = line.carets.iter().rev().find(|(o, _)| *o < line.end) {
+        if !last
+            && let Some(&(off, _)) = line.carets.iter().rev().find(|(o, _)| *o < line.end) {
                 end = off.max(line.start);
             }
-        }
         (Pos::new(p.para, line.start), Pos::new(p.para, end))
     }
 }
@@ -267,6 +273,9 @@ fn fingerprint(p: &Paragraph, width: f32) -> u64 {
     }
     let st = &p.style;
     (st.align, st.first_indent.to_bits(), st.left_indent.to_bits(), st.right_indent.to_bits(), st.line_spacing.to_bits(), st.list, st.level, st.leader).hash(&mut h);
+    for stop in &st.tab_stops {
+        stop.to_bits().hash(&mut h);
+    }
     if let Some(img) = &p.image {
         (img.width.to_bits(), img.height.to_bits()).hash(&mut h);
     }
@@ -355,12 +364,11 @@ impl Layouter {
             };
             out.paras.push(boxed);
             for (_, _, st) in para.runs() {
-                if let Some(id) = st.note {
-                    if !note_numbers.iter().any(|(i, _)| *i == id) {
+                if let Some(id) = st.note
+                    && !note_numbers.iter().any(|(i, _)| *i == id) {
                         note_base += 1;
                         note_numbers.push((id, note_base));
                     }
-                }
             }
             out.styles.push(para.spans.iter().map(|s| s.style.clone()).collect());
             let _ = index;
@@ -535,7 +543,8 @@ impl Layouter {
         let avail_for = |first: bool| (width - left - right - if first { st.first_indent } else { 0.0 }).max(12.0);
         let mut avail = avail_for(true);
         for (i, w) in words.iter().enumerate() {
-            let ww = if w.tab { TAB_STOP - ((x + st.first_indent.max(0.0)) % TAB_STOP) } else { width_of(w) };
+            let tab_origin = left + if lines_words.is_empty() { st.first_indent.max(0.0) } else { 0.0 };
+            let ww = if w.tab { tab_width(st, tab_origin + x) } else { width_of(w) };
             let has_content = cur.iter().any(|&j| !words[j].blank);
             if !w.blank && x + ww > avail && has_content {
                 lines_words.push((std::mem::take(&mut cur), false));
@@ -568,7 +577,7 @@ impl Layouter {
             let mut last_tab: Option<(usize, f32)> = None;
             for (k, &wi) in idx.iter().enumerate() {
                 let w = &words[wi];
-                let ww = if w.tab { TAB_STOP - ((line_left + pen) % TAB_STOP).max(0.0) } else { width_of(w) };
+                let ww = if w.tab { tab_width(st, line_left + pen) } else { width_of(w) };
                 if w.tab {
                     last_tab = Some((k, ww));
                 }
@@ -608,7 +617,7 @@ impl Layouter {
                         leader = Some((pen, pen + lw));
                         Some(lw)
                     }
-                    _ if w.tab => Some(TAB_STOP - ((pen) % TAB_STOP).max(0.0)),
+                    _ if w.tab => Some(tab_width(st, line_left + pen)),
                     _ => None,
                 };
                 let gap_extra = if justify && w.blank && !w.tab && k < content_end { extra } else { 0.0 };
@@ -847,5 +856,18 @@ mod tests {
         let mut l = Layouter::default();
         let lay = l.layout(&mut fs, &doc);
         assert!((lay.paras[0].lines[0].x0 - cm(1.25)).abs() < 0.5);
+    }
+
+    #[test]
+    fn tabulacao_usa_parada_personalizada() {
+        let mut fs = fonts();
+        let mut doc = Doc::new();
+        doc.insert_text(Pos::default(), "A\tB", &CharStyle::default());
+        doc.paras[0].style.tab_stops = vec![100.0];
+        let mut l = Layouter::default();
+        let lay = l.layout(&mut fs, &doc);
+        let line = &lay.paras[0].lines[0];
+        let after_tab = line.carets.iter().find(|(off, _)| *off == 2).expect("cursor depois da tabulação").1;
+        assert!((after_tab - 100.0).abs() < 0.5, "tabulação em {after_tab}");
     }
 }

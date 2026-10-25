@@ -454,7 +454,7 @@ fn window_elements(
     // cima das outras, com os mesmos cantos arredondados da janela.
     {
         let snapshots = genie.snapshots.borrow();
-        for (id, frame, start) in &state.ghosts {
+        for (id, frame, start, ghost_radius) in &state.ghosts {
             let Some((texture, size)) = snapshots.get(id) else {
                 continue;
             };
@@ -470,7 +470,7 @@ fn window_elements(
             let x = frame.loc.x - origin.x + (size.w - w) / 2;
             let y = frame.loc.y - origin.y + (size.h - h) / 2;
             use smithay::backend::renderer::Renderer as _;
-            let radius = if state.config.effects.rounded_corners { decorations::CORNER_RADIUS as f32 * scale } else { 0.0 };
+            let radius = if state.config.effects.rounded_corners { *ghost_radius * scale } else { 0.0 };
             let clip = crate::clip::uniforms(Rectangle::new((x, y).into(), (w, h).into()), radius, output_rect.size.h as f32);
             let photo = smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
                 smithay::backend::renderer::element::Id::new(),
@@ -491,7 +491,7 @@ fn window_elements(
     // Fotos que não servem mais: a janela fechou e a foto já esmaeceu.
     genie.snapshots.borrow_mut().retain(|id, _| {
         state.close_requests.iter().any(|(w, _)| w == id)
-            || state.ghosts.iter().any(|(w, _, _)| w == id)
+            || state.ghosts.iter().any(|(w, _, _, _)| w == id)
             || state.commits.contains_key(id)
     });
     genie.photo_taken.borrow_mut().retain(|id, _| state.commits.contains_key(id));
@@ -995,8 +995,30 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
 
 /// Raio dos cantos de uma janela: o pedido pelo app (`window_style app:<id> radius=N`, os
 /// apps de conteúdo inteiro do mide-ui) ou o padrão.
-fn corner_radius(state: &State, window: &Window) -> f32 {
-    state.window_radius.get(&app_id_of(window)).copied().unwrap_or(decorations::CORNER_RADIUS) as f32
+pub fn corner_radius(state: &State, window: &Window) -> f32 {
+    radius_for(&state.window_radius, &app_id_of(window))
+}
+
+/// O raio pedido por `app_id` ou o padrão: o mesmo para a janela viva e para a foto dela ao fechar.
+pub fn radius_for(requested: &std::collections::HashMap<String, i32>, app_id: &str) -> f32 {
+    requested.get(app_id).copied().unwrap_or(decorations::CORNER_RADIUS) as f32
+}
+
+#[cfg(test)]
+mod radius_tests {
+    use super::radius_for;
+    use std::collections::HashMap;
+
+    #[test]
+    fn raio_do_app_ou_o_padrao() {
+        let mut requested = HashMap::new();
+        requested.insert("mide-text".to_string(), 24);
+        assert_eq!(radius_for(&requested, "mide-text"), 24.0);
+        // Um app que não pediu (cliente de terceiros) fica com o padrão de 16.
+        assert_eq!(radius_for(&requested, "foot"), 16.0);
+        assert_eq!(radius_for(&requested, ""), 16.0);
+        assert_eq!(radius_for(&HashMap::new(), "mide-text"), 16.0);
+    }
 }
 
 /// Título da janela (vazio se o app não definiu um).

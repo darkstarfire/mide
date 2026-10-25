@@ -594,6 +594,8 @@ O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de s
 ## Campo de texto, área de transferência e Editor de Texto — automáticos
 
 - `cargo test`: `kit::textedit` (digitar no meio, acentos, seleção com Shift, palavras, tudo selecionado, duplo clique, cursor fora do texto), `kit::textarea` (linhas, coluna por largura, desfazer juntando a digitação, recuo), `files::is_text`, `mide-text` (salvar mantém CRLF, binário não abre, buscar e substituir com desfazer).
+- `cargo test --bin mide-text`: diálogo de tamanho da imagem e proporção; nomes das faces Regular/Bold/Italic/Bold Italic; editor simples.
+- `cargo test --lib richtext::layout::tests::tabulacao_usa_parada_personalizada`; testes `grava_e_le_de_volta` do RTF, `grava_e_le_docx` e `grava_e_le_odt`: posição aplicada no layout e round-trip das paradas.
 - `tests/ui.sh` (editor de texto): editar no fim e salvar com Ctrl+S; copiar num editor e colar em outro (Wayland) e salvar; título com "•" quando alterado; fechar com alteração pergunta (a janela continua).
 
 ## Campo de texto, área de transferência e Editor de Texto — manual
@@ -602,6 +604,19 @@ O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de s
 - [ ] Digitar acentos no campo e no editor (ABNT2: `´`+`a`, `~`+`a`, `ç`).
 - [ ] Arquivos: duplo clique num `.txt`/`.md`/`.rs` abre no Editor de Texto; editar, Ctrl+S, conferir o arquivo; Ctrl+Z desfaz.
 - [ ] Editor: Ctrl+F busca, Substituir tudo; fechar com alteração pergunta; Não salvar fecha sem gravar.
+- [ ] Editor formatado: inserir uma imagem PNG/JPEG; abrir Formatar → Tamanho da imagem… e confirmar as dimensões atuais; alterar a largura com "Manter proporção" ligado, aplicar e conferir a altura; desfazer e refazer; desligar a proporção e definir largura e altura diferentes; alinhar à esquerda, ao centro e à direita; salvar em DOCX/ODT e conferir também no PDF.
+- [ ] Editor formatado: abrir os popovers de Fonte e Tamanho, rolar a lista com a roda sem mover a página atrás; fechar o popover e confirmar que a roda sobre a página volta a rolar o documento.
+- [ ] Editor formatado: abrir o popover de Realce, selecionar uma cor e confirmar que o documento não move o cursor nem rola atrás do painel.
+- [ ] Editor formatado: escolher Regular, Bold, Italic e Bold Italic pelo seletor de face; conferir que B/I e a face exibida ficam sincronizados e que a escolha persiste em RTF, DOCX e ODT.
+- [ ] Editor formatado: clicar na régua para criar triângulos de tabulação; arrastar para outra medida; soltar fora para remover; digitar texto com Tab e conferir alinhamento; salvar e reabrir em RTF, DOCX e ODT.
+- [ ] Conferir visualmente que os marcadores de tabulação personalizada são triângulos deitados apontando para a direita, diferentes dos marcadores verticais de recuo.
+- [ ] (pendente de implementação, ver IMPLEMENTED 4i) Triângulos deitados também nas paradas padrão, como no TextEdit; ícone do Realce sem sobreposição; cor personalizada (`#rrggbb`) em Cor do texto e em Realce.
+- [ ] Editor formatado: rolar o documento com a roda e conferir que a folha não passa por cima da barra de título, das cápsulas Abrir/Salvar/Buscar nem da barra de formatação.
+
+### Como validar o Editor formatado sem a sessão (feito na 4i)
+- Compilar e testar: `systemd-run --user --scope -p MemoryMax=9G -p MemorySwapMax=2G nice -n 10 cargo test --bin mide-text` (7 testes) e `cargo test --lib richtext` (layout, DOCX, ODT, RTF).
+- Quadro de teste: `SCENARIO_OUT=/tmp/ed-shot tests/scenario.sh "300 click 600 300; 320 type ola; 330 wheel down; 331 wheel down; 340 list" 380 -- "$PWD/target/debug/mide-text"` e abrir `/tmp/ed-shot/frame.png` (compile antes `cargo build --bin mide --bin mide-text`).
+- Resultado conhecido, **não comparado com a base**: `cargo test` tem 1 falha em `thumbnails::tests::folha_de_texto_tem_linhas_escuras` (fora do editor) e `tests/ui.sh editor` falhou 2 vezes em 3 fluxos do editor simples ("copiar num app e colar em outro", "Abrir… pelo seletor", "Salvar como…"). Para saber se é regressão: `git worktree add /tmp/base HEAD`, compilar lá e rodar `tests/ui.sh editor`.
 - [ ] Abrir um app e digitar logo em seguida: as teclas vão para ele (não para a área de trabalho).
 
 ## Sessão de login (C2) — automáticos

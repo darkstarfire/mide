@@ -122,13 +122,12 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
                 }
             }
             // A tabela inteira selecionada (de fora): um véu por cima.
-            if let Some((a, b)) = sel {
-                if a <= Pos::new(placed.para, 0) && b >= Pos::new(placed.para, line.end) {
+            if let Some((a, b)) = sel
+                && a <= Pos::new(placed.para, 0) && b >= Pos::new(placed.para, line.end) {
                     let mut c = view.selection_color;
                     c[3] = 90;
                     fill(pixmap, left + line.x0 * s, top, (line.x1 - line.x0) * s, rh * s, c);
                 }
-            }
             continue;
         }
         // Imagem.
@@ -139,11 +138,10 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
             let sy = h / img.pixmap.height() as f32;
             let paint = PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
             pixmap.draw_pixmap(0, 0, img.pixmap.as_ref().as_ref(), &paint, Transform::from_row(sx, 0.0, 0.0, sy, left + line.x0 * s, top), None);
-            if let Some((a, b)) = sel {
-                if a <= Pos::new(placed.para, 0) && b >= Pos::new(placed.para, line.end) {
+            if let Some((a, b)) = sel
+                && a <= Pos::new(placed.para, 0) && b >= Pos::new(placed.para, line.end) {
                     fill(pixmap, left + line.x0 * s, top, w, h, view.selection_color);
                 }
-            }
             continue;
         }
         // Realce (cor de fundo do texto).
@@ -153,12 +151,11 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
             }
         }
         // Marcador da lista.
-        if placed.line == 0 {
-            if let Some((glyphs, mx)) = &layout.paras[placed.para].marker {
+        if placed.line == 0
+            && let Some((glyphs, mx)) = &layout.paras[placed.para].marker {
                 let c = styles.first().map_or([0, 0, 0], |st| st.color);
                 draw_glyphs(text, pixmap, glyphs, (left + mx * s, baseline), s, |_| [c[0], c[1], c[2], 255]);
             }
-        }
         let style_of = |g: &Glyph| styles.get(g.span).cloned().unwrap_or_default();
         draw_glyphs(text, pixmap, &line.glyphs, (left, baseline), s, |g| {
             let c = style_of(g).color;
@@ -232,15 +229,14 @@ pub fn draw_page(text: &mut crate::ui::text::Text, layouter: &mut Layouter, pixm
         }
     }
     // Cursor.
-    if let (Some(p), None) = (view.caret, sel) {
-        if let Some(placed) = layout.line_of(p).filter(|pl| pl.page == view.page) {
+    if let (Some(p), None) = (view.caret, sel)
+        && let Some(placed) = layout.line_of(p).filter(|pl| pl.page == view.page) {
             let line = &layout.paras[p.para].lines[placed.line];
             let x = left + layout.caret_x(p) * s;
             let top = view.origin.1 + placed.y * s;
             let h = (line.ascent + line.descent) * s;
             fill(pixmap, x.round(), top + (line.baseline - line.ascent) * s, (1.5 * s / 1.333).max(1.0), h, view.caret_color);
         }
-    }
     // Cabeçalho, rodapé e número da página.
     let page = &doc.page;
     // Cabeçalho, rodapé e números: só a fonte do documento (sem o negrito de um título).

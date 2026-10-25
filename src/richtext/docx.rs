@@ -199,8 +199,15 @@ fn write_paras(paras: &[Paragraph], content_width: f32, ctx: &mut WriteCtx) -> S
         if st.page_break_before {
             body.push_str("<w:pageBreakBefore/>");
         }
-        if st.leader {
-            body.push_str(&format!("<w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{}\"/></w:tabs>", twips(content_width - st.right_indent)));
+        if st.leader || !st.tab_stops.is_empty() {
+            body.push_str("<w:tabs>");
+            for stop in st.tab_stops.iter().copied().filter(|stop| stop.is_finite() && *stop > 0.0) {
+                body.push_str(&format!("<w:tab w:val=\"left\" w:pos=\"{}\"/>", twips(stop)));
+            }
+            if st.leader {
+                body.push_str(&format!("<w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{}\"/>", twips(content_width - st.right_indent)));
+            }
+            body.push_str("</w:tabs>");
         }
         if let Some(kind) = st.list {
             body.push_str(&format!("<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{}\"/></w:numPr>", st.level, list_num_id(kind)));
@@ -539,11 +546,10 @@ fn apply_rpr(rpr: &Element, s: &mut CharStyle, theme_font: &str) {
     if let Some(h) = rpr.child("w:highlight").and_then(val) {
         s.highlight = named_highlight(h);
     }
-    if let Some(fill) = rpr.child("w:shd").and_then(|e| e.attr("w:fill")) {
-        if fill != "auto" {
+    if let Some(fill) = rpr.child("w:shd").and_then(|e| e.attr("w:fill"))
+        && fill != "auto" {
             s.highlight = parse_hex(fill).or(s.highlight);
         }
-    }
     if let Some(v) = rpr.child("w:vertAlign").and_then(val) {
         s.baseline = match v {
             "superscript" => Baseline::Super,
@@ -596,19 +602,20 @@ fn apply_ppr(ppr: &Element, p: &mut ParaStyle) {
     }
     if let Some(tabs) = ppr.child("w:tabs") {
         p.leader = tabs.elements().any(|t| t.attr("w:leader").is_some_and(|l| l == "dot") && t.attr("w:val") == Some("right"));
+        p.tab_stops = tabs.elements().filter(|t| t.attr("w:val").is_none_or(|v| v == "left")).filter_map(|t| num(Some(t), "w:pos").map(|v| v / 20.0)).filter(|v| v.is_finite() && *v > 0.0).collect();
+        p.tab_stops.sort_by(f32::total_cmp);
+        p.tab_stops.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     }
     // O sumário do Word (TOC 1, TOC 2...) com pontilhado.
-    if let Some(id) = ppr.child("w:pStyle").and_then(val) {
-        if id.to_lowercase().starts_with("toc") || id.to_lowercase().starts_with("sumário") || id.to_lowercase().starts_with("sumario") {
+    if let Some(id) = ppr.child("w:pStyle").and_then(val)
+        && (id.to_lowercase().starts_with("toc") || id.to_lowercase().starts_with("sumário") || id.to_lowercase().starts_with("sumario")) {
             p.leader = true;
             p.name = "Sumário".into();
         }
-    }
-    if let Some(id) = ppr.child("w:pStyle").and_then(val) {
-        if let Some(name) = mide_style(id) {
+    if let Some(id) = ppr.child("w:pStyle").and_then(val)
+        && let Some(name) = mide_style(id) {
             p.name = name.to_string();
         }
-    }
 }
 
 struct Reader<'a> {
@@ -991,12 +998,11 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     // Página.
     let mut page = PageSetup::a4();
     if let Some(sect) = body.child("w:sectPr") {
-        if let Some(sz) = sect.child("w:pgSz") {
-            if let (Some(w), Some(h)) = (num(Some(sz), "w:w"), num(Some(sz), "w:h")) {
+        if let Some(sz) = sect.child("w:pgSz")
+            && let (Some(w), Some(h)) = (num(Some(sz), "w:w"), num(Some(sz), "w:h")) {
                 page.width = w / 20.0;
                 page.height = h / 20.0;
             }
-        }
         if let Some(m) = sect.child("w:pgMar") {
             for (i, k) in ["w:top", "w:right", "w:bottom", "w:left"].iter().enumerate() {
                 if let Some(v) = num(Some(m), k) {
@@ -1095,6 +1101,7 @@ mod tests {
             p.align = Align::Justify;
             p.first_indent = cm(1.25);
             p.line_spacing = 1.5;
+            p.tab_stops = vec![cm(2.0), cm(4.0)];
         });
         d.apply_para(Pos::new(2, 0), Pos::new(3, 0), |p| p.list = Some(ListKind::Number));
         d.page.margins = [cm(3.0), cm(2.0), cm(2.0), cm(3.0)];
@@ -1124,6 +1131,9 @@ mod tests {
         assert!(back.paras[1].spans[0].style.italic);
         assert_eq!(back.paras[1].spans[0].style.family, "Times New Roman");
         assert_eq!(back.paras[1].style.align, Align::Justify);
+        assert_eq!(back.paras[1].style.tab_stops.len(), 2);
+        assert!((back.paras[1].style.tab_stops[0] - cm(2.0)).abs() < 0.1);
+        assert!((back.paras[1].style.tab_stops[1] - cm(4.0)).abs() < 0.1);
         assert!((back.paras[1].style.first_indent - cm(1.25)).abs() < 0.2);
         assert!((back.paras[1].style.line_spacing - 1.5).abs() < 0.01);
         assert_eq!(back.paras[2].style.list, Some(ListKind::Number));

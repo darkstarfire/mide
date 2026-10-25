@@ -74,8 +74,10 @@ impl State {
                     let bar_h = bar_height_for(&window);
                     let size = window.geometry().size;
                     let frame = smithay::utils::Rectangle::new((loc.x, loc.y - bar_h).into(), (size.w, size.h + bar_h).into());
-                    self.ghosts.push((id, frame, Instant::now()));
-                    tracing::info!("janela fechando com transição");
+                    // O raio some com o app_id quando a janela é destruída: guarda agora.
+                    let radius = crate::render::corner_radius(self, &window);
+                    self.ghosts.push((id, frame, Instant::now(), radius));
+                    tracing::info!("janela fechando com transição (raio {radius})");
                 }
             }
             self.close_requests.retain(|(w, _)| *w != id);

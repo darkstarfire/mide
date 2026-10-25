@@ -1185,6 +1185,11 @@ delegate_xdg_decoration!(State);
 pub const ABOVE_LAUNCHER: &[&str] = &[
     "mide-bar",
     "mide-dock",
+    // A ampliação dos ícones e o ícone que pula ao abrir um app são camadas à parte
+    // da dock: sem elas aqui, ficavam atrás do launcher e da dock (o vidro da dock as
+    // desfocava).
+    "mide-dock-zoom",
+    "mide-dock-pulo",
     "mide-bar-menu",
     "mide-dock-menu",
     "mide-notifications",

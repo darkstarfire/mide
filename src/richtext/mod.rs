@@ -121,6 +121,8 @@ pub struct ParaStyle {
     pub page_break_before: bool,
     /// A última tabulação vai até a margem direita com pontos (sumário: "Título ..... 5").
     pub leader: bool,
+    /// Paradas de tabulação em pontos, a partir da margem esquerda do texto.
+    pub tab_stops: Vec<f32>,
 }
 
 impl Default for ParaStyle {
@@ -138,6 +140,7 @@ impl Default for ParaStyle {
             name: String::new(),
             page_break_before: false,
             leader: false,
+            tab_stops: Vec::new(),
         }
     }
 }
@@ -184,6 +187,20 @@ impl Image {
             width = max_width;
         }
         Some(Self { data: Rc::new(data), format, pixmap: Rc::new(pixmap), width, height })
+    }
+
+    /// Ajusta a largura exibida e preserva a proporção original.
+    pub fn resize_to_width(&mut self, width: f32) -> bool {
+        if !width.is_finite() || width <= 0.0 || !self.width.is_finite() || self.width <= 0.0 || !self.height.is_finite() || self.height <= 0.0 {
+            return false;
+        }
+        let height = self.height * width / self.width;
+        if !height.is_finite() || height <= 0.0 {
+            return false;
+        }
+        self.width = width;
+        self.height = height;
+        true
     }
 }
 
@@ -722,11 +739,10 @@ impl Doc {
         let para = &self.paras[p.para];
         let mut best = None;
         for (a, b, s) in para.runs() {
-            if let Some(id) = s.note {
-                if p.off >= a && p.off <= b {
+            if let Some(id) = s.note
+                && p.off >= a && p.off <= b {
                     best = Some(id);
                 }
-            }
         }
         best
     }
@@ -971,6 +987,22 @@ impl Doc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imagem_redimensiona_mantendo_proporcao() {
+        let mut image = Image {
+            data: Rc::new(Vec::new()),
+            format: "png",
+            pixmap: Rc::new(Pixmap::new(8, 4).unwrap()),
+            width: 12.0,
+            height: 6.0,
+        };
+
+        assert!(image.resize_to_width(30.0));
+        assert_eq!((image.width, image.height), (30.0, 15.0));
+        assert!(!image.resize_to_width(f32::NAN));
+        assert_eq!((image.width, image.height), (30.0, 15.0));
+    }
 
     fn bold() -> CharStyle {
         CharStyle { bold: true, ..Default::default() }

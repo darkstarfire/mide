@@ -520,11 +520,10 @@ impl App for Editor {
         // busca. Itens dos menus do app na barra superior também.
         let (save, find, open) = (ui.input().shortcut_shift("s"), ui.input().shortcut("f"), ui.input().shortcut("o"));
         for action in ui.input().menu.clone() {
-            if let Some(r) = self.rich.as_mut() {
-                if r.command(&action, ui) {
+            if let Some(r) = self.rich.as_mut()
+                && r.command(&action, ui) {
                     continue;
                 }
-            }
             match action.as_str() {
                 "texto-simples" if self.rich.is_some() => self.to_plain(),
                 "texto-formatado" if self.rich.is_none() => self.to_rich(),

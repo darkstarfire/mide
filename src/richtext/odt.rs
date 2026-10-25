@@ -80,11 +80,17 @@ fn text_props(s: &CharStyle) -> String {
 
 fn para_props(st: &ParaStyle, content_width: f32) -> String {
     let list_left = if st.list.is_some() { 18.0 * (st.level as f32 + 1.0) } else { 0.0 };
-    let tabs = if st.leader {
-        format!("<style:tab-stops><style:tab-stop style:position=\"{:.2}pt\" style:type=\"right\" style:leader-style=\"dotted\" style:leader-text=\".\"/></style:tab-stops>", content_width - st.left_indent - st.right_indent)
-    } else {
-        String::new()
-    };
+    let mut tabs = String::new();
+    if st.leader || !st.tab_stops.is_empty() {
+        tabs.push_str("<style:tab-stops>");
+        for stop in st.tab_stops.iter().copied().filter(|stop| stop.is_finite() && *stop > 0.0) {
+            tabs.push_str(&format!("<style:tab-stop style:position=\"{stop:.2}pt\" style:type=\"left\"/>"));
+        }
+        if st.leader {
+            tabs.push_str(&format!("<style:tab-stop style:position=\"{:.2}pt\" style:type=\"right\" style:leader-style=\"dotted\" style:leader-text=\".\"/>", content_width - st.left_indent - st.right_indent));
+        }
+        tabs.push_str("</style:tab-stops>");
+    }
     format!(
         "<style:paragraph-properties fo:text-align=\"{}\" fo:margin-left=\"{:.2}pt\" fo:margin-right=\"{:.2}pt\" fo:text-indent=\"{:.2}pt\" fo:margin-top=\"{:.2}pt\" fo:margin-bottom=\"{:.2}pt\" fo:line-height=\"{:.0}%\"{}>{tabs}</style:paragraph-properties>",
         match st.align {
@@ -498,16 +504,18 @@ fn apply_para(e: &Element, p: &mut ParaStyle) {
             }
         }
     }
-    if let Some(lh) = e.attr("fo:line-height") {
-        if let Some(pct) = lh.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()) {
+    if let Some(lh) = e.attr("fo:line-height")
+        && let Some(pct) = lh.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()) {
             p.line_spacing = (pct / 100.0).clamp(0.5, 4.0);
         }
-    }
     if e.attr("fo:break-before") == Some("page") {
         p.page_break_before = true;
     }
     if let Some(tabs) = e.child("style:tab-stops") {
         p.leader = tabs.elements().any(|t| t.attr("style:type") == Some("right") && t.attr("style:leader-text").is_some_and(|l| !l.trim().is_empty()));
+        p.tab_stops = tabs.elements().filter(|t| t.attr("style:type").is_none_or(|v| v == "left")).filter_map(|t| t.attr("style:position").and_then(length)).filter(|v| v.is_finite() && *v > 0.0).collect();
+        p.tab_stops.sort_by(f32::total_cmp);
+        p.tab_stops.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     }
 }
 
@@ -821,17 +829,16 @@ pub fn read(data: &[u8]) -> Option<Doc> {
     let mut page = PageSetup::a4();
     if let Some(sr) = &styles_root {
         collect_styles(sr, &mut styles, &mut lists);
-        if let Some(def) = sr.child("office:styles").and_then(|s| s.elements().find(|e| e.name == "style:default-style" && e.attr("style:family") == Some("paragraph"))) {
-            if let Some(t) = def.child("style:text-properties") {
+        if let Some(def) = sr.child("office:styles").and_then(|s| s.elements().find(|e| e.name == "style:default-style" && e.attr("style:family") == Some("paragraph")))
+            && let Some(t) = def.child("style:text-properties") {
                 apply_text(t, &mut default_text);
             }
-        }
         // Página do estilo de página "Standard" (ou o primeiro).
         let auto = sr.child("office:automatic-styles");
         let master = sr.path("office:master-styles").and_then(|m| m.elements().find(|e| e.name == "style:master-page"));
         let layout_name = master.and_then(|m| m.attr("style:page-layout-name"));
-        if let Some(layout) = auto.and_then(|a| a.elements().find(|e| e.name == "style:page-layout" && (layout_name.is_none() || e.attr("style:name") == layout_name))) {
-            if let Some(p) = layout.child("style:page-layout-properties") {
+        if let Some(layout) = auto.and_then(|a| a.elements().find(|e| e.name == "style:page-layout" && (layout_name.is_none() || e.attr("style:name") == layout_name)))
+            && let Some(p) = layout.child("style:page-layout-properties") {
                 if let (Some(w), Some(h)) = (p.attr("fo:page-width").and_then(length), p.attr("fo:page-height").and_then(length)) {
                     page.width = w;
                     page.height = h;
@@ -842,18 +849,16 @@ pub fn read(data: &[u8]) -> Option<Doc> {
                     }
                 }
             }
-        }
         // Com cabeçalho/rodapé, o texto começa depois deles: soma a altura à margem.
         if let Some(layout) = auto.and_then(|a| a.elements().find(|e| e.name == "style:page-layout" && (layout_name.is_none() || e.attr("style:name") == layout_name))) {
             for (part, style, index, gap_attr) in [("style:header", "style:header-style", 0, "fo:margin-bottom"), ("style:footer", "style:footer-style", 2, "fo:margin-top")] {
-                if master.and_then(|m| m.child(part)).is_some() {
-                    if let Some(props) = layout.child(style).and_then(|s| s.child("style:header-footer-properties")) {
+                if master.and_then(|m| m.child(part)).is_some()
+                    && let Some(props) = layout.child(style).and_then(|s| s.child("style:header-footer-properties")) {
                         let h = props.attr("fo:min-height").or(props.attr("svg:height")).and_then(length).unwrap_or(0.0);
                         // Com "dynamic-spacing" (o modo do Word), a altura já inclui o espaço.
                         let gap = if props.attr("style:dynamic-spacing") == Some("true") { 0.0 } else { props.attr(gap_attr).and_then(length).unwrap_or(0.0) };
                         page.margins[index] += h.max(12.0) + gap;
                     }
-                }
             }
         }
         if let Some(m) = master {
@@ -916,6 +921,7 @@ mod tests {
             p.align = Align::Center;
             p.line_spacing = 2.0;
             p.page_break_before = true;
+            p.tab_stops = vec![cm(2.0), cm(4.0)];
         });
         d.apply_para(Pos::new(2, 0), Pos::new(3, 0), |p| p.list = Some(ListKind::Letter));
         d.page.margins = [cm(3.0), cm(2.0), cm(2.0), cm(3.0)];
@@ -946,6 +952,9 @@ mod tests {
         assert_eq!(back.paras[1].spans[0].style.color, [10, 120, 30]);
         assert_eq!(back.paras[1].spans[0].style.family, "Arial");
         assert_eq!(back.paras[1].style.align, Align::Center);
+        assert_eq!(back.paras[1].style.tab_stops.len(), 2);
+        assert!((back.paras[1].style.tab_stops[0] - cm(2.0)).abs() < 0.1);
+        assert!((back.paras[1].style.tab_stops[1] - cm(4.0)).abs() < 0.1);
         assert!((back.paras[1].style.line_spacing - 2.0).abs() < 0.01);
         assert!(back.paras[1].style.page_break_before);
         assert_eq!(back.paras[2].style.list, Some(ListKind::Letter));
