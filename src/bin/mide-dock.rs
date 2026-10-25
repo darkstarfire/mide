@@ -100,7 +100,8 @@ fn magnify_size() -> Option<u32> {
     }
     let size = match mide::settings_file::get("dock", "magnify_size") {
         Some(mide::settings_file::Value::Int(n)) => n as u32,
-        _ => 96,
+        // Padrão: 70 pontos (o usuário aumenta ou diminui em Configurações → Dock).
+        _ => 70,
     };
     let size = size.clamp(icon_size() + 8, 128);
     Some(size)

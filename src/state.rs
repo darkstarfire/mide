@@ -185,8 +185,8 @@ pub struct State {
     /// Pedidos de fechar feitos pelo mide (janela e quando): enquanto o app não fecha,
     /// o compositor fotografa a janela para a transição de fechar.
     pub close_requests: Vec<(u64, Instant)>,
-    /// Janelas que acabaram de fechar: a foto delas esmaece (número, moldura, início).
-    pub ghosts: Vec<(u64, smithay::utils::Rectangle<i32, Logical>, Instant)>,
+    /// Janelas que acabaram de fechar: a foto delas esmaece (número, moldura, início, raio dos cantos).
+    pub ghosts: Vec<(u64, smithay::utils::Rectangle<i32, Logical>, Instant, f32)>,
     /// Último commit de cada janela: o desenho tira uma foto nova dela (para a
     /// transição de fechar também quando o app fecha sozinho).
     pub commits: std::collections::HashMap<u64, Instant>,
@@ -1200,6 +1200,10 @@ pub fn front_layers(map: &smithay::desktop::LayerMap) -> Vec<smithay::desktop::L
         .filter(|l| matches!(l.layer(), Layer::Top | Layer::Overlay))
         .cloned()
         .collect();
+    // Overlay sempre na frente de Top, seja qual for a ordem em que foram criadas (a
+    // dock recriada não pode cobrir a ampliação dos ícones, que é Overlay). Ordenação
+    // estável: dentro de cada grupo, a mais nova na frente.
+    layers.sort_by_key(|l| l.layer() != Layer::Overlay);
     if layers.iter().any(|l| l.namespace() == "mide-launcher") {
         // Ordenação estável: mantém a ordem original dentro de cada grupo.
         layers.sort_by_key(|l| !ABOVE_LAUNCHER.contains(&l.namespace()));
@@ -1374,7 +1378,7 @@ impl State {
     pub fn finish_animations(&mut self, now: Instant) {
         // Pedido de fechar sem resposta em 2 s (o app perguntou "salvar?"): esquece.
         self.close_requests.retain(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(2));
-        self.ghosts.retain(|(_, _, at)| now.duration_since(*at) < CLOSE_FADE);
+        self.ghosts.retain(|(_, _, at, _)| now.duration_since(*at) < CLOSE_FADE);
         self.appearing.retain(|(s, at)| s.is_alive() && now.duration_since(*at) < MENU_APPEAR);
         crate::osd::finish(self, now);
         match self.launcher_anim {
