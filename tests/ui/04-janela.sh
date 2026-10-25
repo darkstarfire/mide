@@ -18,6 +18,7 @@ check "restaurar minimizada" "janela restaurada" "400 click 89 95; 440 restore" 
 check "encaixe: terço esquerdo do topo vira metade esquerda" "$FOOT posição=\(0, 28\) visível=683x673" "400 press 400 95; 405 move 300 60; 410 move 200 20; 415 move 150 3; 430 release 150 3; 480 list" "$TERMINAL"
 check "encaixe: meio do topo maximiza" "$FOOT posição=\(0, 28\) visível=1366x673" "400 press 400 95; 405 move 500 60; 410 move 650 20; 415 move 683 3; 430 release 683 3; 480 list" "$TERMINAL"
 check "encaixe: painel de layouts põe no quarto" "$FOOT posição=\(683, 365\) visível=683x336" "400 press 400 95; 405 move 500 60; 410 move 650 20; 415 move 683 3; 430 move 760 40; 440 move 874 86; 450 release 874 86; 500 list" "$TERMINAL"
+check "encaixe: arrastar a janela encaixada a desencaixa (tamanho de antes)" "$FOOT posição=\(23, 281\) visível=700x500" "400 press 400 95; 405 move 300 60; 410 move 200 20; 415 move 150 3; 420 move 100 2; 430 release 100 2; 480 press 300 47; 485 move 310 80; 490 move 320 200; 495 move 330 300; 500 release 330 300; 540 list" "$TERMINAL"
 # Mostrar a mesa: clique no papel de parede afasta a janela; Esc a traz de volta.
 check "clique no papel de parede mostra a mesa" "mesa à mostra: 1 janela" "400 click 1100 450; 450 list" "$TERMINAL"
 check "Esc traz as janelas de volta" "$FOOT posição=\(48, 76\)" "400 click 1100 450; 440 key esc; 500 list" "$TERMINAL"

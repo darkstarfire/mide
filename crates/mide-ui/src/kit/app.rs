@@ -324,9 +324,12 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         }
         None => {
             let xdg_shell = XdgShell::bind(&globals, &qh)?;
-            let decorations = if window.full_size { WindowDecorations::ClientOnly } else { WindowDecorations::RequestServer };
+            // Fora do mide, toda janela desenha a própria barra (no visual do Tahoe, em
+            // qualquer desktop); no mide, as comuns ganham a barra do compositor.
+            let standalone = !crate::control_client::on_mide();
+            let decorations = if window.full_size || standalone { WindowDecorations::ClientOnly } else { WindowDecorations::RequestServer };
             let xdg = xdg_shell.create_window(surface, decorations, &qh);
-            if window.full_size {
+            if window.full_size && !standalone {
                 // Cantos do Tahoe para esta janela (o compositor recorta e faz a sombra).
                 let command = format!("window_style app:{} radius={}", window.app_id, super::theme::RADIUS_WINDOW as i32);
                 std::thread::spawn(move || {
@@ -406,7 +409,10 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
         app: Box::new(app),
         menus: None,
         maximized: false,
+        standalone: !crate::control_client::on_mide() && window.overlay.is_none() && !window.desktop && !window.dropdown && !window.corner && !window.lock,
+        client_bar: !crate::control_client::on_mide() && !window.full_size && window.overlay.is_none() && !window.desktop && !window.dropdown && !window.corner && !window.lock,
         constrained: false,
+        bar_actions: Vec::new(),
         configured_size: (None, None),
         wanted_size: None,
         compositor,
@@ -567,6 +573,13 @@ struct Runner {
     /// Menus publicados na barra superior.
     menus: Option<super::menubar::Published>,
     maximized: bool,
+    /// Fora do mide (janela comum): o app arredonda os próprios cantos.
+    standalone: bool,
+    /// Fora do mide, janela que não é de conteúdo inteiro: o app desenha a barra de
+    /// título (luzes, menus do app, título).
+    client_bar: bool,
+    /// Ações escolhidas nos menus da barra da janela, entregues no próximo quadro.
+    bar_actions: Vec<String>,
     /// Maximizada, em tela cheia ou lado a lado: o tamanho é do compositor.
     constrained: bool,
     /// Último tamanho mandado pelo compositor (`configure`), para saber quando ele muda.
@@ -646,6 +659,8 @@ impl Runner {
                 }
             }
         }
+        // Escolhas nos menus da barra da janela (fora do mide), do quadro anterior.
+        self.ctx.input.menu.append(&mut self.bar_actions);
         let mut pixmap = None;
         // Imagem em pixels (tamanho em pontos vezes a escala); o layout continua em pontos.
         crate::ui::draw::set_scale(self.scale);
@@ -660,15 +675,47 @@ impl Runner {
                 canvas.fill(color(self.ctx.theme.background));
             }
             self.ctx.begin_frame();
+            let mut window_menu = None;
             {
                 let mut ui = Ui::root(&mut canvas, &mut self.ctx);
-                self.app.view(&mut ui);
+                if self.client_bar {
+                    // Fora do mide: a barra de título do app, com os menus dele, e o
+                    // conteúdo logo abaixo.
+                    let groups = self.app.menu_bar();
+                    let (w, _) = ui.window_size();
+                    if let Some(action) = ui.client_title_bar(&self.title, &groups) {
+                        window_menu = Some(action);
+                    }
+                    let app = &mut self.app;
+                    ui.at(0.0, super::ui::CLIENT_BAR_HEIGHT, w, |ui| app.view(ui));
+                } else {
+                    self.app.view(&mut ui);
+                }
             }
             // Menus de contexto ficam por cima de tudo.
             if let Some(overlay) = self.ctx.take_overlay() {
                 let (alpha, dy) = self.ctx.overlay_look();
                 let paint = tiny_skia::PixmapPaint { opacity: alpha, ..Default::default() };
                 canvas.draw_pixmap(0, crate::ui::draw::px(dy as f32), overlay.as_ref(), &paint, tiny_skia::Transform::identity(), None);
+            }
+            // Escolha num menu da barra da janela: os do menu "Janela" são da janela; o
+            // resto vai ao app no próximo quadro (como os da barra superior).
+            if let Some(action) = window_menu {
+                match (action.as_str(), &self.shell) {
+                    (super::menubar::MINIMIZE, Shell::Xdg(xdg)) => xdg.set_minimized(),
+                    (super::menubar::ZOOM, Shell::Xdg(xdg)) => {
+                        if self.maximized { xdg.unset_maximized() } else { xdg.set_maximized() }
+                    }
+                    _ => {
+                        self.bar_actions.push(action);
+                        self.dirty = true;
+                    }
+                }
+            }
+            // Fora do mide, os cantos arredondados são do app (no mide, do compositor).
+            if self.standalone && !self.maximized && matches!(self.shell, Shell::Xdg(_)) {
+                let radius = if self.ctx.content_window { super::theme::RADIUS_WINDOW } else { 12.0 };
+                crate::ui::draw::round_corners(&mut canvas, radius * self.scale);
             }
             // Tamanho pedido pelo app: a janela muda no próximo quadro.
             if let Some((size, min)) = self.ctx.size_request.take()

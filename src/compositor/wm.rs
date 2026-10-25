@@ -247,6 +247,41 @@ impl State {
         self.space.map_element(window, to_loc, true);
     }
 
+    /// A janela está encaixada (maximizada, numa metade, terço ou quarto)?
+    pub fn is_snapped(&self, surface: &ToplevelSurface) -> bool {
+        self.tiled.contains(surface.wl_surface()) || surface.with_pending_state(|s| s.states.contains(XdgState::Maximized))
+    }
+
+    /// Arrastando uma janela encaixada: ela volta ao tamanho de antes e fica sob o
+    /// ponteiro, no mesmo ponto proporcional da barra (como no Mac e no Windows).
+    /// Devolve o novo deslocamento do ponteiro em relação à janela.
+    pub fn unsnap_for_drag(&mut self, surface: &ToplevelSurface, window: &Window, pointer: Point<f64, Logical>, offset: Point<f64, Logical>) -> Point<f64, Logical> {
+        let size = window.geometry().size;
+        let restore = self
+            .restore_sizes
+            .iter()
+            .position(|(s, _)| s == surface.wl_surface())
+            .map(|i| self.restore_sizes.remove(i).1)
+            .unwrap_or_else(|| ((size.w * 2 / 3).max(400), (size.h * 2 / 3).max(300)).into());
+        self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
+        self.tiled.retain(|s| s != surface.wl_surface());
+        self.animations.retain(|a| &a.surface != surface.wl_surface());
+        surface.with_pending_state(|s| {
+            s.states.unset(XdgState::Maximized);
+            for tiled in [XdgState::TiledLeft, XdgState::TiledRight, XdgState::TiledTop, XdgState::TiledBottom] {
+                s.states.unset(tiled);
+            }
+            s.size = Some(restore);
+        });
+        surface.send_configure();
+        let fx = (offset.x / size.w.max(1) as f64).clamp(0.0, 1.0);
+        let new_offset = Point::<f64, Logical>::from((fx * restore.w as f64, offset.y));
+        let loc = (pointer - new_offset).to_i32_round();
+        self.space.map_element(window.clone(), loc, false);
+        tracing::info!("janela desencaixada pelo arrasto: volta a {}x{}", restore.w, restore.h);
+        new_offset
+    }
+
     /// Restaura a janela maximizada ao tamanho e posição anteriores, com animação.
     pub fn unmaximize(&mut self, surface: &ToplevelSurface) {
         let Some(window) = self.window_for(surface.wl_surface()) else {

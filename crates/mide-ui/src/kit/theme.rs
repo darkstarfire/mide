@@ -164,17 +164,81 @@ pub fn accent_key() -> String {
     }
 }
 
-/// A cor de destaque da sessão no tema claro ou escuro.
+/// A cor de destaque da sessão no tema claro ou escuro. Fora do mide, a do sistema
+/// (portal do freedesktop, `accent-color`), se ele tiver uma.
 pub fn system_accent(dark: bool) -> Rgba {
+    if !crate::control_client::on_mide() {
+        if let Some(c) = portal_appearance().1 {
+            return [c[0], c[1], c[2], 255];
+        }
+    }
     let key = accent_key();
     let (_, _, light, dim) = ACCENTS.iter().find(|(k, ..)| *k == key).copied().unwrap_or(ACCENTS[0]);
     let c = if dark { dim } else { light };
     [c[0], c[1], c[2], 255]
 }
 
-/// O tema da sessão é o escuro.
+/// O tema da sessão é o escuro. No mide, a escolha das Configurações; fora dele, a do
+/// sistema (portal do freedesktop, `color-scheme`: GNOME, KDE e outros).
 pub fn system_dark() -> bool {
+    if !crate::control_client::on_mide() {
+        return portal_appearance().0;
+    }
     matches!(crate::settings_file::cached("appearance", "theme"), Some(crate::settings_file::Value::Text(s)) if s == "dark")
+}
+
+/// Aparência pedida pelo sistema fora do mide, pelo portal do freedesktop
+/// (`org.freedesktop.appearance`): escuro e a cor de destaque. Lida no máximo a cada
+/// 2 s (os apps perguntam o tempo todo); sem portal, claro e sem cor.
+fn portal_appearance() -> (bool, Option<[u8; 3]>) {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    };
+    type Cache = Option<(std::time::Instant, (bool, Option<[u8; 3]>))>;
+    static CACHE: Mutex<Cache> = Mutex::new(None);
+    static READING: AtomicBool = AtomicBool::new(false);
+    let cached = CACHE.lock().ok().and_then(|c| *c);
+    // Velha ou nunca lida: lê numa thread (o portal pode demorar ou nem existir; a
+    // interface nunca espera). Até chegar, vale o último valor (claro na primeira vez).
+    if cached.is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(2)) && !READING.swap(true, Ordering::AcqRel) {
+        std::thread::spawn(|| {
+            let value = read_portal_appearance().unwrap_or((false, None));
+            if let Ok(mut cache) = CACHE.lock() {
+                *cache = Some((std::time::Instant::now(), value));
+            }
+            READING.store(false, Ordering::Release);
+        });
+    }
+    cached.map(|(_, v)| v).unwrap_or((false, None))
+}
+
+fn read_portal_appearance() -> Option<(bool, Option<[u8; 3]>)> {
+    static CONN: std::sync::OnceLock<Option<zbus::blocking::Connection>> = std::sync::OnceLock::new();
+    let conn = CONN.get_or_init(|| zbus::blocking::Connection::session().ok()).as_ref()?;
+    let read = |key: &str| -> Option<zbus::zvariant::OwnedValue> {
+        let reply = conn
+            .call_method(Some("org.freedesktop.portal.Desktop"), "/org/freedesktop/portal/desktop", Some("org.freedesktop.portal.Settings"), "ReadOne", &("org.freedesktop.appearance", key))
+            .ok()?;
+        reply.body().deserialize::<zbus::zvariant::OwnedValue>().ok()
+    };
+    let dark = read("color-scheme").and_then(|v| u32::try_from(unwrap_variant(&v)).ok()).is_some_and(|n| n == 1);
+    let accent = read("accent-color").and_then(|v| {
+        let s = zbus::zvariant::Structure::try_from(unwrap_variant(&v)).ok()?;
+        let f: Vec<f64> = s.fields().iter().filter_map(|x| f64::try_from(x).ok()).collect();
+        // Fora de 0..1: o sistema não escolheu cor.
+        (f.len() == 3 && f.iter().all(|c| (0.0..=1.0).contains(c))).then(|| [(f[0] * 255.0) as u8, (f[1] * 255.0) as u8, (f[2] * 255.0) as u8])
+    });
+    Some((dark, accent))
+}
+
+/// O portal às vezes manda o valor dentro de outro variant.
+fn unwrap_variant(v: &zbus::zvariant::OwnedValue) -> zbus::zvariant::Value<'static> {
+    let mut value: zbus::zvariant::Value<'static> = v.try_clone().map(Into::into).unwrap_or(zbus::zvariant::Value::from(0u32));
+    while let zbus::zvariant::Value::Value(inner) = value {
+        value = *inner;
+    }
+    value
 }
 
 /// Converte para a cor do tiny-skia.

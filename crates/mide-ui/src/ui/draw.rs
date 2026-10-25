@@ -245,6 +245,34 @@ pub fn blit(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
     blit_px(dst, src, px(x as f32), px(y as f32), opacity);
 }
 
+/// Arredonda os cantos da imagem com raio `r` (em pixels), deixando o lado de fora
+/// transparente, com borda suave: a janela fora do mide (lá, o compositor arredonda).
+pub fn round_corners(pixmap: &mut Pixmap, r: f32) {
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    let ri = r.ceil() as i32;
+    if ri <= 0 || w < 2 * ri || h < 2 * ri {
+        return;
+    }
+    let data = pixmap.data_mut();
+    for cy in 0..ri {
+        for cx in 0..ri {
+            // Distância do centro do pixel ao centro do arco; cobertura por 1 pixel de borda.
+            let (dx, dy) = (r - (cx as f32 + 0.5), r - (cy as f32 + 0.5));
+            let d = (dx * dx + dy * dy).sqrt();
+            let cover = (r - d + 0.5).clamp(0.0, 1.0);
+            if cover >= 1.0 {
+                continue;
+            }
+            for (x, y) in [(cx, cy), (w - 1 - cx, cy), (cx, h - 1 - cy), (w - 1 - cx, h - 1 - cy)] {
+                let i = ((y * w + x) * 4) as usize;
+                for c in &mut data[i..i + 4] {
+                    *c = (*c as f32 * cover).round() as u8;
+                }
+            }
+        }
+    }
+}
+
 /// Copia pixels RGBA opacos (um quadro de vídeo, `w`x`h`) na posição em pixels, linha
 /// a linha, sem misturar transparência: o caminho rápido para o player.
 pub fn copy_rgba(dst: &mut Pixmap, pixels: &[u8], w: u32, h: u32, x: i32, y: i32) {

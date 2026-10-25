@@ -682,10 +682,26 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     }
 
     // Durante um arrasto, a janela segue o cursor e o cliente não recebe o movimento.
-    if let Some((window, offset)) = state.move_grab.as_ref().map(|g| (g.window.clone(), g.offset)) {
+    if let Some((window, mut offset)) = state.move_grab.as_ref().map(|g| (g.window.clone(), g.offset)) {
+        // Janela encaixada (maximizada, metade...): arrastar uns pixels a desencaixa,
+        // de volta ao tamanho de antes, sob o ponteiro.
+        if let Some(toplevel) = window.toplevel().cloned() {
+            let moved = state.press_location.is_some_and(|p| (pos.x - p.x).abs() + (pos.y - p.y).abs() > 10.0);
+            if moved && state.is_snapped(&toplevel) {
+                offset = state.unsnap_for_drag(&toplevel, &window, pos, offset);
+                if let Some(grab) = state.move_grab.as_mut() {
+                    grab.offset = offset;
+                }
+            }
+        }
         // Encostando na barra superior: prévia do encaixe (metades, tela inteira, layouts).
         if !crate::state::fixed_size(&window) {
             crate::snap::update(state, pos);
+        }
+        // Sobre uma zona de encaixe (ou o painel de layouts), a janela fica parada: só a
+        // prévia mostra o destino, e ela assume o formato ao soltar.
+        if state.snap.is_some() {
+            return;
         }
         let mut loc: Point<i32, Logical> = (pos - offset).to_i32_round();
         // Como no macOS, a barra de título não passa para baixo da barra superior.

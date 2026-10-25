@@ -433,6 +433,9 @@ pub struct Memory {
     /// Menu de contexto aberto e o retângulo dele no último quadro (na janela).
     menu: Option<MenuState>,
     menu_rect: Option<(f32, f32, f32, f32)>,
+    /// O menu abriu neste quadro: o mesmo clique (apertar e soltar no mesmo quadro)
+    /// não o fecha como "clique fora".
+    menu_just_opened: bool,
     menu_drawn: bool,
     /// Modal aberto (retângulo do quadro anterior, na janela) e se foi desenhado agora.
     modal_rect: Option<(f32, f32, f32, f32)>,
@@ -468,6 +471,8 @@ pub enum WindowRequest {
 /// Botões da janela no estilo do Tahoe: diâmetro, distância entre os centros e as
 /// cores (fechar, minimizar, maximizar).
 pub const LIGHT_SIZE: f32 = 14.0;
+/// Altura da barra de título que o próprio app desenha fora do mide.
+pub const CLIENT_BAR_HEIGHT: f32 = 38.0;
 pub const LIGHT_STEP: f32 = 20.0;
 const LIGHT_COLORS: [[u8; 4]; 3] = [[255, 95, 87, 255], [254, 188, 46, 255], [40, 200, 64, 255]];
 
@@ -777,7 +782,8 @@ impl Ctx {
         if self.memory.menu.is_some() {
             let outside = (self.input.pressed || self.input.secondary)
                 && !self.memory.menu_rect.is_some_and(|r| self.input.over(r));
-            if !self.memory.menu_drawn || (outside && !self.input.secondary) {
+            let just_opened = std::mem::take(&mut self.memory.menu_just_opened);
+            if !self.memory.menu_drawn || (outside && !self.input.secondary && !just_opened) {
                 self.memory.menu = None;
                 self.memory.menu_rect = None;
                 self.repaint = true;
@@ -1139,6 +1145,45 @@ impl<'a> Ui<'a> {
             self.ctx.memory.drag_area_press = Some(now);
             self.ctx.window_request = Some(WindowRequest::Move);
         }
+    }
+
+    /// Barra de título desenhada pelo próprio app quando o compositor não desenha a do
+    /// mide (GNOME, KDE...): as luzes, os menus do app (sem a barra superior do mide, eles
+    /// ficam aqui, como num app do Windows, mas no visual do Tahoe), o título no meio e
+    /// o vazio arrastando a janela (duplo clique maximiza). Devolve a ação de menu
+    /// escolhida.
+    pub(crate) fn client_title_bar(&mut self, title: &str, menus: &[super::menubar::MenuGroup]) -> Option<String> {
+        let t = self.ctx.theme.clone();
+        let (w, h) = (self.width, CLIENT_BAR_HEIGHT);
+        fill_rounded(self.canvas, 0.0, 0.0, w, h, 0.0, color(t.background));
+        fill_rounded(self.canvas, 0.0, h - 1.0, w, 1.0, 0.0, color(t.line));
+        let lights = self.window_controls(14.0, (h - LIGHT_SIZE) / 2.0);
+        let mut x = 14.0 + lights + 22.0;
+        let mut chosen = None;
+        for group in menus {
+            let tw = self.measure(&group.title, t.font, FontWeight::Regular);
+            let rect = (x - 8.0, (h - 24.0) / 2.0, tw + 16.0, 24.0);
+            let id = self.ctx.id();
+            let r = self.interact(id, rect);
+            let open = self.ctx.memory.menu.is_some_and(|m| m.owner == id);
+            if r.hovered || open {
+                fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, 6.0, color(t.control));
+            }
+            self.draw_text(&group.title, x, (h - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, t.text);
+            self.menu_impl(&r, r.clicked, |m| fill_menu(m, &group.items, &mut chosen));
+            x += tw + 16.0;
+        }
+        // Título no meio, se não encostar nos menus.
+        let tw = self.measure(title, t.font, FontWeight::Semibold);
+        let tx = (w - tw) / 2.0;
+        if tx > x + 12.0 {
+            self.draw_text(title, tx, (h - t.font * 1.25) / 2.0, t.font, FontWeight::Semibold, t.text);
+        }
+        // Só o vazio depois dos menus arrasta (um clique num menu não move a janela).
+        let was = std::mem::replace(&mut self.ctx.content_window, true);
+        self.window_drag_area((x, 0.0, (w - x).max(0.0), h));
+        self.ctx.content_window = was;
+        chosen
     }
 
     /// A janela é de conteúdo inteiro (`Window::full_size_content`).
@@ -1534,6 +1579,7 @@ impl<'a> Ui<'a> {
                 let opened = crate::settings_file::effect("menu_animation").then(std::time::Instant::now);
                 self.ctx.memory.menu = Some(MenuState { owner: response.id, pos, click, height: 0.0, item_top, opened });
                 self.ctx.memory.menu_rect = None;
+                self.ctx.memory.menu_just_opened = true;
                 self.ctx.repaint = true;
             }
         }
@@ -4952,5 +4998,30 @@ mod tests {
         let (x, y) = snap_physical(&screens, &layout, 1, (540.0, 30.0));
         assert_eq!(x, 1920);
         assert!((y - 108).abs() <= 1, "y = {y}");
+    }
+}
+
+/// Itens de um menu do app (`MenuItem`) num menu do kit: submenus entram depois de um
+/// separador; os desligados não aparecem.
+fn fill_menu(m: &mut Menu, items: &[super::menubar::MenuItem], chosen: &mut Option<String>) {
+    use super::menubar::MenuItem;
+    for item in items {
+        match item {
+            MenuItem::Action { action, label, checked, enabled: true, .. } => {
+                let hit = match checked {
+                    Some(on) => m.item_checked(label, *on),
+                    None => m.item(label),
+                };
+                if hit {
+                    *chosen = Some(action.clone());
+                }
+            }
+            MenuItem::Action { .. } => {}
+            MenuItem::Separator => m.separator(),
+            MenuItem::Submenu { items, .. } => {
+                m.separator();
+                fill_menu(m, items, chosen);
+            }
+        }
     }
 }

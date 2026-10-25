@@ -36,7 +36,7 @@ use std::{
 use mide::{
     files::{self, Entry},
     files_view::{self, ViewMemory},
-    kit::{run, App, Key, Tile, Ui, Window},
+    kit::{run, window_menu, App, Key, MenuGroup, MenuItem, Tile, Ui, Window},
     places,
     programs::{self, Answer, Labels, Opened, Prompt},
 };
@@ -95,6 +95,10 @@ struct Files {
     /// campo ainda precisa receber o foco.
     inline: Option<(PathBuf, String, bool)>,
     message: Option<String>,
+    /// O que dá para desfazer (Ctrl+Z, como o ⌘Z do Finder), da mais antiga para a mais
+    /// nova, com a hora (operações seguidas no mesmo instante, como mandar vários itens
+    /// para a Lixeira, viram uma só).
+    undo: Vec<(std::time::Instant, Undo)>,
     favorites: Vec<(String, PathBuf, &'static str)>,
     /// Miniaturas por (arquivo, tamanho): imagens, folhas de texto e as dos geradores
     /// do sistema (`mide::thumbnails`).
@@ -245,6 +249,7 @@ impl Files {
             inline: None,
             tags: HashMap::new(),
             message: None,
+            undo: Vec::new(),
             favorites: files::favorites(),
             thumbs: HashMap::new(),
             waiting: HashSet::new(),
@@ -417,6 +422,7 @@ impl Files {
         match files::duplicate(path) {
             Ok(copy) => {
                 tracing::info!("duplicado: {}", copy.display());
+                self.remember(Undo::Created(vec![copy.clone()]));
                 self.reload();
                 self.select_one(copy);
             }
@@ -440,6 +446,7 @@ impl Files {
         }
         self.reload();
         if !pasted.is_empty() {
+            self.remember(Undo::Created(pasted.clone()));
             self.selection = pasted;
         }
     }
@@ -488,15 +495,28 @@ impl Files {
     /// Move (ou copia, com Ctrl) os itens arrastados para a pasta.
     fn drop_into(&mut self, paths: &[PathBuf], dir: &Path, copy: bool) {
         let mut done = 0;
+        let mut moved = Vec::new();
+        let mut created = Vec::new();
         for path in paths {
             let result = if copy { files::copy_into(path, dir) } else { files::move_into(path, dir) };
             match result {
                 Ok(target) => {
                     tracing::info!("{}: {} → {}", if copy { "copiado" } else { "movido" }, path.display(), target.display());
                     done += 1;
+                    if copy {
+                        created.push(target);
+                    } else {
+                        moved.push((path.clone(), target));
+                    }
                 }
                 Err(err) => self.message = Some(format!("Não foi possível {} \"{}\": {err}", if copy { "copiar" } else { "mover" }, path.display())),
             }
+        }
+        if !moved.is_empty() {
+            self.remember(Undo::Move(moved));
+        }
+        if !created.is_empty() {
+            self.remember(Undo::Created(created));
         }
         if done > 0 {
             let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string());
@@ -558,12 +578,18 @@ impl Files {
 
     /// Avança o vídeo do ícone: quadro novo vira a imagem mostrada.
     fn tick_inline_video(&mut self, ui: &mut Ui) {
+        let size = self.icon_size;
         let Some((_, player, pix)) = self.inline_video.as_mut() else {
             return;
         };
+        // Zoom mudou com o vídeo tocando: os quadros passam a vir no tamanho novo.
+        player.resize((size, size));
         if player.tick() {
             if let Some(f) = player.frame() {
-                *pix = tiny_skia::IntSize::from_wh(f.width, f.height).and_then(|s| tiny_skia::Pixmap::from_vec(f.pixels.clone(), s));
+                let frame = tiny_skia::IntSize::from_wh(f.width, f.height).and_then(|s| tiny_skia::Pixmap::from_vec(f.pixels.clone(), s));
+                // Sempre dentro do ícone: um quadro maior (vindo de outro tamanho) é
+                // reduzido para caber no lado do ícone.
+                *pix = frame.map(|frame| fit_inside(frame, size));
             }
         }
         if let Some(due) = player.next_due() {
@@ -686,10 +712,171 @@ impl Files {
 
     fn move_to_trash(&mut self, path: &Path) {
         match places::move_to_trash(path, &Self::trash()) {
-            Ok(_) => tracing::info!("para a Lixeira: {}", path.display()),
+            Ok(name) => {
+                tracing::info!("para a Lixeira: {}", path.display());
+                self.remember(Undo::Trash(vec![(name, path.to_path_buf())]));
+            }
             Err(err) => self.message = Some(format!("Não foi possível mover para a Lixeira: {err}")),
         }
         self.reload();
+    }
+
+    /// Ações dos menus da barra superior.
+    fn menu_action(&mut self, action: &str) {
+        let primary = self.primary().cloned();
+        let entry = primary.as_ref().and_then(|p| self.entries.iter().find(|e| &e.path == p).cloned());
+        let user_dir = |key: &str| {
+            let home = places::home_dir();
+            let text = std::fs::read_to_string(home.join(".config/user-dirs.dirs")).unwrap_or_default();
+            places::parse_user_dir(&text, key, &home).filter(|p| p.is_dir()).unwrap_or(home)
+        };
+        match action {
+            "new-folder" => self.new_folder(),
+            "new-file" => self.new_file(),
+            "open" => {
+                if let Some(entry) = entry {
+                    self.open(&entry);
+                }
+            }
+            "info" => {
+                for path in self.selection.clone() {
+                    self.show_info(&path);
+                }
+            }
+            "rename" => {
+                if let Some(path) = primary {
+                    self.start_rename(path);
+                }
+            }
+            "duplicate" => {
+                if let Some(path) = primary {
+                    self.duplicate(&path);
+                }
+            }
+            "trash" => {
+                for path in self.selection.clone() {
+                    self.move_to_trash(&path);
+                }
+            }
+            "undo" => self.undo_last(),
+            "copy" => self.clipboard = self.selection.clone(),
+            "paste" => self.paste(),
+            "select-all" => self.selection = self.entries.iter().map(|e| e.path.clone()).collect(),
+            "view-icons" => self.set_mode(0),
+            "view-list" => self.set_mode(1),
+            "view-columns" => self.set_mode(2),
+            "preview" => self.preview_pane = !self.preview_pane,
+            "hidden" => {
+                self.hidden = !self.hidden;
+                self.reload();
+            }
+            "back" => self.go_back(),
+            "forward" => self.go_forward(),
+            "up" => self.go_up(),
+            "go-home" => self.go(Place::Dir(places::home_dir())),
+            "go-desktop" => self.go(Place::Dir(places::desktop_dir().unwrap_or_else(places::home_dir))),
+            "go-documents" => self.go(Place::Dir(user_dir("DOCUMENTS"))),
+            "go-downloads" => self.go(Place::Dir(places::downloads_dir())),
+            "go-trash" => self.go(Place::Trash),
+            "goto" => self.open_dialog(DialogKind::GoTo, String::new()),
+            _ => {}
+        }
+    }
+
+    /// Guarda uma operação para o Ctrl+Z. Várias do mesmo tipo no mesmo instante (itens
+    /// mandados à Lixeira um a um) viram uma só.
+    fn remember(&mut self, op: Undo) {
+        let now = std::time::Instant::now();
+        if let (Some((at, Undo::Trash(list))), Undo::Trash(more)) = (self.undo.last_mut(), &op) {
+            if now.duration_since(*at) < std::time::Duration::from_millis(300) {
+                list.extend(more.iter().cloned());
+                *at = now;
+                return;
+            }
+        }
+        self.undo.push((now, op));
+        if self.undo.len() > 50 {
+            self.undo.remove(0);
+        }
+    }
+
+    /// Desfaz a última operação (Ctrl+Z): tira da Lixeira, volta o nome, move de volta
+    /// ou manda o que foi criado para a Lixeira.
+    fn undo_last(&mut self) {
+        let Some((_, op)) = self.undo.pop() else {
+            return;
+        };
+        let mut back = Vec::new();
+        let mut errors = Vec::new();
+        match op {
+            Undo::Trash(items) => {
+                for (name, _) in items {
+                    match places::restore_from_trash(&Self::trash(), &name) {
+                        Ok(path) => back.push(path),
+                        Err(err) => errors.push(err.to_string()),
+                    }
+                }
+            }
+            Undo::Rename { from, to } => {
+                if from.exists() {
+                    errors.push(format!("já existe \"{}\"", from.display()));
+                } else {
+                    match std::fs::rename(&to, &from) {
+                        Ok(()) => back.push(from),
+                        Err(err) => errors.push(err.to_string()),
+                    }
+                }
+            }
+            Undo::Move(pairs) => {
+                for (from, to) in pairs {
+                    if from.exists() {
+                        errors.push(format!("já existe \"{}\"", from.display()));
+                        continue;
+                    }
+                    match std::fs::rename(&to, &from) {
+                        Ok(()) => back.push(from),
+                        Err(err) => errors.push(err.to_string()),
+                    }
+                }
+            }
+            Undo::Created(paths) => {
+                for path in paths {
+                    if let Err(err) = places::move_to_trash(&path, &Self::trash()) {
+                        errors.push(err.to_string());
+                    }
+                }
+            }
+        }
+        tracing::info!("desfeito: {} item(ns) de volta, {} erro(s)", back.len(), errors.len());
+        self.message = errors.first().map(|e| format!("Não foi possível desfazer tudo: {e}"));
+        self.reload();
+        if !back.is_empty() {
+            self.selection = back;
+        }
+    }
+
+    /// Ir para a pasta (Ctrl+Shift+G): aceita `~`, caminhos com ou sem a barra no fim e
+    /// arquivos (abre a pasta dele com ele escolhido).
+    fn go_to_typed(&mut self, typed: &str) {
+        let home = places::home_dir();
+        let path = match typed.strip_prefix('~') {
+            Some(rest) => home.join(rest.trim_start_matches('/')),
+            None if typed.starts_with('/') => PathBuf::from(typed),
+            None => self.target_dir().unwrap_or(home).join(typed),
+        };
+        if path.is_dir() {
+            self.dialog = None;
+            self.go(Place::Dir(path));
+        } else if path.exists() {
+            self.dialog = None;
+            if let Some(parent) = path.parent() {
+                self.go(Place::Dir(parent.to_path_buf()));
+                self.select_one(path.clone());
+                self.reveal = Some(path);
+            }
+        } else if let Some(d) = self.dialog.as_mut() {
+            d.error = Some("Essa pasta não existe.".into());
+        }
     }
 
     /// Nova pasta: abre o diálogo com o nome sugerido (nada é criado ainda).
@@ -716,7 +903,17 @@ impl Files {
         let Some(dialog) = self.dialog.as_ref() else {
             return;
         };
+        let renamed_from = match &dialog.kind {
+            DialogKind::Rename(path) => Some(path.clone()),
+            _ => None,
+        };
+        if matches!(dialog.kind, DialogKind::GoTo) {
+            let typed = dialog.name.trim().to_string();
+            self.go_to_typed(&typed);
+            return;
+        }
         let result = match &dialog.kind {
+            DialogKind::GoTo => return,
             DialogKind::Rename(path) => files::rename(path, &dialog.name),
             DialogKind::NewFolder(dir) | DialogKind::NewFile(dir) => {
                 let dir = dir.clone();
@@ -733,6 +930,10 @@ impl Files {
             Ok(path) => {
                 tracing::info!("pronto: {}", path.display());
                 self.dialog = None;
+                match renamed_from {
+                    Some(from) => self.remember(Undo::Rename { from, to: path.clone() }),
+                    None => self.remember(Undo::Created(vec![path.clone()])),
+                }
                 // Criado dentro de uma pasta da lista: ela abre para mostrar o item novo.
                 if let Some(parent) = path.parent().filter(|p| Some(p.to_path_buf()) != self.target_dir()) {
                     self.expanded.insert(parent.to_path_buf());
@@ -848,6 +1049,18 @@ impl Files {
         let (new, hidden, find, rename) = (input.shortcut("n"), input.shortcut("h"), input.shortcut("f"), input.shortcut("r"));
         let (copy, paste, dup, select_all) = (input.shortcut("c"), input.shortcut("v"), input.shortcut("d"), input.shortcut("a"));
         let info = input.shortcut("i");
+        // Ctrl+Z desfaz; Ctrl+Shift+G vai para uma pasta digitada (como no Finder).
+        let undo = input.shortcut_shift("z") == Some(false);
+        let goto = input.shortcut_shift("g") == Some(true);
+        if goto {
+            self.open_dialog(DialogKind::GoTo, String::new());
+            ui.request_repaint();
+            return;
+        }
+        if undo && !ui.typing() && self.dialog.is_none() {
+            self.undo_last();
+            ui.request_repaint();
+        }
         if hidden {
             self.hidden = !self.hidden;
             self.reload();
@@ -1180,7 +1393,9 @@ impl Files {
             DialogKind::NewFolder(_) => ("Nova pasta", "Criar"),
             DialogKind::NewFile(_) => ("Novo arquivo", "Criar"),
             DialogKind::Rename(_) => ("Renomear", "Renomear"),
+            DialogKind::GoTo => ("Ir para a pasta", "Ir"),
         };
+        let placeholder = if matches!(dialog.kind, DialogKind::GoTo) { "Caminho (como ~/Documentos)" } else { "Nome" };
         let focus = std::mem::take(&mut self.focus_rename);
         let mut done = false;
         let mut cancel = ui.input().key(Key::Escape);
@@ -1191,7 +1406,7 @@ impl Files {
             if focus {
                 ui.focus_next_input();
             }
-            done = ui.text_input(&mut name, "Nome").submitted();
+            done = ui.text_input(&mut name, placeholder).submitted();
             if let Some(err) = &error {
                 ui.note(err);
             }
@@ -1840,6 +2055,7 @@ impl Files {
                     match files::rename(&path, name.trim()) {
                         Ok(new_path) => {
                             tracing::info!("renomeado: {} → {}", path.display(), new_path.display());
+                            self.remember(Undo::Rename { from: path.clone(), to: new_path.clone() });
                             self.reload();
                             self.select_one(new_path);
                         }
@@ -2243,6 +2459,32 @@ enum DialogKind {
     NewFolder(PathBuf),
     NewFile(PathBuf),
     Rename(PathBuf),
+    /// Ir para a pasta (Ctrl+Shift+G): um caminho digitado.
+    GoTo,
+}
+
+/// Uma operação que dá para desfazer.
+enum Undo {
+    /// Itens mandados para a Lixeira: nome lá e de onde vieram.
+    Trash(Vec<(String, PathBuf)>),
+    Rename { from: PathBuf, to: PathBuf },
+    /// Itens movidos: de onde e para onde.
+    Move(Vec<(PathBuf, PathBuf)>),
+    /// Itens criados (colar, duplicar, nova pasta ou arquivo, copiar arrastando):
+    /// desfazer manda para a Lixeira, como no Finder.
+    Created(Vec<PathBuf>),
+}
+
+impl Undo {
+    /// Nome no menu Editar ("Desfazer Mover para a Lixeira").
+    fn label(&self) -> &'static str {
+        match self {
+            Undo::Trash(_) => "Desfazer Mover para a Lixeira",
+            Undo::Rename { .. } => "Desfazer Renomear",
+            Undo::Move(_) => "Desfazer Mover",
+            Undo::Created(_) => "Desfazer Criar",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2278,9 +2520,76 @@ enum Action {
 const COLUMN_W: f32 = 200.0;
 
 impl App for Files {
+    /// Menus do Finder na barra superior: Arquivo, Editar, Visualizar, Ir e Janela.
+    fn menu_bar(&mut self) -> Vec<MenuGroup> {
+        let in_trash = self.place == Place::Trash;
+        let one = self.selection.len() == 1;
+        let some = !self.selection.is_empty();
+        let mode = self.mode();
+        let undo = self.undo.last().map(|(_, op)| op.label()).unwrap_or("Desfazer");
+        vec![
+            MenuGroup {
+                title: "Arquivo".into(),
+                items: vec![
+                    MenuItem::action("new-folder", "Nova pasta").shortcut("Ctrl+N").enabled(!in_trash),
+                    MenuItem::action("new-file", "Novo arquivo").enabled(!in_trash),
+                    MenuItem::Separator,
+                    MenuItem::action("open", "Abrir").shortcut("Ctrl+O").enabled(one),
+                    MenuItem::action("info", "Obter informações").shortcut("Ctrl+I").enabled(some),
+                    MenuItem::action("rename", "Renomear").enabled(one && !in_trash),
+                    MenuItem::action("duplicate", "Duplicar").shortcut("Ctrl+D").enabled(one && !in_trash),
+                    MenuItem::Separator,
+                    MenuItem::action("trash", "Mover para a Lixeira").enabled(some && !in_trash),
+                ],
+            },
+            MenuGroup {
+                title: "Editar".into(),
+                items: vec![
+                    MenuItem::action("undo", undo).shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
+                    MenuItem::Separator,
+                    MenuItem::action("copy", "Copiar").shortcut("Ctrl+C").enabled(some && !in_trash),
+                    MenuItem::action("paste", "Colar").shortcut("Ctrl+V").enabled(!self.clipboard.is_empty() && !in_trash),
+                    MenuItem::action("select-all", "Selecionar tudo").shortcut("Ctrl+A"),
+                ],
+            },
+            MenuGroup {
+                title: "Visualizar".into(),
+                items: vec![
+                    MenuItem::action("view-icons", "Como ícones").checked(mode == 0),
+                    MenuItem::action("view-list", "Como lista").checked(mode == 1),
+                    MenuItem::action("view-columns", "Como colunas").checked(mode == 2),
+                    MenuItem::Separator,
+                    MenuItem::action("preview", "Mostrar pré-visualização").checked(self.preview_pane),
+                    MenuItem::action("hidden", "Mostrar arquivos ocultos").shortcut("Ctrl+H").checked(self.hidden),
+                ],
+            },
+            MenuGroup {
+                title: "Ir".into(),
+                items: vec![
+                    MenuItem::action("back", "Voltar").enabled(!self.back.is_empty()),
+                    MenuItem::action("forward", "Avançar").enabled(!self.forward.is_empty()),
+                    MenuItem::action("up", "Pasta de cima").shortcut("Ctrl+Up"),
+                    MenuItem::Separator,
+                    MenuItem::action("go-home", "Pasta pessoal"),
+                    MenuItem::action("go-desktop", "Área de trabalho"),
+                    MenuItem::action("go-documents", "Documentos"),
+                    MenuItem::action("go-downloads", "Downloads"),
+                    MenuItem::action("go-trash", "Lixeira"),
+                    MenuItem::Separator,
+                    MenuItem::action("goto", "Ir para a pasta…").shortcut("Ctrl+Shift+G"),
+                ],
+            },
+            window_menu(Vec::new()),
+        ]
+    }
+
     fn view(&mut self, ui: &mut Ui) {
         ui.set_title(&self.title());
         self.tick_inline_video(ui);
+        for action in ui.input().menu.clone() {
+            self.menu_action(&action);
+            ui.request_repaint();
+        }
         let mut items: Vec<(String, &str)> = vec![("Favoritos".into(), "")];
         items.extend(self.favorites.iter().map(|(name, _, icon)| (name.clone(), *icon)));
         items.push(("Lugares".into(), ""));
@@ -2526,4 +2835,20 @@ fn play_button(canvas: &mut tiny_skia::Pixmap, cx: f32, cy: f32, rad: f32, playi
         paint.anti_alias = true;
         canvas.fill_path(&path, &paint, tiny_skia::FillRule::Winding, mide::ui::draw::tf(), None);
     }
+}
+
+/// Reduz a imagem para caber num quadrado de `side` (mantendo a proporção).
+fn fit_inside(pix: tiny_skia::Pixmap, side: u32) -> tiny_skia::Pixmap {
+    let (w, h) = (pix.width(), pix.height());
+    if w <= side && h <= side {
+        return pix;
+    }
+    let k = (side as f32 / w as f32).min(side as f32 / h as f32);
+    let (nw, nh) = (((w as f32 * k).round() as u32).max(1), ((h as f32 * k).round() as u32).max(1));
+    let Some(mut out) = tiny_skia::Pixmap::new(nw, nh) else {
+        return pix;
+    };
+    let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    out.draw_pixmap(0, 0, pix.as_ref(), &paint, tiny_skia::Transform::from_scale(k, k), None);
+    out
 }

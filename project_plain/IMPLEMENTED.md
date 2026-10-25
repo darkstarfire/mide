@@ -1730,3 +1730,9 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 - **`mide-new "Nome do App"`** (`--dir`, `--local`): cria um projeto pronto (`Cargo.toml` com as dependências otimizadas em desenvolvimento, `src/main.rs` com uma janela do Tahoe — barra lateral de vidro com seções, barra de ferramentas, cartões, campo de texto, lista, interruptor e menus na barra superior —, o `.desktop` e um README com como instalar). Testado gerando, compilando e usando o app (as notas entram na lista).
 - `docs/mide-ui.md` explica o pacote e o `mide-new`; os exemplos usam `mide_ui::kit`.
 - Falta decidir a licença do projeto (o repositório não tem arquivo de licença; o pacote ficou sem o campo `license`).
+
+## mide-ui fora do mide e projeto separado (2026-10-25)
+
+- **Decisões do usuário (2026-10-25):** o framework vira o projeto `fabioaacarneiro/mide-ui`, para qualquer desktop Linux com Wayland, e o mide passa a depender dele; licença MIT ou Apache-2.0. O projeto está pronto em `~/Projetos/mide-ui` (licenças, guia, mapa do Tahoe, `docs/roadmap.md`), esperando o repositório ser criado no GitHub (o `gh` não está conectado); até lá, o mide usa a cópia em `crates/mide-ui`, que é a principal (as mudanças são copiadas para o projeto separado).
+- **Fora do mide** (`control_client::on_mide`; `MIDE_UI_STANDALONE=1` força o modo para testar): barra de título própria no visual do Tahoe nas janelas comuns (luzes, menus do app dentro dela, título, arrastar e duplo clique), cantos arredondados pelo próprio app, tema claro/escuro e cor de destaque do sistema pelo portal do freedesktop (lidos numa thread: sem portal, a interface não trava), vidro desligado. Dentro do mide, nada muda. Exemplo novo `janela-comum` (janela comum com menus).
+- **Menus do kit**: um menu aberto por clique rápido (apertar e soltar no mesmo quadro) fechava na hora, como se fosse um clique fora; agora o quadro em que ele abre não o fecha.

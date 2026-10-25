@@ -21,7 +21,7 @@ trap 'rm -rf "$OUT"' EXIT
 # Espera a GPU terminar cada quadro e registra o tempo real de desenho
 # ("quadro na GPU"); o "quadro do compositor" é só o tempo de CPU para montar a cena.
 export MIDE_GPU_TIMING=1
-export RUST_LOG="mide=debug,mide_dock=debug,mide_launcher=debug,mide_files=debug,mide_search=debug,mide::kit=debug"
+export RUST_LOG="mide=debug,mide_dock=debug,mide_launcher=debug,mide_files=debug,mide_search=debug,mide_ui::kit=debug"
 ONLY="${1:-}"
 
 # stats "rótulo" "regex com o número em ms": mediana, p95, máximo e quantidade.
@@ -73,4 +73,4 @@ FDIR="$OUT/pasta"
 mkdir -p "$FDIR"/{Fotos,Projetos,Docs}
 for i in $(seq 1 40); do echo "$i" >"$FDIR/arquivo $i.txt"; done
 run arquivos "200 click 463 190; 230 click 694 106; 260 rclick 500 203; 290 key esc; 320 click 652 106; 350 click 463 190; 356 click 463 190; 400 key backspace; 440 wheel down; 460 wheel down; 480 list" \
-    "RUST_LOG=mide_files=debug,mide::kit=debug target/debug/mide-files '$FDIR' >>'$OUT/app.log' 2>&1"
+    "RUST_LOG=mide_files=debug,mide_ui::kit=debug target/debug/mide-files '$FDIR' >>'$OUT/app.log' 2>&1"

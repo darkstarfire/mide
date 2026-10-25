@@ -651,11 +651,13 @@ impl CompositorHandler for State {
             if let Some(toplevel) = window.toplevel() {
                 if !toplevel.is_initial_configure_sent() {
                     toplevel.send_configure();
-                    if self.focus_on_map.as_ref() == Some(surface) {
-                        self.focus_on_map = None;
-                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                        crate::input::focus_window(self, &window, serial);
-                    }
+                }
+                // Janela nova: o foco vem logo depois do configure inicial (quem quer que o
+                // tenha mandado).
+                if self.focus_on_map.as_ref() == Some(surface) {
+                    self.focus_on_map = None;
+                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                    crate::input::focus_window(self, &window, serial);
                 }
             }
             window.on_commit();
@@ -1146,7 +1148,10 @@ fn set_server_side(toplevel: &ToplevelSurface) {
         states.data_map.insert_if_missing_threadsafe(|| SsdMarker);
     });
     toplevel.with_pending_state(|s| s.decoration_mode = Some(Mode::ServerSide));
-    toplevel.send_configure();
+    // Antes do primeiro commit do app, o configure inicial (no commit) já leva o modo.
+    if toplevel.is_initial_configure_sent() {
+        toplevel.send_configure();
+    }
 }
 
 /// Marca de superfície que pediu decoração de servidor (o mide desenha a barra).

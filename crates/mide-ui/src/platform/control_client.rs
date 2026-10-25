@@ -90,5 +90,19 @@ impl Glass {
 /// O vidro das barras e menus está ligado nas Configurações? Sem ele, os painéis
 /// usam o fundo claro quase opaco de antes.
 pub fn panel_glass() -> bool {
-    crate::settings_file::effect("panel_glass")
+    // Fora do mide ninguém desfoca o fundo: os apps desenham opaco.
+    on_mide() && crate::settings_file::effect("panel_glass")
+}
+
+/// O app está numa sessão do mide (o compositor responde no canal de controle)? Fora
+/// dele (GNOME, KDE...), o mide-ui desenha a própria barra de título, arredonda os
+/// cantos e lê o tema do sistema. `MIDE_UI_STANDALONE=1` força o modo de fora (testes).
+pub fn on_mide() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        if std::env::var_os("MIDE_UI_STANDALONE").is_some() {
+            return false;
+        }
+        control_path().is_some_and(|p| UnixStream::connect(p).is_ok())
+    })
 }
