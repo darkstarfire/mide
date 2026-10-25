@@ -67,6 +67,9 @@ struct Files {
     preview_pane: bool,
     /// Visualização Rápida (Espaço): o item mostrado grande por cima da janela.
     quick_look: Option<PathBuf>,
+    /// Vídeo tocando dentro do próprio ícone (botão de tocar na miniatura, como no
+    /// Finder): o arquivo, o player e o quadro atual.
+    inline_video: Option<(PathBuf, mide::media::video::Player, Option<tiny_skia::Pixmap>)>,
     /// Seleção por retângulo: onde o botão foi apertado no vazio, e depois de andar, o
     /// retângulo (início, ponta) com a seleção de antes (Ctrl/Shift somam a ela).
     lasso_press: Option<(f32, f32)>,
@@ -227,6 +230,7 @@ impl Files {
             icon_size: files_view::ICON_DEFAULT,
             preview_pane: false,
             quick_look: None,
+            inline_video: None,
             lasso_press: None,
             lasso: None,
             col_cache: HashMap::new(),
@@ -533,7 +537,43 @@ impl Files {
         self.after_move();
     }
 
+    /// Botão de tocar na miniatura de um vídeo: toca no próprio ícone (com som), pausa,
+    /// ou troca para outro vídeo.
+    fn toggle_inline_video(&mut self, path: &Path, size: u32) {
+        if let Some((current, player, _)) = self.inline_video.as_mut() {
+            if current == path {
+                player.toggle();
+                return;
+            }
+        }
+        match mide::media::video::Player::open(path, (size, size), true) {
+            Some(mut player) => {
+                tracing::info!("arquivos: tocando {} no ícone", path.display());
+                player.play();
+                self.inline_video = Some((path.to_path_buf(), player, None));
+            }
+            None => tracing::warn!("arquivos: vídeo não abriu: {}", path.display()),
+        }
+    }
+
+    /// Avança o vídeo do ícone: quadro novo vira a imagem mostrada.
+    fn tick_inline_video(&mut self, ui: &mut Ui) {
+        let Some((_, player, pix)) = self.inline_video.as_mut() else {
+            return;
+        };
+        if player.tick() {
+            if let Some(f) = player.frame() {
+                *pix = tiny_skia::IntSize::from_wh(f.width, f.height).and_then(|s| tiny_skia::Pixmap::from_vec(f.pixels.clone(), s));
+            }
+        }
+        if let Some(due) = player.next_due() {
+            ui.wake_after(due);
+        }
+    }
+
     fn after_move(&mut self) {
+        // O vídeo tocando no ícone para ao sair da pasta.
+        self.inline_video = None;
         self.selection.clear();
         self.search.clear();
         self.searching = false;
@@ -1624,23 +1664,53 @@ impl Files {
                 // aparecem são pedidas; até chegar, o ícone do tipo.
                 let view = ui.region();
                 let thumbs = &self.thumbs;
+                // Vídeo tocando no ícone: o quadro atual no lugar da miniatura.
+                let video_now = self.inline_video.as_ref().map(|(path, player, pix)| (path.clone(), pix.clone(), player.playing()));
+                let mut video_click: Option<PathBuf> = None;
                 ui.wrap(|ui| {
                     for entry in &shown {
                         let selected = selection.contains(&entry.path);
                         let (name, icon) = label_of(entry);
                         let wants = Self::wants_thumb(entry);
                         let cached = if wants { thumbs.get(&(entry.path.clone(), size)) } else { None };
-                        let image = match cached {
-                            Some(Some(pix)) => Tile::Image(pix),
+                        let here = video_now.as_ref().filter(|(p, ..)| *p == entry.path);
+                        let image = match (here.and_then(|(_, pix, _)| pix.as_ref()), cached) {
+                            (Some(frame), _) => Tile::Image(frame),
+                            (None, Some(Some(pix))) => Tile::Image(pix),
                             _ => Tile::Icon(&icon),
                         };
                         let r = ui.tile(image, &name, selected, size);
                         if wants && cached.is_none() && r.rect.1 + r.rect.3 >= view.1 - 200.0 && r.rect.1 <= view.1 + view.3 + 200.0 {
                             wanted.push(entry.path.clone());
                         }
-                        item(ui, entry, r);
+                        // Vídeos: botão de tocar sobre a miniatura (com o ponteiro em cima,
+                        // ou parado no meio); tocando, vira pausar.
+                        let mut on_button = false;
+                        if !entry.is_dir && size >= 64 && mide::media::video::is_video(&entry.path) {
+                            let fw = size as f32;
+                            let (cx, cy) = (r.rect.0 + (fw + 44.0) / 2.0, r.rect.1 + 6.0 + fw / 2.0);
+                            let rad = (fw * 0.15).clamp(14.0, 24.0);
+                            let button = (cx - rad, cy - rad, 2.0 * rad, 2.0 * rad);
+                            let over = ui.pointer().is_some_and(|p| p.0 >= button.0 && p.0 < button.0 + button.2 && p.1 >= button.1 && p.1 < button.1 + button.3);
+                            let playing = here.is_some_and(|(_, _, playing)| *playing);
+                            if r.hovered || here.is_some_and(|_| !playing) {
+                                ui.paint(|canvas, _| play_button(canvas, cx, cy, rad, playing, over));
+                            }
+                            if over && (r.clicked || ui.input().pressed || r.double_clicked) {
+                                on_button = true;
+                                if r.clicked {
+                                    video_click = Some(entry.path.clone());
+                                }
+                            }
+                        }
+                        if !on_button {
+                            item(ui, entry, r);
+                        }
                     }
                 });
+                if let Some(path) = video_click {
+                    self.toggle_inline_video(&path, size);
+                }
             }
             if revealed {
                 self.reveal = None;
@@ -2210,6 +2280,7 @@ const COLUMN_W: f32 = 200.0;
 impl App for Files {
     fn view(&mut self, ui: &mut Ui) {
         ui.set_title(&self.title());
+        self.tick_inline_video(ui);
         let mut items: Vec<(String, &str)> = vec![("Favoritos".into(), "")];
         items.extend(self.favorites.iter().map(|(name, _, icon)| (name.clone(), *icon)));
         items.push(("Lugares".into(), ""));
@@ -2429,5 +2500,30 @@ mod tests {
             assert_eq!((got.place, got.select), (Place::Dir(dir.clone()), vec![latin1]));
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Botão redondo de tocar/pausar sobre a miniatura de um vídeo (como no Finder):
+/// círculo escuro translúcido com o símbolo branco; mais escuro com o ponteiro em cima.
+fn play_button(canvas: &mut tiny_skia::Pixmap, cx: f32, cy: f32, rad: f32, playing: bool, over: bool) {
+    use mide::ui::draw::fill_rounded;
+    let white = tiny_skia::Color::from_rgba8(255, 255, 255, 255);
+    fill_rounded(canvas, cx - rad, cy - rad, 2.0 * rad, 2.0 * rad, rad, tiny_skia::Color::from_rgba8(0, 0, 0, if over { 170 } else { 120 }));
+    let s = rad * 0.8;
+    if playing {
+        fill_rounded(canvas, cx - s * 0.45, cy - s * 0.5, s * 0.3, s, s * 0.08, white);
+        fill_rounded(canvas, cx + s * 0.15, cy - s * 0.5, s * 0.3, s, s * 0.08, white);
+        return;
+    }
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.move_to(cx - s * 0.35, cy - s * 0.55);
+    pb.line_to(cx + s * 0.6, cy);
+    pb.line_to(cx - s * 0.35, cy + s * 0.55);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color(white);
+        paint.anti_alias = true;
+        canvas.fill_path(&path, &paint, tiny_skia::FillRule::Winding, mide::ui::draw::tf(), None);
     }
 }

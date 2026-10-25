@@ -1715,3 +1715,11 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 
 - Pedido do usuário (como no Zorin, ChromeOS e Windows 11): arrastando uma janela até encostar na barra superior, o terço esquerdo da tela põe a janela na metade esquerda, o terço direito na metade direita e o meio na tela inteira. No meio abre também um painel de layouts no topo (metades, 2/3 + 1/3, terços, metade + quartos, quartos): passar sobre uma célula mostra onde a janela vai ficar e soltar a põe ali. Uma prévia translúcida na cor de destaque acompanha o arrasto; Esc cancela; vale na tela sob o ponteiro (várias telas). Tudo desenhado pelo compositor (`src/compositor/snap.rs`, com testes), e a seção 04 da bateria ganhou os três casos.
 - A barra de nível do aviso de volume e brilho também segue a cor de destaque.
+
+## Player de Vídeo nativo e vídeo tocando no ícone do Arquivos (2026-10-25)
+
+- **Decisão do usuário (2026-10-25):** o `ffmpeg` (já dependência do mide) decodifica como programa à parte; o player é do mide (janela, controles, relógio, sincronia).
+- **Núcleo** `mide::media::video` (pasta nova `src/media/`): `probe` (duração, tamanho, quadros por segundo e som pelo `ffprobe`), `Player` (um `ffmpeg` entrega quadros RGBA já no tamanho da tela por um cano, lidos numa thread com fila de 3; outro toca o som direto no PipeWire/PulseAudio; pausar e pular recomeçam os dois na posição nova; redimensionar recomeça no tamanho novo), com testes que tocam um vídeo de verdade.
+- **`mide-player` ("Player de Vídeo")**, como o QuickTime do Tahoe: vídeo sobre preto na janela inteira, luzes e título no topo, cápsula escura com voltar/avançar 15 s, tocar/pausar, volume e a barra de tempo na cor de destaque (arrastável, o quadro acompanha), que somem 2,5 s depois do mouse parar. Teclado: Espaço, ←/→ (5 s), ↑/↓ (volume), M (mudo), Ctrl+O, Ctrl+W; menus Arquivo e Reprodução (Repetir, Sem som) na barra. Janela no tamanho do vídeo (até 960x540). `.desktop` com os tipos de vídeo e padrão dos vídeos na sessão do mide. Falta: tela cheia.
+- **Arquivos**: nos vídeos, um botão redondo de tocar aparece sobre a miniatura (com o ponteiro em cima); clicar toca o vídeo no próprio ícone, com som, como no Finder; clicar de novo pausa; sair da pasta para.
+- `ui::draw::copy_rgba`: cópia rápida de um quadro (linha a linha, sem misturar transparência).

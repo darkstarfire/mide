@@ -206,7 +206,7 @@ fn write_defaults(path: &Path, mimes: &[&str], desktop_id: &str) -> std::io::Res
 
 /// Apps do mide que são o padrão da sessão: pastas no Arquivos e textos no Editor de
 /// Texto. Imagens, compactados e outros entram quando o mide tiver o app (B23, E4).
-pub const SESSION_DEFAULTS: &[(&str, &str)] = &[("files", "mide-files.desktop"), ("text", "mide-text.desktop"), ("documents", "mide-text.desktop")];
+pub const SESSION_DEFAULTS: &[(&str, &str)] = &[("files", "mide-files.desktop"), ("text", "mide-text.desktop"), ("documents", "mide-text.desktop"), ("video", "mide-player.desktop")];
 
 /// Na sessão do mide: grava no `mide-mimeapps.list` os apps do mide para os tipos que
 /// ainda não têm escolha nele (uma escolha feita nas Configurações nunca é trocada).

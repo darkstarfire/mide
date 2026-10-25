@@ -206,6 +206,8 @@ Apps do dia a dia feitos com o mide-ui, com o visual e o comportamento do resto 
 
 - [ ] E11. Planilha nativa (`mide-sheets`, "Planilhas") compatível com o Excel (pedido do usuário em 2026-10-24, deixado para depois): grade com fórmulas (motor próprio, funções comuns do Excel), formatação de células, várias abas, gráficos simples, ler e gravar .xlsx, .ods e .csv, imprimir e exportar PDF (reaproveitando o gravador de PDF do Editor de Texto), visual do Tahoe (como o Numbers no visual, com a compatibilidade do Excel).
 
+- [~] E12. Player de Vídeo nativo (`mide-player`, como o QuickTime) e vídeo tocando no ícone do Arquivos (pedido do usuário em 2026-10-25; decisão: `ffmpeg` externo decodifica, o resto é do mide). Feito em 2026-10-25: núcleo `mide::media::video`, janela com controles no visual do Tahoe, teclado, menus, padrão dos vídeos, botão de tocar nas miniaturas do Arquivos. Falta: tela cheia, legendas, escolher a faixa de áudio, listas de reprodução, aceleração por GPU (VA-API) e o teste do usuário com vídeos grandes.
+
 ### Planos futuros (fora do foco atual)
 - Apps completos em outras linguagens com o visual do mide: depois do mide-ui 1.0 (API estável), uma camada declarativa (a tela descrita como dados, não por closures) exposta por interface C (`cbindgen`) e, a partir dela, outras linguagens (Python com PyO3, Lua etc.). Até lá, apps de outras linguagens rodam no mide pelos toolkits deles (GTK, Qt...), sem o visual nativo.
 - Uma ISO de instalação de um Linux com o mide.

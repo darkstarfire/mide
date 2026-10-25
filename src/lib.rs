@@ -8,6 +8,7 @@
 //! - `applications`: apps instalados e como abrir coisas;
 //! - `storage`: arquivos, pastas e miniaturas;
 //! - `documents`: texto formatado, ortografia e marcações;
+//! - `media`: o núcleo do player de vídeo;
 //! - `terminal` e `calculator`: os núcleos do Terminal e da Calculadora.
 //!
 //! Os módulos também ficam na raiz (`mide::sounds`, `mide::files`...), para os
@@ -17,6 +18,7 @@ pub mod applications;
 pub mod calculator;
 pub mod documents;
 pub mod kit;
+pub mod media;
 pub mod platform;
 pub mod shell;
 pub mod storage;

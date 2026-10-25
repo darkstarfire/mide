@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Video Player
+Name[pt_BR]=Player de Vídeo
+Comment=Watch videos
+Comment[pt_BR]=Assista a vídeos
+Exec=mide-player %f
+Icon=multimedia-video-player
+Categories=AudioVideo;Video;Player;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/mpeg;video/ogg;video/3gpp;video/x-flv;video/x-ms-wmv;video/mp2t;
+StartupWMClass=mide-player
+OnlyShowIn=mide;

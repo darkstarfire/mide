@@ -245,6 +245,24 @@ pub fn blit(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
     blit_px(dst, src, px(x as f32), px(y as f32), opacity);
 }
 
+/// Copia pixels RGBA opacos (um quadro de vídeo, `w`x`h`) na posição em pixels, linha
+/// a linha, sem misturar transparência: o caminho rápido para o player.
+pub fn copy_rgba(dst: &mut Pixmap, pixels: &[u8], w: u32, h: u32, x: i32, y: i32) {
+    let (dw, dh) = (dst.width() as i32, dst.height() as i32);
+    let (w, h) = (w as i32, h as i32);
+    let (x0, x1) = (x.max(0), (x + w).min(dw));
+    if x0 >= x1 || pixels.len() < (w * h * 4) as usize {
+        return;
+    }
+    let data = dst.data_mut();
+    for row in y.max(0)..(y + h).min(dh) {
+        let s = (((row - y) * w + (x0 - x)) * 4) as usize;
+        let d = ((row * dw + x0) * 4) as usize;
+        let n = ((x1 - x0) * 4) as usize;
+        data[d..d + n].copy_from_slice(&pixels[s..s + n]);
+    }
+}
+
 /// Como `blit`, com a posição já em pixels (colar uma área desenhada à parte).
 pub fn blit_px(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32, opacity: f32) {
     let (dw, dh, sw, sh) = (dst.width() as i32, dst.height() as i32, src.width() as i32, src.height() as i32);
