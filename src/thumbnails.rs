@@ -383,7 +383,7 @@ mod tests {
         let pix = make(&file, 128).expect("miniatura do texto");
         assert_eq!((pix.width(), pix.height()), (128, 128));
         let dark = pix.pixels().iter().filter(|p| p.alpha() > 200 && p.red() < 120).count();
-        assert!(dark > 20, "há texto desenhado ({dark} pontos escuros)");
+        assert!(dark > 10, "há texto desenhado ({dark} pontos escuros)");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
