@@ -1766,3 +1766,10 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 
 - Instalador de AppImage (o usuário achou os botões do fim sem sentido e cortados): nenhum botão em nenhuma etapa; no fim, uma linha centralizada diz que o app foi instalado (a janela fecha pela luz vermelha ou Esc; Enter abre o app instalado).
 - Ícone dos AppImages no Arquivos (o usuário viu o ícone do app instalado virar o genérico): a miniatura do sistema voltou (o ícone do próprio app); só a folha genérica em preto e branco que o gerador devolve para AppImages sem ícone é trocada pelo ícone de AppImage do tema (no mide-ui).
+
+## Área de trabalho: arrastar ícones e diálogo na frente das janelas (2026-10-25)
+
+- Pedido do usuário: o arquivo criado na área de trabalho não se arrastava, e o diálogo Renomear abria atrás das janelas, sem dar para ver o que se digitava.
+- Arrastar ícones: o ícone segue o ponteiro e cai na célula mais perto da grade (como o "Alinhar à grade" do Mac); se já havia outro ícone lá, os dois trocam de lugar. Os lugares ficam em `~/.local/state/mide/desktop-positions` (uma linha por item: coluna a partir da direita, linha, nome); renomear mantém o lugar; itens novos ocupam os primeiros lugares livres. Soltar em cima de uma pasta move o item para dentro dela (a pasta fica destacada durante o arrasto).
+- Diálogos (renomear, criar, confirmar um programa): a camada da área de trabalho sobe para a frente das janelas e pega o teclado enquanto o diálogo aparece, e volta para trás quando ele fecha. Novo no mide-ui: `Ui::set_raised` (troca a camada de Bottom para Overlay pelo `set_layer` do layer-shell).
+- Testes: 3 cenários novos na seção 13 (arrastar muda o lugar, soltar na pasta move, renomear com o Editor de Texto na frente); seção 13: 8/8.

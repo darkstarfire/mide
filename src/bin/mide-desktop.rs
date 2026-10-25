@@ -12,9 +12,15 @@
 //! AppImages, executáveis e scripts rodam com duplo clique (ou perguntam antes, como
 //! no Arquivos: `mide::programs`).
 //!
+//! Arrastar um ícone muda o lugar dele na grade (como no Mac, com "Alinhar à grade"):
+//! o lugar fica guardado em `~/.local/state/mide/desktop-positions` e, se já houver
+//! outro ícone lá, os dois trocam de lugar. Soltar em cima de uma pasta move o item
+//! para dentro dela. Diálogos (renomear, criar) trazem a camada para a frente das
+//! janelas enquanto estão abertos.
+//!
 //! `MIDE_DESKTOP_DIR` troca a pasta (os testes usam uma pasta temporária).
 
-use std::{error::Error, path::PathBuf, time::Duration};
+use std::{collections::HashMap, error::Error, path::PathBuf, time::Duration};
 
 use mide::{
     files::{self, Entry},
@@ -42,6 +48,71 @@ struct Desktop {
     prompt: Option<Prompt>,
     /// Nome e ícone dos atalhos `.desktop`, no lugar do nome do arquivo.
     labels: Labels,
+    /// Lugar escolhido de cada ícone (nome do arquivo → coluna a partir da direita, linha).
+    cells: HashMap<String, (usize, usize)>,
+    /// Ícone apertado: caminho, ponto onde o botão desceu e distância do ponteiro ao
+    /// canto do ícone. Vira arrasto quando o ponteiro anda mais que alguns pontos.
+    press: Option<Press>,
+    dragging: bool,
+}
+
+/// Ícone apertado: caminho, onde o botão desceu e distância do ponteiro ao canto.
+type Press = (PathBuf, (f32, f32), (f32, f32));
+
+/// Posições guardadas: uma linha por ícone, `coluna<TAB>linha<TAB>nome`.
+fn cells_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))?;
+    Some(base.join("mide").join("desktop-positions"))
+}
+
+fn parse_cells(text: &str) -> HashMap<String, (usize, usize)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let col = parts.next()?.parse().ok()?;
+            let row = parts.next()?.parse().ok()?;
+            let name = parts.next().filter(|n| !n.is_empty())?;
+            Some((name.to_string(), (col, row)))
+        })
+        .collect()
+}
+
+fn format_cells(cells: &HashMap<String, (usize, usize)>) -> String {
+    let mut lines: Vec<String> = cells.iter().map(|(name, (c, r))| format!("{c}\t{r}\t{name}")).collect();
+    lines.sort();
+    lines.iter().map(|l| l.clone() + "\n").collect()
+}
+
+/// Lugar de cada item na grade de `cols` x `rows`: os que têm lugar guardado (dentro
+/// da grade e ainda livre) ficam nele; os outros ocupam os primeiros livres, coluna
+/// por coluna a partir da direita, de cima para baixo.
+fn layout(names: &[String], saved: &HashMap<String, (usize, usize)>, cols: usize, rows: usize) -> Vec<(usize, usize)> {
+    let mut taken = std::collections::HashSet::new();
+    let mut out: Vec<Option<(usize, usize)>> = names
+        .iter()
+        .map(|n| {
+            let cell = saved.get(n).copied().filter(|&(c, r)| c < cols && r < rows && !taken.contains(&(c, r)))?;
+            taken.insert(cell);
+            Some(cell)
+        })
+        .collect();
+    let mut next = 0usize;
+    for slot in out.iter_mut().filter(|s| s.is_none()) {
+        // Sem lugar livre na grade (muitos ícones): continua para a esquerda.
+        loop {
+            let cell = (next / rows, next % rows);
+            next += 1;
+            if !taken.contains(&cell) {
+                taken.insert(cell);
+                *slot = Some(cell);
+                break;
+            }
+        }
+    }
+    out.into_iter().map(|c| c.unwrap_or((0, 0))).collect()
 }
 
 /// Diálogo de criar ou renomear (o mesmo jeito do Arquivos).
@@ -74,7 +145,8 @@ enum Action {
 
 impl Desktop {
     fn new() -> Self {
-        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, dialog: None, focus_dialog: false, workarea: None, asked_at: None, prompt: None, labels: Labels::default() };
+        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, dialog: None, focus_dialog: false, workarea: None, asked_at: None, prompt: None, labels: Labels::default(), cells: HashMap::new(), press: None, dragging: false };
+        app.cells = cells_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_cells(&t)).unwrap_or_default();
         app.reload();
         app
     }
@@ -100,6 +172,15 @@ impl Desktop {
         self.workarea = parsed;
     }
 
+    fn save_cells(&self) {
+        if let Some(path) = cells_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, format_cells(&self.cells));
+        }
+    }
+
     fn changed(&self) -> bool {
         self.dir.as_ref().is_some_and(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok() != self.mtime)
     }
@@ -113,6 +194,10 @@ impl Desktop {
     fn confirm_dialog(&mut self) {
         let (Some(dialog), Some(dir)) = (self.dialog.as_ref(), self.dir.clone()) else {
             return;
+        };
+        let renamed_from = match &dialog.kind {
+            DialogKind::Rename(path) => path.file_name().map(|n| n.to_string_lossy().into_owned()),
+            _ => None,
         };
         let result = match &dialog.kind {
             DialogKind::Rename(path) => files::rename(path, &dialog.name),
@@ -129,6 +214,12 @@ impl Desktop {
         match result {
             Ok(path) => {
                 tracing::info!("área de trabalho: {}", path.display());
+                // O ícone renomeado continua no mesmo lugar.
+                let new = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                if let (Some(cell), Some(new)) = (renamed_from.and_then(|old| self.cells.remove(&old)), new) {
+                    self.cells.insert(new, cell);
+                    self.save_cells();
+                }
                 self.dialog = None;
                 self.reload();
                 self.selected = Some(path);
@@ -183,12 +274,60 @@ impl Desktop {
         }
     }
 
-    /// Posição do ícone `i`: colunas de cima para baixo, a partir da direita.
-    fn place(i: usize, area: (f32, f32, f32, f32)) -> (f32, f32) {
-        let (x, y, width, height) = area;
+    /// Tamanho da grade (colunas, linhas) que cabe na área.
+    fn grid(area: (f32, f32, f32, f32)) -> (usize, usize) {
+        let (_, _, width, height) = area;
+        let cols = (((width - 2.0 * MARGIN) / CELL.0).floor() as usize).max(1);
         let rows = (((height - 2.0 * MARGIN) / CELL.1).floor() as usize).max(1);
-        let (col, row) = (i / rows, i % rows);
-        (x + width - MARGIN - (col as f32 + 1.0) * CELL.0, y + MARGIN + row as f32 * CELL.1)
+        (cols, rows)
+    }
+
+    /// Canto da célula (coluna contada a partir da direita, linha a partir de cima).
+    fn cell_pos(cell: (usize, usize), area: (f32, f32, f32, f32)) -> (f32, f32) {
+        let (x, y, width, _) = area;
+        (x + width - MARGIN - (cell.0 as f32 + 1.0) * CELL.0, y + MARGIN + cell.1 as f32 * CELL.1)
+    }
+
+    /// Célula mais perto de um ícone com o canto em `corner`.
+    fn nearest_cell(corner: (f32, f32), area: (f32, f32, f32, f32)) -> (usize, usize) {
+        let (x, y, width, _) = area;
+        let (cols, rows) = Self::grid(area);
+        let col = ((x + width - MARGIN - corner.0) / CELL.0 - 1.0).round().clamp(0.0, (cols - 1) as f32) as usize;
+        let row = ((corner.1 - y - MARGIN) / CELL.1).round().clamp(0.0, (rows - 1) as f32) as usize;
+        (col, row)
+    }
+
+    /// Ícone solto: dentro de uma pasta (se caiu em cima de uma) ou numa célula nova;
+    /// quem estava na célula vai para o lugar antigo do arrastado.
+    fn drop_icon(&mut self, path: PathBuf, corner: (f32, f32), pointer: (f32, f32), placed: &[(Entry, (usize, usize))], area: (f32, f32, f32, f32)) {
+        let target = placed.iter().find(|(e, cell)| {
+            let (x, y) = Self::cell_pos(*cell, area);
+            e.path != path && e.is_dir && pointer.0 >= x && pointer.0 < x + CELL.0 && pointer.1 >= y && pointer.1 < y + CELL.1
+        });
+        if let Some((folder, _)) = target {
+            match files::move_into(&path, &folder.path) {
+                Ok(moved) => tracing::info!("área de trabalho: movido para {}", moved.display()),
+                Err(err) => tracing::warn!("não foi movido: {err}"),
+            }
+            self.reload();
+            return;
+        }
+        let name = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let Some(from) = placed.iter().find(|(e, _)| e.path == path).map(|(_, c)| *c) else {
+            return;
+        };
+        let to = Self::nearest_cell(corner, area);
+        if from == to {
+            return;
+        }
+        // Quem está na célula de destino troca de lugar com o arrastado; os outros
+        // ficam onde estão (todos passam a ter o lugar guardado).
+        for (e, cell) in placed {
+            let cell = if *cell == to { from } else { *cell };
+            self.cells.insert(name(&e.path), cell);
+        }
+        self.cells.insert(name(&path), to);
+        self.save_cells();
     }
 
     fn keys(&mut self, ui: &mut Ui) {
@@ -271,20 +410,52 @@ impl App for Desktop {
         self.keys(ui);
         let region = ui.region();
         let area = self.workarea.unwrap_or(region);
+        let (cols, rows) = Self::grid(area);
+        let names: Vec<String> = self.entries.iter().map(|e| e.name.clone()).collect();
+        let placed: Vec<(Entry, (usize, usize))> = self.entries.iter().cloned().zip(layout(&names, &self.cells, cols, rows)).collect();
         let mut action: Option<(Action, Option<Entry>)> = None;
         let mut select = None;
-        let entries = self.entries.clone();
-        for (i, entry) in entries.iter().enumerate() {
-            let (x, y) = Self::place(i, area);
+        // Arrasto: começa quando o ponteiro anda mais que 5 pontos com o botão no ícone.
+        let (pointer, pressed, down, released) = {
+            let input = ui.input();
+            (input.pointer, input.pressed, input.down, input.released)
+        };
+        if let (Some((_, start, _)), Some(p)) = (&self.press, pointer)
+            && down
+            && !self.dragging
+            && ((p.0 - start.0).powi(2) + (p.1 - start.1).powi(2)).sqrt() > 5.0
+        {
+            self.dragging = true;
+        }
+        let dragged = self.press.as_ref().filter(|_| self.dragging).map(|(p, _, offset)| (p.clone(), *offset));
+        let mut ghost = None;
+        for (entry, cell) in &placed {
+            let (x, y) = Self::cell_pos(*cell, area);
             let selected = self.selected.as_ref() == Some(&entry.path);
-            let mut response = None;
             let (name, icon) = self.labels.get(&entry.path, entry.modified).unwrap_or_else(|| (entry.name.clone(), entry.icon_name().to_string()));
+            // O arrastado vai junto com o ponteiro (desenhado por último, por cima).
+            if let (Some((path, offset)), Some(p)) = (&dragged, pointer)
+                && path == &entry.path
+            {
+                ghost = Some(((p.0 - offset.0, p.1 - offset.1), name, icon));
+                continue;
+            }
+            // Pasta sob o ícone arrastado: destacada, como quem vai receber o item.
+            let drop_here = dragged.is_some() && entry.is_dir && pointer.is_some_and(|p| p.0 >= x && p.0 < x + CELL.0 && p.1 >= y && p.1 < y + CELL.1);
+            let mut response = None;
             ui.at(x, y, CELL.0, |ui| {
-                response = Some(ui.tile(Tile::Icon(&icon), &name, selected, ICON));
+                response = Some(ui.tile(Tile::Icon(&icon), &name, selected || drop_here, ICON));
             });
             let Some(r) = response else {
                 continue;
             };
+            if r.hovered()
+                && pressed
+                && self.press.is_none()
+                && let Some(p) = pointer
+            {
+                self.press = Some((entry.path.clone(), p, (p.0 - x, p.1 - y)));
+            }
             if r.clicked() || r.secondary_clicked() {
                 select = Some(entry.path.clone());
             }
@@ -315,6 +486,23 @@ impl App for Desktop {
                 }
             });
         }
+        if let Some(((gx, gy), name, icon)) = ghost {
+            ui.at(gx, gy, CELL.0, |ui| {
+                ui.tile(Tile::Icon(&icon), &name, true, ICON);
+            });
+            ui.request_repaint();
+        }
+        // Botão solto: termina o arrasto (ou só esquece o aperto, num clique comum).
+        let just_dropped = self.dragging && (released || !down);
+        if released || (!down && self.press.is_some()) {
+            if let (Some((path, _, offset)), true, Some(p)) = (self.press.take(), self.dragging, pointer) {
+                self.selected = Some(path.clone());
+                self.drop_icon(path, (p.0 - offset.0, p.1 - offset.1), p, &placed, area);
+                ui.request_repaint();
+            }
+            self.press = None;
+            self.dragging = false;
+        }
         if let Some(path) = select {
             self.selected = Some(path);
             ui.request_repaint();
@@ -322,14 +510,14 @@ impl App for Desktop {
         // Fundo: clique tira a seleção; botão direito abre o menu da área de trabalho.
         let area = ui.region();
         let bg = ui.background(area);
-        if bg.clicked() && self.selected.is_some() {
+        if bg.clicked() && self.selected.is_some() && !just_dropped {
             self.selected = None;
             ui.request_repaint();
         }
         // Clique no papel de parede (espaço vazio): o compositor afasta as janelas para
         // mostrar a mesa, ou as traz de volta (como no macOS). Numa thread: o desenho
         // não espera a resposta.
-        if bg.clicked() {
+        if bg.clicked() && !just_dropped {
             std::thread::spawn(|| {
                 let _ = mide::control_client::ask_compositor("reveal");
             });
@@ -364,6 +552,9 @@ impl App for Desktop {
             self.act(a, entry);
             ui.request_repaint();
         }
+        // Diálogo aberto (renomear, criar, confirmar um programa): a camada vem para a
+        // frente das janelas e pega o teclado; fechado, volta para trás delas.
+        ui.set_raised(self.dialog.is_some() || self.prompt.is_some());
         self.dialog_view(ui);
         if let Some(answer) = self.prompt.as_mut().and_then(|p| p.view(ui)) {
             self.prompt = None;
@@ -394,14 +585,32 @@ mod tests {
     fn icones_em_colunas_a_partir_da_direita() {
         // Área útil de 800 x 500 abaixo de uma barra de 28 px: 4 linhas por coluna.
         let area = (0.0, 28.0, 800.0, 500.0);
-        let (x0, y0) = Desktop::place(0, area);
-        assert_eq!((x0, y0), (800.0 - MARGIN - CELL.0, 28.0 + MARGIN));
-        let (x1, y1) = Desktop::place(1, area);
-        assert_eq!(x1, x0);
-        assert!(y1 > y0);
+        let (_, rows) = Desktop::grid(area);
+        assert_eq!(rows, 4);
+        let names: Vec<String> = (0..5).map(|i| format!("f{i}")).collect();
+        let cells = layout(&names, &HashMap::new(), 7, rows);
+        assert_eq!(cells[0], (0, 0));
+        assert_eq!(cells[1], (0, 1));
         // Quinto ícone: segunda coluna, à esquerda da primeira, de novo em cima.
-        let (x4, y4) = Desktop::place(4, area);
-        assert!(x4 < x0);
-        assert_eq!(y4, 28.0 + MARGIN);
+        assert_eq!(cells[4], (1, 0));
+        let (x0, y0) = Desktop::cell_pos(cells[0], area);
+        assert_eq!((x0, y0), (800.0 - MARGIN - CELL.0, 28.0 + MARGIN));
+        assert!(Desktop::cell_pos(cells[4], area).0 < x0);
+        assert_eq!(Desktop::nearest_cell((x0 - 3.0, y0 + 40.0), area), (0, 0));
+        assert_eq!(Desktop::nearest_cell((x0 - 100.0, y0 + 110.0), area), (1, 1));
+    }
+
+    #[test]
+    fn lugares_guardados() {
+        let mut saved = HashMap::new();
+        saved.insert("b".to_string(), (2, 1));
+        // Lugar fora da grade (tela menor) é ignorado; lugar ocupado também.
+        saved.insert("c".to_string(), (9, 9));
+        let names = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let cells = layout(&names, &saved, 4, 3);
+        assert_eq!(cells, vec![(0, 0), (2, 1), (0, 1)]);
+        let text = format_cells(&saved);
+        assert_eq!(parse_cells(&text), saved);
+        assert_eq!(parse_cells("1\t2\tcom espaço e\ttab"), HashMap::from([("com espaço e\ttab".to_string(), (1, 2))]));
     }
 }
