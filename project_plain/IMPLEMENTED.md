@@ -1688,3 +1688,8 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 - **Clique no aviso "Gravação salva" / "Captura salva"** abre o arquivo (o vídeo no player padrão, a imagem no visualizador; várias telas abrem a pasta). O aviso leva o caminho numa dica do mide (`x-mide-open`), e o servidor de notificações abre com o app padrão, mesmo que o programa que avisou já tenha fechado.
 - **Menus do mide-ui** cortam com "…" os itens que não cabem (antes o texto passava da borda); no Arquivos o item ficou só "Comprimir", como pedido.
 - Seções 04 e 20 da bateria: coordenadas da barra do Terminal atualizadas para a janela de conteúdo inteiro.
+
+## Som: escolher a saída e a entrada; papel amassado refeito (2026-10-25)
+
+- **Saída e entrada de som** (pedido do usuário): o painel de som da barra mostra a lista "Saída" (cada aparelho num círculo, o escolhido em azul, como no Mac); clicar passa o som de todos os apps para ele (`wpctl set-default`). Configurações → Som ganhou a lista de saídas, e a seção Entrada (microfones, com o volume de entrada). A lista vem do `wpctl status` (`system::parse_audio_devices`, com teste), com o nome do aparelho sem o perfil quando não há dois do mesmo aparelho.
+- **Papel amassado** (o usuário achou parecido com uma arma engatilhando): a síntese virou um chiado agudo que sobe e desce em rajadas, com uns cem estalinhos de 1 a 3 ms dentro delas, sem graves. Teste confere que a energia fica nos agudos (acima de 3 kHz). O tema de sons é refeito sozinho (versão 3).

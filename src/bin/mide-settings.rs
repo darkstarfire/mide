@@ -183,6 +183,8 @@ struct Settings {
     locales: Vec<String>,
     /// Grupos de atalhos recolhidos (Configurações → Teclado).
     closed_groups: Vec<String>,
+    /// Volume da entrada padrão (microfone), de 0 a 100.
+    mic_volume: f32,
     /// Itens de início (relidos ao abrir a seção e depois de cada mudança).
     login_items: Option<Vec<mide::login_items::LoginItem>>,
     /// Diálogo de adicionar um item de início.
@@ -241,6 +243,7 @@ impl Settings {
             },
             login_items: None,
             login_dialog: None,
+            mic_volume: 0.0,
             volume: 0.0,
             dock_size: match settings_file::get("dock", "icon_size") {
                 Some(Value::Int(n)) => (n as f32).clamp(DOCK_MIN, DOCK_MAX),
@@ -268,6 +271,9 @@ impl Settings {
             if status != self.status {
                 if let Some((v, _)) = status.volume {
                     self.volume = v * 100.0;
+                }
+                if let Some(mic) = status.inputs.iter().find(|d| d.default) {
+                    self.mic_volume = mic.volume * 100.0;
                 }
                 self.status = status;
             }
@@ -592,6 +598,63 @@ impl Settings {
         if mute != muted {
             if let Some(v) = self.status.volume.as_mut() {
                 v.1 = mute;
+            }
+        }
+        // Por onde o som sai (como "Saída" nos Ajustes do Mac): os apps passam a tocar
+        // no aparelho escolhido.
+        let outputs = self.status.outputs.clone();
+        if !outputs.is_empty() {
+            let mut chosen = None;
+            ui.card(|ui| {
+                for d in &outputs {
+                    if ui.choice_item(&d.name, "", d.default, true).clicked() && !d.default {
+                        chosen = Some(d.id);
+                    }
+                }
+            });
+            if let Some(id) = chosen {
+                tracing::info!("som: saída {id}");
+                for d in &mut self.status.outputs {
+                    d.default = d.id == id;
+                }
+                if let Some(d) = self.status.outputs.iter().find(|d| d.id == id) {
+                    self.volume = d.volume * 100.0;
+                }
+                system::set_default_audio(id);
+            }
+        }
+        // Entrada: o microfone usado pelos apps, o volume dele e o mudo.
+        let inputs = self.status.inputs.clone();
+        if !inputs.is_empty() {
+            ui.heading("Entrada");
+            let mut chosen = None;
+            let mut mic = self.mic_volume;
+            let default_id = inputs.iter().find(|d| d.default).map(|d| d.id);
+            ui.card(|ui| {
+                for d in &inputs {
+                    if ui.choice_item(&d.name, "", d.default, true).clicked() && !d.default {
+                        chosen = Some(d.id);
+                    }
+                }
+            });
+            ui.card(|ui| {
+                if ui.slider("Volume de entrada", &mut mic, 0.0, 100.0).submitted() {
+                    if let Some(id) = default_id {
+                        tracing::info!("som: volume de entrada {:.0}", mic);
+                        system::set_device_volume(id, mic / 100.0);
+                    }
+                }
+            });
+            self.mic_volume = mic;
+            if let Some(id) = chosen {
+                tracing::info!("som: entrada {id}");
+                for d in &mut self.status.inputs {
+                    d.default = d.id == id;
+                }
+                if let Some(d) = self.status.inputs.iter().find(|d| d.id == id) {
+                    self.mic_volume = d.volume * 100.0;
+                }
+                system::set_default_audio(id);
             }
         }
         // Efeitos sonoros do mide (`[sounds]`): ligados, volume e o som de alerta.

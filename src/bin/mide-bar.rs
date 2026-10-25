@@ -266,6 +266,8 @@ enum PanelAction {
     ClockPart(usize),
     /// Central de notificações: apagar o histórico.
     ClearNotifications,
+    /// Painel de som: tocar por esta saída (número do nó do PipeWire).
+    AudioOutput(u32),
 }
 
 /// Títulos dos menus do app, depois do nome dele.
@@ -1974,8 +1976,31 @@ impl Bar {
         draw_switch(p, pw - 54.0, 84.0, muted);
         regions.push(((pw - 60.0, 80.0, 50.0, 28.0), PanelAction::ToggleMute));
         Self::panel_separator(p, pw, 114.0);
-        self.panel_row(p, pw, 124.0, 26.0, "Configurações de som…", regions, hover, PanelAction::Settings("sound"));
-        124.0 + 26.0 + 8.0
+        // Saída (como no Mac): cada aparelho num círculo, o escolhido em azul.
+        let mut y = 124.0;
+        let outputs = self.status.outputs.clone();
+        if !outputs.is_empty() {
+            self.text.draw(p, "Saída", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            y += 22.0;
+            for device in &outputs {
+                let hovered = hover == Some(regions.len());
+                if hovered {
+                    fill_rounded(p, 6.0, y, pw - 12.0, 34.0, 8.0, pal().ink(18));
+                }
+                let circle = if device.default { pal().accent_color() } else { pal().ink(26) };
+                fill_rounded(p, 14.0, y + 4.0, 26.0, 26.0, 13.0, circle);
+                let fg = if device.default { [255, 255, 255, 255] } else { pal().text };
+                draw_speaker_icon(p, 27.0, y + 17.0, Some((0.5, false)), fg);
+                let name = fit_label(&mut self.text, &device.name, FONT, pw - 64.0);
+                self.text.draw(p, &name, 50.0, y + (34.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, pal().text);
+                regions.push(((6.0, y, pw - 12.0, 34.0), PanelAction::AudioOutput(device.id)));
+                y += 36.0;
+            }
+            Self::panel_separator(p, pw, y);
+            y += 10.0;
+        }
+        self.panel_row(p, pw, y, 26.0, "Configurações de som…", regions, hover, PanelAction::Settings("sound"));
+        y + 26.0 + 8.0
     }
 
     fn panel_wifi(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
@@ -2248,6 +2273,17 @@ impl Bar {
                         menu.dragging_volume = true;
                     }
                 }
+            }
+            PanelAction::AudioOutput(id) => {
+                tracing::info!("som: saída {id}");
+                for d in &mut self.status.outputs {
+                    d.default = d.id == id;
+                }
+                // O volume mostrado passa a ser o da saída escolhida.
+                if let (Some(d), Some((_, m))) = (self.status.outputs.iter().find(|d| d.id == id), self.status.volume) {
+                    self.status.volume = Some((d.volume, m));
+                }
+                system::set_default_audio(id);
             }
             PanelAction::ToggleMute => {
                 if let Some((v, m)) = self.status.volume {

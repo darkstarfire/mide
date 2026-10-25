@@ -36,6 +36,99 @@ pub struct Status {
     /// Brilho da tela de 0.0 a 1.0. `None` sem controle de brilho (`brightnessctl`)
     /// ou sem tela com luz de fundo (monitores de mesa).
     pub brightness: Option<f32>,
+    /// Saídas de som (alto-falantes, fones, HDMI) e entradas (microfones), com a
+    /// padrão marcada. Vazias sem o `wpctl`.
+    pub outputs: Vec<AudioDevice>,
+    pub inputs: Vec<AudioDevice>,
+}
+
+/// Uma saída ou entrada de som do PipeWire.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AudioDevice {
+    /// Número do nó no PipeWire (para o `wpctl`).
+    pub id: u32,
+    /// Nome para mostrar (o do aparelho, sem o perfil quando não há ambiguidade).
+    pub name: String,
+    pub default: bool,
+    pub volume: f32,
+}
+
+/// Lê as saídas (`Sinks`) e entradas (`Sources`) da parte "Audio" do `wpctl status`.
+pub fn parse_audio_devices(text: &str) -> (Vec<AudioDevice>, Vec<AudioDevice>) {
+    let mut section = "";
+    let mut in_audio = false;
+    let mut devices: Vec<String> = Vec::new();
+    let (mut sinks, mut sources) = (Vec::new(), Vec::new());
+    for line in text.lines() {
+        if !line.starts_with(' ') && !line.trim().is_empty() {
+            in_audio = line.trim() == "Audio";
+            continue;
+        }
+        if !in_audio {
+            continue;
+        }
+        // Tira os desenhos da árvore ("│", "├─", "└─").
+        let clean = line.trim_start_matches(|c: char| c == ' ' || c == '│' || c == '├' || c == '└' || c == '─');
+        if let Some(name) = clean.strip_suffix(':') {
+            section = match name.trim() {
+                "Devices" => "devices",
+                "Sinks" => "sinks",
+                "Sources" => "sources",
+                _ => "",
+            };
+            continue;
+        }
+        let default = clean.trim_start().starts_with('*');
+        let rest = clean.trim_start().trim_start_matches('*').trim_start();
+        let Some((num, after)) = rest.split_once(". ") else {
+            continue;
+        };
+        let Ok(id) = num.trim().parse::<u32>() else {
+            continue;
+        };
+        let (name, tail) = match after.rfind('[') {
+            Some(i) => (after[..i].trim().to_string(), &after[i..]),
+            None => (after.trim().to_string(), ""),
+        };
+        let volume = tail.strip_prefix("[vol:").and_then(|v| v.trim().trim_end_matches(']').split_whitespace().next()?.parse().ok()).unwrap_or(1.0);
+        let device = AudioDevice { id, name, default, volume };
+        match section {
+            "devices" => devices.push(device.name),
+            "sinks" => sinks.push(device),
+            "sources" => sources.push(device),
+            _ => {}
+        }
+    }
+    // Nome curto: o do aparelho, quando ele tem só um nó na lista.
+    for list in [&mut sinks, &mut sources] {
+        let full: Vec<String> = list.iter().map(|d| d.name.clone()).collect();
+        for d in list.iter_mut() {
+            if let Some(dev) = devices.iter().filter(|dev| d.name.starts_with(dev.as_str())).max_by_key(|dev| dev.len()) {
+                if full.iter().filter(|n| n.starts_with(dev.as_str())).count() == 1 {
+                    d.name = dev.clone();
+                }
+            }
+        }
+    }
+    (sinks, sources)
+}
+
+/// Escolhe a saída ou entrada de som padrão (os apps passam a tocar nela).
+pub fn set_default_audio(id: u32) {
+    if dry_run() {
+        tracing::info!("sistema (teste): som padrão = {id}");
+        return;
+    }
+    run("wpctl", &["set-default", &id.to_string()]);
+}
+
+/// Volume de uma saída ou entrada (0.0 a 1.0).
+pub fn set_device_volume(id: u32, value: f32) {
+    if dry_run() {
+        tracing::info!("sistema (teste): volume de {id} = {value:.2}");
+        return;
+    }
+    run("wpctl", &["set-volume", &id.to_string(), &format!("{:.2}", value.clamp(0.0, 1.0))]);
 }
 
 impl Status {
@@ -140,6 +233,11 @@ fn fake_status() -> Status {
             ],
         )),
         brightness: Some(0.7),
+        outputs: vec![
+            AudioDevice { id: 50, name: "Alto-falantes".into(), default: true, volume: 0.5 },
+            AudioDevice { id: 51, name: "Fone USB".into(), default: false, volume: 0.8 },
+        ],
+        inputs: vec![AudioDevice { id: 52, name: "Microfone".into(), default: true, volume: 0.9 }],
     }
 }
 
@@ -177,7 +275,8 @@ pub fn read_status() -> Status {
         (on, devices)
     });
     let brightness = output("brightnessctl", &["-m", "-c", "backlight"]).and_then(|t| parse_brightness(&t));
-    Status { volume, wifi, bluetooth, brightness }
+    let (outputs, inputs) = output("wpctl", &["status"]).map(|t| parse_audio_devices(&t)).unwrap_or_default();
+    Status { volume, wifi, bluetooth, brightness, outputs, inputs }
 }
 
 /// Executa uma ação em segundo plano (ou só registra, nos testes).
@@ -491,5 +590,23 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Fone JBL");
         assert_eq!(list[1].address, "AA:BB:CC:DD:EE:FF");
+    }
+}
+
+#[cfg(test)]
+mod audio_tests {
+    use super::*;
+
+    #[test]
+    fn le_saidas_e_entradas_do_wpctl() {
+        let text = "PipeWire 'pipewire-0' [1.0.5]\n └─ Clients:\n        31. pipewire\n\nAudio\n ├─ Devices:\n │      46. Built-in Audio                      [alsa]\n │      53. Audio Adapter (Unitek Y-247A)       [alsa]\n │  \n ├─ Sinks:\n │  *   60. Audio Adapter (Unitek Y-247A) Analog Stereo [vol: 0.80]\n │      61. Built-in Audio Analog Stereo  [vol: 0.55 MUTED]\n │      62. Built-in Audio Digital Stereo (HDMI) [vol: 1.00]\n │  \n ├─ Sources:\n │      58. Built-in Audio Analog Stereo  [vol: 1.00]\n │  *   65. Audio Adapter (Unitek Y-247A) Mono  [vol: 0.40]\n │  \n └─ Streams:\n\nVideo\n ├─ Sinks:\n │      90. Câmera [vol: 1.00]\n";
+        let (sinks, sources) = parse_audio_devices(text);
+        assert_eq!(sinks.len(), 3);
+        assert_eq!(sinks[0], AudioDevice { id: 60, name: "Audio Adapter (Unitek Y-247A)".into(), default: true, volume: 0.8 });
+        // Dois nós do mesmo aparelho: fica o nome completo.
+        assert_eq!(sinks[1].name, "Built-in Audio Analog Stereo");
+        assert!((sinks[1].volume - 0.55).abs() < 1e-6);
+        assert_eq!(sources.iter().map(|d| (d.id, d.default)).collect::<Vec<_>>(), [(58, false), (65, true)]);
+        assert_eq!(sources[0].name, "Built-in Audio");
     }
 }
