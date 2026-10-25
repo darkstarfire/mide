@@ -2080,7 +2080,7 @@ impl<'a> Ui<'a> {
         let at = |i: usize| (x0 + i as f32 * (size + gap), cy, size, size);
         let hover = (0..colors.len()).find(|i| {
             let (x, y, w, h) = at(*i);
-            self.ctx.input.over((x - gap / 2.0, y - 4.0, w + gap, h + 8.0))
+            self.over((x - gap / 2.0, y - 4.0, w + gap, h + 8.0))
         });
         if r.clicked {
             if let Some(i) = hover.filter(|i| i != selected) {
