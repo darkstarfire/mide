@@ -20,7 +20,7 @@ use std::{
 
 const RATE: u32 = 48_000;
 /// Muda quando um som muda: o tema é refeito.
-const VERSION: &str = "1";
+const VERSION: &str = "2";
 
 /// Sons de alerta oferecidos: chave, nome na tela.
 pub const ALERTS: &[(&str, &str)] = &[("vidro", "Vidro"), ("gota", "Gota"), ("sino", "Sino"), ("pop", "Pop")];
@@ -30,6 +30,7 @@ const EVENTS: &[&str] = &[
     "message-new-instant",
     "screen-capture",
     "trash-empty",
+    "trash-move",
     "bell",
     "dialog-warning",
     "dialog-information",
@@ -43,12 +44,23 @@ const EVENTS: &[&str] = &[
 
 /// Toca um som do tema (pelo nome do freedesktop), se os efeitos estão ligados.
 pub fn play(name: &str) {
-    if !enabled() {
+    if cfg!(test) || !enabled() {
         return;
     }
     if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
         tracing::info!("som (teste): {name}");
         return;
+    }
+    // O mesmo som várias vezes seguidas (vários itens para a Lixeira de uma vez)
+    // toca uma vez só.
+    {
+        use std::sync::Mutex;
+        static LAST: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        if last.as_ref().is_some_and(|(n, t)| n == name && t.elapsed().as_millis() < 300) {
+            return;
+        }
+        *last = Some((name.to_string(), std::time::Instant::now()));
     }
     let name = name.to_string();
     std::thread::spawn(move || {
@@ -172,6 +184,32 @@ fn noise(secs: f32, decay: f32, smooth: f32, amp: f32, seed: u32) -> Wave {
         .collect()
 }
 
+/// Papel amassado: estalos curtos e claros em momentos irregulares, sobre um
+/// chiado baixo, mais densos no começo.
+fn crumple(secs: f32, crackles: u32, amp: f32, seed: u32) -> Wave {
+    let mut out = noise(secs, 6.0, 0.15, amp * 0.25, seed);
+    let mut state = seed.wrapping_mul(2_654_435_761).max(1);
+    let mut rand = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state as f32 / u32::MAX as f32
+    };
+    for i in 0..crackles {
+        // Mais estalos no começo (o papel se fechando na mão).
+        let at = secs * 0.9 * rand().powf(1.6);
+        let len = 0.006 + 0.02 * rand();
+        let bright = 0.35 + 0.5 * rand();
+        let a = amp * (0.35 + 0.65 * rand());
+        out = mix(out, &noise(len, 120.0, bright, a, seed + 97 * (i + 1)), at);
+    }
+    // Sem estourar: a soma é limitada.
+    for s in &mut out {
+        *s = s.clamp(-0.95, 0.95);
+    }
+    out
+}
+
 /// Soma `b` em `a` a partir de `at` segundos.
 fn mix(mut a: Wave, b: &Wave, at: f32) -> Wave {
     let start = (at * RATE as f32) as usize;
@@ -217,7 +255,10 @@ pub fn synth(name: &str) -> Wave {
         // Obturador: dois estalos de ruído.
         "screen-capture" => mix(noise(0.05, 70.0, 0.55, 0.7, 11), &noise(0.07, 55.0, 0.4, 0.6, 23), 0.085),
         // Papel amassado caindo na Lixeira.
-        "trash-empty" => mix(mix(noise(0.25, 9.0, 0.08, 0.6, 5), &noise(0.18, 14.0, 0.12, 0.5, 9), 0.12), &noise(0.2, 12.0, 0.06, 0.45, 13), 0.26),
+        // Esvaziar: papel amassado mais longo e a queda no fundo da lixeira.
+        "trash-empty" => mix(crumple(0.45, 22, 0.5, 5), &mix(note(95.0, 0.25, 18.0, 0.35), &noise(0.12, 30.0, 0.05, 0.4, 41), 0.0), 0.42),
+        // Mover para a Lixeira: papel amassado curto.
+        "trash-move" => crumple(0.32, 14, 0.55, 17),
         "bell" | "dialog-warning" => alert(&alert_key()),
         // Volume: um toque curto.
         "audio-volume-change" => note(880.0, 0.08, 45.0, 0.45),

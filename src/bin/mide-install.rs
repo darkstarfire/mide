@@ -545,7 +545,6 @@ impl App for Remove {
         match chosen {
             Some(1) => match appimage::uninstall(&self.desktop, &appimage::Dirs::current()) {
                 Ok(_) => {
-                    mide::sounds::play("trash-empty");
                     ui.close();
                 }
                 Err(err) => {

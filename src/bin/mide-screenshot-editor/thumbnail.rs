@@ -192,7 +192,6 @@ impl Thumb {
         match mide::places::move_to_trash(&self.path, &mide::places::trash_dir()) {
             Ok(name) => {
                 tracing::info!("miniatura: movida para a Lixeira ({name})");
-                mide::sounds::play("trash-empty");
                 self.leave(Leave::Trash);
             }
             Err(err) => tracing::warn!("miniatura: não foi para a Lixeira: {err}"),

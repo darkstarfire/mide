@@ -340,7 +340,6 @@ impl Editor {
         match mide::places::move_to_trash(&path, &mide::places::trash_dir()) {
             Ok(name) => {
                 tracing::info!("editor: movido para a Lixeira: {} ({name})", path.display());
-                mide::sounds::play("trash-empty");
                 ui.close();
             }
             Err(err) => self.message = Some(format!("Não foi possível mover para a Lixeira: {err}")),

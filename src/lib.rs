@@ -23,6 +23,7 @@ pub mod icons;
 pub mod kit;
 pub mod keyboard_layouts;
 pub mod launcher_layout;
+pub mod login_items;
 pub mod markup;
 pub mod motion;
 pub mod notify;

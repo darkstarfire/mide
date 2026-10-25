@@ -42,6 +42,7 @@ enum Section {
     Region,
     Energy,
     DefaultApps,
+    LoginItems,
     About,
 }
 
@@ -65,6 +66,7 @@ const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Region), "Idioma e região", "preferences-desktop-locale-symbolic", [10, 132, 255]),
     (Some(Section::Energy), "Energia", "battery-full-symbolic", [52, 199, 89]),
     (Some(Section::DefaultApps), "Apps padrão", "applications-system-symbolic", [142, 142, 147]),
+    (Some(Section::LoginItems), "Itens de início", "system-run-symbolic", [142, 142, 147]),
     (Some(Section::About), "Sobre", "help-about-symbolic", [142, 142, 147]),
 ];
 
@@ -126,6 +128,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Suspender o computador após", "energia suspender dormir repouso inatividade bateria", Section::Energy),
     ("Botão de ligar", "energia botao ligar desligar power suspender", Section::Energy),
     ("Apps padrão", "apps padrao navegador email abrir com pdf imagens videos musica pastas texto", Section::DefaultApps),
+    ("Itens de início", "iniciar sessao login startup autostart abrir ao entrar apps comandos scripts", Section::LoginItems),
     ("Sobre este computador", "sistema versao memoria processador", Section::About),
 ];
 
@@ -179,6 +182,22 @@ struct Settings {
     locales: Vec<String>,
     /// Grupos de atalhos recolhidos (Configurações → Teclado).
     closed_groups: Vec<String>,
+    /// Itens de início (relidos ao abrir a seção e depois de cada mudança).
+    login_items: Option<Vec<mide::login_items::LoginItem>>,
+    /// Diálogo de adicionar um item de início.
+    login_dialog: Option<LoginDialog>,
+}
+
+/// Diálogo de adicionar um item de início: um app instalado ou um comando.
+#[derive(Default)]
+struct LoginDialog {
+    command_mode: bool,
+    query: String,
+    name: String,
+    command: String,
+    error: Option<String>,
+    /// Escolhendo o programa ou script pelo seletor de arquivos.
+    chooser: Option<mide::kit::FileChooser>,
 }
 
 impl Settings {
@@ -219,6 +238,8 @@ impl Settings {
                 Some(Value::Text(t)) => t.split(',').filter(|g| !g.is_empty()).map(str::to_string).collect(),
                 _ => Vec::new(),
             },
+            login_items: None,
+            login_dialog: None,
             volume: 0.0,
             dock_size: match settings_file::get("dock", "icon_size") {
                 Some(Value::Int(n)) => (n as f32).clamp(DOCK_MIN, DOCK_MAX),
@@ -1247,6 +1268,160 @@ impl Settings {
         ui.note("Vale só na sessão do mide: outros desktops instalados (Cinnamon, GNOME) continuam com as escolhas deles.");
     }
 
+    /// Apps e comandos que abrem ao entrar na sessão (autostart do freedesktop,
+    /// `mide::login_items`), como os Itens de início de sessão do Mac.
+    fn login_items(&mut self, ui: &mut Ui) {
+        ui.title("Itens de início");
+        let items = self.login_items.get_or_insert_with(mide::login_items::list).clone();
+        let mut changed = false;
+        ui.note("Abrem sozinhos quando você entra na sessão.");
+        ui.card(|ui| {
+            if items.is_empty() {
+                ui.note("Nenhum item. Use Adicionar app ou Adicionar comando.");
+            }
+            for item in &items {
+                let mut on = item.enabled;
+                let detail = if item.system { format!("{} · do sistema", item.exec) } else { item.exec.clone() };
+                let mut remove = false;
+                ui.row(|ui| {
+                    // Os do sistema não são apagados, só desligados: sem o botão de remover.
+                    let w = ui.remaining_width() - 40.0;
+                    ui.sized(w, |ui| {
+                        if ui.switch_detail(&item.name, &detail, &mut on).changed() {
+                            match mide::login_items::set_enabled(&item.file, on) {
+                                Ok(()) => tracing::info!("itens de início: {} {}", item.name, if on { "ligado" } else { "desligado" }),
+                                Err(err) => tracing::warn!("item de início não gravado: {err}"),
+                            }
+                            changed = true;
+                        }
+                    });
+                    if !item.system {
+                        remove = ui.icon_button("list-remove-symbolic", "−", true).clicked();
+                    }
+                });
+                if remove {
+                    match mide::login_items::remove(&item.file) {
+                        Ok(()) => tracing::info!("itens de início: {} removido", item.name),
+                        Err(err) => tracing::warn!("item de início não removido: {err}"),
+                    }
+                    changed = true;
+                }
+            }
+        });
+        let (mut add_app, mut add_cmd) = (false, false);
+        ui.row(|ui| {
+            ui.push_right(2.0 * 170.0 + 8.0);
+            ui.sized(170.0, |ui| add_app = ui.button("Adicionar app…").clicked());
+            ui.sized(170.0, |ui| add_cmd = ui.button("Adicionar comando…").clicked());
+        });
+        ui.note("Os itens do sistema só podem ser desligados. A lista vale também nos outros desktops, que leem a mesma pasta de início.");
+        if add_app || add_cmd {
+            self.login_dialog = Some(LoginDialog { command_mode: add_cmd, ..Default::default() });
+        }
+        if changed {
+            self.login_items = None;
+            ui.request_repaint();
+        }
+    }
+
+    /// Diálogo de adicionar um item de início.
+    fn login_dialog(&mut self, ui: &mut Ui) {
+        let Some(mut dialog) = self.login_dialog.take() else {
+            return;
+        };
+        // Escolhendo o arquivo: o seletor ocupa o lugar do diálogo.
+        if let Some(chooser) = dialog.chooser.as_mut() {
+            match chooser.show(ui) {
+                Some(mide::kit::Choice::Chosen(path)) => {
+                    let text = path.to_string_lossy().into_owned();
+                    dialog.command = if text.contains(' ') { format!("\"{text}\"") } else { text };
+                    if dialog.name.trim().is_empty() {
+                        dialog.name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    }
+                    dialog.chooser = None;
+                }
+                Some(mide::kit::Choice::Cancelled) => dialog.chooser = None,
+                None => {}
+            }
+            ui.request_repaint();
+            self.login_dialog = Some(dialog);
+            return;
+        }
+        let mut close = ui.input().key(Key::Escape);
+        let mut added = false;
+        let mut pick: Option<mide::apps::App> = None;
+        let mut save = false;
+        let mut browse = false;
+        let apps = &self.apps;
+        ui.modal(440.0, |ui| {
+            if !dialog.command_mode {
+                ui.strong("Adicionar app");
+                ui.text_input(&mut dialog.query, "Buscar app");
+                ui.card(|ui| {
+                    let found = mide::apps::filter(apps, &dialog.query, None);
+                    if found.is_empty() {
+                        ui.note("Nenhum app encontrado.");
+                    }
+                    for app in found.into_iter().take(6) {
+                        if ui.list_item(&app.name, "").clicked() {
+                            pick = Some(app.clone());
+                        }
+                    }
+                });
+                ui.row(|ui| {
+                    ui.push_right(110.0);
+                    ui.sized(110.0, |ui| close |= ui.button("Cancelar").clicked());
+                });
+                return;
+            }
+            ui.strong("Adicionar comando");
+            ui.note("Um nome, e o programa ou script que abre ao entrar na sessão.");
+            ui.text_input(&mut dialog.name, "Nome");
+            ui.row(|ui| {
+                let w = ui.remaining_width() - 118.0;
+                ui.sized(w, |ui| {
+                    ui.text_input(&mut dialog.command, "Comando ou script");
+                });
+                ui.sized(110.0, |ui| browse = ui.button("Escolher…").clicked());
+            });
+            if let Some(err) = &dialog.error {
+                ui.error_note(err);
+            }
+            let ok = !dialog.name.trim().is_empty() && !dialog.command.trim().is_empty();
+            ui.row(|ui| {
+                ui.push_right(2.0 * 120.0 + 8.0);
+                ui.sized(120.0, |ui| close |= ui.button("Cancelar").clicked());
+                ui.sized(120.0, |ui| save = ui.primary_button("Adicionar").clicked() && ok);
+            });
+            save |= ok && ui.input().key(Key::Enter);
+        });
+        if browse {
+            dialog.chooser = Some(mide::kit::FileChooser::open("Escolher programa ou script", None));
+        }
+        if let Some(app) = pick {
+            match mide::login_items::add_app(&app) {
+                Ok(file) => tracing::info!("itens de início: {} adicionado ({file})", app.name),
+                Err(err) => tracing::warn!("item de início não adicionado: {err}"),
+            }
+            added = true;
+        }
+        if save {
+            match mide::login_items::add_command(dialog.name.trim(), dialog.command.trim()) {
+                Ok(file) => {
+                    tracing::info!("itens de início: comando {} adicionado ({file})", dialog.name.trim());
+                    added = true;
+                }
+                Err(err) => dialog.error = Some(format!("Não foi possível gravar: {err}")),
+            }
+        }
+        if added {
+            self.login_items = None;
+            ui.request_repaint();
+        } else if !close {
+            self.login_dialog = Some(dialog);
+        }
+    }
+
     /// Avisa o compositor e relê os atalhos em uso.
     fn apply_bindings(&mut self) {
         ask_compositor("reload");
@@ -1519,6 +1694,7 @@ impl App for Settings {
                 Section::Region => self.region(ui),
                 Section::Energy => self.energy(ui),
                 Section::DefaultApps => self.default_apps(ui),
+                Section::LoginItems => self.login_items(ui),
                 Section::About => self.about(ui),
             }
         });
@@ -1531,6 +1707,8 @@ impl App for Settings {
             let mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
             self.shortcut_dialog(ui, mac);
         }
+        // Diálogo de adicionar item de início, também por cima da janela inteira.
+        self.login_dialog(ui);
         // Escolher um resultado limpa a busca: aí o que estava no campo não volta.
         if std::mem::take(&mut self.query_reset) {
             ui.request_repaint();
@@ -1830,6 +2008,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("region") => Section::Region,
         Some("energy") => Section::Energy,
         Some("default-apps") => Section::DefaultApps,
+        Some("login-items") => Section::LoginItems,
         Some("about") => Section::About,
         _ => Section::Wifi,
     };

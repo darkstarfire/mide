@@ -301,6 +301,7 @@ pub fn move_to_trash(path: &Path, trash: &Path) -> std::io::Result<String> {
         let _ = fs::remove_file(info.join(format!("{name}.trashinfo")));
         return Err(err);
     }
+    crate::sounds::play("trash-move");
     Ok(name)
 }
 
