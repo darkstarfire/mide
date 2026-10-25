@@ -390,3 +390,9 @@
 - Nos cenários, a saída dos apps vai para /dev/null: para ver o log de um app, abrir com `"RUST_LOG=mide=info app >arquivo 2>&1"` (o tracing do mide-ui escreve na saída padrão).
 - A gnome-calculator não abre nos cenários com o D-Bus isolado (para logo depois de procurar o gerenciador de sessão, antes de pedir a janela ao Wayland): a parte dela na seção 04 trava até o tempo limite. É do ambiente de teste, não do compositor; a investigar (talvez um serviço que a GApplication espera no barramento).
 - Seção 04: desde o Terminal de conteúdo inteiro, as luzes ficam em (69, 95), (89, 95) e (109, 95) e o maximizado vai a (0, 28) 1366x673. Clique fora de janela agora mostra a mesa: coordenadas antigas que caem no papel de parede mudam o resultado dos passos seguintes.
+
+## Workspace mide + mide-ui (2026-10-25)
+
+- O mide-ui é o pacote `crates/mide-ui`; o pacote `mide` repassa os módulos dele (`pub use mide_ui::...` nos `mod.rs` de `platform`, `shell`, `applications`, `storage` e em `lib.rs`). Um módulo novo que o kit precise usar tem de ir para o `mide-ui` (o mide-ui não pode depender do `mide`).
+- Exemplos do kit ficam em `crates/mide-ui/examples`; para a bateria, `cargo build --workspace --bins --examples` (eles caem no mesmo `target/debug/examples`).
+- `mide-new --local` aponta o app gerado para o mide-ui do repositório; para compilar o app de teste sem recompilar tudo, `CARGO_TARGET_DIR=<repo>/target`.

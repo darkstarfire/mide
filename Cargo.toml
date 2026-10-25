@@ -1,3 +1,9 @@
+# Dois pacotes: o mide (compositor, shell e apps) e o mide-ui (framework de apps).
+[workspace]
+members = [".", "crates/mide-ui"]
+# `cargo build` e `cargo test` na raiz valem para os dois.
+default-members = [".", "crates/mide-ui"]
+
 [package]
 name = "mide"
 version = "0.1.0"
@@ -10,6 +16,8 @@ name = "mide"
 path = "src/compositor/main.rs"
 
 [dependencies]
+# O framework de apps (janelas, componentes, tema), também usado pelos apps de fora.
+mide-ui = { path = "crates/mide-ui" }
 chrono = "0.4"
 cosmic-text = "0.19"
 freedesktop-desktop-entry = "0.8"

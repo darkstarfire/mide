@@ -2,10 +2,11 @@
 
 pub mod notify;
 pub mod tray;
-pub mod appmenu;
 pub mod gmenu;
 pub mod calendar;
 pub mod backdrop;
-pub mod motion;
 pub mod launcher_layout;
 pub mod search;
+
+// No framework mide-ui (crates/mide-ui), repassados aqui.
+pub use mide_ui::shell::{appmenu, motion};

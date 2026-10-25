@@ -8,10 +8,34 @@ lateral, barra de rolagem fina e a barra de título com os três botões. Você 
 em Rust, descreve a tela numa função e o framework cuida da janela, do mouse, do
 teclado e do desenho.
 
+## O pacote e o `mide-new`
+
+O mide-ui é um pacote próprio (`crates/mide-ui` no repositório do mide), sem o
+compositor: um app de fora depende só dele.
+
+```toml
+[dependencies]
+mide-ui = { git = "https://github.com/fabioaacarneiro/mide" }
+```
+
+O jeito mais rápido de começar é o `mide-new`, que cria um projeto pronto: `Cargo.toml`,
+`src/main.rs` com uma janela do Tahoe (barra lateral de vidro com seções, barra de
+ferramentas, cartões, campo de texto, lista, interruptor e menus na barra superior), o
+`.desktop` e um README com como instalar.
+
+```sh
+mide-new "Minhas Notas"            # cria ./minhas-notas
+mide-new "Minhas Notas" --dir ~/Projetos
+mide-new "Minhas Notas" --local    # usa o mide-ui do repositório (desenvolvimento)
+```
+
+Dentro do mide, os apps usam o mesmo framework por `mide::kit` (repassado pelo
+pacote `mide`); fora dele, por `mide_ui::kit`.
+
 ## Primeiro app
 
 ```rust
-use mide::kit::{run, App, Ui, Window};
+use mide_ui::kit::{run, App, Ui, Window};
 
 #[derive(Default)]
 struct Contador {
@@ -258,7 +282,7 @@ O mesmo `view` é chamado uma vez por tela em cada quadro:
   teclado.
 
 As funções de geometria (`screen_at`, `union`, `to_main`...) ficam em
-`mide::kit::screens`. O exemplo `examples/kit-telas.rs` mostra tudo isso.
+`mide::kit::screens`. O exemplo `crates/mide-ui/examples/kit-telas.rs` mostra tudo isso.
 
 ## Área de texto (várias linhas)
 
@@ -291,8 +315,8 @@ texto sob o ponteiro: guarde a linha no clique direito para o menu de contexto u
 depois (com o menu aberto, o ponteiro está em cima dele e a posição não vem):
 
 ```rust
-use mide::kit::{Decorations, TextAreaLook, TextDoc};
-use mide::kit::textarea::{line_of, line_starts};
+use mide_ui::kit::{Decorations, TextAreaLook, TextDoc};
+use mide_ui::kit::textarea::{line_of, line_starts};
 
 let destaque = ui.theme().accent;
 let mut decorar = |doc: &TextDoc| Decorations {
@@ -350,7 +374,7 @@ desativados), Enter escolhe o marcado (sem busca, o item atual; com busca, o mel
 resultado: a palavra exata, depois o começo do nome), Esc e "Cancelar" fecham:
 
 ```rust
-use mide::kit::{ListPicker, PickGroup, PickItem, Picked};
+use mide_ui::kit::{ListPicker, PickGroup, PickItem, Picked};
 
 // Rótulo, detalhe cinza e as palavras exatas do item (símbolo, apelidos).
 let grupos = vec![PickGroup { name: "Comprimento".into(), items: vec![PickItem::new("Metros", "m", &["m", "metro"])] }];
@@ -417,7 +441,7 @@ rolagem: dá para pôr uma `toolbar` fixa e uma `page` embaixo.
 
 ## Exemplo completo
 
-`examples/mide-ui-demo.rs` usa os componentes básicos: barra lateral, cartões com
+`crates/mide-ui/examples/mide-ui-demo.rs` usa os componentes básicos: barra lateral, cartões com
 interruptores e trilho, campo de texto com Enter e uma lista de tarefas.
 
 O app **Arquivos** (`src/bin/mide-files.rs`) é um app completo feito só com o mide-ui:

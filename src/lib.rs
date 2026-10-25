@@ -2,7 +2,7 @@
 //! compositor (`src/compositor/`).
 //!
 //! Organização por assunto:
-//! - `kit` e `ui`: o mide-ui (framework de apps) e o desenho de baixo nível;
+//! - `kit` e `ui`: o mide-ui (framework de apps), que é o pacote `crates/mide-ui`;
 //! - `platform`: sistema e sessão;
 //! - `shell`: peças da barra, dock, launcher, busca e notificações;
 //! - `applications`: apps instalados e como abrir coisas;
@@ -17,13 +17,14 @@
 pub mod applications;
 pub mod calculator;
 pub mod documents;
-pub mod kit;
 pub mod media;
 pub mod platform;
 pub mod shell;
 pub mod storage;
 pub mod terminal;
-pub mod ui;
+
+// O mide-ui (framework de apps, crates/mide-ui) e o desenho de baixo nível.
+pub use mide_ui::{kit, ui};
 
 pub use applications::{appimage, apps, default_apps, icons, programs};
 pub use documents::{annotate, markup, richtext, spell};

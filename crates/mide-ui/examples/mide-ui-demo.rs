@@ -4,7 +4,7 @@
 //!
 //! Rodar dentro do mide: `cargo run --example mide-ui-demo`
 
-use mide::kit::{run, App, ButtonStyle, TabAction, Ui, Window, TAG_COLORS};
+use mide_ui::kit::{run, App, ButtonStyle, TabAction, Ui, Window, TAG_COLORS};
 
 struct Demo {
     secao: usize,

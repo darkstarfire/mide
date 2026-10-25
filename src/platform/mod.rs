@@ -4,10 +4,10 @@ pub mod system;
 pub mod sysinfo;
 pub mod displays;
 pub mod keyboard_layouts;
-pub mod sounds;
 pub mod appearance;
-pub mod settings_file;
 pub mod login_items;
 pub mod elevate;
 pub mod portal;
-pub mod control_client;
+
+// No framework mide-ui (crates/mide-ui), repassados aqui.
+pub use mide_ui::platform::{control_client, settings_file, sounds};

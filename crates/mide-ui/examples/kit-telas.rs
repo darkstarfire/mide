@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use mide::kit::{run, App, Key, Ui, Window};
+use mide_ui::kit::{run, App, Key, Ui, Window};
 
 #[derive(Default)]
 struct Telas {
@@ -56,7 +56,7 @@ impl App for Telas {
             && let (Some(a), Some(b)) = (self.inicio.take(), global)
         {
             let telas = ui.screens();
-            let nome = mide::kit::screens::screen_at(&telas, b).map_or("-".to_string(), |i| telas[i].name.clone());
+            let nome = mide_ui::kit::screens::screen_at(&telas, b).map_or("-".to_string(), |i| telas[i].name.clone());
             if (a.0 - b.0).abs() < 3.0 && (a.1 - b.1).abs() < 3.0 {
                 tracing::info!("clique global ({:.0}, {:.0}) na tela {nome}", b.0, b.1);
             } else {
@@ -68,7 +68,7 @@ impl App for Telas {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "kit_telas=info,mide=info".into()))
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "kit_telas=info,mide_ui=info".into()))
         .init();
     run(Window::new("Telas").overlay("kit-telas").on_every_output().fixed_scale(), Telas::default())
 }
