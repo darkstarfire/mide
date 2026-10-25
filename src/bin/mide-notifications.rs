@@ -73,7 +73,8 @@ const BUTTONS_H: f32 = 34.0;
 const GAP: f32 = 8.0;
 /// Borda transparente em volta dos banners, para a sombra.
 const MARGIN: f32 = 10.0;
-const RADIUS: f32 = 16.0;
+/// Cantos dos cartões (Tahoe: bem arredondados).
+const RADIUS: f32 = 24.0;
 const ICON: u32 = 38;
 const MAX_VISIBLE: usize = 4;
 const BTN_LEFT: u32 = 0x110;
@@ -502,18 +503,18 @@ impl Banners {
         }
 
         // Ícone do app à esquerda.
-        let ix = x + 14.0;
+        let ix = x + 16.0;
         let iy = y + (BANNER_H - ICON as f32) / 2.0;
         match icon {
             Some(icon) => pixmap.draw_pixmap(ix as i32, iy as i32, icon.as_ref(), &PixmapPaint::default(), Transform::identity(), None),
-            None => fill_rounded(pixmap, ix, iy, ICON as f32, ICON as f32, 9.0, rgba(140, 140, 150, 255)),
+            None => fill_rounded(pixmap, ix, iy, ICON as f32, ICON as f32, 10.0, rgba(140, 140, 150, 255)),
         }
 
         // Título, "agora" à direita e o corpo em até duas linhas.
         let tx = ix + ICON as f32 + 12.0;
-        let max_w = x + BANNER_W - 14.0 - tx;
+        let max_w = x + BANNER_W - 18.0 - tx;
         let now_w = self.text.measure("agora", 11.5, FontWeight::Regular);
-        self.text.draw(pixmap, "agora", x + BANNER_W - 14.0 - now_w, y + 12.0, 11.5, FontWeight::Regular, theme.text_secondary);
+        self.text.draw(pixmap, "agora", x + BANNER_W - 18.0 - now_w, y + 12.0, 11.5, FontWeight::Regular, theme.text_secondary);
         let title = if summary.is_empty() { app.clone() } else { summary };
         let title = fit(&mut self.text, &title, 13.5, FontWeight::Semibold, max_w - now_w - 8.0);
         self.text.draw(pixmap, &title, tx, y + 11.0, 13.5, FontWeight::Semibold, theme.text);
@@ -525,12 +526,13 @@ impl Banners {
         // Botões das ações, alinhados à direita embaixo.
         if !buttons.is_empty() {
             let by = y + BANNER_H - 4.0;
-            let mut bx = x + BANNER_W - 12.0;
+            let mut bx = x + BANNER_W - 16.0;
             for (k, (_, label)) in buttons.iter().enumerate().rev() {
                 let lw = self.text.measure(label, 12.5, FontWeight::Semibold) + 24.0;
                 bx -= lw;
                 let pressed = self.press == Some(Spot::Button(index, k));
-                fill_rounded(pixmap, bx, by, lw, 26.0, 8.0, ink(if pressed { 40 } else { 18 }));
+                // Tahoe: botões de ação em cápsula.
+                fill_rounded(pixmap, bx, by, lw, 26.0, 13.0, ink(if pressed { 40 } else { 18 }));
                 self.text.draw(pixmap, label, bx + 12.0, by + 5.0, 12.5, FontWeight::Semibold, theme.text);
                 bx -= 8.0;
             }
@@ -538,7 +540,7 @@ impl Banners {
 
         // × para fechar, no canto de cima à esquerda, só com o mouse em cima.
         if hovered {
-            let (cx, cy) = (x + 4.0, y + 4.0);
+            let (cx, cy) = (x + 6.0, y + 6.0);
             if let Some(circle) = PathBuilder::from_circle(cx, cy, 9.0) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
