@@ -109,7 +109,7 @@ if [ "${XDG_CURRENT_DESKTOP:-}" = "mide" ]; then
     if [ -f /usr/share/xdg-desktop-portal/portals/mide.portal ] || [ -e "$pasta/mide.portal" ]; then
         ok "o portal acha o seletor do mide"
     else
-        falta "o portal não acha o mide.portal: saia e entre de novo na sessão (ou data/mide-update --tudo)"
+        falta "o portal não acha o mide.portal: saia e entre de novo na sessão (ou data/mide-update --all)"
     fi
     [ -n "$(dono org.freedesktop.impl.portal.desktop.mide)" ] && ok "seletor de arquivos do mide no barramento" ||
         aviso "seletor de arquivos do mide fora do barramento (inicia no primeiro pedido)"

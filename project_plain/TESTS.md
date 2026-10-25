@@ -653,7 +653,7 @@ Preparação: `cargo build` e `sudo tests/session-dev.sh`. O fim da sessão (lim
 
 ## Atualizar sem deslogar — manual
 
-- Na sessão: `data/mide-update` (barra, dock... trocam; janelas ficam) e `data/mide-update --tudo` (compositor reinicia; volta sem passar pelo login; os apps automáticos como o nm-applet voltam, os que seguiam abertos não duplicam).
+- Na sessão: `data/mide-update` (barra, dock... trocam; janelas ficam) e `data/mide-update --all` (compositor reinicia; volta sem passar pelo login; os apps automáticos como o nm-applet voltam, os que seguiam abertos não duplicam).
 - Chrome: menu ⋮ → Histórico: o submenu abre para a esquerda, dentro da tela.
 - Arquivos: a barra lateral de vidro mostra o papel de parede na posição certa.
 
@@ -809,7 +809,7 @@ Preparação: `cargo build` e `sudo tests/session-dev.sh`. O fim da sessão (lim
 Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de login, no DRM).
 
 1. `git pull` no projeto e `data/mide-check` (mostra o que falta: binários, tema de ícones, `mide-session`, erros no log).
-2. Dentro da sessão do mide, num terminal: `data/mide-update --tudo`. Recompila em release, baixa o tema de ícones do fork (`fabioaacarneiro/mide-icons`, versão de `data/icons.version`; precisa de `git` e internet na primeira vez) e reinicia o compositor (as janelas abertas fecham; a sessão continua). No fim aparece `ícones do mide instalados (xxxxxxxx)`.
+2. Dentro da sessão do mide, num terminal: `data/mide-update --all`. Recompila em release, baixa o tema de ícones do fork (`fabioaacarneiro/mide-icons`, versão de `data/icons.version`; precisa de `git` e internet na primeira vez) e reinicia o compositor (as janelas abertas fecham; a sessão continua). No fim aparece `ícones do mide instalados (xxxxxxxx)`.
 3. Se o `data/mide-check` disser que o `mide-session` instalado é uma cópia antiga: `sudo cp data/mide-session <caminho que ele mostrar>`.
 4. Sair e entrar de novo na sessão do mide (o `mide-session` prepara o tema de ícones dos apps GTK e Qt). Rodar `data/mide-check` de novo, dentro da sessão: tudo `ok`.
 5. Conferir:

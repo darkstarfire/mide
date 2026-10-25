@@ -3,7 +3,7 @@
 #
 # Uso: data/mide-update          barra, dock, área de trabalho, notificações e
 #                                   launcher com os programas novos (as janelas ficam)
-#      data/mide-update --tudo   também o compositor: as janelas dos apps fecham,
+#      data/mide-update --all   também o compositor: as janelas dos apps fecham,
 #                                   mas a sessão continua (sem voltar ao login)
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."
@@ -55,13 +55,14 @@ mkdir -p "$servicos"
 printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.mide\nExec=%s --portal-only\n' "$PWD/target/release/mide-portal" \
     > "$servicos/org.freedesktop.impl.portal.desktop.mide.service"
 [ -f /usr/share/xdg-desktop-portal/portals/mide.portal ] ||
-    echo "nota: o seletor de arquivos do mide vale ao entrar de novo na sessão (ou com $0 --tudo); para não depender da pasta de portais montada pela sessão: sudo install -m644 data/xdg-desktop-portal/portals/mide.portal /usr/share/xdg-desktop-portal/portals/"
+    echo "nota: o seletor de arquivos do mide vale ao entrar de novo na sessão (ou com $0 --all); para não depender da pasta de portais montada pela sessão: sudo install -m644 data/xdg-desktop-portal/portals/mide.portal /usr/share/xdg-desktop-portal/portals/"
 command -v ffmpeg >/dev/null ||
     echo "aviso: para gravar a tela em vídeo pelo mide, instale o ffmpeg (sudo apt install ffmpeg)"
-if [ "${1:-}" = "--tudo" ]; then
+# --all (o antigo --tudo continua valendo)
+if [ "${1:-}" = "--all" ] || [ "${1:-}" = "--tudo" ]; then
     echo "reiniciando o compositor (as janelas abertas vão fechar)..."
     target/release/mide-ctl restart all
 else
     target/release/mide-ctl restart shell
-    echo "barra, dock e afins atualizados. Para atualizar também o compositor: $0 --tudo"
+    echo "barra, dock e afins atualizados. Para atualizar também o compositor: $0 --all"
 fi
