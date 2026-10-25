@@ -326,6 +326,12 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 finish_switcher(state, false);
                 return FilterResult::Intercept(None);
             }
+            // Esc arrastando uma janela sobre o topo: cancela o encaixe.
+            if state.snap.is_some() && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape {
+                state.snap = None;
+                state.wake();
+                return FilterResult::Intercept(None);
+            }
             // Esc com a mesa à mostra: as janelas voltam.
             if state.desktop_revealed() && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape && !mods.ctrl && !mods.alt && !mods.logo {
                 state.restore_revealed_and_focus();
@@ -676,9 +682,12 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     }
 
     // Durante um arrasto, a janela segue o cursor e o cliente não recebe o movimento.
-    if let Some(grab) = &state.move_grab {
-        let window = grab.window.clone();
-        let mut loc: Point<i32, Logical> = (pos - grab.offset).to_i32_round();
+    if let Some((window, offset)) = state.move_grab.as_ref().map(|g| (g.window.clone(), g.offset)) {
+        // Encostando na barra superior: prévia do encaixe (metades, tela inteira, layouts).
+        if !crate::state::fixed_size(&window) {
+            crate::snap::update(state, pos);
+        }
+        let mut loc: Point<i32, Logical> = (pos - offset).to_i32_round();
         // Como no macOS, a barra de título não passa para baixo da barra superior.
         if let Some(area) = state.usable_area() {
             loc.y = loc.y.max(area.loc.y + crate::state::bar_height_for(&window));
@@ -833,7 +842,11 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
         }
     }
     if button_state == ButtonState::Released && code == BTN_LEFT {
-        state.move_grab = None;
+        // Soltou a janela sobre uma zona de encaixe: ela vai para lá.
+        if let Some(grab) = state.move_grab.take() {
+            crate::snap::finish(state, &grab.window);
+        }
+        state.snap = None;
         state.resize_grab = None;
         if std::mem::take(&mut state.title_press) {
             return;

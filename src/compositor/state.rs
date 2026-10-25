@@ -202,6 +202,8 @@ pub struct State {
     pub reveal_homes: Vec<(Window, String)>,
     /// Janela nova que recebe o foco no primeiro commit (depois do configure inicial).
     pub focus_on_map: Option<WlSurface>,
+    /// Encaixe pelo topo da tela durante um arrasto de janela (`crate::snap`).
+    pub snap: Option<crate::snap::Snap>,
     /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
     /// tecla apertada (o soltar usa a mesma).
     pub mac_keys: MacKeys,
@@ -409,6 +411,7 @@ impl State {
             revealed: Vec::new(),
             reveal_homes: Vec::new(),
             focus_on_map: None,
+            snap: None,
             hidden: Vec::new(),
             mac_keys: MacKeys::default(),
             shown: Default::default(),

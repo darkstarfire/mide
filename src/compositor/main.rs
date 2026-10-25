@@ -25,6 +25,7 @@ mod screencopy;
 mod selftest;
 mod session;
 mod shake;
+mod snap;
 mod preview;
 mod render;
 mod state;

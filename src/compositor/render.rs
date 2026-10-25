@@ -208,6 +208,10 @@ impl Scene {
         if layer_map_for_output(&state.layer_output(output)).layers().any(|l| l.namespace() == "mide-dock") {
             custom.extend(crate::preview::elements(renderer, state, origin, shaders, titles));
         }
+        // Encaixe pelo topo: o painel de layouts na frente de tudo, a prévia atrás da
+        // barra e da dock (na frente das janelas).
+        let (snap_front, snap_back) = crate::snap::elements(state, output, shaders);
+        custom.extend(snap_front);
         custom.extend(popup_elements(renderer, state, origin).into_iter().map(MideRenderElement::from));
         let before_layers = custom.len();
         let (layers, mut glass) = layer_elements(renderer, output, state, blur, wallpaper);
@@ -215,6 +219,7 @@ impl Scene {
             region.at += before_layers;
         }
         custom.extend(layers);
+        custom.extend(snap_back);
         let before_windows = custom.len();
         let (windows, window_glass) = window_elements(renderer, state, output, origin, shaders, genie, wallpaper, titles);
         custom.extend(windows);

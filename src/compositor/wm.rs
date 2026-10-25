@@ -145,6 +145,23 @@ impl State {
         self.fill_area(surface, &window, area, None);
     }
 
+    /// Maximiza na área útil dada (encaixe pelo topo: a tela sob o ponteiro).
+    pub fn maximize_in(&mut self, surface: &ToplevelSurface, area: smithay::utils::Rectangle<i32, Logical>) {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w)) else {
+            return;
+        };
+        self.fill_area(surface, &window, area, None);
+    }
+
+    /// Põe a janela em `rect` (metade, terço ou quarto escolhido no encaixe pelo topo);
+    /// `left` diz se ela encosta na borda esquerda.
+    pub fn snap_to(&mut self, surface: &ToplevelSurface, rect: smithay::utils::Rectangle<i32, Logical>, left: bool) {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w)) else {
+            return;
+        };
+        self.fill_area(surface, &window, rect, Some(left));
+    }
+
     /// Metade esquerda (`left`) ou direita da área útil da tela da janela (Super+← e
     /// Super+→, como no GNOME). Super+↓ volta ao tamanho de antes.
     pub fn tile(&mut self, surface: &ToplevelSurface, left: bool) {

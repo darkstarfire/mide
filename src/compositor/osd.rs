@@ -469,8 +469,11 @@ fn build(
             let color = match (reading.muted, dark) {
                 (true, false) => [130.0 / 255.0, 130.0 / 255.0, 138.0 / 255.0, 1.0],
                 (true, true) => [152.0 / 255.0, 152.0 / 255.0, 160.0 / 255.0, 1.0],
-                (false, false) => [10.0 / 255.0, 110.0 / 255.0, 235.0 / 255.0, 1.0],
-                (false, true) => [30.0 / 255.0, 125.0 / 255.0, 245.0 / 255.0, 1.0],
+                (false, _) => {
+                    // Cor de destaque da sessão (Configurações → Aparência).
+                    let [r, g, b, _] = mide::kit::system_accent(dark);
+                    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+                }
             };
             let fill = Rectangle::new(track.loc, (filled.max(h), h).into());
             out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, fill, fade(color), h / 2)));

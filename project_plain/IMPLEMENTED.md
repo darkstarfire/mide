@@ -1710,3 +1710,8 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 ## Avisos clicáveis na central de notificações (2026-10-25)
 
 - Os cartões da central (painel do relógio) são clicáveis, com destaque ao passar o ponteiro: o aviso de captura ou gravação salva abre o arquivo; os outros trazem para a frente o app que avisou (dica `desktop-entry`, por exemplo o navegador depois de um download), ou o abrem. O banner sem ação do app faz o mesmo (como no Mac). O histórico guarda o arquivo e o app (`notify::Entry::open`/`app_id`, linhas antigas continuam valendo); `notify::activate` faz a ação.
+
+## Encaixe de janelas pelo topo e painel de layouts (2026-10-25)
+
+- Pedido do usuário (como no Zorin, ChromeOS e Windows 11): arrastando uma janela até encostar na barra superior, o terço esquerdo da tela põe a janela na metade esquerda, o terço direito na metade direita e o meio na tela inteira. No meio abre também um painel de layouts no topo (metades, 2/3 + 1/3, terços, metade + quartos, quartos): passar sobre uma célula mostra onde a janela vai ficar e soltar a põe ali. Uma prévia translúcida na cor de destaque acompanha o arrasto; Esc cancela; vale na tela sob o ponteiro (várias telas). Tudo desenhado pelo compositor (`src/compositor/snap.rs`, com testes), e a seção 04 da bateria ganhou os três casos.
+- A barra de nível do aviso de volume e brilho também segue a cor de destaque.
