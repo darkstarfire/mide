@@ -1205,10 +1205,16 @@ pub fn front_layers(map: &smithay::desktop::LayerMap) -> Vec<smithay::desktop::L
         .filter(|l| matches!(l.layer(), Layer::Top | Layer::Overlay))
         .cloned()
         .collect();
-    // Overlay sempre na frente de Top, seja qual for a ordem em que foram criadas (a
-    // dock recriada não pode cobrir a ampliação dos ícones, que é Overlay). Ordenação
-    // estável: dentro de cada grupo, a mais nova na frente.
-    layers.sort_by_key(|l| l.layer() != Layer::Overlay);
+    // Da frente para trás: as Overlay (captura, launcher...), depois as camadas da dock
+    // que andam com ela (a ampliação dos ícones e o ícone que pula, logo na frente da
+    // dock e atrás das outras Overlay: a captura não pode ter a dock viva por cima) e
+    // por fim as Top. Seja qual for a ordem em que foram criadas; ordenação estável:
+    // dentro de cada grupo, a mais nova na frente.
+    layers.sort_by_key(|l| match (l.layer(), l.namespace()) {
+        (_, "mide-dock-zoom" | "mide-dock-pulo") => 1,
+        (Layer::Overlay, _) => 0,
+        _ => 2,
+    });
     if layers.iter().any(|l| l.namespace() == "mide-launcher") {
         // Ordenação estável: mantém a ordem original dentro de cada grupo.
         layers.sort_by_key(|l| !ABOVE_LAUNCHER.contains(&l.namespace()));
