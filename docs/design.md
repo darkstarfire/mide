@@ -16,7 +16,7 @@ cantos arredondados, movimento curto e suave. Bonito, mas sempre leve.
 > (raios, tamanhos, anatomia da janela), vale o mapa.
 
 Valores marcados com `código:` estão no código e devem ser lidos de lá (o tema do
-mide-ui em `src/kit/theme.rs`, as durações e curvas em `src/motion.rs`). Se mudar aqui,
+mide-ui em `src/kit/theme.rs`, as durações e curvas em `src/shell/motion.rs`). Se mudar aqui,
 mude lá, e vice-versa.
 
 ---
@@ -59,7 +59,7 @@ mude lá, e vice-versa.
 | Perigo | vermelho (`#D22828` no texto) | ações que apagam ("Mover para a Lixeira") |
 
 Botões da janela (barra de título): fechar `#FF5E57`, minimizar `#FFBD2E`, maximizar
-`#28C840` (`código: src/decorations.rs`).
+`#28C840` (`código: src/compositor/decorations.rs`).
 
 **A corrigir:** a barra superior usa um azul próprio (`#0A78F0`) nos interruptores e
 trilhos da central de controle. O certo é o destaque do tema (`#0A6EEB`).
@@ -87,7 +87,7 @@ texto (não com a cor do arquivo do ícone), para acompanharem o tema escuro soz
 
 ## 4. Forma e espaço
 
-`código: src/kit/theme.rs`, `src/decorations.rs`
+`código: src/kit/theme.rs`, `src/compositor/decorations.rs`
 
 | Medida | Valor |
 |---|---|
@@ -243,7 +243,7 @@ não fica só no app.
 
 ## 8. Movimento
 
-`código: src/motion.rs` (durações e curvas num lugar só: o compositor, a barra, a dock, o launcher, o Arquivos e o mide-ui usam daqui)
+`código: src/shell/motion.rs` (durações e curvas num lugar só: o compositor, a barra, a dock, o launcher, o Arquivos e o mide-ui usam daqui)
 
 ### Curvas
 

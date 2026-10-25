@@ -10,7 +10,7 @@ padrões de tela. **Em conflito com o `docs/design.md`, vale este documento**; o
 
 Só inspiração: nenhuma imagem, ícone, fonte ou código da Apple. As medidas abaixo são
 do mide, escolhidas para dar o mesmo efeito visual, e ficam no código
-(`src/kit/theme.rs`, `src/decorations.rs`, `src/motion.rs`). Referências do usuário: o
+(`src/kit/theme.rs`, `src/compositor/decorations.rs`, `src/shell/motion.rs`). Referências do usuário: o
 Human Interface Guidelines (developer.apple.com/design/human-interface-guidelines/designing-for-macos),
 o artigo do Eclectic Light sobre o Tahoe
 (eclecticlight.co/2026/05/31/last-week-on-my-mac-razzle-and-dazzle/) e as capturas de
@@ -138,7 +138,7 @@ da barra de ferramentas, **o próprio conteúdo** que passa por baixo.
 
 ### 2.7 Movimento
 
-`código: src/motion.rs`. Molas curtas: resposta 0,35 s, amortecimento 0,85.
+`código: src/shell/motion.rs`. Molas curtas: resposta 0,35 s, amortecimento 0,85.
 
 - apertar: o controle encolhe para 97% e o vidro clareia no ponto do clique;
 - seleção do segmentado e de abas: a pílula desliza (mola);

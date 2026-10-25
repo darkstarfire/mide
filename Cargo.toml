@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 default-run = "mide"
 
+# O compositor fica em src/compositor/ (a biblioteca e os apps, no resto de src/).
+[[bin]]
+name = "mide"
+path = "src/compositor/main.rs"
+
 [dependencies]
 chrono = "0.4"
 cosmic-text = "0.19"

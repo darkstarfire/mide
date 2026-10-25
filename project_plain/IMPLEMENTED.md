@@ -12,24 +12,24 @@
 - Adicionado o Smithay 0.7.0 com as features de Wayland, desktop, renderização GL, winit, DRM, libinput, libseat e udev. Ainda não são usadas todas, mas já ficam prontas para as próximas etapas.
 - Adicionados `tracing` e `tracing-subscriber` para os logs.
 - Verificado que as bibliotecas de sistema da seção 10 do `RECURSES.md` estão instaladas (wayland, xkbcommon, libinput, libseat, libudev, gbm, libdrm, EGL, GLES, dbus, pipewire, pixman e fontconfig).
-- `src/main.rs`: cria o display Wayland, abre o socket `mide-0` e roda o event loop (calloop). A cada 16 ms envia os eventos pendentes aos clientes.
-- `src/state.rs`: estado global do compositor e os handlers dos protocolos mínimos: `wl_compositor`, `xdg_wm_base` (janelas e popups), `wl_shm`, `wl_seat` e `wl_data_device`.
+- `src/compositor/main.rs`: cria o display Wayland, abre o socket `mide-0` e roda o event loop (calloop). A cada 16 ms envia os eventos pendentes aos clientes.
+- `src/compositor/state.rs`: estado global do compositor e os handlers dos protocolos mínimos: `wl_compositor`, `xdg_wm_base` (janelas e popups), `wl_shm`, `wl_seat` e `wl_data_device`.
 - Teste feito: um cliente Wayland cru conectou em `mide-0`, recebeu a lista de globais e desconectou. Os logs confirmaram a conexão e a desconexão.
 - Ainda não há renderização nem entrada de teclado ou mouse. Uma janela de cliente pode ser criada, mas não aparece na tela.
 
 ## Etapa 3: renderização no backend winit
 
-- `src/backend_winit.rs`: cria uma janela winit (1280x800) dentro da sessão atual, registra a saída `mide-winit` (`wl_output`) e desenha a cada frame com `render_output` e `OutputDamageTracker`. Envia os frame callbacks aos clientes e entrega o `submit` ao backend.
-- `src/state.rs`: agora há um `Space<Window>`. Cada toplevel novo entra mapeado em cascata (48 px + 32 px por janela). O commit atualiza a janela, e fechar a janela remove ela do espaço.
+- `src/compositor/backend_winit.rs`: cria uma janela winit (1280x800) dentro da sessão atual, registra a saída `mide-winit` (`wl_output`) e desenha a cada frame com `render_output` e `OutputDamageTracker`. Envia os frame callbacks aos clientes e entrega o `submit` ao backend.
+- `src/compositor/state.rs`: agora há um `Space<Window>`. Cada toplevel novo entra mapeado em cascata (48 px + 32 px por janela). O commit atualiza a janela, e fechar a janela remove ela do espaço.
 - Implementado `OutputHandler` e `delegate_output!`, necessários para o `wl_output`.
 - Teste feito: o compositor abriu a janela winit sem erros nem panics. Um app GTK real (`gnome-calculator`) conectou em `mide-0`, criou uma janela (log `nova janela criada`) e fechou (log `janela fechada`).
 - Limitação: a conferência visual do conteúdo da janela não foi feita por mim, porque não tenho acesso à tela. Os logs confirmam o fluxo, mas não a aparência final.
 
 ## Etapas A3, A4 e A5: teclado, ponteiro e foco por clique
 
-- `src/input.rs`: recebe os eventos do winit e os repassa ao seat. Teclado com keymap padrão (xkbcommon). Ponteiro com movimento, botões e rolagem, enviados à superfície sob o cursor.
+- `src/compositor/input.rs`: recebe os eventos do winit e os repassa ao seat. Teclado com keymap padrão (xkbcommon). Ponteiro com movimento, botões e rolagem, enviados à superfície sob o cursor.
 - Clique com o botão esquerdo traz a janela para frente, dá a ela o foco do teclado e marca só ela como ativa (configure com o estado `Activated`).
-- `src/state.rs`: `State::new` agora retorna `Result`, porque criar o teclado pode falhar. Guarda também a posição do cursor.
+- `src/compositor/state.rs`: `State::new` agora retorna `Result`, porque criar o teclado pode falhar. Guarda também a posição do cursor.
 - Correção visual: a janela aparecia de cabeça para baixo, porque o GL do winit tem a origem embaixo. A saída agora usa `Transform::Flipped180`.
 - Limitação: nenhum evento de entrada real foi injetado, porque não há ferramenta instalada (ydotool, wtype, xdotool) e não tenho permissão para instalar. O código compila e o compositor roda sem panics com um cliente GTK conectado. Falta confirmar teclado, clique e foco com um teste real.
 
@@ -43,8 +43,8 @@
 ## Pedidos de janela: arrastar, maximizar e restaurar
 
 - Confirmado no teste: a calculadora aparece dentro do mide e responde a mouse e teclado (`10×2` resultou em `20`).
-- `src/state.rs`: tratados os pedidos xdg-shell que a calculadora envia pelos próprios botões. `move_request` inicia o arrasto. `maximize_request` ocupa a área da saída e guarda a posição anterior. `unmaximize_request` restaura essa posição.
-- `src/input.rs`: durante o arrasto, a janela segue o cursor e o cliente não recebe o movimento. Soltar o botão esquerdo encerra o arrasto.
+- `src/compositor/state.rs`: tratados os pedidos xdg-shell que a calculadora envia pelos próprios botões. `move_request` inicia o arrasto. `maximize_request` ocupa a área da saída e guarda a posição anterior. `unmaximize_request` restaura essa posição.
+- `src/compositor/input.rs`: durante o arrasto, a janela segue o cursor e o cliente não recebe o movimento. Soltar o botão esquerdo encerra o arrasto.
 - Pendente: minimizar só registra no log, porque a dock (B4) ainda não existe para restaurar a janela. Redimensionar pela borda também fica para depois.
 - Pendente: barra de título do próprio mide (A7). Hoje a barra vem do app, como o GTK faz.
 
@@ -56,7 +56,7 @@
 
 ## Atalhos de teclado (A9 parcial) e fechar janela (A8 parcial)
 
-- `src/config.rs`: lê `~/.config/mide/config.toml` (ou `$XDG_CONFIG_HOME/mide/config.toml`) na seção `[keybindings]`. Sem arquivo, usa os atalhos padrão.
+- `src/compositor/config.rs`: lê `~/.config/mide/config.toml` (ou `$XDG_CONFIG_HOME/mide/config.toml`) na seção `[keybindings]`. Sem arquivo, usa os atalhos padrão.
 - Padrões: `super+q` fecha a janela com foco, e `ctrl+alt+t` abre `x-terminal-emulator`.
 - Ações: `close_window` e `launch:<comando>` (binário ou script, executado pelo shell com `WAYLAND_DISPLAY=mide-0`).
 - Atalho casado é interceptado: a tecla não chega ao app.
@@ -105,7 +105,7 @@
 
 ## A7 parcial: barra de título do mide (decoração de servidor)
 
-- `src/decorations.rs`: barra de 30 px acima do conteúdo, com botões fechar (vermelho), minimizar (amarelo) e maximizar (verde). A cor muda com o foco.
+- `src/compositor/decorations.rs`: barra de 30 px acima do conteúdo, com botões fechar (vermelho), minimizar (amarelo) e maximizar (verde). A cor muda com o foco.
 - O protocolo `xdg-decoration` foi implementado: o mide responde sempre com decoração de servidor. Apps que pedem essa decoração (ex.: `foot`) recebem a barra do mide.
 - Clicar nos botões fecha, minimiza (só registra no log) ou maximiza. Arrastar a barra move a janela. Duplo clique alterna a maximização.
 - Maximizar agora deixa o conteúdo abaixo da barra, para ela não sair da tela.
@@ -121,7 +121,7 @@
 
 ## Cantos arredondados e botões redondos
 
-- `src/decorations.rs`: dois shaders de pixel compilados na inicialização. Um desenha retângulos arredondados (botões circulares e fundo da barra). O outro é uma máscara de canto, que pinta com a cor do fundo do desktop a região fora do arco.
+- `src/compositor/decorations.rs`: dois shaders de pixel compilados na inicialização. Um desenha retângulos arredondados (botões circulares e fundo da barra). O outro é uma máscara de canto, que pinta com a cor do fundo do desktop a região fora do arco.
 - Os quatro cantos da janela (barra + conteúdo) são arredondados com raio de 12 px. Janela maximizada fica sem arredondamento.
 - Botões são círculos de 12 px.
 - Limitação: a máscara usa a cor sólida do fundo do desktop. Atrás de um canto arredondado aparece essa cor, e não o que está por trás de verdade. Não há sombra.
@@ -198,7 +198,7 @@
 
 ## Título da janela em texto (completa A7)
 
-- `src/title.rs`: o título do app é composto com `cosmic-text` (fontes do sistema, SemiBold 13 px), rasterizado para RGBA premultiplicado e enviado à GPU como buffer de memória. Fica em cache por título e foco.
+- `src/compositor/title.rs`: o título do app é composto com `cosmic-text` (fontes do sistema, SemiBold 13 px), rasterizado para RGBA premultiplicado e enviado à GPU como buffer de memória. Fica em cache por título e foco.
 - Centralizado na barra. Cinza-escuro com foco, cinza-claro sem foco, como no macOS.
 - Título vem de `XdgToplevelSurfaceData` (o que o app define). Sem título, a barra fica sem texto.
 - Verificado: o quadro salvo mostra "foot" centralizado. `tests/smoke.sh` e 21 unitários passam.
@@ -250,7 +250,7 @@ Limitações conhecidas, que continuam:
 
 ## Autoteste de interface e correções encontradas por ele
 
-Para testar sem depender do usuário, o mide ganhou um autoteste de ponteiro (`src/selftest.rs`): a variável `MIDE_SELFTEST` define um roteiro de passos `frame ação x y` (move, press, release, click, list, restore). O tratamento de mouse foi separado do formato de evento do winit, então os cliques simulados passam pelo mesmo código dos reais.
+Para testar sem depender do usuário, o mide ganhou um autoteste de ponteiro (`src/compositor/selftest.rs`): a variável `MIDE_SELFTEST` define um roteiro de passos `frame ação x y` (move, press, release, click, list, restore). O tratamento de mouse foi separado do formato de evento do winit, então os cliques simulados passam pelo mesmo código dos reais.
 
 - `tests/scenario.sh`: sobe o mide com um roteiro, abre apps e mostra o log (e, opcionalmente, salva um quadro).
 - `tests/ui.sh`: 20 cenários com resultado conferido (posição, tamanho, fechamento, popups, ordem das janelas, dock). Passam todos.
@@ -265,7 +265,7 @@ Bugs encontrados e corrigidos com o autoteste:
 
 ## Dock conversando com o compositor
 
-- Canal de controle `$XDG_RUNTIME_DIR/mide-0.ctl` (`src/control.rs`): `list` devolve as janelas com app, título e estado; `activate <ids>` restaura a minimizada ou foca a aberta.
+- Canal de controle `$XDG_RUNTIME_DIR/mide-0.ctl` (`src/compositor/control.rs`): `list` devolve as janelas com app, título e estado; `activate <ids>` restaura a minimizada ou foca a aberta.
 - A dock agora: foca o app já aberto em vez de abrir outro; restaura a janela minimizada do app; mostra um ponto embaixo dos apps abertos (consulta a cada 0,8 s).
 - A dock deixou de redesenhar a 60 quadros por segundo: só desenha quando algo muda.
 
@@ -291,7 +291,7 @@ Bugs encontrados e corrigidos com o autoteste:
 
 ## Efeito lâmpada (genie)
 
-- `src/genie.rs`: durante minimizar e restaurar, o conteúdo da janela é renderizado numa textura fora da tela e desenhado com um shader que deforma cada linha. A base afunila e desce primeiro em direção ao centro inferior (a dock); o topo vai depois.
+- `src/compositor/genie.rs`: durante minimizar e restaurar, o conteúdo da janela é renderizado numa textura fora da tela e desenhado com um shader que deforma cada linha. A base afunila e desce primeiro em direção ao centro inferior (a dock); o topo vai depois.
 - Duração de 420 ms (maximizar continua com 220 ms).
 - Restaurar faz o caminho inverso, saindo da dock.
 - Desligável com `lamp = false` em `[effects]` (volta à animação de escala).
@@ -305,7 +305,7 @@ Bugs encontrados e corrigidos com o autoteste:
 
 ## Correções da rodada: ponta branca, dock, lâmpada, saída redimensionada e Ctrl+clique
 
-- **Ponta branca no canto (bug):** a máscara de canto não pintava sobre janelas de baixo, e o canto quadrado da barra aparecia. Agora o conteúdo da janela é recortado de verdade no desenho (`src/clip.rs`): um shader de textura troca o padrão do Smithay (`override_default_tex_program`) e zera os pixels fora da moldura arredondada. A barra usa o mesmo recorte no shader dela. As máscaras de canto foram removidas. O canto mostra o que está atrás (desktop com sombra ou outra janela).
+- **Ponta branca no canto (bug):** a máscara de canto não pintava sobre janelas de baixo, e o canto quadrado da barra aparecia. Agora o conteúdo da janela é recortado de verdade no desenho (`src/compositor/clip.rs`): um shader de textura troca o padrão do Smithay (`override_default_tex_program`) e zera os pixels fora da moldura arredondada. A barra usa o mesmo recorte no shader dela. As máscaras de canto foram removidas. O canto mostra o que está atrás (desktop com sombra ou outra janela).
 - **Dock com visual do macOS:** raio de 18 px (antes era uma pílula), vidro claro translúcido com gradiente, borda fina mais escura em cima e mais clara embaixo, brilho interno de 1 px, margens mais justas e ponto de app aberto menor.
 - **Efeito lâmpada vai até o ícone do app:** a dock informa ao compositor onde está cada ícone (`icons` no canal de controle), sempre que muda. Ao minimizar e restaurar, o funil vai e volta do ícone do app naquele momento. Sem ícone, vai ao centro inferior.
 - **Efeito lâmpada mais bem feito:** a janela inteira entra na textura (barra, título, botões e conteúdo), com cantos arredondados no próprio shader; curva de aceleração e desaceleração suave (antes desacelerava logo no começo e ficava brusco).
@@ -342,7 +342,7 @@ Bugs encontrados e corrigidos com o autoteste:
   ```
   Aceita PNG e JPEG. A imagem cobre a tela inteira sem distorcer (corta as sobras no centro) e se ajusta quando a saída muda de tamanho.
 - Sem imagem, ou se ela não abrir, o fundo é um gradiente próprio do mide (azul profundo, violeta e um brilho quente embaixo).
-- As sombras das janelas continuam sobre o papel de parede: o fundo é uma textura desenhada por um shader que também aplica a sombra combinada (`src/wallpaper.rs`).
+- As sombras das janelas continuam sobre o papel de parede: o fundo é uma textura desenhada por um shader que também aplica a sombra combinada (`src/compositor/wallpaper.rs`).
 
 ## Janelas sempre abaixo da barra superior
 
@@ -374,7 +374,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - `ctrl+shift+space` abre e, com ele aberto, fecha (nova ação `toggle_launcher`, padrão no lugar do fuzzel).
 - Desempenho: abre em cerca de 165 ms. Os ícones carregam numa thread separada e aparecem conforme ficam prontos; várias teclas seguidas geram um quadro só.
 - O modo de desenvolvimento agora compila as dependências otimizadas (`[profile.dev.package."*"]`): abrir o launcher caiu de 5 s para menos de 0,2 s, e a dock, a barra e o compositor também ficaram mais rápidos.
-- Código compartilhado novo: `src/apps.rs` (lista de apps, grupos, busca), `src/icons.rs` (ícones do tema, usados pela dock e pelo launcher) e `src/control_client.rs` (canal de controle).
+- Código compartilhado novo: `src/applications/apps.rs` (lista de apps, grupos, busca), `src/applications/icons.rs` (ícones do tema, usados pela dock e pelo launcher) e `src/platform/control_client.rs` (canal de controle).
 - Autoteste: passos `key`, `type` e `combo`, que passam pelo mesmo caminho de uma tecla de verdade (inclusive os atalhos).
 - Efeito lâmpada com 650 ms.
 
@@ -389,7 +389,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - **Downloads**: clique abre um painel acima do ícone com os 8 itens mais recentes da pasta (lida de `user-dirs.dirs`), com ícone pelo tipo de arquivo, nome cortado com reticências e há quanto tempo chegou ("agora", "há 5 min", "ontem"). Clique num item abre com o app padrão; "Abrir no Gerenciador de Arquivos" abre a pasta. Clique direito: "Abrir pasta Downloads".
 - **Lixeira**: o ícone muda de vazia para cheia sozinho (conferido a cada 0,8 s). Clique abre a Lixeira no gerenciador de arquivos. Clique direito: "Abrir" e "Esvaziar Lixeira…", que pede confirmação ("N itens serão apagados para sempre. Não dá para desfazer.") com "Esvaziar Lixeira" em vermelho e "Cancelar".
 - Painéis com o visual dos menus do macOS: claros, translúcidos, cantos arredondados, sombra suave e destaque azul sob o mouse. Clique fora ou no mesmo ícone de novo fecha.
-- Código novo: `src/places.rs` (pasta de Downloads, itens recentes, Lixeira, abrir arquivos) e `load_themed_icon` em `src/icons.rs`.
+- Código novo: `src/storage/places.rs` (pasta de Downloads, itens recentes, Lixeira, abrir arquivos) e `load_themed_icon` em `src/applications/icons.rs`.
 - Proteção nos testes: cada sessão de teste usa uma Lixeira própria (`XDG_DATA_HOME` temporário) e abrir arquivos só vai para o log (`MIDE_OPEN_DRY_RUN`).
 
 ## Rodada de ajustes pedidos pelo usuário (launcher, dock, barra, Sobre)
@@ -410,7 +410,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - Com o mouse em cima aparece o **×** no canto para fechar. Clique no banner aciona a ação padrão do app (quando ele tem uma). Ações extras viram **botões** no banner (ex.: "Abrir", "Ignorar"), e o app recebe a ação escolhida pelo D-Bus.
 - Texto com marcação simples (`<b>`, `<i>`, links) é mostrado como texto puro.
 - Rodando o mide em janela dentro do GNOME, o GNOME já é o servidor de notificações: o do mide percebe e sai sem fazer nada. Numa sessão própria do mide, ele assume.
-- Código: `src/notify.rs` (regras de tempo, texto e ações, com testes) e `src/bin/mide-notifications.rs` (servidor D-Bus com `zbus` e os banners). Nova dependência: `zbus`.
+- Código: `src/shell/notify.rs` (regras de tempo, texto e ações, com testes) e `src/bin/mide-notifications.rs` (servidor D-Bus com `zbus` e os banners). Nova dependência: `zbus`.
 - Testes: `tests/scenario-dbus.sh` roda o cenário num D-Bus próprio (`dbus-run-session`); 5 verificações novas, inclusive o app recebendo a ação.
 
 ## Rodada de ajustes 2 (pedido do usuário com 6 fotos)
@@ -421,7 +421,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - Janelas de apps sem arquivo `.desktop` (como a "Sobre") agora aparecem na dock com o título da janela e um ícone do tema (o de computador, para as janelas do mide). Antes, minimizada, a janela sumia sem ícone para trazer de volta. Sem `.desktop`, o menu do ícone só tem Ocultar e Encerrar (não dá para abrir outra nem manter na dock).
 
 ### Launcher com a dock e a barra por cima
-- Com o launcher aberto, a dock, a barra, os menus delas e as notificações ficam por cima do fundo escurecido, como no macOS (o compositor reordena as camadas no desenho e no clique: `front_layers` em `src/state.rs`).
+- Com o launcher aberto, a dock, a barra, os menus delas e as notificações ficam por cima do fundo escurecido, como no macOS (o compositor reordena as camadas no desenho e no clique: `front_layers` em `src/compositor/state.rs`).
 - A barra fica transparente, com o texto branco, enquanto o launcher está aberto (ela pergunta ao compositor com `launcher state`).
 - Clicar num app, em Downloads ou na Lixeira da dock fecha o launcher (`launcher close`).
 - A busca desceu (fica abaixo da barra, como na referência) e agora diz "Buscar Aplicativos".
@@ -441,7 +441,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - Com o ponteiro parado ~0,45 s sobre o ícone de um app aberto, aparece acima da dock um painel claro com a miniatura de cada janela do app e o título embaixo. Janelas com a barra do mide ganham uma barra em miniatura, para parecer a janela de verdade. Passando de um ícone para outro com as prévias abertas, elas trocam mais rápido (0,12 s).
 - A miniatura sob o ponteiro fica destacada e mostra o **×**: clicar no × fecha aquela janela; clicar na miniatura traz a janela para frente (restaurando se estava minimizada).
 - O painel some quando o ponteiro sai da dock e do painel, ou com um clique em outro lugar. Qualquer clique na dock também esconde as prévias.
-- Quem desenha é o compositor (`src/preview.rs`), porque só ele tem o conteúdo das janelas. A dock pede com `preview <x do ícone> <números das janelas>` e esconde com `preview hide`.
+- Quem desenha é o compositor (`src/compositor/preview.rs`), porque só ele tem o conteúdo das janelas. A dock pede com `preview <x do ícone> <números das janelas>` e esconde com `preview hide`.
 
 ### Launcher: arrastar, criar pastas e renomear
 - Segurar e arrastar um app (ou pasta) no launcher: o ícone segue o ponteiro e o lugar dele fica vazio.
@@ -452,11 +452,11 @@ Bugs encontrados e corrigidos com o autoteste:
 - Com uma pasta aberta: arrastar um app **para fora do painel** tira o app da pasta (ele fica logo depois dela); arrastar dentro do painel muda a ordem. Pasta que fica com um app só deixa de existir.
 - **Renomear pasta:** clique no nome em cima do painel; ele vira um campo com cursor. Enter (ou clicar fora) salva, Esc cancela.
 - A organização fica salva em `~/.config/mide/launcher.toml`. Ao abrir, apps desinstalados saem e apps novos entram no fim.
-- Código: `src/launcher_layout.rs` (regras de pastas, ordem e arquivo, com testes).
+- Código: `src/shell/launcher_layout.rs` (regras de pastas, ordem e arquivo, com testes).
 
 ### Calendário no relógio
 - Clique no relógio da barra abre o calendário, no estilo do macOS: a data de hoje por extenso ("sábado, 17 de outubro"), o mês ("outubro de 2026") com os botões ‹ Hoje ›, os dias da semana (D S T Q Q S S, começando no domingo) e o dia de hoje num círculo azul. Dias de outros meses aparecem apagados.
-- Código: `src/calendar.rs` (grade do mês, troca de mês e textos em português, com testes).
+- Código: `src/shell/calendar.rs` (grade do mês, troca de mês e textos em português, com testes).
 
 ### Ícones de som, Wi-Fi, Bluetooth e bateria na barra (B3, parte 1)
 - À esquerda do relógio: **som** (alto-falante com ondas pelo volume, ou × no mudo), **Wi-Fi** (leque aceso pela força do sinal, riscado quando desligado), **Bluetooth** (mais apagado quando desligado) e a **bateria** (quando o computador tem). Cada ícone só aparece se o sistema tiver aquilo.
@@ -467,7 +467,7 @@ Bugs encontrados e corrigidos com o autoteste:
   - **Bateria:** nível, se está carregando e "Configurações de bateria…".
 - Com um painel aberto, passar o mouse pelos ícones troca de painel, como nos menus.
 - O estado vem de `wpctl` (som), `nmcli` (Wi-Fi) e `bluetoothctl` (Bluetooth), lidos numa thread a cada 2 s (ou na hora, depois de uma ação), para a barra nunca travar. As configurações abrem o `gnome-control-center`.
-- Código: `src/system.rs` (leitura e ações, com testes da leitura).
+- Código: `src/platform/system.rs` (leitura e ações, com testes da leitura).
 - Nos testes, `MIDE_SYSTEM_DRY_RUN` simula o estado e as ações só vão para o log: nenhum teste mexe no som, no Wi-Fi ou no Bluetooth de verdade.
 
 ## Configurações do Sistema (B7, parte 1)
@@ -482,9 +482,9 @@ Bugs encontrados e corrigidos com o autoteste:
   - **Atalhos de teclado:** os atalhos em uso, com a ação em português e as teclas ("Ctrl ⇧ Espaço").
   - **Sobre:** as especificações da máquina e a versão do mide.
 - Abre pelo menu do mide ("Configurações do sistema…", que antes ficava desativado) e pelos links "Configurações de Wi-Fi/Bluetooth/som…" dos painéis da barra, já na seção certa (`mide-settings wifi`, `sound`...). A bateria ainda abre as configurações do GNOME.
-- **Gravar sem perder comentários:** as escolhas vão para o `~/.config/mide/config.toml` com `toml_edit`, que mantém os comentários e a formatação do usuário (`src/settings_file.rs`, com testes). Efeito ligado é o padrão: ao religar, a chave é apagada em vez de gravar `true`.
+- **Gravar sem perder comentários:** as escolhas vão para o `~/.config/mide/config.toml` com `toml_edit`, que mantém os comentários e a formatação do usuário (`src/platform/settings_file.rs`, com testes). Efeito ligado é o padrão: ao religar, a chave é apagada em vez de gravar `true`.
 - **Valer na hora:** novo comando `reload` no canal de controle; o compositor relê o `config.toml` (atalhos, efeitos e papel de parede) e o papel de parede troca no quadro seguinte. Novo comando `bindings` lista os atalhos em uso.
-- Código compartilhado novo: `src/backdrop.rs` (ajuste de imagem à tela e gradiente padrão, usado pelo compositor e pelas miniaturas) e `src/sysinfo.rs` (especificações da máquina, usado pelo "Sobre" e pelas Configurações).
+- Código compartilhado novo: `src/shell/backdrop.rs` (ajuste de imagem à tela e gradiente padrão, usado pelo compositor e pelas miniaturas) e `src/platform/sysinfo.rs` (especificações da máquina, usado pelo "Sobre" e pelas Configurações).
 - Arquivos `.desktop` dos programas do mide em `data/applications/` (Configurações do Sistema e Sobre), para o instalador copiar; com eles, as Configurações aparecem no launcher. Até lá, a dock mostra o ícone de configurações do tema para a janela delas.
 
 ## Rodada de ajustes 3 (lentidão, Configurações, roda do mouse, animações)
@@ -495,7 +495,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - Com a janela do mide mudando de tamanho (maximizar), o papel de parede é esticado e só é refeito no tamanho novo quando o tamanho para de mudar por 0,15 s (antes era refeito a cada passo do redimensionamento).
 
 ### Configurações sempre à mão
-- Os programas abertos pelo mide recebem a pasta de dados do mide em `XDG_DATA_DIRS` e a pasta dos programas do mide no `PATH` (`child_env` em `src/main.rs`). Assim os `.desktop` do mide (em `data/applications/` no desenvolvimento, `share/mide` instalado, ou `MIDE_DATA_DIR`) aparecem no launcher e na dock, e "Manter na Dock" funciona para as Configurações.
+- Os programas abertos pelo mide recebem a pasta de dados do mide em `XDG_DATA_DIRS` e a pasta dos programas do mide no `PATH` (`child_env` em `src/compositor/main.rs`). Assim os `.desktop` do mide (em `data/applications/` no desenvolvimento, `share/mide` instalado, ou `MIDE_DATA_DIR`) aparecem no launcher e na dock, e "Manter na Dock" funciona para as Configurações.
 - As Configurações do Sistema vêm fixadas na dock por padrão, como no macOS (para quem ainda não tem `dock.toml`; quem já tem fixa com clique direito → Manter na Dock).
 - Ícones de app que só existem no tema do usuário (como o das Configurações) agora são encontrados: a busca de ícone de app tenta o tema padrão e depois o tema do usuário.
 
@@ -531,7 +531,7 @@ Bugs encontrados e corrigidos com o autoteste:
 - **Configurações sem barra de rolagem:** barra fina no estilo do macOS na borda direita, que só aparece quando o conteúdo não cabe, engrossa com o mouse em cima e pode ser arrastada (clique no trilho pula para o ponto).
 
 ### Desfoque (blur)
-- Novo módulo `src/blur.rs` no compositor, com a técnica "dual Kawase" (a do KDE e do Hyprland): reduções pela metade e ampliações de volta, misturando vizinhos. Barato na GPU.
+- Novo módulo `src/compositor/blur.rs` no compositor, com a técnica "dual Kawase" (a do KDE e do Hyprland): reduções pela metade e ampliações de volta, misturando vizinhos. Barato na GPU.
 - **Launcher:** o fundo é o papel de parede ativo, bem desfocado (5 passadas), por baixo do véu, como o Launchpad. Calculado uma vez por papel de parede e tamanho de tela.
 - **Dock:** desfoca o que estiver atrás dela (janelas e papel de parede) a cada quadro (3 passadas), recortado pelos cantos arredondados da dock: efeito de vidro fosco. Medido: o detalhe atrás da dock cai de 29 para 10 (desvio dos pixels).
 - **Configurações → Efeitos:** interruptores "Desfoque na dock" e "Desfoque no launcher" (`[effects] dock_blur` e `launcher_blur`), valendo na hora.
@@ -598,7 +598,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## Vidro líquido na dock (estilo Liquid Glass), leve
 
-- **Shader novo no compositor** (`src/blur.rs`, composto da dock), numa passada só, a partir da distância até a borda arredondada (calculada no shader, sem texturas extras):
+- **Shader novo no compositor** (`src/compositor/blur.rs`, composto da dock), numa passada só, a partir da distância até a borda arredondada (calculada no shader, sem texturas extras):
   - **Refração:** perto da borda, a imagem de trás é puxada para dentro como numa lente; a borda parece vidro grosso e curvo (as pontas da dock "entortam" o que está atrás).
   - **Tom adaptativo:** um pouco mais de saturação e de luz, mais forte sobre fundos escuros, para os ícones continuarem legíveis.
   - **Reflexo:** linha fina e clara na borda, mais forte do lado da luz (em cima, à esquerda), e brilho suave na faixa curva.
@@ -789,9 +789,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 ## Separação da cena, da política de janelas e do backend (preparo do A13)
 
 - Refatoração sem mudança de comportamento, para o backend DRM (A13) reaproveitar tudo sem duplicar código.
-- **`src/render.rs` (cena):** o que estava em `backend_winit.rs` e não era do winit foi para cá: `MideRenderElement`, montagem das janelas, decorações, efeito lâmpada, fotos de fechar, camadas, vidro, papel de parede, `send_frames` e títulos. `Scene` guarda os recursos de GPU (shaders, lâmpada, desfoque, papel de parede, títulos); `Scene::render` desenha num alvo qualquer do `GlesRenderer`, e `Scene::moving` diz se algo está em movimento.
-- **`src/backend_winit.rs`** ficou só com a janela do anfitrião, a saída, os relógios, os eventos e a apresentação (`bind`, `Scene::render`, `submit`, `send_frames`). De 892 para 222 linhas.
-- **`src/wm.rs` (política de janelas):** janela nova em cascata (`map_new_window`), fechar (`request_close`, `window_closed`), arrastar (`begin_move`), maximizar e restaurar (`maximize`, `unmaximize`), minimizar e restaurar minimizada, abrir saindo da dock, alvo na dock, área útil e ajuste à área. Os handlers do `XdgShellHandler` em `state.rs` só chamam essas funções.
+- **`src/compositor/render.rs` (cena):** o que estava em `backend_winit.rs` e não era do winit foi para cá: `MideRenderElement`, montagem das janelas, decorações, efeito lâmpada, fotos de fechar, camadas, vidro, papel de parede, `send_frames` e títulos. `Scene` guarda os recursos de GPU (shaders, lâmpada, desfoque, papel de parede, títulos); `Scene::render` desenha num alvo qualquer do `GlesRenderer`, e `Scene::moving` diz se algo está em movimento.
+- **`src/compositor/backend_winit.rs`** ficou só com a janela do anfitrião, a saída, os relógios, os eventos e a apresentação (`bind`, `Scene::render`, `submit`, `send_frames`). De 892 para 222 linhas.
+- **`src/compositor/wm.rs` (política de janelas):** janela nova em cascata (`map_new_window`), fechar (`request_close`, `window_closed`), arrastar (`begin_move`), maximizar e restaurar (`maximize`, `unmaximize`), minimizar e restaurar minimizada, abrir saindo da dock, alvo na dock, área útil e ajuste à área. Os handlers do `XdgShellHandler` em `state.rs` só chamam essas funções.
 - **Cursor sem tipo do winit:** `input::CursorShape` (padrão e quatro formas de redimensionar) no lugar do `CursorIcon` do winit em `State`; o backend winit traduz. No DRM, o compositor vai desenhar a imagem correspondente.
 - **Entrada genérica:** `input::handle_event` aceita eventos de qualquer `InputBackend` do Smithay (winit hoje, libinput no A13).
 - Testes: `cargo test` (102) passando, build sem avisos.
@@ -809,9 +809,9 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## Backend DRM (A13): o mide direto na tela
 
-- **`src/backend_udev.rs`:** sessão pelo libseat (acesso à placa de vídeo e à entrada sem root), placa principal do assento, DRM/KMS com o primeiro monitor conectado no modo preferido, GBM + EGL + `GlesRenderer` (o mesmo renderizador do winit, então a cena é a mesma) e `GbmBufferedSurface` com formato opaco (XRGB8888) primeiro. O quadro é entregue com o ponto de sincronização da GPU e o próximo só sai depois do vblank; parado, não desenha (`state.wake` acorda pelo `ping`).
+- **`src/compositor/backend_udev.rs`:** sessão pelo libseat (acesso à placa de vídeo e à entrada sem root), placa principal do assento, DRM/KMS com o primeiro monitor conectado no modo preferido, GBM + EGL + `GlesRenderer` (o mesmo renderizador do winit, então a cena é a mesma) e `GbmBufferedSurface` com formato opaco (XRGB8888) primeiro. O quadro é entregue com o ponto de sincronização da GPU e o próximo só sai depois do vblank; parado, não desenha (`state.wake` acorda pelo `ping`).
 - **Entrada pelo libinput:** mouse e touchpad por deslocamento (ponteiro preso na tela), teclado, rolagem; touchpads com toque para clicar ligado.
-- **Cursor desenhado pelo mide** (`src/cursor.rs`): tema do sistema (`XCURSOR_THEME`, `XCURSOR_SIZE`, padrão `default` 24 px, com nomes antigos de reserva), seta própria se não houver tema, superfície do app quando ele pede (com hotspot), e as formas de redimensionar do mide por cima. A cena desenha o cursor só quando o backend pede (`Scene::with_cursor`); no winit, o anfitrião mostra o dele.
+- **Cursor desenhado pelo mide** (`src/compositor/cursor.rs`): tema do sistema (`XCURSOR_THEME`, `XCURSOR_SIZE`, padrão `default` 24 px, com nomes antigos de reserva), seta própria se não houver tema, superfície do app quando ele pede (com hotspot), e as formas de redimensionar do mide por cima. A cena desenha o cursor só quando o backend pede (`Scene::with_cursor`); no winit, o anfitrião mostra o dele.
 - **Troca de console:** Ctrl+Alt+F1…F12 (`XF86Switch_VT_n` do xkb) troca pela sessão; ao sair, tela e entrada são liberadas; ao voltar, retomadas e redesenhadas.
 - **Layout do teclado do sistema:** o assento lê `/etc/default/keyboard` (ex.: `XKBLAYOUT="br"`), a não ser que `XKB_DEFAULT_LAYOUT` esteja definido. Vale também no winit.
 - **Escolha do backend:** `MIDE_BACKEND=drm` ou `winit`; sem ele, DRM quando não há `WAYLAND_DISPLAY` nem `DISPLAY` (iniciado de um console de texto).
@@ -827,7 +827,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## XWayland (A14): apps X11 dentro do mide
 
-- **`src/xwayland.rs`:** na partida, o mide inicia o `xwayland-satellite` (procurado ao lado do executável, no PATH e em `~/.cargo/bin`) no primeiro display X livre (`:1`, `:2`...; o `:0` costuma ser de outra sessão), conectado ao socket Wayland do mide. O satellite roda o Xwayland e entrega cada janela X11 como janela comum (xdg-shell): barra de título, sombra, dock e barra superior funcionam igual. O compositor continua sem código X11.
+- **`src/compositor/xwayland.rs`:** na partida, o mide inicia o `xwayland-satellite` (procurado ao lado do executável, no PATH e em `~/.cargo/bin`) no primeiro display X livre (`:1`, `:2`...; o `:0` costuma ser de outra sessão), conectado ao socket Wayland do mide. O satellite roda o Xwayland e entrega cada janela X11 como janela comum (xdg-shell): barra de título, sombra, dock e barra superior funcionam igual. O compositor continua sem código X11.
 - **`DISPLAY` para os apps do mide:** `child_env` passa o display do XWayland a tudo o que o mide abre (dock, launcher, atalhos, Arquivos). Um app X11 aberto pelo mide aparece dentro dele, e não no desktop por baixo (modo janela).
 - **Protocolos novos no compositor:** `wp_viewporter` (o satellite exige) e `xdg-output` (posição lógica das saídas).
 - O display fica gravado em `$XDG_RUNTIME_DIR/<socket>.xdisplay` (para ferramentas e testes); um arquivo velho é apagado na partida. O satellite é encerrado com o mide; se o mide morrer, ele perde a conexão e sai sozinho.
@@ -848,7 +848,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 - **`data/wayland-sessions/mide.desktop`:** entrada "mide" para a tela de login (LightDM, GDM, greetd leem `/usr/share/wayland-sessions`). O instalador (C3) a copia.
 - **`data/mide-session`:** o que a tela de login executa. Define `XDG_SESSION_TYPE=wayland`, `XDG_CURRENT_DESKTOP=mide`, `MIDE_SESSION=1`, `MIDE_BACKEND=drm` e as variáveis que fazem apps (Firefox, Qt, Electron, SDL, Java) preferirem Wayland; acha o `mide` ao lado do script, em `target/` (desenvolvimento) ou no PATH; abre um barramento de sessão próprio se a tela de login não abriu; grava o log em `~/.local/state/mide/session.log` (o anterior fica em `session.log.anterior`).
-- **`src/session.rs`:** com `MIDE_SESSION=1`, o mide publica `WAYLAND_DISPLAY`, `DISPLAY` (XWayland), `XDG_CURRENT_DESKTOP` e `XDG_SESSION_TYPE` para os serviços do D-Bus e do systemd do usuário (`dbus-update-activation-environment --systemd`) e inicia os apps de inicialização automática (`~/.config/autostart` e `/etc/xdg/autostart`), com as regras do padrão: arquivo do usuário substitui o do sistema, `Hidden`, `OnlyShowIn`/`NotShowIn` (o mide se chama `mide`), `TryExec` e `X-GNOME-Autostart-enabled`. Rodando numa janela (desenvolvimento), não mexe na sessão de quem o abriu.
+- **`src/compositor/session.rs`:** com `MIDE_SESSION=1`, o mide publica `WAYLAND_DISPLAY`, `DISPLAY` (XWayland), `XDG_CURRENT_DESKTOP` e `XDG_SESSION_TYPE` para os serviços do D-Bus e do systemd do usuário (`dbus-update-activation-environment --systemd`) e inicia os apps de inicialização automática (`~/.config/autostart` e `/etc/xdg/autostart`), com as regras do padrão: arquivo do usuário substitui o do sistema, `Hidden`, `OnlyShowIn`/`NotShowIn` (o mide se chama `mide`), `TryExec` e `X-GNOME-Autostart-enabled`. Rodando numa janela (desenvolvimento), não mexe na sessão de quem o abriu.
 - **B1 conferido:** Reiniciar, Desligar e Encerrar sessão já estavam na barra com confirmação; Encerrar sessão encerra o compositor, o que numa sessão de login volta à tela de login. "Bloquear tela" chama `loginctl lock-session`, que só funciona com a tela de bloqueio (C1).
 - **`tests/session-dev.sh`:** `sudo tests/session-dev.sh` instala "mide (desenvolvimento)" na tela de login apontando para o projeto; `sudo tests/session-dev.sh remover` tira.
 
@@ -1015,7 +1015,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## Bloqueio de tela (C1)
 
-- **Compositor (`src/lock.rs`):** atende o protocolo `ext-session-lock-v1`. Com a tela bloqueada, a cena desenha só a tela de bloqueio de cada saída (sem ela, um fundo escuro: nada de trás aparece nem por um quadro), o teclado vai só para a primeira tela de bloqueio do programa e o mouse só alcança a tela de bloqueio da saída onde está; nenhum atalho do mide funciona, só trocar de console (Ctrl+Alt+Fn). Se o programa de bloqueio fechar ou cair, a tela continua bloqueada e o mide abre outro.
+- **Compositor (`src/compositor/lock.rs`):** atende o protocolo `ext-session-lock-v1`. Com a tela bloqueada, a cena desenha só a tela de bloqueio de cada saída (sem ela, um fundo escuro: nada de trás aparece nem por um quadro), o teclado vai só para a primeira tela de bloqueio do programa e o mouse só alcança a tela de bloqueio da saída onde está; nenhum atalho do mide funciona, só trocar de console (Ctrl+Alt+Fn). Se o programa de bloqueio fechar ou cair, a tela continua bloqueada e o mide abre outro.
 - **Quem bloqueia:** Super+L (agora abre o `mide-lock`, antes chamava o `loginctl` sem ninguém atender), o logind (`loginctl lock-session` e antes de suspender, sinais `Lock` e `PrepareForSleep`) e o tempo sem uso (`[lock] idle_minutes`, padrão 5) — esses dois só na sessão de verdade (DRM); num mide em janela quem bloqueia é o desktop de baixo (`MIDE_LOCK_IDLE=1` liga mesmo assim).
 - **App `mide-lock` (mide-ui):** papel de parede desfocado e escurecido, relógio e data, a inicial e o nome de quem usa, campo de senha (novo no mide-ui: `Ui::password_input`, com bolinhas e sem copiar); a senha é conferida pelo PAM numa thread (interface própria com a `libpam.so.0`, sem crate e sem o pacote de desenvolvimento), com o serviço `mide-lock` (arquivo em `data/pam/mide-lock`) ou o `login`; senha errada mostra "Senha incorreta" e o campo balança. Novo no mide-ui: `Window::lock` (tela de bloqueio em todas as saídas; a interface na primeira) e `Ui::unlock`.
 - **Configurações → Bloqueio de tela:** bloquear após (nunca, 1, 2, 5, 10, 15, 30 minutos), bloquear ao suspender e "Bloquear agora".
@@ -1069,14 +1069,14 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## Gravar a tela pelos apps (A19) e atalhos de captura do Mac
 
-- **`wlr-screencopy` v3 no compositor** (`src/screencopy.rs`): tela inteira e região, `copy` (no próximo quadro) e `copy_with_damage` (quando a tela muda; o primeiro pedido de cada cliente sai logo, para a gravação não começar preta). A imagem sai do quadro que o mide acabou de desenhar (sem desenho extra), convertida para XRGB8888 no buffer de memória compartilhada do cliente. Durante uma gravação que pede o cursor, o DRM desenha o cursor na cena (o plano de hardware não entra na imagem).
+- **`wlr-screencopy` v3 no compositor** (`src/compositor/screencopy.rs`): tela inteira e região, `copy` (no próximo quadro) e `copy_with_damage` (quando a tela muda; o primeiro pedido de cada cliente sai logo, para a gravação não começar preta). A imagem sai do quadro que o mide acabou de desenhar (sem desenho extra), convertida para XRGB8888 no buffer de memória compartilhada do cliente. Durante uma gravação que pede o cursor, o DRM desenha o cursor na cena (o plano de hardware não entra na imagem).
 - **Portal:** `mide-portals.conf` manda `ScreenCast` e `Screenshot` ao `xdg-desktop-portal-wlr` (OBS, navegador em videochamada); o `mide-update` escreve `~/.config/xdg-desktop-portal-wlr/mide` com a janela de escolha do mide; o `data/mide-check` avisa se o pacote falta.
 - **`mide-screencast-picker`:** janela "Compartilhar a tela" com os monitores (o principal já escolhido); o nome do escolhido sai na saída padrão para o portal; Cancelar recusa.
 - **⌘⇧4 e ⌘⇧3, como no Mac:** ⌘⇧4 escolhe uma área e, ao soltar o mouse, salva em Imagens/Capturas de tela e copia (sem painel); ⌘⇧3 salva e copia a tela inteira sem abrir nada. Funcionam com o launcher aberto, e a imagem sai com ele. Fora do estilo Mac o ⌘ é a tecla Super; no estilo Mac, a Alt. O app Captura de Tela (Print) continua com o painel e as marcações.
 
 ## Foco e escala pedidos pelos apps (A14/A15)
 
-- **`xdg-activation`:** um app pede para trazer uma janela para a frente (link aberto de outro app, notificação clicada, o xwayland-satellite passando o foco de uma janela X11). Pedido recente (até 10 s do token): a janela sobe, volta se estava minimizada e ganha o teclado (`src/activation.rs`).
+- **`xdg-activation`:** um app pede para trazer uma janela para a frente (link aberto de outro app, notificação clicada, o xwayland-satellite passando o foco de uma janela X11). Pedido recente (até 10 s do token): a janela sobe, volta se estava minimizada e ganha o teclado (`src/compositor/activation.rs`).
 - **`wp_fractional_scale`:** cada janela, camada e tela de bloqueio recebe a escala exata da tela onde está (1,25, 1,5...), atualizada a cada quadro só quando muda; apps GTK 4, Qt 6, Firefox e Chromium desenham nítidos em vez de esticados. (O `wp_viewporter`, que eles usam junto, já existia.)
 
 ## Transparência de janelas inteiras (A11)
@@ -1092,13 +1092,13 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## Tray: ícones de apps na barra (B3)
 
-- `src/tray.rs`: a barra é o registro `org.kde.StatusNotifierWatcher` (no barramento da sessão; com outro painel já atendendo, fica sem tray). Cada app que registra um ícone (`StatusNotifierItem`, pelo nome no barramento ou só pelo objeto, como o Ayatana) tem as propriedades lidas numa thread: título, estado (os "passivos" não aparecem), ícone pelo nome (pasta do app, depois o tema) ou a imagem mandada (ARGB32), e o menu. Sinais `NewIcon`/`NewStatus`/... releem o ícone; o app que sai do barramento perde os ícones.
+- `src/shell/tray.rs`: a barra é o registro `org.kde.StatusNotifierWatcher` (no barramento da sessão; com outro painel já atendendo, fica sem tray). Cada app que registra um ícone (`StatusNotifierItem`, pelo nome no barramento ou só pelo objeto, como o Ayatana) tem as propriedades lidas numa thread: título, estado (os "passivos" não aparecem), ícone pelo nome (pasta do app, depois o tema) ou a imagem mandada (ARGB32), e o menu. Sinais `NewIcon`/`NewStatus`/... releem o ícone; o app que sai do barramento perde os ícones.
 - Na barra: os ícones ficam à esquerda dos do sistema (como no macOS); clique esquerdo chama `Activate` (os apps que só têm menu abrem o menu); clique direito abre o menu do app (`dbusmenu`, o mesmo leitor do menu global), com o título dele no topo; o item clicado chega ao app.
 - Exemplo de teste `examples/mide-tray-teste.rs` (ícone laranja, menu "Abrir"/"Sair", tempo de vida `TRAY_TESTE_SEGUNDOS`).
 
 ## Menu global dos apps GTK e Qt no Wayland (B2)
 
-- **GTK (`gtk_shell1`)** (`src/app_menus.rs`): o mide anuncia o `gtk_shell1` com a capacidade de menu global; o app GTK diz onde está a barra de menus dele no D-Bus (`set_dbus_properties`) e deixa de desenhar a barra dentro da janela. A barra do mide pergunta ao compositor (`appmenu`) e lê os menus pelo `org.gtk.Menus` (`src/gmenu.rs`: seções viram separadores, submenus, atalhos `<Primary>s` → `Ctrl+S`), com o estado das ações pelo `org.gtk.Actions` (desligadas em cinza, opções marcadas com ✓). O item clicado manda `Activate` ao app (`app.` no objeto do app, `win.` no da janela). O menu é relido ao abrir.
+- **GTK (`gtk_shell1`)** (`src/compositor/app_menus.rs`): o mide anuncia o `gtk_shell1` com a capacidade de menu global; o app GTK diz onde está a barra de menus dele no D-Bus (`set_dbus_properties`) e deixa de desenhar a barra dentro da janela. A barra do mide pergunta ao compositor (`appmenu`) e lê os menus pelo `org.gtk.Menus` (`src/shell/gmenu.rs`: seções viram separadores, submenus, atalhos `<Primary>s` → `Ctrl+S`), com o estado das ações pelo `org.gtk.Actions` (desligadas em cinza, opções marcadas com ✓). O item clicado manda `Activate` ao app (`app.` no objeto do app, `win.` no da janela). O menu é relido ao abrir.
 - **Qt (`org_kde_kwin_appmenu`)**: o app diz o serviço e o objeto do `dbusmenu`; a barra usa o mesmo leitor do menu global do X11 (depende do tema de plataforma do Qt publicar o menu).
 - O registrar (`com.canonical.AppMenu.Registrar`) continua tendo preferência; o caminho pelo compositor entra quando o app não registrou nada nele.
 - App de teste `tests/apps/gtk-menu-teste.py` (GTK 3: Arquivo/Exibir/Ajuda, uma seção e uma opção marcável).
@@ -1109,7 +1109,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **mide-ui:** `Theme::dark()` e `Theme::system()`; as janelas seguem o tema do sistema e trocam na hora (verificado uma vez por segundo, o arquivo só é relido quando muda). Os componentes não têm mais cores fixas: trilhos, bordas de campos, listras, barras de rolagem, menus e ações destrutivas vêm do tema (`ink`/`shade`, `menu`, `danger`, `sidebar_glass`). A tela de bloqueio fica sempre clara (sobre o papel de parede); apps com tema próprio (`Window::theme`) não mudam.
 - **Compositor:** barras de título grafite com título claro no tema escuro.
 - **Barra superior:** barra escura com texto branco; menus, painéis (calendário, som, Wi-Fi, Bluetooth, central de controle, confirmações) com a paleta escura. Notificações e "Sobre este computador" também.
-- **Apps GTK e Qt (só na sessão do mide):** o mide escreve `color-scheme` e `gtk-theme` (`Adwaita-dark`) no banco do dconf da sessão (`src/appearance.rs`; o mesmo perfil do tema de ícones, agora criado sempre que o dconf existe) e reinicia o portal do GTK; valem para os apps abertos depois da troca. Outras sessões não mudam.
+- **Apps GTK e Qt (só na sessão do mide):** o mide escreve `color-scheme` e `gtk-theme` (`Adwaita-dark`) no banco do dconf da sessão (`src/platform/appearance.rs`; o mesmo perfil do tema de ícones, agora criado sempre que o dconf existe) e reinicia o portal do GTK; valem para os apps abertos depois da troca. Outras sessões não mudam.
 
 ## mide-ui: teclas mortas, listas longas e redesenho parcial (D1)
 
@@ -1141,7 +1141,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - **Idioma e região:** "Idioma" e "Formatos (data, hora, números e moeda)" entre os idiomas instalados que a lista sabe nomear (`locale -a`), gravados em `[locale] lang`/`formats`; o `mide-session` exporta `LANG`/`LANGUAGE` e `LC_TIME`, `LC_NUMERIC`, `LC_MONETARY`, `LC_PAPER`, `LC_MEASUREMENT` no próximo login, e a sessão passa os mesmos aos serviços do D-Bus.
 - **Energia:** "Suspender o computador após" (nunca, 15/30 min, 1/2/3 h; `[power] suspend_minutes`), contado como o bloqueio (não suspende enquanto um app pede a tela acesa) e uma vez por período sem uso; "Botão de ligar" (perguntar, suspender, desligar, nada; `[power] button`).
 - **Suspender, reiniciar, desligar e bloquear pelo logind no D-Bus** (`org.freedesktop.login1`): funciona com o systemd e com o elogind (Slackware, Void, Gentoo sem systemd); sem resposta, cai no `systemctl`/`loginctl`.
-- **Apps padrão:** Navegador, E-mail, Pastas, Textos, Imagens, Vídeos, Músicas e PDF; a lista vem dos apps que declaram o tipo (`MimeType`) e a escolha vai para `~/.config/mimeapps.list` (`[Default Applications]`, mantendo o resto do arquivo), o mesmo do `gio open`, `xdg-open`, GNOME e Cinnamon (`src/default_apps.rs`). O mide respeita a escolha: com outro app padrão para pastas ou textos, eles não abrem mais no Arquivos/Editor do mide.
+- **Apps padrão:** Navegador, E-mail, Pastas, Textos, Imagens, Vídeos, Músicas e PDF; a lista vem dos apps que declaram o tipo (`MimeType`) e a escolha vai para `~/.config/mimeapps.list` (`[Default Applications]`, mantendo o resto do arquivo), o mesmo do `gio open`, `xdg-open`, GNOME e Cinnamon (`src/applications/default_apps.rs`). O mide respeita a escolha: com outro app padrão para pastas ou textos, eles não abrem mais no Arquivos/Editor do mide.
 - **Barra lateral do mide-ui rola** com a roda do mouse quando os itens não cabem, e abre mostrando o item escolhido.
 
 ## Arquivos: seleção múltipla, arrastar e soltar e "Abrir com…" (B8)
@@ -1153,7 +1153,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 
 ## Movimento num lugar só e o azul único (B17)
 
-- `src/motion.rs` (`mide::motion`): todas as durações da tabela do `docs/design.md` (menus 120 ms, prévias 160, fechar 180, dock 200/450, lista do Arquivos 180+25, troca de visão 200, vidro 220, mover janela 220, pasta do launcher 240, launcher 260/170, página 320, pasta nova 340, papel de parede 450, lâmpada 650) e as curvas (`ease_out` cúbica, `ease_out_soft`, `smooth`, `ease_in_out`, `ease_out_back`, `progress`). O compositor (`state.rs`, `genie.rs`, `wallpaper.rs`, `preview.rs`), a barra, a dock, o launcher, o Arquivos e os menus do mide-ui usam daqui.
+- `src/shell/motion.rs` (`mide::motion`): todas as durações da tabela do `docs/design.md` (menus 120 ms, prévias 160, fechar 180, dock 200/450, lista do Arquivos 180+25, troca de visão 200, vidro 220, mover janela 220, pasta do launcher 240, launcher 260/170, página 320, pasta nova 340, papel de parede 450, lâmpada 650) e as curvas (`ease_out` cúbica, `ease_out_soft`, `smooth`, `ease_in_out`, `ease_out_back`, `progress`). O compositor (`state.rs`, `genie.rs`, `wallpaper.rs`, `preview.rs`), a barra, a dock, o launcher, o Arquivos e os menus do mide-ui usam daqui.
 - Azul de destaque único: a barra superior (menus, painéis, calendário, controles, confirmações) e os menus da dock usam a cor de destaque do tema do mide-ui (`[10, 110, 235]`; no escuro, `[30, 125, 245]`), em vez de três azuis diferentes; os menus da dock também seguem o tema escuro.
 
 ## Tema de ícones: tipos de arquivo e símbolos (B15, etapa 4)
@@ -1185,14 +1185,14 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 ## Gravar a tela em vídeo com áudio (A21)
 
 - **⌘⇧5** (`super+shift+5`; no estilo Mac, ⌘ é o Alt): a Captura de Tela abre no modo gravar, com um painel embaixo: **Tela inteira** ou **Área** (arrastar para escolher), **Som do sistema** e **Microfone** (lembrados em `[record]`), Cancelar e **Gravar** (ou Enter). Com uma gravação em andamento, ⌘⇧5 para.
-- **Compositor** (`src/record.rs`, comandos `record start [full|x y w h] [sistema] [microfone]`, `record stop`, `record status`): depois de desenhar a tela, copia a área gravada (em pixels, com lados pares) e manda ao `ffmpeg` pela entrada, com a hora de chegada de cada quadro; com a tela parada, uma linha de execução repete o último quadro a cada 100 ms (o vídeo acompanha o tempo e o som). O cursor entra na imagem. Os primeiros 250 ms ficam de fora (o painel ainda sumindo). Fila curta: se o `ffmpeg` atrasar, quadros são pulados, sem travar o desenho.
+- **Compositor** (`src/compositor/record.rs`, comandos `record start [full|x y w h] [sistema] [microfone]`, `record stop`, `record status`): depois de desenhar a tela, copia a área gravada (em pixels, com lados pares) e manda ao `ffmpeg` pela entrada, com a hora de chegada de cada quadro; com a tela parada, uma linha de execução repete o último quadro a cada 100 ms (o vídeo acompanha o tempo e o som). O cursor entra na imagem. Os primeiros 250 ms ficam de fora (o painel ainda sumindo). Fila curta: se o `ffmpeg` atrasar, quadros são pulados, sem travar o desenho.
 - **ffmpeg** (dependência obrigatória): H.264 (`libx264`, `veryfast`, CRF 23, 30 quadros por segundo) e AAC; som do sistema pelo monitor da saída padrão (`@DEFAULT_MONITOR@`) e microfone pela entrada padrão (`@DEFAULT_SOURCE@`), misturados quando os dois; arquivo `Vídeos/Gravações de tela/Gravação de tela AAAA-MM-DD HH-MM-SS.mp4`. Sem o ffmpeg, o aviso diz como instalar.
 - **Barra superior:** enquanto grava, o botão de parar (quadrado num círculo) com o tempo (00:12); o clique para. No fim, notificação "Gravação salva" com o caminho.
 - `places::videos_dir` (pasta de vídeos do usuário, `XDG_VIDEOS_DIR`).
 
 ## Sons do sistema (A22)
 
-- **Sons do mide, feitos do zero** (`src/sounds.rs`): sintetizados por código (senos com harmônico leve e queda exponencial, ruído filtrado com envelope), sem arquivo de som de terceiros: notificação (duas notas subindo), obturador (dois estalos), Lixeira (papel amassado), volume (toque curto), bateria fraca (notas descendo), pronto (três notas subindo), entrada na sessão (acorde aberto), aparelho conectado/desconectado e o alerta escolhido (Vidro, Gota, Sino ou Pop).
+- **Sons do mide, feitos do zero** (`src/platform/sounds.rs`): sintetizados por código (senos com harmônico leve e queda exponencial, ruído filtrado com envelope), sem arquivo de som de terceiros: notificação (duas notas subindo), obturador (dois estalos), Lixeira (papel amassado), volume (toque curto), bateria fraca (notas descendo), pronto (três notas subindo), entrada na sessão (acorde aberto), aparelho conectado/desconectado e o alerta escolhido (Vidro, Gota, Sino ou Pop).
 - **Tema de sons do freedesktop `mide`:** na primeira vez, vira `~/.local/share/sounds/mide` (WAV estéreo de 48 kHz, nomes da especificação: `message-new-instant`, `screen-capture`, `trash-empty`, `bell`, `dialog-warning`...), refeito quando os sons ou o alerta mudam. Na sessão do mide, o banco do dconf põe `org.gnome.desktop.sound theme-name='mide'` e `event-sounds` (apps GTK com libcanberra tocam os sons do mide).
 - **Onde tocam:** notificação chegando (não no Não perturbe, nem se o app pede silêncio ou manda o próprio som); captura de tela (uma vez por captura); esvaziar a Lixeira (Arquivos e dock); ao soltar o volume na barra; sino do terminal com o sino visual desligado; bateria passando de 10%, descarregando (com um aviso); gravação de tela salva; entrada na sessão.
 - **Tocar:** `pw-play` (PipeWire), ou `paplay`, no volume dos efeitos; nos testes (`MIDE_SYSTEM_DRY_RUN`), só "som (teste): nome" no log.
@@ -1247,7 +1247,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 ## Janela restaurada que ignorava cliques e teclas (A24, bug do VS Code)
 
 - Causa: o mide guarda as janelas minimizadas numa lista e não manda input para as que estão nela (as que estão saindo, na animação). O "minimizar tudo" (Super+D) e o botão de minimizar não conferiam se a janela já estava na lista: uma janela ainda na animação de saída, ou um Super+D repetido, entrava duas vezes. Ao restaurar saía uma entrada e a outra ficava: a janela voltava à tela, mas cliques e teclas eram ignorados (parecia congelada). Maximizar pela barra de título, que é do mide, destravava.
-- Correção (`src/wm.rs`, `src/input.rs`): uma entrada só por janela, a restauração limpa as que sobraram e o Super+D deixa como estão as janelas que já estão saindo.
+- Correção (`src/compositor/wm.rs`, `src/compositor/input.rs`): uma entrada só por janela, a restauração limpa as que sobraram e o Super+D deixa como estão as janelas que já estão saindo.
 
 ## Calculadora, etapa 2: moeda no conversor (E3b, partes 4 e 5 do plano da etapa 2)
 
@@ -1262,7 +1262,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 ## Pastas coloridas nas listas da dock (B24)
 
 - Causa: no tema do mide (do WhiteSur), os ícones de 16, 22 e 24 px das pastas (e de outros lugares) são desenhos só de contorno, na cor do texto; a lista de Downloads e da Lixeira pede 24 px e recebia o contorno, que parecia um símbolo ou um tema mal acabado.
-- Correção (`src/icons.rs`): para nomes que não são `-symbolic`, a busca no tema usa o desenho grande (48 px ou mais, o colorido) e reduz para o tamanho pedido. Vale em todo lugar que mostra arquivos (dock, Arquivos, busca, área de trabalho, Abrir com…); os ícones `-symbolic` das barras laterais continuam de contorno, como devem.
+- Correção (`src/applications/icons.rs`): para nomes que não são `-symbolic`, a busca no tema usa o desenho grande (48 px ou mais, o colorido) e reduz para o tamanho pedido. Vale em todo lugar que mostra arquivos (dock, Arquivos, busca, área de trabalho, Abrir com…); os ícones `-symbolic` das barras laterais continuam de contorno, como devem.
 
 ## Teclas multimídia (A23)
 
@@ -1342,10 +1342,10 @@ O usuário mandou fotos do nvim (Neo-tree e lualine) e do prompt do bash com qua
 
 O problema (diagnóstico na sessão do usuário): o compositor não oferecia o protocolo `zwp_linux_dmabuf_v1`, o jeito de um app Wayland entregar ao compositor uma imagem que já está na placa de vídeo. Sem ele, o Mesa não tem como usar a GPU e todo app com OpenGL/Vulkan desenhava no processador (llvmpipe): o OBS gastava ~27% de CPU parado e mostrava a captura preta, e o mesmo valia para Chrome/Electron, jogos e o XWayland.
 
-- **`linux-dmabuf` no compositor** (`src/dmabuf.rs`): o global sai na versão 5 com o "feedback" padrão, que diz aos apps qual é a placa principal (o render node, `main_device`) e quais formatos e modificadores o renderizador do mide sabe importar. O Mesa e o portal de captura usam o `main_device` para achar a placa. Cada buffer que um app cria é importado na hora no renderizador; se a importação falha, o app recebe `failed` e pode tentar outro formato. O desenho das janelas não mudou: o Smithay já sabia desenhar buffers dmabuf, faltava só anunciar o protocolo.
+- **`linux-dmabuf` no compositor** (`src/compositor/dmabuf.rs`): o global sai na versão 5 com o "feedback" padrão, que diz aos apps qual é a placa principal (o render node, `main_device`) e quais formatos e modificadores o renderizador do mide sabe importar. O Mesa e o portal de captura usam o `main_device` para achar a placa. Cada buffer que um app cria é importado na hora no renderizador; se a importação falha, o app recebe `failed` e pode tentar outro formato. O desenho das janelas não mudou: o Smithay já sabia desenhar buffers dmabuf, faltava só anunciar o protocolo.
 - **Nos três backends:** DRM (render node da placa aberta pela sessão; a tranche de scanout fica para o A18), sem tela (o próprio render node dos testes) e winit (a placa por trás do EGL do desktop de baixo; sem ela, fica sem o protocolo, que é só desenvolvimento). Sem GPU (renderizador sem importação de dmabuf), o protocolo não é anunciado e os apps continuam por memória compartilhada, como antes. O motivo vai para o log.
 - **`MIDE_NO_DMABUF=1`:** variável de diagnóstico que não anuncia o protocolo, para o caso de algum driver dar problema na sessão de verdade (não é opção do usuário).
-- **Captura por dmabuf** (`src/screencopy.rs`): com o protocolo ligado, o portal (`xdg-desktop-portal-wlr`, o que o OBS e o navegador usam) passa a entregar buffers na GPU. O mide copia o quadro para eles na própria GPU (`glBlitFramebuffer`, sem passar pela memória) e espera a cópia terminar por uma cerca do EGL antes de avisar o app (sem isso o quadro podia sair rasgado ou preto). O destino de cada buffer é preparado fora do quadro, quando o app pede a cópia (o Smithay guarda e o portal reaproveita os mesmos buffers). O caminho por memória compartilhada (o `grim`) continua igual, e a leitura dos pixels só acontece quando algum pedido é por memória.
+- **Captura por dmabuf** (`src/compositor/screencopy.rs`): com o protocolo ligado, o portal (`xdg-desktop-portal-wlr`, o que o OBS e o navegador usam) passa a entregar buffers na GPU. O mide copia o quadro para eles na própria GPU (`glBlitFramebuffer`, sem passar pela memória) e espera a cópia terminar por uma cerca do EGL antes de avisar o app (sem isso o quadro podia sair rasgado ou preto). O destino de cada buffer é preparado fora do quadro, quando o app pede a cópia (o Smithay guarda e o portal reaproveita os mesmos buffers). O caminho por memória compartilhada (o `grim`) continua igual, e a leitura dos pixels só acontece quando algum pedido é por memória.
 - **winit:** a cópia sai de pé também com a janela invertida do GL (destino de cabeça para baixo no blit). Achado e corrigido no caminho: no winit, qualquer leitura dos pixels do quadro (o `grim`, a gravação) deixava o contexto do EGL sem a janela e com a leitura desligada (`glReadBuffer(GL_NONE)`, do Smithay); a troca de buffers seguinte falhava ("context lost") e o mide parava de desenhar, e uma cópia por dmabuf depois disso saía preta. Agora um quadro vazio liga a janela de novo (`screencopy::reattach_window`) quando houve captura ou gravação.
 - **Gravação nativa (⌘⇧5, A21):** sem mudança; continua lendo o quadro do compositor.
 - **Exemplo `examples/mide-screencopy-dmabuf.rs`:** faz o que o portal faz, sem o portal nem o PipeWire: acha a placa pelo feedback, cria um buffer na GPU (linear, com um modificador escolhido ou com os que a placa prefere), pede a tela ou uma região e lê o resultado importando o buffer no EGL (como o OBS lê), e salva um PNG. `--modifiers` lista os modificadores que o mide aceita.
@@ -1383,15 +1383,15 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Uma de cada vez:** uma captura nova fecha a miniatura anterior antes de capturar (para ela não sair na imagem): o PID da miniatura fica num arquivo da sessão (`mide::markup::thumbnail_pid_file`, com o nome do socket) e a captura grava o dela ali; a miniatura confere a cada quadro e sai.
 - **Editor de Capturas (`mide-screenshot-editor`):** app do mide-ui que abre um PNG ou JPEG. Recortar (botão, Ctrl+K ou R) com a área ajustável da Captura (bolinhas na cor de destaque, arrastar dentro move, fora começa outra; Enter ou o botão "Recortar" aplica, Esc cancela); Lápis (desenho livre), Seta, Quadrado e Círculo (L, S, Q, C) nas seis cores da Captura; desfazer e refazer (também o recorte: nada é apagado da imagem original, o recorte é só uma edição); Salvar (Ctrl+S, substitui o arquivo, no formato dele, gravando num temporário e trocando de uma vez), Salvar como… (seletor de arquivos do mide-ui), Copiar (Ctrl+C, pelo compositor), Mover para a Lixeira (Ctrl+Delete, fecha a janela) e Mostrar no Arquivos. Menus na barra: Arquivo, Editar, Ferramentas e Janela. Fechar com alterações pergunta se salva. Sem arquivo, abre o seletor (Imagens/Capturas de tela). A imagem cabe na janela sem ampliar; a versão reduzida para a tela só é refeita quando algo muda. O traço engrossa em imagens grandes (4 pixels até 1600 de lado).
 - **"Abrir com":** `data/applications/mide-screenshot-editor.desktop` (PNG e JPEG), fora do launcher (`NoDisplay`). O "Abrir com" do Arquivos passou a listar também os apps `NoDisplay` que abrem o tipo (`apps::load_handlers`; pela especificação, eles continuam abrindo os tipos deles). Não virou o padrão das imagens (é um editor, não um visualizador).
-- **Código comum:** `src/markup.rs` (lib `mide::markup`) com as cores, as marcações (agora também o desenho livre, `draw_mark`) e a área ajustável com bolinhas, usados pela Captura e pelo editor (a Captura não mudou de comportamento). mide-ui: `Window::corner` (camada pequena no canto, sem teclado), `Ui::menu_open` e `Ui::close_menu` (menu de contexto numa camada pequena).
+- **Código comum:** `src/documents/markup.rs` (lib `mide::markup`) com as cores, as marcações (agora também o desenho livre, `draw_mark`) e a área ajustável com bolinhas, usados pela Captura e pelo editor (a Captura não mudou de comportamento). mide-ui: `Window::corner` (camada pequena no canto, sem teclado), `Ui::menu_open` e `Ui::close_menu` (menu de contexto numa camada pequena).
 - **Correções da revisão (2026-10-23):** em telas 2x ou fracionárias, o editor e a miniatura mostram a imagem com um pixel dela por pixel da tela (antes ficava ampliada e borrada); a miniatura apertada perto da borda direita some ao chegar à borda (antes pedia 40 pontos de arrasto que não cabiam); a captura só espera a miniatura anterior sair quando o PID do arquivo é mesmo de uma miniatura (linha de comando com `--miniatura`) e apaga o arquivo depois (antes esperava 400 ms à toa com a Captura aberta); desfazer até o estado salvo não pergunta mais "Salvar as alterações?"; "Salvar como" com nome sem extensão ou de outro formato ganha `.png`; com imagens grandes, uma marcação nova é desenhada só ela, a redução para a tela começa da imagem sem copiar, e redimensionar a janela estica a imagem reduzida anterior e refaz a boa quando o tamanho para de mudar (150 ms).
 - **Ficam para depois:** arrastar a miniatura para outro app (depende do arrastar entre apps, Wayland DnD), interruptor para não mostrar a miniatura (como a opção do Mac), texto e destaque no editor, zoom no editor.
 
 ## Aviso de volume e brilho (A23, OSD)
 
 - Ao apertar volume +/−, mudo, microfone mudo ou brilho +/−, aparece um aviso no meio, embaixo da tela onde está o ponteiro (acima da dock; espelhando as telas, em todas): painel de 260x48 pontos com cantos de 14, em vidro de painel (desfoque + véu claro a 70%, ou grafite no tema escuro; opaco com o vidro desligado) e contorno fino. Dentro: o ícone (alto-falante com 0 a 3 ondas conforme o nível e cortado no mudo; microfone, cortado quando mudo; sol), a barra de nível contínua no azul de destaque (cinza no mudo) e o valor ("55%", "Mudo"); no microfone, no lugar da barra, "Microfone desligado"/"Microfone ligado".
-- Entra esmaecendo e subindo 8 px (160 ms), fica 1,5 s depois da última tecla e sai esmaecendo (200 ms) (`src/motion.rs`: `OSD_APPEAR`, `OSD_HOLD`, `OSD_FADE`); com "Transições suaves" desligado, aparece e some de uma vez. Apertos seguidos só trocam o valor do mesmo aviso (sem entrar de novo).
-- **Onde é desenhado (decisão):** no próprio compositor, como o alternador de janelas (`src/osd.rs`, chamado pela cena em `render.rs`). É um elemento da cena, sem cliente: não pega teclado nem clique, não abre programa e aparece também por cima da tela de bloqueio (volume, mudo, microfone e brilho, as teclas que já valiam com a tela bloqueada). Um cliente de camada (Overlay) não apareceria com a tela bloqueada, porque nada além da tela de bloqueio é desenhado.
+- Entra esmaecendo e subindo 8 px (160 ms), fica 1,5 s depois da última tecla e sai esmaecendo (200 ms) (`src/shell/motion.rs`: `OSD_APPEAR`, `OSD_HOLD`, `OSD_FADE`); com "Transições suaves" desligado, aparece e some de uma vez. Apertos seguidos só trocam o valor do mesmo aviso (sem entrar de novo).
+- **Onde é desenhado (decisão):** no próprio compositor, como o alternador de janelas (`src/compositor/osd.rs`, chamado pela cena em `render.rs`). É um elemento da cena, sem cliente: não pega teclado nem clique, não abre programa e aparece também por cima da tela de bloqueio (volume, mudo, microfone e brilho, as teclas que já valiam com a tela bloqueada). Um cliente de camada (Overlay) não apareceria com a tela bloqueada, porque nada além da tela de bloqueio é desenhado.
 - O nível é o de verdade: a tecla entra na fila de uma thread só do aviso (os apertos rodam em ordem, então a última leitura é sempre a do último aperto; sem a thread, a tecla ainda vale, sem aviso), que roda o comando (agora `volume_step`, `toggle_mute`, `toggle_mic_mute` e `brightness_step` esperam o comando), lê o nível que ficou (`system::read_volume`, `read_mic_muted`, `read_brightness`) e manda ao compositor por um canal do calloop; resposta de um aperto mais antigo é ignorada. Um relógio do calloop acorda o desenho para o aviso sair (parado, o compositor não desenha). Sem nível (sem áudio, monitor sem luz de fundo), não aparece aviso. Nos testes (`MIDE_SYSTEM_DRY_RUN`), os níveis são simulados (volume 50%, brilho 70%) e mudam com as teclas.
 - Ícones desenhados pelo mide com o `tiny-skia` (nada copiado), em cache por tipo, ondas, mudo, tema e escala; o texto usa o mesmo desenho dos títulos das janelas.
 - **Capturas (decisão):** o aviso fica fora das capturas de tela do mide (Print, ⌘⇧3/⌘⇧4), como o cursor; nas gravações (⌘⇧5) e nas capturas pedidas pelos apps (screencopy: OBS, grim) ele aparece, como o cursor nas gravações.
@@ -1410,7 +1410,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **`mide-polkit-agent` (programa novo):** agente de autenticação do polkit da sessão (`org.freedesktop.PolicyKit1.AuthenticationAgent`, só zbus, sem a libpolkit-agent), para o `pkexec`, o PackageKit e os apps que pedem permissão. Registra-se para a sessão de login (pelo logind/elogind, ou `XDG_SESSION_ID`); a cada `BeginAuthentication` escolhe o usuário (o próprio, inclusive quando o polkit manda o grupo `sudo`), abre a janela (`mide-askpass --agent`, que fica aberta entre as tentativas) e entrega a senha ao `polkit-agent-helper-1` (setuid de root, conferido) por pipe; três erros respondem `Failed`, cancelar (na janela ou pelo `CancelAuthentication`) responde `Cancelled`. Um pedido por vez. Iniciado pelo compositor só na sessão do mide (num mide em janela dentro do Cinnamon, o agente do Cinnamon continua) e reiniciado pelo `mide-ctl restart shell`.
 - **A senha:** passa só por pipes (janela → sudo ou janela → agente → helper), nunca por argumento, variável de ambiente, log ou arquivo; o askpass não gera dump de memória (`PR_SET_DUMPABLE`) e as cópias da senha nos programas do mide são apagadas (`elevate::wipe`).
 - **mide-ui:** `ui.password_field` (campo de senha com a cara dos campos do tema, borda vermelha no erro), `ui.error_note` (texto pequeno em vermelho) e `ui.dialog_buttons` (botões de diálogo à direita, o último é o principal; o `ui.alert` passou a usar).
-- **Código:** regras sem interface em `src/elevate.rs` (ambiente do root, linha do sudo, erros do sudo, estado das tentativas, linhas do helper do polkit, escolha da identidade, protocolo da janela com o agente).
+- **Código:** regras sem interface em `src/platform/elevate.rs` (ambiente do root, linha do sudo, erros do sudo, estado das tentativas, linhas do helper do polkit, escolha da identidade, protocolo da janela com o agente).
 - **Revisão de segurança (2026-10-23):** o agente do polkit só atende o próprio polkit (pedido ou cancelamento de outro processo é recusado); o idioma passado ao root tem o mesmo filtro do sudo (nada de caminhos), a tela só `:N` e o Xauthority só com caminho absoluto; a senha não deixa cópias em buffers que não são apagados (leitura e escrita direto nos pipes, campos com espaço reservado) e nem o tamanho dela vai para o log; o agente também não gera dump de memória; o cancelamento não manda sinal a processos já encerrados; a tela X11 liberada para o root é dividida entre vários `mide-sudo` abertos (só o último fecha; a sobra de um encerrado à força é recolhida pelo próximo), e encerrar o `mide-sudo` (TERM, Ctrl+C, terminal fechado) fecha a janela de senha e desfaz a liberação; forçar o agente fora da sessão só vale em desenvolvimento. Riscos que ficam documentados no `INSTALATION.md`.
 - **Fica para depois:** marca do compositor na janela de senha (para diferenciar de uma imitação), `--wayland` no `mide-sudo` (app root no Wayland com uma pasta de execução própria), ligar a janela do polkit à janela do app que pediu.
 
@@ -1419,7 +1419,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **No Arquivos e na área de trabalho** (duplo clique, Enter e "Abrir"): um atalho `.desktop` abre o app que descreve (comando do `Exec` separado pelas regras da especificação, com aspas e sem os códigos `%f`/`%U`; `Path=` como pasta; `Terminal=true` abre no Terminal do mide; `TryExec` que não existe avisa "não está instalado"; `Type=Link` abre o endereço). AppImages, executáveis (ELF) e scripts (`#!`, ou `.sh` sem `#!`, rodado pelo `sh`) rodam com a pasta deles como pasta de trabalho. Documentos continuam abrindo no app padrão.
 - **Nome e ícone do app:** o atalho aparece com o `Name` e o `Icon` dele no lugar do nome do arquivo, nos ícones e na lista do Arquivos e na área de trabalho (ícone por nome do tema ou por caminho de arquivo). Um atalho baixado (em Downloads ou com a marca do navegador) ainda não confiado continua com o nome do arquivo: um `.desktop` baixado podia se passar por "foto.jpg".
 - **Confiança:** pergunta antes de rodar o que veio da internet (atributo `user.xdg.origin.url`, gravado pelos navegadores, com o site no texto; ou estar em Downloads) ou não está marcado como executável: "Abrir "<nome>"? Este programa veio de <origem>; abra só se confiar.", com Cancelar e Abrir. Abrir marca como executável (chmod +x para quem pode ler) e guarda a confiança num registro do mide (`$XDG_DATA_HOME/mide/programas-confiaveis`, com tamanho e data do arquivo): se o arquivo muda (outra versão com o mesmo nome), pergunta de novo. Atalhos instalados nas pastas de apps (`applications/`) são confiáveis. Scripts de texto sempre perguntam: Cancelar, Abrir no editor ou Executar. O Enter ou o clique que abre o diálogo não conta como resposta.
-- **Código:** `src/programs.rs` (tipo do programa, leitura do atalho, separação do `Exec`, origem, registro de confiança, comando e o diálogo `Prompt` que os dois apps usam); o Arquivos e a área de trabalho só chamam `programs::open` e desenham o `Prompt`. O tipo "AppImage" na lista virou "Programa (AppImage)".
+- **Código:** `src/applications/programs.rs` (tipo do programa, leitura do atalho, separação do `Exec`, origem, registro de confiança, comando e o diálogo `Prompt` que os dois apps usam); o Arquivos e a área de trabalho só chamam `programs::open` e desenham o `Prompt`. O tipo "AppImage" na lista virou "Programa (AppImage)".
 - **Fica para depois:** "Executar no Terminal" para scripts; o E9 (Instalar AppImage arrastando) usa o mesmo módulo.
 
 ## Instalar AppImage arrastando, no estilo do Mac (E9)
@@ -1431,7 +1431,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Instalação:** cópia para a pasta de apps por um temporário escondido (troca só no fim, executável 0755), ícone em `$XDG_DATA_HOME/mide/appimage-icons/<id>.png|svg`, atalho `$XDG_DATA_HOME/applications/mide-appimage-<id>.desktop` feito do `.desktop` de dentro (traduções, categorias, tipos de arquivo, ações), com o `Exec` (também das ações) apontando para o AppImage instalado, `Icon` para o ícone copiado, sem `TryExec`/`DBusActivatable`/`NoDisplay`/`OnlyShowIn`, e as marcas `X-Mide-AppImage=<caminho>` e `X-AppImage-Version`. O id é o nome do `.desktop` de dentro: outra versão do mesmo app substitui a instalada (o arquivo antigo vai para a Lixeira se o nome mudou); outro app com o mesmo nome ganha "Nome (1).AppImage". O launcher e a busca já leem os apps a cada vez que abrem, então o app aparece sem recarregar nada.
 - **Remover:** no launcher, clique direito num app instalado pelo mide abre um menu com "Mover para a Lixeira" (em vermelho; Esc ou clique fora fecham); escolher abre a confirmação do `mide-install --remove` e fecha o launcher; confirmar põe o AppImage na Lixeira e apaga o atalho e o ícone. Apps do sistema não ganham esse menu.
 - **Também:** `ui.dialog_buttons` e `ui.alert` medem a linha de botões com o espaçamento real (10): com três botões o último saía cortado na borda do diálogo. `places::mide_program` acha um programa do mide ao lado do atual. `data/applications/mide-install.desktop` (sem aparecer no launcher) para o "Abrir com".
-- **Código:** `src/appimage.rs` (pasta de apps, nome pelo arquivo, leitura do AppImage, atalho gerado, instalar, remover), `src/bin/mide-install.rs`, `src/programs.rs` (Instalar no diálogo), `src/bin/mide-launcher.rs` (menu).
+- **Código:** `src/applications/appimage.rs` (pasta de apps, nome pelo arquivo, leitura do AppImage, atalho gerado, instalar, remover), `src/bin/mide-install.rs`, `src/applications/programs.rs` (Instalar no diálogo), `src/bin/mide-launcher.rs` (menu).
 - **Revisão de segurança (2026-10-23):** um atalho `.desktop` fora das pastas de apps só roda e só mostra o nome e o ícone do app depois de confiado (mesmo executável: num pendrive ou num zip extraído todo arquivo tem a permissão); programas num pendrive ou em outro disco perguntam antes; um arquivo com nome de documento ou de biblioteca (`foto.jpg`, `libx.so`, `.o`) e um ELF que não é programa (biblioteca, objeto) abrem como documento, nunca rodam; um FIFO ou um arquivo enorme com nome `.desktop` não trava a janela; o Enter não confirma o diálogo de algo baixado nem de um script (só o clique), e nos outros não vale logo que o diálogo aparece nem com a tecla segurada; o nome do AppImage instalado e o `Exec` do atalho não levam nada que o shell interprete; o instalador extrai numa pasta só do usuário no cache dele, mata o grupo inteiro no limite de tempo e não roda um AppImage sem a marca (tipo 0); a pasta de apps fica gravada na primeira instalação (trocar o idioma não "desinstala" nada); remover só manda para a Lixeira um AppImage da pasta de apps.
 - **Fica para depois:** ler o squashfs (gzip/zstd) sem rodar o AppImage; atualização pelo zsync/AppImageUpdate; os .tar.gz comuns do E6 na mesma pasta; animação do ícone voltando quando é solto fora da pasta; o instalador nascer no meio da tela.
 
@@ -1509,7 +1509,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 - **Ampliação** (Configurações → Dock → Ampliação e Tamanho da ampliação, 56–128; desligada por padrão, como no Mac): os ícones perto do ponteiro crescem numa curva suave, os vizinhos se afastam e a faixa de vidro cresce junto; entra e sai animada (com o interruptor de Animações). Os ícones ampliados são carregados no tamanho grande (nítidos), numa camada própria acima da dock que não recebe cliques; os cliques seguem as posições ampliadas.
 
 ## Agitar o ponteiro para localizá-lo (2026-10-24)
-- Como no Mac: quatro vaivéns rápidos do mouse (de pelo menos 30 pontos, em 0,7 s) fazem o cursor crescer até 4 vezes, com animação de crescer (180 ms), segurar enquanto agita (+0,5 s) e voltar (320 ms). A imagem vem do tema de cursores no tamanho mais próximo (nítida) e, enquanto cresce, a cena desenha o cursor no lugar do plano de cursor da placa. Interruptor em Configurações → Efeitos ("Agitar o ponteiro para localizá-lo", `[effects] shake_cursor`). Módulo `src/shake.rs`, com testes.
+- Como no Mac: quatro vaivéns rápidos do mouse (de pelo menos 30 pontos, em 0,7 s) fazem o cursor crescer até 4 vezes, com animação de crescer (180 ms), segurar enquanto agita (+0,5 s) e voltar (320 ms). A imagem vem do tema de cursores no tamanho mais próximo (nítida) e, enquanto cresce, a cena desenha o cursor no lugar do plano de cursor da placa. Interruptor em Configurações → Efeitos ("Agitar o ponteiro para localizá-lo", `[effects] shake_cursor`). Módulo `src/compositor/shake.rs`, com testes.
 
 ## Calculadora no visual do Tahoe (D3, etapa 8, 2026-10-24)
 - Janela de conteúdo inteiro (cantos de 24) com os botões da janela por cima do visor (o alto do visor arrasta a janela), fundo grafite, teclas redondas: números em cinza escuro, funções em cinza mais claro com texto branco e operações em laranja; disposição do Tahoe na Básica: ⌫ AC % ÷ em cima e ± 0 , = embaixo (o ⌫ do visor fica só no Programador e no conversor); a conta em andamento em cinza logo acima do número; sinais das operações maiores. Tamanho padrão da Básica 300x490.
@@ -1517,7 +1517,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 ## Editor de Capturas como a Marcação do Mac (2026-10-24)
 
 - Pedido do usuário: o traço feito com a caneta vira forma editável (como no Mac), com alças de seleção e de tamanho, seletor e as ferramentas da Marcação.
-- **Formas editáveis (`src/annotate.rs`):** desenho livre, linha, seta, retângulo, retângulo arredondado, oval, triângulo, estrela, balão de fala e texto. Cada forma guarda borda, preenchimento, espessura, tracejado e texto, e fica editável até salvar ou copiar (só então entra nos pixels). O reconhecimento do esboço simplifica o traço e decide entre linha, seta, retângulo, triângulo e oval.
+- **Formas editáveis (`src/documents/annotate.rs`):** desenho livre, linha, seta, retângulo, retângulo arredondado, oval, triângulo, estrela, balão de fala e texto. Cada forma guarda borda, preenchimento, espessura, tracejado e texto, e fica editável até salvar ou copiar (só então entra nos pixels). O reconhecimento do esboço simplifica o traço e decide entre linha, seta, retângulo, triângulo e oval.
 - **Ferramentas:** Selecionar (V), Esboço (S, o traço vira forma e já fica escolhido), Desenho (D, traço livre), Formas (menu com as oito) e Texto (T: clique e digite). Com a forma escolhida: arrastar move, as alças redimensionam (numa linha ou seta, as pontas), Delete apaga, setas andam 1 pixel, Esc tira a escolha.
 - **Estilo:** popovers de Estilo do traço (cinco espessuras, tracejado), Cor da borda, Preenchimento (ou nenhum) e Estilo do texto (tamanho). Valem para a próxima forma e para a escolhida.
 - **Mais:** girar para a esquerda e a direita, recortar, desfazer e refazer de tudo (`doc.rs` guarda o estado inteiro: imagem, formas e recorte), Copiar e Salvar na barra. A janela é de conteúdo inteiro (Tahoe), e o menu Ferramentas tem tudo isso.
@@ -1557,7 +1557,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 ## Editor de Texto completo, etapa 1a: núcleo do texto formatado (2026-10-24)
 
-- `src/richtext/` (biblioteca, com testes):
+- `src/documents/richtext/` (biblioteca, com testes):
   - `mod.rs`: documento em parágrafos com trechos de estilo (fonte, tamanho, negrito, itálico, sublinhado, tachado, cor, realce, sobrescrito/subscrito, link) e estilo de parágrafo (alinhamento, recuos, entrelinha, espaços, listas, nome do estilo, quebra de página antes), imagens num parágrafo delas e a página (tamanho, margens, cabeçalho, rodapé e numeração com "mostrar a partir da página N", como a ABNT pede). Edição: digitar, Enter, apagar intervalos entre parágrafos, aplicar estilo de texto e de parágrafo, palavras (Ctrl+setas, duplo clique), copiar e colar com formatação (`fragment`/`insert_fragment`) e contagem de palavras.
   - `layout.rs`: o cosmic-text dá forma às letras; a quebra em linhas (palavra a palavra, recuo da primeira linha, tabulações de meia polegada, justificado, centralizado, à direita), os marcadores de lista e a paginação são daqui, com cache por parágrafo (digitar num livro só refaz o parágrafo mexido). Fontes de métricas iguais para as que faltam no Linux (Times New Roman → Liberation Serif/Tinos, Arial → Liberation Sans/Arimo, Calibri → Carlito...).
   - `render.rs`: desenho de uma página em qualquer escala (seleção, realce, letras, sublinhado, tachado, imagens, marcadores, cursor, cabeçalho, rodapé e número da página).
@@ -1583,16 +1583,16 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 ## Editor de Texto, etapa 2a: PDF e imprimir (2026-10-24)
 
-- **`src/richtext/pdf.rs`, gravador de PDF próprio:** as letras saem nas posições do layout da tela (o que se vê é o que se imprime). Fontes TrueType e OpenType/CFF embutidas inteiras; as de coleções .ttc são separadas num arquivo próprio. Mapa para o Unicode, então copiar e buscar no leitor de PDF funciona (conferido com o `pdftotext`). Também cores, realce, sublinhado, tachado, itálico imitado, imagens (JPEG como veio, PNG com transparência), marcadores de lista, cabeçalho, rodapé, números de página e intervalo de páginas. Conteúdo compactado com o `flate2` (já vinha com o `zip`).
+- **`src/documents/richtext/pdf.rs`, gravador de PDF próprio:** as letras saem nas posições do layout da tela (o que se vê é o que se imprime). Fontes TrueType e OpenType/CFF embutidas inteiras; as de coleções .ttc são separadas num arquivo próprio. Mapa para o Unicode, então copiar e buscar no leitor de PDF funciona (conferido com o `pdftotext`). Também cores, realce, sublinhado, tachado, itálico imitado, imagens (JPEG como veio, PNG com transparência), marcadores de lista, cabeçalho, rodapé, números de página e intervalo de páginas. Conteúdo compactado com o `flate2` (já vinha com o `zip`).
 - **Imprimir (Ctrl+P, Arquivo → Imprimir…)**, como o do Mac: prévia da página com ‹ ›; destino "Salvar como PDF" ou uma impressora do CUPS (`lpstat`, a padrão primeiro); cópias, páginas (todas, a atual ou um intervalo) e frente e verso. Imprime mandando um PDF temporário ao `lp`. Sem impressora configurada, o diálogo avisa e oferece o PDF.
 - **Arquivo → Exportar como PDF…**
 - **mide-ui:** `columns` (duas colunas lado a lado, como o `NSStackView`).
 
 ## Editor de Texto, etapa 2b: DOCX e ODT (2026-10-24)
 
-- **`src/richtext/xml.rs`:** leitor e escritor de XML mínimos, próprios.
-- **`src/richtext/docx.rs` (Word):** ler e gravar. Estilos de parágrafo mapeados (Title, Heading1–3, Quote, Caption, Bibliography); fonte, tamanho, negrito, itálico, sublinhado, tachado, cor, realce, sobrescrito, subscrito; alinhamento, recuos, entrelinha, espaços, quebra de página; listas (`numbering.xml`); imagens (`wp:inline`); papel, margens, cabeçalho e rodapé com o campo PAGE. "Número a partir da página N" vira "primeira página diferente" no Word, e o N exato fica num `docVar` que o mide relê. A leitura entende estilos herdados (`basedOn`), a fonte do tema, links, campos e conteúdos (`sdt`); tabelas viram parágrafos por enquanto.
-- **`src/richtext/odt.rs` (LibreOffice):** o mesmo, com estilos automáticos, listas aninhadas, espaços seguidos (`text:s`), imagens em `Pictures/`, página e cabeçalho/rodapé na página mestra, e a altura do cabeçalho somada à margem (também no modo `dynamic-spacing` do LibreOffice).
+- **`src/documents/richtext/xml.rs`:** leitor e escritor de XML mínimos, próprios.
+- **`src/documents/richtext/docx.rs` (Word):** ler e gravar. Estilos de parágrafo mapeados (Title, Heading1–3, Quote, Caption, Bibliography); fonte, tamanho, negrito, itálico, sublinhado, tachado, cor, realce, sobrescrito, subscrito; alinhamento, recuos, entrelinha, espaços, quebra de página; listas (`numbering.xml`); imagens (`wp:inline`); papel, margens, cabeçalho e rodapé com o campo PAGE. "Número a partir da página N" vira "primeira página diferente" no Word, e o N exato fica num `docVar` que o mide relê. A leitura entende estilos herdados (`basedOn`), a fonte do tema, links, campos e conteúdos (`sdt`); tabelas viram parágrafos por enquanto.
+- **`src/documents/richtext/odt.rs` (LibreOffice):** o mesmo, com estilos automáticos, listas aninhadas, espaços seguidos (`text:s`), imagens em `Pictures/`, página e cabeçalho/rodapé na página mestra, e a altura do cabeçalho somada à margem (também no modo `dynamic-spacing` do LibreOffice).
 - **Conferido com o LibreOffice nos dois sentidos:** ele abre os nossos .docx e .odt (convertidos para PDF, com o texto, as listas e o realce certos) e o mide lê o que ele grava (margens 3/2/2/3 cm, estilos, listas, cores).
 - **No editor:** .docx, .odt e .rtf abrem formatados; salvar usa a extensão; documento novo sugere .docx. Configurações → Apps padrão ganhou "Documentos" (o Editor de Texto é o padrão da sessão se nada foi escolhido); o `.desktop` do editor declara os tipos.
 
@@ -1624,7 +1624,7 @@ O problema (diagnóstico na sessão do usuário): o compositor não oferecia o p
 
 ## Editor de Texto, etapa 4d: revisão ortográfica (2026-10-24)
 
-- **`src/spell.rs` (biblioteca, reaproveitável por outros apps):** verificador próprio que lê os dicionários do sistema no formato Hunspell (`/usr/share/hunspell/pt_BR.aff` e `.dic`, os mesmos do LibreOffice e do Firefox). Entende sufixos e prefixos com condições, prefixo com sufixo, sufixos em duas camadas (afixo com continuação), palavras proibidas, maiúsculas e palavras com hífen. Sugestões: trocas do dicionário (REP), letras parecidas (MAP: acentos), uma letra a mais, a menos, trocada ou de lugar, e duas palavras juntas. Palavras aprendidas em `~/.local/share/mide/spelling-words.txt`. O dicionário de português (312 mil palavras, 26 mil regras) carrega em 0,25 s, em segundo plano; conferido com palavras certas e erradas ("metodolojia" → "metodologia", "intrudução" → "introdução").
+- **`src/documents/spell.rs` (biblioteca, reaproveitável por outros apps):** verificador próprio que lê os dicionários do sistema no formato Hunspell (`/usr/share/hunspell/pt_BR.aff` e `.dic`, os mesmos do LibreOffice e do Firefox). Entende sufixos e prefixos com condições, prefixo com sufixo, sufixos em duas camadas (afixo com continuação), palavras proibidas, maiúsculas e palavras com hífen. Sugestões: trocas do dicionário (REP), letras parecidas (MAP: acentos), uma letra a mais, a menos, trocada ou de lugar, e duas palavras juntas. Palavras aprendidas em `~/.local/share/mide/spelling-words.txt`. O dicionário de português (312 mil palavras, 26 mil regras) carrega em 0,25 s, em segundo plano; conferido com palavras certas e erradas ("metodolojia" → "metodologia", "intrudução" → "introdução").
 - **No editor:** ondulado vermelho nas palavras erradas (a que está sendo digitada só depois de terminar), com cache por parágrafo. Clique direito: sugestões, Aprender ortografia, Ignorar, e Recortar/Copiar/Colar. Editar → Verificar ortografia ao digitar liga e desliga. Idioma pelo `LANG` (reserva em pt_BR e en_US).
 
 ## Editor de Texto, etapa 4e: redimensionar imagens (2026-10-24)
@@ -1674,7 +1674,7 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 
 ## Configurações → Itens de início e som de mover para a Lixeira (2026-10-25)
 
-- **Itens de início** (pedido do usuário): nova seção nas Configurações, como os "Itens de início de sessão" do Mac. Lista os apps e comandos que abrem ao entrar na sessão, no formato do freedesktop (`~/.config/autostart` e as pastas do sistema), cada um com interruptor. Os do sistema não são apagados: desligar grava no usuário um arquivo com o mesmo nome e `Hidden=true` (o compositor já dá preferência ao do usuário). "Adicionar app…" busca entre os apps instalados; "Adicionar comando…" pede nome e comando, com "Escolher…" abrindo o seletor de arquivos do mide para um script. Itens do usuário têm o botão de remover. Biblioteca em `src/login_items.rs`, com teste; `mide-settings login-items` abre direto na seção.
+- **Itens de início** (pedido do usuário): nova seção nas Configurações, como os "Itens de início de sessão" do Mac. Lista os apps e comandos que abrem ao entrar na sessão, no formato do freedesktop (`~/.config/autostart` e as pastas do sistema), cada um com interruptor. Os do sistema não são apagados: desligar grava no usuário um arquivo com o mesmo nome e `Hidden=true` (o compositor já dá preferência ao do usuário). "Adicionar app…" busca entre os apps instalados; "Adicionar comando…" pede nome e comando, com "Escolher…" abrindo o seletor de arquivos do mide para um script. Itens do usuário têm o botão de remover. Biblioteca em `src/platform/login_items.rs`, com teste; `mide-settings login-items` abre direto na seção.
 - **Som de papel amassado** ao mover para a Lixeira (pedido do usuário): evento `trash-move` no tema de sons, tocado pela função comum `places::move_to_trash` (vale no Arquivos, área de trabalho, dock, captura, launcher). Esvaziar a Lixeira ganhou um amassado mais longo com a queda no fundo. O mesmo som pedido várias vezes em 300 ms toca uma vez só (mover 20 arquivos não dá 20 sons). Nos testes de unidade nenhum som toca.
 
 ## Mostrar a mesa e luzes das janelas que perdiam a cor (2026-10-25)
