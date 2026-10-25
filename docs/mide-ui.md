@@ -10,12 +10,12 @@ teclado e do desenho.
 
 ## O pacote e o `mide-new`
 
-O mide-ui é um pacote próprio (`crates/mide-ui` no repositório do mide), sem o
-compositor: um app de fora depende só dele.
+O mide-ui é um projeto próprio (github.com/fabioaacarneiro/mide-ui), sem o
+compositor: um app depende só dele.
 
 ```toml
 [dependencies]
-mide-ui = { git = "https://github.com/fabioaacarneiro/mide" }
+mide-ui = { git = "https://github.com/fabioaacarneiro/mide-ui" }
 ```
 
 O jeito mais rápido de começar é o `mide-new`, que cria um projeto pronto: `Cargo.toml`,
@@ -26,7 +26,7 @@ ferramentas, cartões, campo de texto, lista, interruptor e menus na barra super
 ```sh
 mide-new "Minhas Notas"            # cria ./minhas-notas
 mide-new "Minhas Notas" --dir ~/Projetos
-mide-new "Minhas Notas" --local    # usa o mide-ui do repositório (desenvolvimento)
+mide-new "Minhas Notas" --local    # usa o mide-ui da pasta ao lado do mide (desenvolvimento)
 ```
 
 Dentro do mide, os apps usam o mesmo framework por `mide::kit` (repassado pelo
@@ -282,7 +282,7 @@ O mesmo `view` é chamado uma vez por tela em cada quadro:
   teclado.
 
 As funções de geometria (`screen_at`, `union`, `to_main`...) ficam em
-`mide::kit::screens`. O exemplo `crates/mide-ui/examples/kit-telas.rs` mostra tudo isso.
+`mide::kit::screens`. O exemplo `examples/` do mide-ui (e `examples/kit-telas.rs` do mide)` — `kit-telas.rs` mostra tudo isso.
 
 ## Área de texto (várias linhas)
 
@@ -441,7 +441,7 @@ rolagem: dá para pôr uma `toolbar` fixa e uma `page` embaixo.
 
 ## Exemplo completo
 
-`crates/mide-ui/examples/mide-ui-demo.rs` usa os componentes básicos: barra lateral, cartões com
+`examples/` do mide-ui (e `examples/kit-telas.rs` do mide)` — `mide-ui-demo.rs` usa os componentes básicos: barra lateral, cartões com
 interruptores e trilho, campo de texto com Enter e uma lista de tarefas.
 
 O app **Arquivos** (`src/bin/mide-files.rs`) é um app completo feito só com o mide-ui:

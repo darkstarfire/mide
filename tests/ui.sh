@@ -11,7 +11,7 @@
 # própria pasta de saída e a própria configuração temporária: as seções não se
 # atrapalham. Dentro de uma seção, os cenários seguem em ordem (alguns usam o
 # resultado do anterior). As funções (check, check_last...) estão em tests/ui/comum.sh.
-# Os binários são os de target/debug: compile antes (cargo build --workspace --bins --examples).
+# Os binários são os de target/debug: compile antes (cargo build --bins --examples).
 set -u
 cd "$(dirname "$0")/.."
 

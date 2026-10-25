@@ -1,10 +1,10 @@
 //! `mide-new`: cria um app nativo do mide pronto para compilar, com o framework
-//! mide-ui (pacote `crates/mide-ui`).
+//! mide-ui (github.com/fabioaacarneiro/mide-ui).
 //!
 //! ```text
 //! mide-new "Minhas Notas"            # cria ./minhas-notas
 //! mide-new "Minhas Notas" --dir ~/Projetos
-//! mide-new "Minhas Notas" --local    # usa o mide-ui deste repositório (desenvolvimento)
+//! mide-new "Minhas Notas" --local    # usa o mide-ui da pasta ao lado do mide (desenvolvimento)
 //! ```
 //!
 //! O projeto criado tem o `Cargo.toml`, o `src/main.rs` com uma janela no visual do
@@ -19,7 +19,7 @@ use std::{
 };
 
 /// Onde o mide-ui está publicado (o repositório do mide).
-const REPO: &str = "https://github.com/fabioaacarneiro/mide";
+const REPO: &str = "https://github.com/fabioaacarneiro/mide-ui";
 
 /// Nome do pacote: minúsculas sem acento, palavras ligadas por hífen.
 fn slug(name: &str) -> String {
@@ -230,9 +230,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     if target.exists() {
         return Err(format!("{} já existe", target.display()).into());
     }
-    // `--local`: o mide-ui deste repositório (para quem está desenvolvendo o mide).
+    // `--local`: o mide-ui clonado ao lado do mide (para quem desenvolve os dois).
     let dependency = if local {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/mide-ui");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap_or(Path::new("..")).join("mide-ui");
         format!("mide-ui = {{ path = \"{}\" }}", path.display())
     } else {
         format!("mide-ui = {{ git = \"{REPO}\" }}")

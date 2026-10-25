@@ -3,5 +3,5 @@
 pub mod programs;
 pub mod appimage;
 
-// No framework mide-ui (crates/mide-ui), repassados aqui.
+// No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::applications::{apps, default_apps, icons};

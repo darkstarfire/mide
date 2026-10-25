@@ -8,5 +8,5 @@ pub mod backdrop;
 pub mod launcher_layout;
 pub mod search;
 
-// No framework mide-ui (crates/mide-ui), repassados aqui.
+// No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::shell::{appmenu, motion};

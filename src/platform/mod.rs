@@ -9,5 +9,5 @@ pub mod login_items;
 pub mod elevate;
 pub mod portal;
 
-// No framework mide-ui (crates/mide-ui), repassados aqui.
+// No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::platform::{control_client, settings_file, sounds};

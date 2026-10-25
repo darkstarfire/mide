@@ -2,7 +2,7 @@
 //! compositor (`src/compositor/`).
 //!
 //! Organização por assunto:
-//! - `kit` e `ui`: o mide-ui (framework de apps), que é o pacote `crates/mide-ui`;
+//! - `kit` e `ui`: o mide-ui (framework de apps), projeto à parte (github.com/fabioaacarneiro/mide-ui);
 //! - `platform`: sistema e sessão;
 //! - `shell`: peças da barra, dock, launcher, busca e notificações;
 //! - `applications`: apps instalados e como abrir coisas;
@@ -23,7 +23,7 @@ pub mod shell;
 pub mod storage;
 pub mod terminal;
 
-// O mide-ui (framework de apps, crates/mide-ui) e o desenho de baixo nível.
+// O mide-ui (framework de apps, github.com/fabioaacarneiro/mide-ui) e o desenho de baixo nível.
 pub use mide_ui::{kit, ui};
 
 pub use applications::{appimage, apps, default_apps, icons, programs};

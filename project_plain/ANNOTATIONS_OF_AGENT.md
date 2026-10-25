@@ -396,3 +396,9 @@
 - O mide-ui é o pacote `crates/mide-ui`; o pacote `mide` repassa os módulos dele (`pub use mide_ui::...` nos `mod.rs` de `platform`, `shell`, `applications`, `storage` e em `lib.rs`). Um módulo novo que o kit precise usar tem de ir para o `mide-ui` (o mide-ui não pode depender do `mide`).
 - Exemplos do kit ficam em `crates/mide-ui/examples`; para a bateria, `cargo build --workspace --bins --examples` (eles caem no mesmo `target/debug/examples`).
 - `mide-new --local` aponta o app gerado para o mide-ui do repositório; para compilar o app de teste sem recompilar tudo, `CARGO_TARGET_DIR=<repo>/target`.
+
+## Desenvolver o mide-ui junto (2026-10-25)
+
+- O mide-ui é o projeto `github.com/fabioaacarneiro/mide-ui` (clone em `~/Projetos/mide-ui`); o mide depende dele pelo git (`branch = "main"`), e o `Cargo.lock` do mide fixa o commit (o outro PC atualiza com `git pull`, então o lock versionado precisa apontar para o git).
+- Para testar mudanças do kit sem publicar: `cargo build --config 'patch."https://github.com/fabioaacarneiro/mide-ui".mide-ui.path="../mide-ui"'` (o lock passa a apontar para a pasta). Antes do commit do mide: publicar o mide-ui (commit + push) e rodar `cargo update -p mide-ui` **sem** o `--config`, para o lock voltar ao git com o commit novo.
+- Módulos que o kit usa moram no mide-ui (o mide-ui não pode depender do mide); o mide repassa (`pub use mide_ui::...`).

@@ -1753,3 +1753,7 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 - **Instalador de AppImage** (pedido do usuário, com a foto de uma imagem de instalação do Mac): sem botões enquanto espera; título grande no meio, "Arraste o app para a pasta Aplicativos", ícones maiores e seta grossa na cor de destaque; botões só no fim (Abrir). Testes da seção 32 passaram a arrastar.
 - **Ícones**: AppImage com o ícone de AppImage do tema (o gerador de miniaturas do sistema devolvia uma folha preta genérica); .deb e .rpm com os ícones deles.
 - **Vídeo no ícone**: o quadro é sempre encaixado no tamanho atual do ícone (o usuário viu um quadro maior que o ícone; não reproduzido aqui).
+
+## mide-ui publicado e o mide usando o projeto (2026-10-25)
+
+- O framework foi publicado em **github.com/fabioaacarneiro/mide-ui** (licença MIT ou Apache-2.0, guia, mapa do Tahoe, plano para rodar em qualquer desktop, exemplos `mide-ui-demo` e `janela-comum`). O mide deixou de ter a cópia interna (`crates/mide-ui` saiu) e depende do projeto pelo git; o `Cargo.lock` fixa o commit. O exemplo `kit-telas`, usado pela bateria, voltou para `examples/` do mide. O `mide-new` gera apps apontando para o repositório novo (`--local` usa o clone ao lado, `../mide-ui`). Como mexer nos dois juntos está no `ANNOTATIONS_OF_AGENT.md`.
