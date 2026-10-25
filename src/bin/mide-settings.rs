@@ -90,6 +90,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Bloquear a tela após", "bloqueio bloquear senha inatividade tempo sem uso protetor de tela", Section::Lock),
     ("Bloquear ao suspender", "bloqueio suspender dormir senha", Section::Lock),
     ("Apagar a tela após", "apagar tela monitor desligar energia dpms protetor", Section::Lock),
+    ("Cor de destaque", "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite accent", Section::Appearance),
     ("Aparência", "tema claro escuro modo noturno dark cores", Section::Appearance),
     ("Wi-Fi", "rede internet wireless conectar senha", Section::Wifi),
     ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
@@ -987,8 +988,27 @@ impl Settings {
                     Err(err) => tracing::warn!("aparência não gravada: {err}"),
                 }
             }
+            // Cor de destaque (botões, seleção, interruptores, deslizantes), como no Mac.
+            let dark = mide::kit::system_dark();
+            let colors: Vec<(mide::kit::Rgba, &str)> = mide::kit::ACCENTS
+                .iter()
+                .map(|(_, name, light, dim)| {
+                    let c = if dark { dim } else { light };
+                    ([c[0], c[1], c[2], 255], *name)
+                })
+                .collect();
+            let current = mide::kit::accent_key();
+            let mut accent = mide::kit::ACCENTS.iter().position(|(k, ..)| *k == current).unwrap_or(0);
+            if ui.color_choice("Cor de destaque", &colors, &mut accent).changed() {
+                let key = mide::kit::ACCENTS[accent].0;
+                // Azul é o padrão: grava só as outras.
+                match settings_file::set("appearance", "accent", (key != "blue").then(|| Value::Text(key.into()))) {
+                    Ok(()) => tracing::info!("aparência: cor de destaque {key}"),
+                    Err(err) => tracing::warn!("cor de destaque não gravada: {err}"),
+                }
+            }
         });
-        ui.note("Os apps do mide mudam na hora. Apps GTK e Qt seguem a escolha quando são abertos.");
+        ui.note("Os apps do mide, a barra e a dock mudam na hora. Apps GTK e Qt seguem claro ou escuro quando são abertos.");
     }
 
     fn effects(&mut self, ui: &mut Ui) {

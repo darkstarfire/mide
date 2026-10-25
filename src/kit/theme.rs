@@ -127,19 +127,49 @@ impl Theme {
     }
 
     /// Tema escolhido em Configurações → Aparência (`[appearance] theme` no
-    /// `config.toml`: "light" ou "dark").
+    /// `config.toml`: "light" ou "dark"), com a cor de destaque escolhida
+    /// (`[appearance] accent`).
     pub fn system() -> Self {
-        if system_dark() {
-            Self::dark()
-        } else {
-            Self::default()
-        }
+        let dark = system_dark();
+        let mut theme = if dark { Self::dark() } else { Self::default() };
+        theme.accent = system_accent(dark);
+        theme
     }
 
     /// Tom de contraste com a transparência `alpha` (preto no claro, branco no escuro).
     pub fn shade(&self, alpha: u8) -> Rgba {
         [self.ink[0], self.ink[1], self.ink[2], alpha]
     }
+}
+
+/// Cores de destaque (Configurações → Aparência), como as do Mac: chave gravada, nome
+/// na tela e a cor no tema claro e no escuro (um pouco mais clara no escuro, para ler
+/// bem). Todas aguentam texto branco por cima nos dois temas.
+pub const ACCENTS: &[(&str, &str, [u8; 3], [u8; 3])] = &[
+    ("blue", "Azul", [10, 110, 235], [30, 125, 245]),
+    ("purple", "Roxo", [135, 70, 200], [160, 95, 225]),
+    ("pink", "Rosa", [215, 50, 125], [235, 80, 150]),
+    ("red", "Vermelho", [215, 45, 45], [235, 75, 70]),
+    ("orange", "Laranja", [225, 110, 10], [240, 130, 35]),
+    ("yellow", "Amarelo", [195, 140, 0], [215, 160, 10]),
+    ("green", "Verde", [35, 150, 65], [50, 170, 80]),
+    ("graphite", "Grafite", [115, 115, 125], [140, 140, 150]),
+];
+
+/// Chave da cor de destaque escolhida (`blue` se nenhuma ou desconhecida).
+pub fn accent_key() -> String {
+    match crate::settings_file::cached("appearance", "accent") {
+        Some(crate::settings_file::Value::Text(k)) if ACCENTS.iter().any(|(key, ..)| *key == k) => k,
+        _ => "blue".into(),
+    }
+}
+
+/// A cor de destaque da sessão no tema claro ou escuro.
+pub fn system_accent(dark: bool) -> Rgba {
+    let key = accent_key();
+    let (_, _, light, dim) = ACCENTS.iter().find(|(k, ..)| *k == key).copied().unwrap_or(ACCENTS[0]);
+    let c = if dark { dim } else { light };
+    [c[0], c[1], c[2], 255]
 }
 
 /// O tema da sessão é o escuro.

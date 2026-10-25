@@ -20,7 +20,7 @@ use std::{
 
 const RATE: u32 = 48_000;
 /// Muda quando um som muda: o tema é refeito.
-const VERSION: &str = "3";
+const VERSION: &str = "4";
 
 /// Sons de alerta oferecidos: chave, nome na tela.
 pub const ALERTS: &[(&str, &str)] = &[("vidro", "Vidro"), ("gota", "Gota"), ("sino", "Sino"), ("pop", "Pop")];
@@ -184,60 +184,28 @@ fn noise(secs: f32, decay: f32, smooth: f32, amp: f32, seed: u32) -> Wave {
         .collect()
 }
 
-/// Papel amassado: chiado agudo (ruído sem os graves) que sobe e desce em rajadas
-/// irregulares, cheio de estalinhos curtíssimos (1 a 3 ms) e claros, agrupados nas
-/// rajadas, como o papel se fechando na mão. Sem notas nem graves: nada de "clique".
-fn crumple(secs: f32, crackles: u32, amp: f32, seed: u32) -> Wave {
+/// Sopro suave ("vuuush"): ruído filtrado que começa claro e escurece, com subida e
+/// descida macias (sem estalos), baixinho. Para mover e esvaziar a Lixeira.
+fn whoosh(secs: f32, amp: f32, seed: u32) -> Wave {
     let n = (secs * RATE as f32) as usize;
     let mut state = seed.wrapping_mul(2_654_435_761).max(1);
-    let mut rand = move || {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        state as f32 / u32::MAX as f32
-    };
-    // Rajadas: centros e larguras aleatórios, mais fortes no começo.
-    let bursts: Vec<(f32, f32, f32)> = (0..7)
+    let (mut low1, mut low2) = (0.0f32, 0.0f32);
+    (0..n)
         .map(|i| {
-            let at = secs * (0.05 + 0.85 * (i as f32 + rand()) / 7.0);
-            let width = 0.025 + 0.05 * rand();
-            let gain = (0.45 + 0.55 * rand()) * (1.0 - 0.5 * at / secs);
-            (at, width, gain)
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let white = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;
+            let t = i as f32 / n as f32;
+            // Filtro passa-baixa de duas etapas: de ~1,2 kHz a ~300 Hz.
+            let k = 0.15 * (1.0 - t) + 0.04 * t;
+            low1 += (white - low1) * k;
+            low2 += (low1 - low2) * k;
+            // Envelope em sino (sem começo nem fim bruscos), mais cedo que o meio.
+            let env = (std::f32::consts::PI * t.powf(0.7)).sin().powi(2);
+            amp * 2.5 * low2 * env
         })
-        .collect();
-    let swell = |t: f32| -> f32 { bursts.iter().map(|(c, w, g)| g * (-((t - c) / w).powi(2)).exp()).sum::<f32>().min(1.0) };
-    // Chiado de fundo: ruído branco menos a parte grave (passa-alta simples).
-    let mut out = vec![0.0f32; n];
-    let mut low = 0.0f32;
-    for (i, s) in out.iter_mut().enumerate() {
-        let t = i as f32 / RATE as f32;
-        let white = rand() * 2.0 - 1.0;
-        low += (white - low) * 0.08;
-        let fade = (t / 0.01).min(1.0) * ((secs - t) / 0.06).clamp(0.0, 1.0);
-        *s = (white - low) * amp * 0.22 * (0.15 + swell(t)) * fade;
-    }
-    // Estalinhos dentro das rajadas.
-    for _ in 0..crackles {
-        let (c, w, g) = bursts[(rand() * bursts.len() as f32) as usize % bursts.len()];
-        let at = (c + (rand() - 0.5) * 2.5 * w).clamp(0.0, secs - 0.004);
-        let len = ((0.001 + 0.002 * rand()) * RATE as f32) as usize;
-        let a = amp * g * (0.3 + 0.7 * rand());
-        let start = (at * RATE as f32) as usize;
-        let mut prev = 0.0f32;
-        for k in 0..len {
-            let Some(s) = out.get_mut(start + k) else { break };
-            let white = rand() * 2.0 - 1.0;
-            // Só os agudos do estalo (diferença entre amostras vizinhas).
-            let bright = white - prev;
-            prev = white;
-            let env = (-(k as f32) / (len as f32 * 0.35)).exp();
-            *s += 0.5 * a * bright * env;
-        }
-    }
-    for s in &mut out {
-        *s = s.clamp(-0.95, 0.95);
-    }
-    out
+        .collect()
 }
 
 /// Soma `b` em `a` a partir de `at` segundos.
@@ -286,9 +254,10 @@ pub fn synth(name: &str) -> Wave {
         "screen-capture" => mix(noise(0.05, 70.0, 0.55, 0.7, 11), &noise(0.07, 55.0, 0.4, 0.6, 23), 0.085),
         // Papel amassado caindo na Lixeira.
         // Esvaziar: papel amassado mais longo e a queda no fundo da lixeira.
-        "trash-empty" => mix(crumple(0.6, 160, 0.7, 5), &noise(0.18, 22.0, 0.04, 0.35, 41), 0.55),
+        // Esvaziar: o sopro e um baque macio no fim (sem estalo).
+        "trash-empty" => mix(whoosh(0.5, 0.45, 5), &note(110.0, 0.3, 14.0, 0.22), 0.38),
         // Mover para a Lixeira: papel amassado curto.
-        "trash-move" => crumple(0.38, 90, 0.7, 17),
+        "trash-move" => whoosh(0.32, 0.4, 17),
         "bell" | "dialog-warning" => alert(&alert_key()),
         // Volume: um toque curto.
         "audio-volume-change" => note(880.0, 0.08, 45.0, 0.45),
@@ -359,23 +328,24 @@ mod tests {
 }
 
 #[cfg(test)]
-mod crumple_tests {
+mod trash_sound_tests {
     use super::*;
 
-    /// Papel amassado tem a energia nos agudos (centro do espectro acima de 3 kHz),
-    /// não num estalo grave. Com `MIDE_SOUND_DUMP=pasta`, grava os WAV para ouvir.
+    /// Os sons da Lixeira são macios: sem estalos (nenhum salto grande entre amostras
+    /// vizinhas), baixinhos e com começo e fim suaves. Com `MIDE_SOUND_DUMP=pasta`,
+    /// grava os WAV para ouvir.
     #[test]
-    fn papel_amassado_e_agudo() {
+    fn sons_da_lixeira_sao_macios() {
         for name in ["trash-move", "trash-empty"] {
             let w = synth(name);
             if let Some(dir) = std::env::var_os("MIDE_SOUND_DUMP") {
                 write_wav(&Path::new(&dir).join(format!("{name}.wav")), &w).unwrap();
             }
-            // Frequência média pelos cruzamentos de zero: aproxima o centro do espectro.
-            let crossings = w.windows(2).filter(|p| (p[0] >= 0.0) != (p[1] >= 0.0)).count();
-            let freq = crossings as f32 / 2.0 / (w.len() as f32 / RATE as f32);
-            assert!(freq > 3000.0, "{name}: {freq} Hz");
-            assert!(w.iter().all(|s| s.abs() <= 0.95));
+            let peak = w.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            let jump = w.windows(2).fold(0.0f32, |m, p| m.max((p[1] - p[0]).abs()));
+            assert!(peak < 0.6, "{name}: pico {peak}");
+            assert!(jump < 0.08, "{name}: salto {jump}");
+            assert!(w[0].abs() < 0.01 && w[w.len() - 1].abs() < 0.02, "{name}: começo/fim");
         }
     }
 }

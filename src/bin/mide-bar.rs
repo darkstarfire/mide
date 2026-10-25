@@ -1079,8 +1079,10 @@ impl Bar {
         }
         // Claro/escuro trocado nas Configurações: barra e menu aberto mudam sem esperar o
         // ponteiro passar por cima.
+        // Também a cor de destaque (Configurações → Aparência).
         let dark = mide::kit::system_dark();
-        if dark != self.dark_seen {
+        let accent = mide::kit::system_accent(dark);
+        if dark != self.dark_seen || accent != pal().accent {
             self.dark_seen = dark;
             tracing::info!("barra: tema {}", if dark { "escuro" } else { "claro" });
             refresh_palette();
@@ -1591,19 +1593,6 @@ impl Bar {
             self.clock_options = false;
             self.history = mide::notify::read_history();
         }
-        let title = self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (*x0, *x1));
-        let x = match (id, title) {
-            (MenuId::System, _) => 8.0,
-            // Confirmações: no meio da tela.
-            (_, _) if id.confirm() => (self.width as f32 - id.custom_width()) / 2.0,
-            // Painéis da direita: centrados no ícone, sem sair da tela.
-            (_, Some((x0, x1))) if id.custom() || id == MenuId::Battery || id == MenuId::Layout => {
-                let w = if id.custom() { id.custom_width() } else { MENU_MIN_W };
-                ((x0 + x1) / 2.0 - w / 2.0).min(self.width as f32 - w - 8.0).max(8.0)
-            }
-            (_, Some((x0, _))) => x0 - 2.0,
-            _ => 8.0,
-        };
         let widest = items
             .iter()
             .map(|i| match i {
@@ -1616,6 +1605,21 @@ impl Bar {
             })
             .fold(MENU_MIN_W, f32::max);
         let widest = if id.custom() { id.custom_width() } else { widest };
+        let title = self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (*x0, *x1));
+        let x = match (id, title) {
+            (MenuId::System, _) => 8.0,
+            // Confirmações: no meio da tela.
+            (_, _) if id.confirm() => (self.width as f32 - id.custom_width()) / 2.0,
+            // Painéis da direita: centrados no ícone, sem sair da tela.
+            (_, Some((x0, x1))) if id.custom() || id == MenuId::Battery || id == MenuId::Layout => {
+                (x0 + x1) / 2.0 - widest / 2.0
+            }
+            (_, Some((x0, _))) => x0 - 2.0,
+            _ => 8.0,
+        };
+        // Nenhum menu passa da borda da tela (o de idiomas, mais largo, cortava).
+        let x = x.min(self.width as f32 - widest - 8.0).max(8.0);
+
         tracing::info!("menu aberto: {id:?}");
         if id.custom() {
             self.request_status();
@@ -2117,8 +2121,9 @@ impl Bar {
         regions.push(((rx, gap, half, 104.0), PanelAction::ToggleDnd));
         let mut y = gap + 104.0 + gap;
         // Trilhos: brilho (se houver controle) e som.
-        // Tahoe: o deslizante é uma cápsula larga; a parte cheia é branca (no escuro,
-        // clara) e o valor anda com ela, sem bolinha.
+        // Tahoe: o deslizante é uma cápsula larga; a parte cheia é na cor de destaque do
+        // mide (pedido do usuário: o azul padrão, não branco), com um botão branco na
+        // ponta que anda com o valor.
         let mut slider = |this: &mut Self, p: &mut Pixmap, y: f32, title: &str, value: f32, action: PanelAction| {
             tile(p, gap, y, pw - 2.0 * gap, 60.0);
             this.text.draw(p, title, gap + 14.0, y + 8.0, FONT, FontWeight::Semibold, dark);
@@ -2126,7 +2131,9 @@ impl Bar {
             let ty = y + 30.0;
             fill_rounded(p, tx, ty, tw, th, th / 2.0, pal().ink(26));
             let filled = (tw * value).max(th);
-            fill_rounded(p, tx, ty, filled, th, th / 2.0, if pal().dark { rgba(235, 235, 240, 255) } else { rgba(255, 255, 255, 255) });
+            fill_rounded(p, tx, ty, filled, th, th / 2.0, pal().accent_color());
+            let knob = th - 4.0;
+            fill_rounded(p, tx + filled - knob - 2.0, ty + 2.0, knob, knob, knob / 2.0, rgba(255, 255, 255, 255));
             if let Some(edge) = rounded_rect(tx + 0.5, ty + 0.5, tw - 1.0, th - 1.0, th / 2.0 - 0.5) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;

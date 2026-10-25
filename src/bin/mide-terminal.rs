@@ -1439,7 +1439,7 @@ impl TerminalApp {
                 let color = if i == active { c.text } else { c.dim };
                 text.draw(pixmap, &label, x + (width - tw) / 2.0, y0 + (rect.3 - size * 1.25) / 2.0, size, FontWeight::Regular, color);
                 if activity[i] && i != active {
-                    fill_round(pixmap, x + width - 16.0, y0 + rect.3 / 2.0 - 3.0, 6.0, [10, 110, 235]);
+                    fill_round(pixmap, x + width - 16.0, y0 + rect.3 / 2.0 - 3.0, 6.0, accent_rgb());
                 }
             }
             let px = x0 + n as f32 * width;
@@ -1941,7 +1941,7 @@ fn draw_pane(
     for mark in term.marks().iter().filter(|m| m.line >= top_abs && m.line <= bottom_abs) {
         let y = (mark.line - top_abs) as f32;
         let color = match mark.status {
-            Some(0) => [10, 110, 235],
+            Some(0) => accent_rgb(),
             Some(_) => [230, 60, 50],
             None => [150, 150, 158],
         };
@@ -2926,4 +2926,10 @@ mod tests {
         assert_eq!(glyph_room(&cell('\u{e5ff}'), Some(&cell(' ')), 9.0, true), 9.0);
         assert_eq!(glyph_room(&wide, Some(&Cell { wide: Wide::Spacer, ..Cell::default() }), 9.0, true), 18.0);
     }
+}
+
+/// A cor de destaque da sessão (Configurações → Aparência), sem a transparência.
+fn accent_rgb() -> [u8; 3] {
+    let [r, g, b, _] = mide::kit::system_accent(mide::kit::system_dark());
+    [r, g, b]
 }

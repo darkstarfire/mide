@@ -2063,6 +2063,51 @@ impl<'a> Ui<'a> {
         self.ctx.waker.clone()
     }
 
+    /// Linha de cartão com um texto e, à direita, bolinhas de cor para escolher uma (a
+    /// cor de destaque nas Configurações, como nos Ajustes do Mac): a escolhida tem um
+    /// ponto branco no meio; o nome da cor sob o ponteiro aparece abaixo do texto.
+    /// `changed` quando outra cor é escolhida (`selected` é o índice em `colors`).
+    pub fn color_choice(&mut self, label: &str, colors: &[(Rgba, &str)], selected: &mut usize) -> Response {
+        let t = self.ctx.theme.clone();
+        let id = self.ctx.id();
+        let rect = self.alloc(None, t.row + 14.0);
+        self.card_line(rect.1);
+        let mut r = self.interact(id, rect);
+        let (size, gap) = (20.0, 8.0);
+        let n = colors.len() as f32;
+        let x0 = rect.0 + rect.2 - n * size - (n - 1.0) * gap;
+        let cy = rect.1 + (rect.3 - size) / 2.0;
+        let at = |i: usize| (x0 + i as f32 * (size + gap), cy, size, size);
+        let hover = (0..colors.len()).find(|i| {
+            let (x, y, w, h) = at(*i);
+            self.ctx.input.over((x - gap / 2.0, y - 4.0, w + gap, h + 8.0))
+        });
+        if r.clicked {
+            if let Some(i) = hover.filter(|i| i != selected) {
+                *selected = i;
+                r.changed = true;
+            }
+        }
+        if !self.visible(rect) {
+            return r;
+        }
+        let top = rect.1 + (rect.3 - t.font * 1.25 - t.font_small * 1.3) / 2.0;
+        let label = self.fit(label, t.font, FontWeight::Regular, x0 - rect.0 - 12.0);
+        self.draw_text(&label, rect.0, top, t.font, FontWeight::Regular, t.text);
+        let name = colors.get(hover.unwrap_or(*selected)).map(|(_, n)| *n).unwrap_or("");
+        self.draw_text(name, rect.0, top + t.font * 1.3, t.font_small, FontWeight::Regular, t.text_secondary);
+        for (i, (c, _)) in colors.iter().enumerate() {
+            let (x, y, w, h) = at(i);
+            let grow = if hover == Some(i) { 1.5 } else { 0.0 };
+            fill_rounded(self.canvas, x - grow, y - grow, w + 2.0 * grow, h + 2.0 * grow, w / 2.0 + grow, color(*c));
+            outline(self.canvas, (x - grow, y - grow, w + 2.0 * grow, h + 2.0 * grow), w / 2.0 + grow, t.shade(30));
+            if i == *selected {
+                fill_rounded(self.canvas, x + w / 2.0 - 3.5, y + h / 2.0 - 3.5, 7.0, 7.0, 3.5, color([255, 255, 255, 255]));
+            }
+        }
+        r
+    }
+
     /// Linha com um texto e, à direita, o valor escolhido entre `options`; o clique abre
     /// a lista para trocar. `changed` quando outro valor é escolhido.
     pub fn dropdown(&mut self, label: &str, options: &[String], selected: &mut usize) -> Response {

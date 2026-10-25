@@ -453,8 +453,10 @@ pub fn run(window: Window, app: impl App + 'static) -> Result<(), Box<dyn Error>
             // Claro/escuro trocado nas Configurações: o app muda na hora.
             if runner.follow_theme {
                 runner.theme_checks = (runner.theme_checks + 1) % 25;
-                if runner.theme_checks == 0 && super::theme::system_dark() != runner.ctx.theme.dark {
-                    runner.ctx.theme = Theme::system();
+                // Claro/escuro ou cor de destaque trocados: o app muda na hora.
+                let fresh = if runner.theme_checks == 0 { Some(Theme::system()) } else { None };
+                if let Some(theme) = fresh.filter(|t| t.dark != runner.ctx.theme.dark || t.accent != runner.ctx.theme.accent) {
+                    runner.ctx.theme = theme;
                     runner.last_frame = None;
                     runner.dirty = true;
                 }
