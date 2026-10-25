@@ -1757,3 +1757,7 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 ## mide-ui publicado e o mide usando o projeto (2026-10-25)
 
 - O framework foi publicado em **github.com/fabioaacarneiro/mide-ui** (licença MIT ou Apache-2.0, guia, mapa do Tahoe, plano para rodar em qualquer desktop, exemplos `mide-ui-demo` e `janela-comum`). O mide deixou de ter a cópia interna (`crates/mide-ui` saiu) e depende do projeto pelo git; o `Cargo.lock` fixa o commit. O exemplo `kit-telas`, usado pela bateria, voltou para `examples/` do mide. O `mide-new` gera apps apontando para o repositório novo (`--local` usa o clone ao lado, `../mide-ui`). Como mexer nos dois juntos está no `ANNOTATIONS_OF_AGENT.md`.
+
+## Painel de prévia do Arquivos: maior e com o vídeo tocando (2026-10-25)
+
+- Pedido do usuário: a linha divisória do painel de prévia se arrasta (de 220 pontos até 60% da janela, destacada na cor de destaque com o ponteiro em cima) e a prévia cresce com o painel; nos vídeos, um botão de tocar no meio da prévia toca o vídeo ali, com som (pausar com o ponteiro em cima), parando ao escolher outro item.

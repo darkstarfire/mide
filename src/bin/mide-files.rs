@@ -70,6 +70,11 @@ struct Files {
     /// Vídeo tocando dentro do próprio ícone (botão de tocar na miniatura, como no
     /// Finder): o arquivo, o player e o quadro atual.
     inline_video: Option<(PathBuf, mide::media::video::Player, Option<tiny_skia::Pixmap>)>,
+    /// Vídeo tocando no painel de prévia, maior.
+    preview_video: Option<(PathBuf, mide::media::video::Player, Option<tiny_skia::Pixmap>)>,
+    /// Largura do painel de prévia (arrastando a linha divisória) e se está sendo arrastada.
+    preview_width: f32,
+    dragging_divider: bool,
     /// Seleção por retângulo: onde o botão foi apertado no vazio, e depois de andar, o
     /// retângulo (início, ponta) com a seleção de antes (Ctrl/Shift somam a ela).
     lasso_press: Option<(f32, f32)>,
@@ -238,6 +243,9 @@ impl Files {
             preview_pane: false,
             quick_look: None,
             inline_video: None,
+            preview_video: None,
+            preview_width: 270.0,
+            dragging_divider: false,
             lasso_press: None,
             lasso: None,
             col_cache: HashMap::new(),
@@ -1570,7 +1578,7 @@ impl Files {
         // Barra de caminho (28) e de status (26), coladas.
         let footer_h = 28.0 + 26.0;
         let body_h = (ui.remaining_height() - footer_h).max(80.0);
-        let preview_w = if self.preview_pane && region.2 > 620.0 { 270.0 } else { 0.0 };
+        let preview_w = if self.preview_pane && region.2 > 620.0 { self.preview_width.clamp(220.0, region.2 * 0.6) } else { 0.0 };
         let columns = ((region.2 - preview_w - 2.0 * ui.theme().padding) / (size as f32 + 44.0 + ui.theme().spacing)).max(1.0) as usize;
         // Na lista, as teclas andam pelas linhas (inclusive as de dentro das pastas).
         let rows = if in_list { self.rows(&shown) } else { Vec::new() };
@@ -2145,10 +2153,26 @@ impl Files {
         }
         // Painel de prévia à direita, separado por uma linha fina.
         if preview_w > 0.0 {
-            ui.at(region.0 + region.2 - preview_w, top, preview_w, |ui| self.preview_panel(ui, body_h));
-            let line = ui.theme().line;
+            ui.at(region.0 + region.2 - preview_w, top, preview_w, |ui| self.preview_panel(ui, body_h, preview_w));
             let x = region.0 + region.2 - preview_w;
-            ui.paint(|canvas, _| mide::ui::draw::fill_rounded(canvas, x, top, 1.0, body_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3])));
+            // A linha divisória se arrasta: o painel (e a prévia dentro dele) aumenta.
+            let input = ui.input().clone();
+            let near = ui.pointer().is_some_and(|p| (p.0 - x).abs() <= 4.0 && p.1 >= top && p.1 <= top + body_h);
+            if near && input.pressed {
+                self.dragging_divider = true;
+            }
+            if self.dragging_divider {
+                if let Some(p) = ui.pointer() {
+                    self.preview_width = (region.0 + region.2 - p.0).clamp(220.0, region.2 * 0.6);
+                }
+                ui.request_repaint();
+                if input.released || !input.down {
+                    self.dragging_divider = false;
+                }
+            }
+            let line = if near || self.dragging_divider { ui.theme().accent } else { ui.theme().line };
+            let width = if near || self.dragging_divider { 2.0 } else { 1.0 };
+            ui.paint(|canvas, _| mide::ui::draw::fill_rounded(canvas, x - (width - 1.0) / 2.0, top, width, body_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3])));
         }
         ui.space(body_h);
         // Rodapé do Finder: barra de caminho (clicar vai até a pasta) e barra de status
@@ -2432,7 +2456,7 @@ impl Files {
 
     /// Painel de prévia (à direita, como no Finder): miniatura grande, nome, tipo e
     /// tamanho, e as informações do item.
-    fn preview_panel(&mut self, ui: &mut Ui, height: f32) {
+    fn preview_panel(&mut self, ui: &mut Ui, height: f32, width: f32) {
         let Some(path) = self.primary().cloned() else {
             ui.scroll_area_padded(height, 16.0, |ui| {
                 ui.space(40.0);
@@ -2445,7 +2469,21 @@ impl Files {
         }
         let entry = self.entries.iter().chain(self.col_cache.values().flatten()).find(|e| e.path == path).cloned();
         let icon = entry.as_ref().map(|e| e.icon_name()).unwrap_or("text-x-generic");
-        let image = if entry.as_ref().is_some_and(Self::wants_thumb) { self.thumb_clone(&path, 220) } else { None };
+        // A prévia ocupa a largura do painel (arrastando a linha, ela aumenta).
+        let side = (width - 40.0).max(120.0) as u32;
+        // Vídeo de outro item: para.
+        if self.preview_video.as_ref().is_some_and(|(p, ..)| *p != path) {
+            self.preview_video = None;
+        }
+        let is_video = entry.as_ref().is_some_and(|e| !e.is_dir) && mide::media::video::is_video(&path);
+        let frame = self.preview_video.as_ref().and_then(|(_, _, pix)| pix.clone());
+        let playing = self.preview_video.as_ref().is_some_and(|(_, p, _)| p.playing());
+        let image = match frame {
+            Some(frame) => Some(frame),
+            None if entry.as_ref().is_some_and(Self::wants_thumb) => self.thumb_clone(&path, side),
+            None => None,
+        };
+        let mut toggle_video = false;
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let kind = entry.as_ref().map(files::kind_text).unwrap_or_default();
         let size = entry.as_ref().filter(|e| !e.is_dir).map(|e| files::size_text(e.size)).unwrap_or_default();
@@ -2453,7 +2491,23 @@ impl Files {
         let mut quick = false;
         ui.scroll_area_padded(height, 16.0, |ui| {
             ui.space(8.0);
-            ui.image_centered(image.as_ref(), icon, 220);
+            ui.image_centered(image.as_ref(), icon, side);
+            // Vídeo: botão de tocar sobre a prévia (pausar enquanto toca).
+            if is_video {
+                // `last_rect` e o ponteiro da entrada estão na janela; o desenho, na área.
+                let r = ui.last_rect();
+                let (cx, cy) = (r.0 + r.2 / 2.0, r.1 + r.3 / 2.0);
+                let rad = 26.0;
+                let pointer = ui.input().pointer;
+                let over = pointer.is_some_and(|p| (p.0 - cx).powi(2) + (p.1 - cy).powi(2) <= rad * rad);
+                let hovered_image = pointer.is_some_and(|p| p.0 >= r.0 && p.0 <= r.0 + r.2 && p.1 >= r.1 && p.1 <= r.1 + r.3);
+                if !playing || hovered_image {
+                    ui.paint(|canvas, off| play_button(canvas, cx - off.0, cy - off.1, rad, playing, over));
+                }
+                if over && ui.input().pressed {
+                    toggle_video = true;
+                }
+            }
             ui.strong(&name);
             ui.note(&if size.is_empty() { kind.clone() } else { format!("{kind} - {size}") });
             ui.separator();
@@ -2468,7 +2522,33 @@ impl Files {
             quick = ui.button("Visualização Rápida").clicked();
         });
         if quick {
-            self.quick_look = Some(path);
+            self.quick_look = Some(path.clone());
+        }
+        if toggle_video {
+            match self.preview_video.as_mut() {
+                Some((_, player, _)) => player.toggle(),
+                None => {
+                    if let Some(mut player) = mide::media::video::Player::open(&path, (side, side), true) {
+                        tracing::info!("arquivos: tocando {} na prévia", path.display());
+                        player.play();
+                        self.preview_video = Some((path.clone(), player, None));
+                    }
+                }
+            }
+            ui.request_repaint();
+        }
+        // Avança o vídeo da prévia (o tamanho segue a largura do painel).
+        if let Some((_, player, pix)) = self.preview_video.as_mut() {
+            player.resize((side, side));
+            if player.tick() {
+                if let Some(f) = player.frame() {
+                    let frame = tiny_skia::IntSize::from_wh(f.width, f.height).and_then(|s| tiny_skia::Pixmap::from_vec(f.pixels.clone(), s));
+                    *pix = frame.map(|frame| fit_inside(frame, side));
+                }
+            }
+            if let Some(due) = player.next_due() {
+                ui.wake_after(due);
+            }
         }
     }
 
