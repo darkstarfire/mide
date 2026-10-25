@@ -75,6 +75,42 @@ pub struct Entry {
     pub app: String,
     pub summary: String,
     pub body: String,
+    /// Arquivo que abre no clique (gravação ou captura salva; vazio se nenhum).
+    pub open: String,
+    /// `.desktop` do app que mandou (dica `desktop-entry`; vazio se não veio): o clique
+    /// traz o app para a frente, ou o abre.
+    pub app_id: String,
+}
+
+impl Entry {
+    /// Aviso simples, sem arquivo nem app para abrir.
+    pub fn new(time: u64, app: &str, summary: &str, body: &str) -> Self {
+        Self { time, app: app.into(), summary: summary.into(), body: body.into(), open: String::new(), app_id: String::new() }
+    }
+}
+
+/// O que fazer ao clicar num aviso (no banner sem ação do app, ou na central): abrir o
+/// arquivo salvo, senão trazer o app que avisou para a frente (ou abri-lo).
+pub fn activate(open: &str, app_id: &str) {
+    if !open.is_empty() {
+        tracing::info!("aviso: abrir {open}");
+        crate::places::open(open);
+        return;
+    }
+    if app_id.is_empty() {
+        return;
+    }
+    let id = app_id.trim_end_matches(".desktop").to_lowercase();
+    let short = id.rsplit('.').next().unwrap_or(&id).to_string();
+    let found = crate::control_client::ask_compositor(&format!("activate {id} {short}")).is_some_and(|r| r.first().is_some_and(|l| l == "ok"));
+    if found {
+        tracing::info!("aviso: app {id} na frente");
+        return;
+    }
+    if let Some(app) = crate::apps::load().into_iter().find(|a| a.id.to_lowercase() == id) {
+        tracing::info!("aviso: abrindo {id}");
+        let _ = crate::apps::launch(&app);
+    }
 }
 
 /// Quantas notificações o histórico guarda.
@@ -92,7 +128,7 @@ pub fn history_path() -> Option<std::path::PathBuf> {
 /// quebra de linha escapados.
 pub fn encode(entry: &Entry) -> String {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n");
-    format!("{}\t{}\t{}\t{}", entry.time, esc(&entry.app), esc(&entry.summary), esc(&entry.body))
+    format!("{}\t{}\t{}\t{}\t{}\t{}", entry.time, esc(&entry.app), esc(&entry.summary), esc(&entry.body), esc(&entry.open), esc(&entry.app_id))
 }
 
 pub fn decode(line: &str) -> Option<Entry> {
@@ -115,7 +151,14 @@ pub fn decode(line: &str) -> Option<Entry> {
     };
     let mut parts = line.split('\t');
     let time = parts.next()?.parse().ok()?;
-    Some(Entry { time, app: unesc(parts.next()?), summary: unesc(parts.next()?), body: unesc(parts.next().unwrap_or("")) })
+    Some(Entry {
+        time,
+        app: unesc(parts.next()?),
+        summary: unesc(parts.next()?),
+        body: unesc(parts.next().unwrap_or("")),
+        open: unesc(parts.next().unwrap_or("")),
+        app_id: unesc(parts.next().unwrap_or("")),
+    })
 }
 
 /// Histórico, da mais nova para a mais antiga.
@@ -179,7 +222,9 @@ mod tests {
 
     #[test]
     fn historico_guarda_e_le_de_volta() {
-        let entry = Entry { time: 1_700_000_000, app: "Correio".into(), summary: "Nova\tmensagem".into(), body: "linha 1\nlinha 2 \\ fim".into() };
+        let mut entry = Entry::new(1_700_000_000, "Correio", "Nova\tmensagem", "linha 1\nlinha 2 \\ fim");
+        entry.open = "/tmp/vídeo 1.mp4".into();
+        entry.app_id = "org.gnome.Evolution".into();
         assert_eq!(decode(&encode(&entry)), Some(entry));
         assert_eq!(decode("lixo"), None);
         assert_eq!(decode("12\tApp\tTítulo").unwrap().body, "");

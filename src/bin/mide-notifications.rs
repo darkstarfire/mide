@@ -92,6 +92,8 @@ struct Note {
     shown_at: Instant,
     /// Arquivo que abre no clique (dica do mide: gravação ou captura salva).
     open: Option<String>,
+    /// `.desktop` do app que mandou (dica `desktop-entry`).
+    app_id: Option<String>,
 }
 
 /// Mensagens do servidor D-Bus (outra thread) para a interface.
@@ -138,6 +140,8 @@ impl Server {
             app: app_name.clone(),
             summary: notify::plain_text(&summary),
             body: notify::plain_text(&body),
+            open: hint_str(&hints, notify::OPEN_HINT).unwrap_or_default(),
+            app_id: hint_str(&hints, "desktop-entry").unwrap_or_default(),
         });
         // Não perturbe (central de controle): só as urgentes aparecem.
         let dnd = matches!(mide::settings_file::get("notifications", "dnd"), Some(mide::settings_file::Value::Bool(true)));
@@ -167,6 +171,7 @@ impl Server {
             timeout: notify::timeout(expire_timeout, urgency),
             shown_at: Instant::now(),
             open: hint_str(&hints, notify::OPEN_HINT),
+            app_id: hint_str(&hints, "desktop-entry"),
         };
         if let Ok(sender) = self.sender.lock() {
             let _ = sender.send(Msg::Notify(note));
@@ -743,18 +748,22 @@ impl PointerHandler for Banners {
                         }
                         Some(Spot::Body(i)) => {
                             // Clique no banner: a ação padrão do app, e o banner sai.
-                            let (has_default, id, open) = match self.notes.get(i) {
-                                Some(n) => (n.has_default, n.id, n.open.clone()),
+                            let (has_default, id, open, app_id) = match self.notes.get(i) {
+                                Some(n) => (n.has_default, n.id, n.open.clone(), n.app_id.clone()),
                                 None => continue,
                             };
                             // Gravação ou captura salva: abre o arquivo (vídeo no player).
                             if let Some(path) = open {
-                                tracing::info!("notificação {id}: abrir {path}");
-                                mide::places::open(&path);
+                                mide::notify::activate(&path, "");
                                 self.remove(id, reason::DISMISSED);
                             } else if has_default {
                                 self.invoke(i, "default");
                             } else {
+                                // Sem ação do app: como no Mac, o app que avisou vem para a
+                                // frente (ou abre), e o banner sai.
+                                if let Some(app_id) = app_id {
+                                    std::thread::spawn(move || mide::notify::activate("", &app_id));
+                                }
                                 self.remove(id, reason::DISMISSED);
                             }
                         }

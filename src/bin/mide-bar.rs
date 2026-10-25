@@ -268,6 +268,8 @@ enum PanelAction {
     ClearNotifications,
     /// Painel de som: tocar por esta saída (número do nó do PipeWire).
     AudioOutput(u32),
+    /// Central de notificações: aviso clicado (índice no histórico).
+    Notification(usize),
 }
 
 /// Títulos dos menus do app, depois do nome dele.
@@ -1915,9 +1917,15 @@ impl Bar {
         let now = std::time::SystemTime::now();
         // Só as que cabem na tela (até 5).
         let fits = (((self.panel_room - y - 30.0) / 62.0).floor().max(1.0) as usize).min(5);
-        for entry in self.history.clone().iter().take(fits) {
-            // Cartão claro com app e hora, título e a primeira linha do texto.
-            fill_rounded(p, 10.0, y, pw - 20.0, 56.0, 10.0, rgba(255, 255, 255, 140));
+        for (i, entry) in self.history.clone().iter().take(fits).enumerate() {
+            // Cartão claro com app e hora, título e a primeira linha do texto. Clicável
+            // quando há o que abrir (o arquivo salvo ou o app que avisou).
+            let clickable = !entry.open.is_empty() || !entry.app_id.is_empty();
+            let hovered = clickable && hover == Some(regions.len());
+            fill_rounded(p, 10.0, y, pw - 20.0, 56.0, 10.0, rgba(255, 255, 255, if hovered { 200 } else { 140 }));
+            if clickable {
+                regions.push(((10.0, y, pw - 20.0, 56.0), PanelAction::Notification(i)));
+            }
             let when = mide::files::date_text(std::time::UNIX_EPOCH + Duration::from_secs(entry.time), now);
             let ww = self.text.measure(&when, 11.0, FontWeight::Regular);
             let app = fit_label(&mut self.text, &entry.app, 11.0, pw - 52.0 - ww);
@@ -2279,6 +2287,14 @@ impl Bar {
                     if let Some(menu) = self.menu.as_mut() {
                         menu.dragging_volume = true;
                     }
+                }
+            }
+            PanelAction::Notification(i) => {
+                if let Some(entry) = self.history.get(i).cloned() {
+                    tracing::info!("central de notificações: aviso {i} clicado");
+                    self.close_menu();
+                    std::thread::spawn(move || mide::notify::activate(&entry.open, &entry.app_id));
+                    return;
                 }
             }
             PanelAction::AudioOutput(id) => {

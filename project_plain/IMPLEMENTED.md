@@ -1706,3 +1706,7 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 - **Menus da barra dentro da tela**: a posição passou a usar a largura real do menu; o de idiomas, mais largo, cortava na borda direita.
 - **Som da Lixeira** (o usuário achou o anterior um chiado ruim): um sopro curto e macio, sem estalos, baixinho; esvaziar termina com um baque leve. Teste confere que não há saltos bruscos e o volume é baixo.
 - **Reorganização de `src/`**: compositor em `src/compositor/`, biblioteca por assunto (`platform`, `shell`, `applications`, `storage`, `documents`), caminhos curtos mantidos.
+
+## Avisos clicáveis na central de notificações (2026-10-25)
+
+- Os cartões da central (painel do relógio) são clicáveis, com destaque ao passar o ponteiro: o aviso de captura ou gravação salva abre o arquivo; os outros trazem para a frente o app que avisou (dica `desktop-entry`, por exemplo o navegador depois de um download), ou o abrem. O banner sem ação do app faz o mesmo (como no Mac). O histórico guarda o arquivo e o app (`notify::Entry::open`/`app_id`, linhas antigas continuam valendo); `notify::activate` faz a ação.
