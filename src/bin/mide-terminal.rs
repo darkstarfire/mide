@@ -44,7 +44,11 @@ const PAD: f32 = 6.0;
 const TITLE: &str = "Terminal";
 /// Saída processada por quadro em cada painel (o resto fica para o próximo).
 const CHUNK: usize = 4 << 20;
-const TAB_BAR: f32 = 30.0;
+const TAB_BAR: f32 = 34.0;
+/// Faixa do título (Tahoe: na cor do terminal, com os botões da janela).
+const TITLE_BAR: f32 = 36.0;
+/// Espaço embaixo para o texto não encostar no canto arredondado da janela.
+const BOTTOM_INSET: f32 = 6.0;
 const FIND_BAR: f32 = 40.0;
 
 /// Linha de comando.
@@ -912,10 +916,14 @@ impl TerminalApp {
     // ---- Áreas ----
 
     fn areas(&self, (w, h): (f32, f32)) -> (Option<Rect>, Option<Rect>, Rect) {
-        let mut y = 0.0;
+        // Janela comum: a faixa do título em cima (o terminal de atalho não tem).
+        let content = self.hotkey.is_none();
+        let mut y = if content { TITLE_BAR } else { 0.0 };
+        let h = if content { h - BOTTOM_INSET } else { h };
         let tab_bar = (self.tabs.len() > 1).then(|| {
+            let r = (0.0, y, w, TAB_BAR);
             y += TAB_BAR;
-            (0.0, 0.0, w, TAB_BAR)
+            r
         });
         let find_bar = self.find.is_some().then(|| {
             let r = (0.0, y, w, FIND_BAR);
@@ -1411,19 +1419,19 @@ impl TerminalApp {
         ui.paint_text(|pixmap, text, (ox, oy)| {
             let (x0, y0) = (ox + rect.0, oy + rect.1);
             fill(pixmap, x0, y0, rect.2, rect.3, c.bar);
-            fill(pixmap, x0, y0 + rect.3 - 1.0, rect.2, 1.0, c.line);
+            // Tahoe: cada aba é uma cápsula; a ativa, mais clara.
             for (i, title) in titles.iter().enumerate() {
                 let x = x0 + i as f32 * width;
+                let pill = |pixmap: &mut Pixmap, col: Rgb| mide::ui::draw::fill_rounded(pixmap, x + 3.0, y0 + 3.0, width - 6.0, rect.3 - 6.0, (rect.3 - 6.0) / 2.0, mide::ui::draw::rgba(col[0], col[1], col[2], 255));
                 if i == active {
-                    fill(pixmap, x, y0, width, rect.3, c.active);
+                    pill(pixmap, c.active);
                 } else if hovered == Some(i) {
-                    fill(pixmap, x, y0, width, rect.3 - 1.0, c.hover);
-                }
-                if i > 0 {
-                    fill(pixmap, x, y0 + 6.0, 1.0, rect.3 - 12.0, c.line);
+                    pill(pixmap, c.hover);
+                } else if i > 0 && active != i - 1 {
+                    fill(pixmap, x, y0 + 10.0, 1.0, rect.3 - 20.0, c.line);
                 }
                 if hovered == Some(i) && n > 1 {
-                    text.draw(pixmap, "×", x + 9.0, y0 + 5.0, 15.0, FontWeight::Regular, c.dim);
+                    text.draw(pixmap, "×", x + 11.0, y0 + (rect.3 - 15.0 * 1.25) / 2.0, 15.0, FontWeight::Regular, c.dim);
                 }
                 let size = 12.5;
                 let label = fit(text, title, size, width - 52.0);
@@ -1435,7 +1443,7 @@ impl TerminalApp {
                 }
             }
             let px = x0 + n as f32 * width;
-            text.draw(pixmap, "+", px + 11.0, y0 + 4.0, 17.0, FontWeight::Regular, c.dim);
+            text.draw(pixmap, "+", px + 11.0, y0 + (rect.3 - 17.0 * 1.25) / 2.0, 17.0, FontWeight::Regular, c.dim);
         });
         if let Some(i) = close {
             match self.tabs[i].tmux {
@@ -1453,6 +1461,27 @@ impl TerminalApp {
         if new_tab {
             self.new_tab();
         }
+    }
+
+    /// Faixa do título do Tahoe: na cor do terminal, os botões da janela à esquerda e o
+    /// título no meio ("título — colunas×linhas", como o Terminal do Mac); arrastar move
+    /// a janela e o duplo clique maximiza. Embaixo, a margem que deixa o canto livre.
+    fn title_bar(&mut self, ui: &mut Ui, w: f32, h: f32) {
+        let focused = self.focused().and_then(|id| self.panes.get(&id));
+        let bg = focused.map(|p| p.term.default_bg());
+        let c = bar_colors(bg);
+        let strip = bg.map_or(c.bar, |b| [b[0], b[1], b[2]]);
+        let title = focused.map(|p| format!("{} — {}×{}", p.title(), p.term.cols(), p.term.rows())).unwrap_or_default();
+        ui.paint_text(|pixmap, text, (ox, oy)| {
+            fill(pixmap, ox, oy, w, TITLE_BAR, strip);
+            fill(pixmap, ox, oy + h - BOTTOM_INSET, w, BOTTOM_INSET, strip);
+            let size = 13.0;
+            let label = fit(text, &title, size, w - 200.0);
+            let tw = text.measure(&label, size, FontWeight::Semibold);
+            text.draw(pixmap, &label, ox + (w - tw) / 2.0, oy + (TITLE_BAR - size * 1.25) / 2.0, size, FontWeight::Semibold, c.dim);
+        });
+        ui.window_controls(14.0, (TITLE_BAR - 12.0) / 2.0);
+        ui.window_drag_area((0.0, 0.0, w, TITLE_BAR));
     }
 
     fn find_bar(&mut self, ui: &mut Ui, rect: Rect) {
@@ -1722,6 +1751,9 @@ impl App for TerminalApp {
             ui.paint(|pixmap, (ox, oy)| fill_alpha(pixmap, ox, oy + h - 1.0, w, 1.0, [0, 0, 0], 0.3));
         }
         self.mouse(ui, area);
+        if self.hotkey.is_none() {
+            self.title_bar(ui, w, h);
+        }
         if let Some(rect) = tab_bar.filter(|_| self.tabs.len() > 1) {
             self.tab_bar(ui, rect);
         }
@@ -2752,14 +2784,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     let options = Options::parse(std::env::args().skip(1));
     if options.preferences {
-        let window = Window::new("Preferências do Terminal").app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420);
+        let window = Window::new("Preferências do Terminal").app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420).full_size_content();
         return run(window, Preferences { profiles: Profiles::load(), selected: 0, message: None, color_slot: 1, color_text: String::new(), shown: None, families: Text::new().monospace_families() });
     }
     if options.hotkey {
         return run_hotkey(options);
     }
     // A grade do terminal é pintada à mão (`ui.paint`) em pixels: escala 1 por enquanto.
-    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).fixed_scale();
+    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).fixed_scale().full_size_content();
     run(window, TerminalApp::new(options))
 }
 
