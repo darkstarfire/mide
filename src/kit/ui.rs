@@ -1002,7 +1002,7 @@ impl<'a> Ui<'a> {
     /// Cor da seleção: o destaque com a janela em foco e cinza sem foco, como no Mac.
     fn selection_fill(&self) -> Rgba {
         let t = &self.ctx.theme;
-        if self.ctx.input.focused { t.accent } else { t.shade(if t.dark { 50 } else { 30 }) }
+        if self.ctx.input.window_active() { t.accent } else { t.shade(if t.dark { 50 } else { 30 }) }
     }
 
     /// Os três botões da janela (fechar, minimizar, maximizar), com o canto de cima à
@@ -1020,7 +1020,7 @@ impl<'a> Ui<'a> {
         let group = (x - 4.0, y - 4.0, width + 8.0, LIGHT_SIZE + 8.0);
         let blocked = self.ctx.memory.modal_rect.is_some() && !self.ctx.in_modal;
         let group_hover = !blocked && self.ctx.input.over(group);
-        let focused = self.ctx.input.focused;
+        let focused = self.ctx.input.window_active();
         // Regra do Tahoe: janela de tamanho fixo tem minimizar e maximizar cinza e sem ação.
         if self.ctx.fixed_size {
             self.window_close_only(x, y);
@@ -1091,7 +1091,7 @@ impl<'a> Ui<'a> {
         if r.clicked {
             self.ctx.window_request = Some(WindowRequest::Close);
         }
-        let focused = self.ctx.input.focused;
+        let focused = self.ctx.input.window_active();
         let red = if focused || r.hovered { LIGHT_COLORS[0] } else { t.shade(if t.dark { 60 } else { 38 }) };
         fill_rounded(self.canvas, x, y, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE / 2.0, color(red));
         if r.hovered {
@@ -3355,7 +3355,7 @@ impl<'a> Ui<'a> {
             let h = t.font_small * 1.4;
             fill_rounded(self.canvas, lx - 6.0, ly - 1.0, lw + 12.0, h, h / 2.0, color(self.selection_fill()));
         }
-        let c = if selected && self.ctx.input.focused { t.on_accent } else { t.tile_text };
+        let c = if selected && self.ctx.input.window_active() { t.on_accent } else { t.tile_text };
         // Nome claro (sobre o papel de parede): sombra escura embaixo para ler bem.
         let light = (t.tile_text[0] as u32 + t.tile_text[1] as u32 + t.tile_text[2] as u32) > 600;
         if light && !selected {
@@ -3475,7 +3475,7 @@ impl<'a> Ui<'a> {
         } else if striped {
             fill_rounded(self.canvas, rect.0, rect.1, rect.2, rect.3, super::theme::RADIUS_ITEM, color(t.shade(10)));
         }
-        let on = selected && self.ctx.input.focused;
+        let on = selected && self.ctx.input.window_active();
         let (main, side) = if on { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         if expandable {
             // Triângulo: para a direita fechado, para baixo aberto.
@@ -3535,7 +3535,7 @@ impl<'a> Ui<'a> {
         }
         let cols: f32 = columns.iter().map(|c| c.1).sum();
         let ty = rect.1 + (28.0 - t.font * 1.25) / 2.0;
-        let (main, side) = if selected && self.ctx.input.focused { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
+        let (main, side) = if selected && self.ctx.input.window_active() { (t.on_accent, t.on_accent) } else { (t.text, t.text_secondary) };
         let shown = self.fit(label, t.font, FontWeight::Regular, (rect.2 - 40.0 - cols).max(0.0));
         self.draw_text(&shown, rect.0 + 36.0, ty, t.font, FontWeight::Regular, main);
         let mut cx = rect.0 + rect.2 - cols;

@@ -1136,6 +1136,11 @@ impl WindowHandler for Runner {
     fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &XdgWindow, configure: WindowConfigure, _: u32) {
         self.maximized = configure.is_maximized();
         self.ctx.maximized = configure.is_maximized();
+        let active = configure.is_activated();
+        if self.ctx.input.active != Some(active) {
+            self.ctx.input.active = Some(active);
+            self.dirty = true;
+        }
         let constrained = configure.is_maximized()
             || configure.is_fullscreen()
             || configure.is_tiled_left()

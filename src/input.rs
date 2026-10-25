@@ -326,6 +326,11 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 finish_switcher(state, false);
                 return FilterResult::Intercept(None);
             }
+            // Esc com a mesa à mostra: as janelas voltam.
+            if state.desktop_revealed() && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape && !mods.ctrl && !mods.alt && !mods.logo {
+                state.restore_revealed_and_focus();
+                return FilterResult::Intercept(None);
+            }
             tracing::debug!(
                 "tecla: {} (logo={}, ctrl={}, alt={}, shift={})",
                 xkbcommon::xkb::keysym_get_name(keysym.modified_sym()),
@@ -524,20 +529,9 @@ fn run_action(state: &mut State, action: Action) {
                 _ => {}
             }
         }
-        Action::ShowDesktop => {
-            // Minimiza todas as janelas à mostra (a área de trabalho aparece).
-            // As que já estão saindo (minimizadas, na animação) ficam como estão.
-            let surfaces: Vec<_> = state
-                .space
-                .elements()
-                .filter(|w| interactive(state, w))
-                .filter_map(|w| w.toplevel().map(|t| t.wl_surface().clone()))
-                .collect();
-            tracing::info!("mostrar a área de trabalho: {} janela(s) minimizada(s)", surfaces.len());
-            for surface in surfaces {
-                state.minimize(&surface);
-            }
-        }
+        // Como no macOS: as janelas se afastam para as bordas (e voltam no segundo
+        // aperto), sem minimizar.
+        Action::ShowDesktop => state.toggle_reveal_desktop(),
         // A tela de bloqueio do mide (`mide-lock`), pelo protocolo de bloqueio.
         Action::LockScreen => crate::lock::request(state, "atalho"),
     }
@@ -789,6 +783,16 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
             pointer.frame(state);
             return;
         }
+        // Mesa à mostra: um clique numa janela afastada traz todas de volta (o clique
+        // não chega ao app, como no macOS).
+        if state.desktop_revealed() {
+            if let Some(window) = window_under(state, pos) {
+                state.space.raise_element(&window, true);
+                focus_window(state, &window, serial);
+                state.title_press = true;
+                return;
+            }
+        }
         // Bordas e cantos redimensionam; a barra de título é do mide. Nenhum dos
         // dois chega ao app.
         if resize_press(state, pos, serial) {
@@ -800,7 +804,14 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
             return;
         }
         match surface_under(state, pos) {
-            None => dismiss_popups(state),
+            None => {
+                dismiss_popups(state);
+                // Papel de parede sem a área de trabalho por cima (`mide-desktop` fora):
+                // o clique mostra a mesa. Com ela, quem avisa é o `mide-desktop`.
+                if state.config.desktop.click_reveals() && window_under(state, pos).is_none() {
+                    state.toggle_reveal_desktop();
+                }
+            }
             Some((surface, _)) => {
                 // Clique na área de trabalho também fecha os popups abertos.
                 if back_layer_under(state, pos).is_some_and(|(s, _)| s == surface) {
@@ -1038,12 +1049,16 @@ pub fn focus_window(state: &mut State, window: &Window, serial: smithay::utils::
     };
 
     tracing::debug!("foco do teclado: nova janela ativa");
+    // Mesa à mostra: focar uma janela (clique, dock, Alt+Tab, app novo) traz todas de volta.
+    state.restore_revealed();
     for other in state.space.elements() {
         if let Some(toplevel) = other.toplevel() {
             set_activated(toplevel, other == window);
         }
     }
     keyboard.set_focus(state, Some(target), serial);
+    // As luzes e a sombra seguem o foco na hora (sem esperar o app responder).
+    state.wake();
 }
 
 fn set_activated(toplevel: &ToplevelSurface, activated: bool) {
@@ -1058,7 +1073,9 @@ fn set_activated(toplevel: &ToplevelSurface, activated: bool) {
         }
         had != activated
     });
-    if changed {
+    // Antes do primeiro commit o app não pode receber configure: o inicial (no commit)
+    // já leva o estado.
+    if changed && toplevel.is_initial_configure_sent() {
         toplevel.send_configure();
     }
 }

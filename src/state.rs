@@ -194,6 +194,11 @@ pub struct State {
     pub recording: Option<crate::record::Recording>,
     /// Janelas minimizadas, da mais antiga para a mais recente.
     pub minimized: Vec<MinimizedWindow>,
+    /// Mesa à mostra (clique no papel de parede ou Super+D): janelas afastadas para as
+    /// bordas e onde cada uma estava. Vazio: as janelas estão no lugar.
+    pub revealed: Vec<(Window, Point<i32, Logical>)>,
+    /// Janela nova que recebe o foco no primeiro commit (depois do configure inicial).
+    pub focus_on_map: Option<WlSurface>,
     /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
     /// tecla apertada (o soltar usa a mesma).
     pub mac_keys: MacKeys,
@@ -398,6 +403,8 @@ impl State {
             commits: std::collections::HashMap::new(),
             recording: None,
             minimized: Vec::new(),
+            revealed: Vec::new(),
+            focus_on_map: None,
             hidden: Vec::new(),
             mac_keys: MacKeys::default(),
             shown: Default::default(),
@@ -633,6 +640,17 @@ impl CompositorHandler for State {
         }
         self.follow_toplevel_mapping(surface);
         if let Some(window) = self.window_for(surface) {
+            // Primeiro commit da janela: o configure inicial (com o foco já decidido).
+            if let Some(toplevel) = window.toplevel() {
+                if !toplevel.is_initial_configure_sent() {
+                    toplevel.send_configure();
+                    if self.focus_on_map.as_ref() == Some(surface) {
+                        self.focus_on_map = None;
+                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                        crate::input::focus_window(self, &window, serial);
+                    }
+                }
+            }
             window.on_commit();
             self.center_dialog_once(&window);
             self.open_animation_if_launched(&window);

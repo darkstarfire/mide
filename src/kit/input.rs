@@ -71,6 +71,10 @@ pub struct Input {
     pub menu: Vec<String>,
     /// A janela está com o foco do teclado.
     pub focused: bool,
+    /// O compositor marcou a janela como ativa (`activated` do xdg-shell); `None` em
+    /// camadas. Vale mais que o teclado para a aparência: um menu ou painel que pega o
+    /// teclado não deixa a janela com cara de inativa.
+    pub active: Option<bool>,
     /// Alguma tecla deste quadro veio da repetição de uma tecla segurada.
     pub repeat: bool,
     /// Um arrasto com arquivos (de outro app ou desta janela) está sobre a janela; o
@@ -84,6 +88,11 @@ pub struct Input {
 }
 
 impl Input {
+    /// A janela tem cara de ativa (luzes coloridas, seleção na cor de destaque).
+    pub fn window_active(&self) -> bool {
+        self.active.unwrap_or(self.focused)
+    }
+
     /// Limpa o que vale só para um quadro (o estado do botão e a posição ficam).
     pub fn end_frame(&mut self) {
         self.pressed = false;

@@ -128,6 +128,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Suspender o computador após", "energia suspender dormir repouso inatividade bateria", Section::Energy),
     ("Botão de ligar", "energia botao ligar desligar power suspender", Section::Energy),
     ("Apps padrão", "apps padrao navegador email abrir com pdf imagens videos musica pastas texto", Section::DefaultApps),
+    ("Clicar no papel de parede mostra a mesa", "mesa area de trabalho papel de parede clicar afastar janelas mostrar desktop", Section::Wallpaper),
     ("Itens de início", "iniciar sessao login startup autostart abrir ao entrar apps comandos scripts", Section::LoginItems),
     ("Sobre este computador", "sistema versao memoria processador", Section::About),
 ];
@@ -635,6 +636,19 @@ impl Settings {
             return;
         }
         ui.title("Papel de parede");
+        ui.card(|ui| {
+            let mut on = settings_file::flag("desktop", "click_reveal", true);
+            if ui.switch_detail("Clicar no papel de parede mostra a mesa", "As janelas se afastam para as bordas; outro clique, Esc ou um clique numa janela as traz de volta", &mut on).changed() {
+                // Ligado é o padrão: grava só quando desliga.
+                match settings_file::set("desktop", "click_reveal", (!on).then_some(Value::Bool(false))) {
+                    Ok(()) => {
+                        tracing::info!("mesa: clique no papel de parede {}", if on { "ligado" } else { "desligado" });
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("opção da mesa não gravada: {err}"),
+                }
+            }
+        });
         let current = current_wallpaper();
         let mut chosen = None;
         let mut remove = None;
@@ -1975,7 +1989,7 @@ fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
         "minimize" => "Minimizar a janela".into(),
         "tile_left" => "Janela na metade esquerda".into(),
         "tile_right" => "Janela na metade direita".into(),
-        "show_desktop" => "Mostrar a área de trabalho".into(),
+        "show_desktop" => "Mostrar a mesa".into(),
         "lock_screen" => "Bloquear a tela".into(),
         "launch:mide-screenshot" => "Captura de tela".into(),
         "launch:mide-terminal --hotkey" => "Mostrar ou esconder o terminal de atalho".into(),

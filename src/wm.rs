@@ -40,8 +40,9 @@ impl State {
     /// cascata e foco.
     pub fn map_new_window(&mut self, surface: ToplevelSurface) {
         tracing::info!("nova janela criada");
-        // Sem o configure inicial o cliente nunca desenha a janela.
-        surface.send_configure();
+        // O configure inicial sai no primeiro commit do app (`commit` em `state.rs`), como
+        // pede o protocolo, já com o foco e o resto decididos aqui. Mandado antes, o app
+        // podia perder o configure seguinte (ficava sem saber que é a janela ativa).
 
         // Janelas novas entram em cascata, para não nascerem uma sobre a outra, a partir
         // do canto da área útil (abaixo da barra superior).
@@ -57,8 +58,13 @@ impl State {
         self.space.map_element(window.clone(), at, true);
 
         // Como no macOS, a janela recém-aberta recebe o foco.
-        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        crate::input::focus_window(self, &window, serial);
+        // O foco vem no primeiro commit, logo depois do configure inicial (`commit`):
+        // teclado antes do configure derruba alguns apps (o foot cai). O estado "ativa"
+        // já vai no configure inicial.
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.with_pending_state(|s| s.states.set(XdgState::Activated));
+            self.focus_on_map = Some(toplevel.wl_surface().clone());
+        }
     }
 
     /// A janela do app foi destruída: sai do espaço e deixa a foto dela esmaecendo
@@ -607,3 +613,117 @@ mod tests {
     }
 }
 
+
+/// Quanto de cada janela fica à mostra na borda com a mesa à mostra.
+const REVEAL_PEEK: i32 = 56;
+/// Duração do afastar e voltar das janelas.
+const REVEAL_DURATION: Duration = Duration::from_millis(380);
+
+/// Mostrar a mesa (como clicar no papel de parede no macOS): as janelas deslizam para a
+/// borda mais próxima, deixando uma faixa à mostra, e voltam com outro clique no papel
+/// de parede, Esc, um clique numa janela ou ao abrir ou focar um app.
+impl State {
+    /// A mesa está à mostra?
+    pub fn desktop_revealed(&self) -> bool {
+        !self.revealed.is_empty()
+    }
+
+    /// Afasta as janelas, ou as traz de volta.
+    pub fn toggle_reveal_desktop(&mut self) {
+        if self.desktop_revealed() {
+            self.restore_revealed_and_focus();
+        } else {
+            self.reveal_desktop();
+        }
+    }
+
+    /// Afasta as janelas à mostra para as bordas da tela delas.
+    pub fn reveal_desktop(&mut self) {
+        if self.desktop_revealed() {
+            return;
+        }
+        let windows: Vec<Window> = self
+            .space
+            .elements()
+            .filter(|w| !self.minimized.iter().any(|m| &m.window == *w))
+            .filter(|w| !self.animations.iter().any(|a| &a.window == *w && a.hide_at_end))
+            .cloned()
+            .collect();
+        for window in windows {
+            let Some(loc) = self.space.element_location(&window) else {
+                continue;
+            };
+            let output = self.space.outputs_for_element(&window).first().cloned().or_else(|| self.primary_output());
+            let Some(screen) = output.and_then(|o| self.space.output_geometry(&o)) else {
+                continue;
+            };
+            let w = window.geometry().size.w;
+            // Para o lado mais perto: o centro da janela decide.
+            let to_x = if loc.x + w / 2 < screen.loc.x + screen.size.w / 2 {
+                screen.loc.x - w + REVEAL_PEEK
+            } else {
+                screen.loc.x + screen.size.w - REVEAL_PEEK
+            };
+            self.slide_window(&window, loc, (to_x, loc.y).into());
+            self.revealed.push((window, loc));
+        }
+        tracing::info!("mesa à mostra: {} janela(s) afastada(s)", self.revealed.len());
+    }
+
+    /// Traz as janelas afastadas de volta para onde estavam.
+    pub fn restore_revealed(&mut self) {
+        let revealed = std::mem::take(&mut self.revealed);
+        if revealed.is_empty() {
+            return;
+        }
+        tracing::info!("mesa: {} janela(s) de volta", revealed.len());
+        for (window, loc) in revealed {
+            // Fechada ou minimizada enquanto isso: fica como está.
+            if self.minimized.iter().any(|m| m.window == window) {
+                continue;
+            }
+            let Some(now) = self.space.element_location(&window) else {
+                continue;
+            };
+            self.slide_window(&window, now, loc);
+        }
+    }
+
+    /// Traz as janelas de volta e devolve o foco à de cima (Esc, segundo clique no
+    /// papel de parede, Super+D): a área de trabalho tinha ficado com o teclado.
+    pub fn restore_revealed_and_focus(&mut self) {
+        let top = self.revealed.iter().map(|(w, _)| w.clone()).collect::<Vec<_>>();
+        self.restore_revealed();
+        let window = self.space.elements().rev().find(|w| top.contains(w)).cloned();
+        if let Some(window) = window {
+            crate::input::focus_window(self, &window, smithay::utils::SERIAL_COUNTER.next_serial());
+        }
+    }
+
+    /// Move a janela de `from` a `to`, deslizando se as animações estão ligadas.
+    fn slide_window(&mut self, window: &Window, from: Point<i32, Logical>, to: Point<i32, Logical>) {
+        if let (Some(toplevel), true) = (window.toplevel(), self.config.effects.animations) {
+            let surface = toplevel.wl_surface().clone();
+            let size = window.geometry().size;
+            self.animations.retain(|a| a.surface != surface);
+            self.animations.push(WindowAnimation {
+                window: window.clone(),
+                surface,
+                from_loc: from,
+                from_size: size,
+                to_loc: to,
+                to_size: size,
+                zoom_from: 1.0,
+                zoom_to: 1.0,
+                alpha_from: 1.0,
+                alpha_to: 1.0,
+                hide_at_end: false,
+                genie: false,
+                duration: REVEAL_DURATION,
+                start: Instant::now(),
+            });
+        }
+        self.space.map_element(window.clone(), to, false);
+        self.wake();
+    }
+}

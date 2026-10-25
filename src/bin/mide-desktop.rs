@@ -326,6 +326,14 @@ impl App for Desktop {
             self.selected = None;
             ui.request_repaint();
         }
+        // Clique no papel de parede (espaço vazio): o compositor afasta as janelas para
+        // mostrar a mesa, ou as traz de volta (como no macOS). Numa thread: o desenho
+        // não espera a resposta.
+        if bg.clicked() {
+            std::thread::spawn(|| {
+                let _ = mide::control_client::ask_compositor("reveal");
+            });
+        }
         let has_dir = self.dir.is_some();
         ui.context_menu(&bg, |m| {
             let mut chosen = None;

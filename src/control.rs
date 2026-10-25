@@ -264,6 +264,24 @@ pub fn handle(state: &mut State, command: &str) -> String {
             }
             out
         }
+        // Mesa: `reveal` (clique no papel de parede: afasta ou traz as janelas de volta,
+        // se a opção estiver ligada), `reveal on|off`, `reveal state`.
+        Some("reveal") => match words.next() {
+            Some("state") => if state.desktop_revealed() { "on\n".into() } else { "off\n".into() },
+            Some("on") => {
+                state.reveal_desktop();
+                "ok\n".into()
+            }
+            Some("off") => {
+                state.restore_revealed_and_focus();
+                "ok\n".into()
+            }
+            _ if state.config.desktop.click_reveals() || state.desktop_revealed() => {
+                state.toggle_reveal_desktop();
+                "ok\n".into()
+            }
+            _ => "none\n".into(),
+        },
         Some("quit") => {
             tracing::info!("encerrando por pedido do canal de controle");
             state.quit_requested = true;

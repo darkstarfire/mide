@@ -384,7 +384,10 @@ fn window_elements(
             continue;
         };
         let state_flags = toplevel.current_state().states;
-        let focused = state_flags.contains(XdgState::Activated);
+        // Foco pelo que o compositor decidiu (estado pendente), não pelo que o app já
+        // confirmou: apps parados (VS Code, Electron) demoram a responder ao configure
+        // e a barra ficava cinza com a janela em foco. A decoração é do compositor.
+        let focused = toplevel.with_pending_state(|s| s.states.contains(XdgState::Activated));
         let maximized = state_flags.contains(XdgState::Maximized);
         let geo = window.geometry();
 

@@ -369,9 +369,17 @@ pub struct Desktop {
     /// Imagem do papel de parede (PNG ou JPEG). `~/` é o diretório do usuário.
     /// Sem imagem, o fundo é um gradiente próprio do mide.
     pub wallpaper: Option<String>,
+    /// Clicar no papel de parede afasta as janelas para mostrar a mesa (como no
+    /// macOS). Padrão: ligado.
+    pub click_reveal: Option<bool>,
 }
 
 impl Desktop {
+    /// Clique no papel de parede mostra a mesa?
+    pub fn click_reveals(&self) -> bool {
+        self.click_reveal.unwrap_or(true)
+    }
+
     /// Caminho do papel de parede com `~/` expandido.
     pub fn wallpaper_path(&self) -> Option<PathBuf> {
         let raw = self.wallpaper.as_deref()?.trim();

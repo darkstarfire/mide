@@ -1,16 +1,21 @@
 # Seção da bateria (tests/ui.sh); usa as funções de tests/ui/comum.sh.
-echo "== janela com barra do mide (Terminal)"
-check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 58\) visível=1366x643" "400 click 103 61; 450 list" "$TERMINAL"
-check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 103 61; 450 click 55 43; 500 list" "$TERMINAL"
-check "duplo clique maximiza" "$FOOT posição=\(0, 58\)" "400 click 400 61; 404 click 400 61; 450 list" "$TERMINAL"
-check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 61; 405 move 450 111; 410 move 500 161; 415 release 500 161; 430 list" "$TERMINAL"
+# Terminal de conteúdo inteiro (Tahoe): a barra e as luzes são do app, desenhadas pelo
+# mide-ui; luzes em (69, 95), (89, 95) e (109, 95) com a janela em (48, 76).
+echo "== janela de conteúdo inteiro (Terminal)"
+check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 28\) visível=1366x673" "400 click 109 95; 450 list" "$TERMINAL"
+check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 109 95; 450 click 61 47; 500 list" "$TERMINAL"
+check "duplo clique maximiza" "$FOOT posição=\(0, 28\)" "400 click 400 95; 404 click 400 95; 450 list" "$TERMINAL"
+check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 95; 405 move 450 145; 410 move 500 195; 415 release 500 195; 430 list" "$TERMINAL"
 check "redimensionar pelo canto" "$FOOT posição=\(48, 76\) visível=650x450" "400 press 745 573; 405 move 720 548; 410 move 695 523; 415 release 695 523; 450 list" "$TERMINAL"
 check "redimensionar pela esquerda" "$FOOT posição=\(88, 76\) visível=660x500" "400 press 50 330; 405 move 70 330; 410 move 90 330; 415 release 90 330; 450 list" "$TERMINAL"
-check "fechar pelo vermelho" "janela fechada" "400 click 63 61" "$TERMINAL"
+check "fechar pelo vermelho" "janela fechada" "400 click 69 95" "$TERMINAL"
 # O app fecha sozinho (aqui, o processo termina): a foto dele esmaece mesmo assim (A20).
 SCENARIO_WAIT=12 check "app que fecha sozinho também sai com transição" "janela fechando com transição" "900 list" "sh -c '$CALCULATOR & sleep 4; kill \$!'"
-check "minimizar pelo amarelo" "janela minimizada" "400 click 83 61" "$TERMINAL"
-check "restaurar minimizada" "janela restaurada" "400 click 83 61; 440 restore" "$TERMINAL"
+check "minimizar pelo amarelo" "janela minimizada" "400 click 89 95" "$TERMINAL"
+check "restaurar minimizada" "janela restaurada" "400 click 89 95; 440 restore" "$TERMINAL"
+# Mostrar a mesa: clique no papel de parede afasta a janela; Esc a traz de volta.
+check "clique no papel de parede mostra a mesa" "mesa à mostra: 1 janela" "400 click 1100 450; 450 list" "$TERMINAL"
+check "Esc traz as janelas de volta" "$FOOT posição=\(48, 76\)" "400 click 1100 450; 440 key esc; 500 list" "$TERMINAL"
 
 # Cabeçalho desenhado pelo próprio app (GTK): só com a gnome-calculator instalada.
 if command -v gnome-calculator >/dev/null; then
