@@ -653,11 +653,23 @@ impl State {
             let Some(loc) = self.space.element_location(&window) else {
                 continue;
             };
-            let output = self.space.outputs_for_element(&window).first().cloned().or_else(|| self.primary_output());
-            let Some(screen) = output.and_then(|o| self.space.output_geometry(&o)) else {
+            let w = window.geometry().size.w;
+            let h = window.geometry().size.h;
+            // A tela da janela é a que tem o centro dela (ou a principal).
+            let center = Point::<i32, Logical>::from((loc.x + w / 2, loc.y + h / 2));
+            let output = self
+                .space
+                .outputs()
+                .find(|o| self.space.output_geometry(o).is_some_and(|g| g.contains(center)))
+                .cloned()
+                .or_else(|| self.space.outputs_for_element(&window).first().cloned())
+                .or_else(|| self.primary_output());
+            let Some((screen, name)) = output.and_then(|o| self.space.output_geometry(&o).map(|g| (g, o.name()))) else {
                 continue;
             };
-            let w = window.geometry().size.w;
+            // Vai até a borda da própria tela; o que passa dela não aparece na vizinha.
+            self.reveal_homes.retain(|(other, _)| other != &window);
+            self.reveal_homes.push((window.clone(), name));
             // Para o lado mais perto: o centro da janela decide.
             let to_x = if loc.x + w / 2 < screen.loc.x + screen.size.w / 2 {
                 screen.loc.x - w + REVEAL_PEEK

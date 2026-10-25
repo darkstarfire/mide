@@ -7,6 +7,9 @@ export XDG_CONFIG_HOME="$MONCFG"
 export MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080
 SETTINGS="$PWD/target/debug/mide-settings"
 check "duas telas lado a lado" 'tela HEADLESS-2 em \(1366, 0\) 1920x1080' "300 list"
+# Mostrar a mesa com duas telas: a janela perto da tela vizinha vai até a borda da
+# própria tela (1366 - 56) e não muda de tela.
+check "mesa com duas telas: janela na borda da própria tela" 'janela "Terminal" popups=0 posição=\(1310, 76\)' "400 press 400 95; 405 move 700 95; 410 move 1000 95; 415 release 1000 95; 440 click 300 450; 500 list" "$PWD/target/debug/mide-terminal --title Terminal"
 printf '[monitors]\nprimary = "HEADLESS-2"\n' > "$MONCFG/mide/config.toml"
 check "barra na tela principal escolhida" 'camada "mide-bar" em \(0, 0\) 1920x28' "300 list"
 printf '[monitors.outputs."HEADLESS-2"]\nenabled = false\n' > "$MONCFG/mide/config.toml"
@@ -34,9 +37,9 @@ fi
 # Sem confirmar, volta sozinho em 15 s (a barra volta para a primeira tela).
 SCENARIO_WAIT=34 check "Monitores: sem confirmar, volta ao anterior em 15 s" 'camada "mide-bar" em \(0, 0\) 1366x28' "300 click 654 255; 330 click 404 526; 360 click 430 422; 1500 list" "$SETTINGS displays"
 # Principal à direita da outra: a lâmpada (minimizar) vai até o ícone na dock dela,
-# e não para a tela da esquerda. Janela em (1968, 76): minimizar em (2003, 61).
+# e não para a tela da esquerda. Janela em (1968, 76): minimizar (amarelo) em (2009, 95).
 printf '[monitors]\nprimary = "HEADLESS-1"\n[monitors.outputs."HEADLESS-2"]\nx = 0\ny = 0\n[monitors.outputs."HEADLESS-1"]\nx = 1920\ny = 0\n' > "$MONCFG/mide/config.toml"
-check "principal à direita: a lâmpada vai até a dock dela" "alvo no ícone da dock em Point.*x: 2511" "300 click 2003 61; 400 list" "$TERMINAL"
+check "principal à direita: a lâmpada vai até a dock dela" "alvo no ícone da dock em Point.*x: 2511" "300 click 2009 95; 400 list" "$TERMINAL"
 unset MIDE_HEADLESS_OUTPUTS
 printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.25\n' > "$MONCFG/mide/config.toml"
 MIDE_HEADLESS_OUTPUTS=1920x1080 check "escala 125%: tela de 1920x1080 com 1536x864 pontos" 'tela HEADLESS-1 em \(0, 0\) 1536x864' "300 list"

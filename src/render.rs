@@ -383,6 +383,10 @@ fn window_elements(
         else {
             continue;
         };
+        // Mesa à mostra com várias telas: a janela afastada só aparece na tela dela.
+        if state.reveal_home(window).is_some_and(|home| home != output.name()) {
+            continue;
+        }
         let state_flags = toplevel.current_state().states;
         // Foco pelo que o compositor decidiu (estado pendente), não pelo que o app já
         // confirmou: apps parados (VS Code, Electron) demoram a responder ao configure

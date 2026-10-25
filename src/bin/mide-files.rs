@@ -1461,7 +1461,7 @@ impl Files {
                             if m.item("Extrair aqui") {
                                 chosen = Some(Action::Extract);
                             }
-                        } else if m.item(&format!("Comprimir \"{}\"", short(&entry.name))) {
+                        } else if m.item("Comprimir") {
                             chosen = Some(Action::Compress);
                         }
                         m.separator();

@@ -1562,6 +1562,19 @@ impl<'a> Ui<'a> {
             m.height = h;
         }
         self.ctx.memory.menu_rect = Some((x, y0, w, h));
+        // Com algum símbolo ou marca no menu, todos os textos alinham depois deles.
+        let indent = rows.iter().any(|r| r.icon.is_some() || r.checked);
+        let text_x = if indent { x + 36.0 } else { x + 16.0 };
+        // Textos que não cabem (nome de arquivo comprido) terminam com "…" antes do
+        // atalho e da borda, sem passar do menu.
+        let fitted: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                let sc = row.shortcut.as_ref().map(|sc| self.ctx.text.measure(sc, t.font, FontWeight::Regular) + 12.0).unwrap_or(0.0);
+                let max = (x + w - 14.0 - sc - text_x).max(10.0);
+                self.fit(&row.label, t.font, FontWeight::Regular, max)
+            })
+            .collect();
         // Desenho na camada de cima.
         let k = crate::ui::draw::scale();
         let overlay = self.ctx.overlay.get_or_insert_with(|| Pixmap::new((ww * k).max(1.0).round() as u32, (wh * k).max(1.0).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap()));
@@ -1573,12 +1586,9 @@ impl<'a> Ui<'a> {
         fill_rounded(overlay, x, y0, w, h, radius, color(t.menu));
         outline(overlay, (x, y0, w, h), radius, if t.dark { [255, 255, 255, 30] } else { [0, 0, 0, 16] });
         let _ = (side, up);
-        // Com algum símbolo ou marca no menu, todos os textos alinham depois deles.
-        let indent = rows.iter().any(|r| r.icon.is_some() || r.checked);
-        let text_x = if indent { x + 36.0 } else { x + 16.0 };
         let mut y = y0 + 5.0;
         let mut icons = Vec::new();
-        for row in &rows {
+        for (i, row) in rows.iter().enumerate() {
             match row.kind {
                 2 => {
                     fill_rounded(overlay, x + 12.0, y + 4.0, w - 24.0, 1.0, 0.0, color(t.shade(30)));
@@ -1612,7 +1622,7 @@ impl<'a> Ui<'a> {
                     if let Some(icon) = &row.icon {
                         icons.push((icon.clone(), x + 13.0, y + 5.0, c));
                     }
-                    self.ctx.text.draw(overlay, &row.label, text_x, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, c);
+                    self.ctx.text.draw(overlay, &fitted[i], text_x, y + (26.0 - t.font * 1.25) / 2.0, t.font, FontWeight::Regular, c);
                     if let Some(sc) = &row.shortcut {
                         let sc_c = if row.hovered { t.on_accent } else { t.text_secondary };
                         let sw = self.ctx.text.measure(sc, t.font, FontWeight::Regular);

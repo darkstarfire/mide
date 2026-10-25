@@ -196,15 +196,37 @@ pub fn send(app: &str, summary: &str, body: &str) {
 /// Como `send`, esperando a entrega: para quem fecha logo depois (a captura de tela),
 /// e a thread de `send` morreria junto antes de mandar.
 pub fn send_and_wait(app: &str, summary: &str, body: &str) {
+    send_full(app, summary, body, None);
+}
+
+/// Dica do mide: arquivo ou pasta que abre quando se clica no aviso (gravação ou
+/// captura salva). O servidor do mide abre com o app padrão; outros servidores ignoram.
+pub const OPEN_HINT: &str = "x-mide-open";
+
+/// Como `send`, e clicar no aviso abre `path` (o vídeo ou a imagem salva).
+pub fn send_open(app: &str, summary: &str, body: &str, path: &std::path::Path) {
+    let (app, summary, body, path) = (app.to_string(), summary.to_string(), body.to_string(), path.to_string_lossy().into_owned());
+    std::thread::spawn(move || send_full(&app, &summary, &body, Some(&path)));
+}
+
+/// Como `send_open`, esperando a entrega.
+pub fn send_open_and_wait(app: &str, summary: &str, body: &str, path: &std::path::Path) {
+    send_full(app, summary, body, Some(&path.to_string_lossy()));
+}
+
+fn send_full(app: &str, summary: &str, body: &str, open: Option<&str>) {
     // Testes (`MIDE_SYSTEM_DRY_RUN`): só no log, sem aparecer na sessão de quem testa.
     if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
-        tracing::info!("notificação (teste): {app}: {summary}: {body}");
+        tracing::info!("notificação (teste): {app}: {summary}: {body}{}", open.map(|p| format!(" (abre {p})")).unwrap_or_default());
         return;
     }
     let Ok(conn) = zbus::blocking::Connection::session() else {
         return;
     };
-    let hints: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
+    let mut hints: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
+    if let Some(path) = open {
+        hints.insert(OPEN_HINT, zbus::zvariant::Value::from(path));
+    }
     let result = conn.call_method(
         Some("org.freedesktop.Notifications"),
         "/org/freedesktop/Notifications",

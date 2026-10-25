@@ -1050,8 +1050,8 @@ fn save_images(images: &[(&Pixmap, Option<&str>)]) -> Vec<PathBuf> {
     }
     match (saved.as_slice(), error) {
         (_, Some(err)) => mide::notify::send_and_wait("Captura de tela", "A captura não foi salva", &format!("{}: {err}", dir.display())),
-        ([one], None) => mide::notify::send_and_wait("Captura de tela", "Captura salva", &one.display().to_string()),
-        (many, None) if !many.is_empty() => mide::notify::send_and_wait("Captura de tela", "Capturas salvas", &format!("{} telas em {}", many.len(), dir.display())),
+        ([one], None) => mide::notify::send_open_and_wait("Captura de tela", "Captura salva", &one.display().to_string(), one),
+        (many, None) if !many.is_empty() => mide::notify::send_open_and_wait("Captura de tela", "Capturas salvas", &format!("{} telas em {}", many.len(), dir.display()), &dir),
         _ => {}
     }
     saved

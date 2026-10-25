@@ -896,6 +896,13 @@ fn interactive(state: &State, window: &Window) -> bool {
 fn window_with_origin_under(state: &State, pos: Point<f64, Logical>) -> Option<(Window, Point<i32, Logical>)> {
     use smithay::desktop::space::SpaceElement;
     state.space.elements().rev().filter(|w| interactive(state, w)).find_map(|window| {
+        // Janela afastada (mesa à mostra): o pedaço que passa para outra tela não pega cliques.
+        if let Some(home) = state.reveal_home(window) {
+            let inside = state.space.outputs().find(|o| o.name() == home).and_then(|o| state.space.output_geometry(o)).is_some_and(|g| g.to_f64().contains(pos));
+            if !inside {
+                return None;
+            }
+        }
         let origin = state.space.element_location(window)? - window.geometry().loc;
         window
             .is_in_input_region(&(pos - origin.to_f64()))

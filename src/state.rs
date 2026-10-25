@@ -197,6 +197,9 @@ pub struct State {
     /// Mesa à mostra (clique no papel de parede ou Super+D): janelas afastadas para as
     /// bordas e onde cada uma estava. Vazio: as janelas estão no lugar.
     pub revealed: Vec<(Window, Point<i32, Logical>)>,
+    /// Tela de cada janela afastada (pelo nome), até ela terminar de voltar: com várias
+    /// telas, a janela só aparece e recebe cliques na tela dela, sem invadir a vizinha.
+    pub reveal_homes: Vec<(Window, String)>,
     /// Janela nova que recebe o foco no primeiro commit (depois do configure inicial).
     pub focus_on_map: Option<WlSurface>,
     /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
@@ -404,6 +407,7 @@ impl State {
             recording: None,
             minimized: Vec::new(),
             revealed: Vec::new(),
+            reveal_homes: Vec::new(),
             focus_on_map: None,
             hidden: Vec::new(),
             mac_keys: MacKeys::default(),
@@ -1436,6 +1440,19 @@ impl State {
             }
         }
         self.animations.retain(|a| !a.finished(now));
+        // Janelas da mesa que já voltaram ao lugar: deixam de ficar presas à tela delas.
+        let keep: Vec<bool> = self
+            .reveal_homes
+            .iter()
+            .map(|(w, _)| self.revealed.iter().any(|(r, _)| r == w) || self.animations.iter().any(|a| &a.window == w))
+            .collect();
+        let mut keep = keep.into_iter();
+        self.reveal_homes.retain(|_| keep.next().unwrap_or(false));
+    }
+
+    /// Tela onde a janela fica enquanto a mesa está à mostra (ou voltando).
+    pub fn reveal_home(&self, window: &Window) -> Option<&str> {
+        self.reveal_homes.iter().find(|(w, _)| w == window).map(|(_, name)| name.as_str())
     }
 }
 

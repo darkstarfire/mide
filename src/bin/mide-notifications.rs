@@ -90,6 +90,8 @@ struct Note {
     buttons: Vec<(String, String)>,
     timeout: Option<Duration>,
     shown_at: Instant,
+    /// Arquivo que abre no clique (dica do mide: gravação ou captura salva).
+    open: Option<String>,
 }
 
 /// Mensagens do servidor D-Bus (outra thread) para a interface.
@@ -164,6 +166,7 @@ impl Server {
             buttons,
             timeout: notify::timeout(expire_timeout, urgency),
             shown_at: Instant::now(),
+            open: hint_str(&hints, notify::OPEN_HINT),
         };
         if let Ok(sender) = self.sender.lock() {
             let _ = sender.send(Msg::Notify(note));
@@ -740,11 +743,16 @@ impl PointerHandler for Banners {
                         }
                         Some(Spot::Body(i)) => {
                             // Clique no banner: a ação padrão do app, e o banner sai.
-                            let (has_default, id) = match self.notes.get(i) {
-                                Some(n) => (n.has_default, n.id),
+                            let (has_default, id, open) = match self.notes.get(i) {
+                                Some(n) => (n.has_default, n.id, n.open.clone()),
                                 None => continue,
                             };
-                            if has_default {
+                            // Gravação ou captura salva: abre o arquivo (vídeo no player).
+                            if let Some(path) = open {
+                                tracing::info!("notificação {id}: abrir {path}");
+                                mide::places::open(&path);
+                                self.remove(id, reason::DISMISSED);
+                            } else if has_default {
                                 self.invoke(i, "default");
                             } else {
                                 self.remove(id, reason::DISMISSED);
