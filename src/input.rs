@@ -694,12 +694,19 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         .as_ref()
         .and_then(|p| crate::preview::layout(state, p))
         .is_some_and(|(panel, _)| panel.to_f64().contains(pos));
-    let under = if over_preview {
+    // Barra de título desenhada pelo mide (e as luzes dela): o ponteiro é do mide, sem
+    // passar o movimento para a área de trabalho que fica atrás.
+    let over_bar = title_bar_under(state, pos).is_some() && top_layer_under(state, pos).is_none() && popup_under(state, pos).is_none();
+    let under = if over_preview || over_bar { None } else { surface_under(state, pos) };
+    // Trocou a superfície sob o ponteiro (ou não há nenhuma): volta a seta. O app novo
+    // pede o cursor dele logo depois, se quiser outro. Sem isso, o cursor de texto de um
+    // app (VS Code) ficava na barra de título e nos apps que não pedem cursor.
+    let previous = pointer.current_focus();
+    let changed = under.is_none() || under.as_ref().map(|(s, _)| s) != previous.as_ref();
+    if changed && !matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default)) {
         state.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
-        None
-    } else {
-        surface_under(state, pos)
-    };
+        state.wake();
+    }
     let serial = SERIAL_COUNTER.next_serial();
     pointer.motion(
         state,

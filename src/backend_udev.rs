@@ -612,19 +612,39 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
     let Some(area) = state.space.output_geometry(&head.output) else {
         return false;
     };
-    let Some(plan) = scene.cursor_plan(state) else {
-        return false;
+    // Cursor desenhado pelo app (VS Code, navegadores, GTK): também vai para o plano de
+    // hardware, lido do buffer dele. Sem isso, cada movimento do mouse redesenhava a tela
+    // inteira, e um quadro lento atrasava o ponteiro.
+    let app_cursor = match &state.cursor_status {
+        smithay::input::pointer::CursorImageStatus::Surface(surface)
+            if state.cursor == crate::input::CursorShape::Default && state.shake.scale(std::time::Instant::now()) <= 1.001 =>
+        {
+            client_cursor(surface, head.output.current_scale().fractional_scale())
+        }
+        _ => None,
     };
-    let (name, pixels, size, hotspot) = match plan {
-        crate::cursor::Plan::Hidden => {
-            hide(head);
-            return true;
+    let owned: Vec<u8>;
+    let (name, pixels, size, hotspot): (String, &[u8], (u32, u32), (i32, i32)) = match app_cursor {
+        Some((key, data, size, hotspot)) => {
+            owned = data;
+            (key, &owned, size, hotspot)
         }
-        crate::cursor::Plan::Surface => {
-            hide(head);
-            return false;
+        None => {
+            let Some(plan) = scene.cursor_plan(state) else {
+                return false;
+            };
+            match plan {
+                crate::cursor::Plan::Hidden => {
+                    hide(head);
+                    return true;
+                }
+                crate::cursor::Plan::Surface => {
+                    hide(head);
+                    return false;
+                }
+                crate::cursor::Plan::Image { name, pixels, size, hotspot } => (name, pixels, size, hotspot),
+            }
         }
-        crate::cursor::Plan::Image { name, pixels, size, hotspot } => (name, pixels, size, hotspot),
     };
     if size.0 > plane.0 || size.1 > plane.1 {
         hide(head);
@@ -685,6 +705,56 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
     true
 }
 
+/// Imagem do cursor de um app (buffer de memória compartilhada): chave que muda com a
+/// imagem, pixels em RGBA pré-multiplicado, tamanho e ponto quente em pixels. `None`
+/// quando o plano de hardware não serve (escala do buffer diferente da tela, buffer da
+/// GPU, formato desconhecido): a cena desenha.
+type AppCursor = (String, Vec<u8>, (u32, u32), (i32, i32));
+
+fn client_cursor(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface, scale: f64) -> Option<AppCursor> {
+    use smithay::reexports::wayland_server::protocol::wl_shm::Format;
+    use std::hash::{Hash, Hasher};
+    let (buffer, buffer_scale) = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| (s.buffer().cloned(), s.buffer_scale()))?;
+    let buffer = buffer?;
+    if (buffer_scale as f64 - scale).abs() > 0.01 {
+        return None;
+    }
+    let hotspot = smithay::wayland::compositor::with_states(surface, |states| {
+        states.data_map.get::<smithay::input::pointer::CursorImageSurfaceData>().and_then(|d| d.lock().ok().map(|a| a.hotspot))
+    })?;
+    let (pixels, w, h) = smithay::wayland::shm::with_buffer_contents(&buffer, |ptr, len, data| {
+        let (w, h, stride, offset) = (data.width.max(0) as usize, data.height.max(0) as usize, data.stride.max(0) as usize, data.offset.max(0) as usize);
+        let opaque = match data.format {
+            Format::Argb8888 => false,
+            Format::Xrgb8888 => true,
+            _ => return None,
+        };
+        if w == 0 || h == 0 || stride < w * 4 || offset + stride * h > len {
+            return None;
+        }
+        // SAFETY: a área foi conferida contra o tamanho do mapeamento acima.
+        let src = unsafe { std::slice::from_raw_parts(ptr.add(offset), stride * h) };
+        let mut out = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let s = y * stride + x * 4;
+                let d = (y * w + x) * 4;
+                // Na memória, B, G, R, A; aqui, R, G, B, A (como os do tema).
+                out[d] = src[s + 2];
+                out[d + 1] = src[s + 1];
+                out[d + 2] = src[s];
+                out[d + 3] = if opaque { 255 } else { src[s + 3] };
+            }
+        }
+        Some((out, w as u32, h as u32))
+    })
+    .ok()??;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pixels.hash(&mut hasher);
+    let key = format!("app:{:x}", hasher.finish());
+    Some((key, pixels, (w, h), (hotspot.x * buffer_scale, hotspot.y * buffer_scale)))
+}
+
 /// Liga ou desliga os monitores (propriedade DPMS dos conectores: 0 ligado, 3
 /// desligado; o kernel aceita também com o modo atômico).
 fn set_dpms(gpu: &Gpu, on: bool) {
@@ -728,6 +798,10 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     if !gpu.drm.is_active() {
         return;
     }
+    // Quadro demorado atrasa o mouse (o laço não lê a entrada enquanto desenha): fica
+    // registrado, no máximo uma vez a cada 5 s, para achar a causa.
+    let started = std::time::Instant::now();
+    let _slow = SlowFrame(started);
     // Tela apagada (tempo sem uso): desliga os monitores e não desenha; ao acender,
     // liga de novo e recomeça os quadros (o que esperava o vblank não vai chegar).
     if state.blanked != gpu.blanked {
@@ -809,6 +883,23 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     // Algo em movimento (ou uma tela que ficou para depois): o próximo vblank desenha.
     if again || gpu.scene.moving(state) {
         state.redraw = true;
+    }
+}
+
+/// Avisa no log, ao sair de `render`, se o quadro passou de 12 ms.
+struct SlowFrame(std::time::Instant);
+
+impl Drop for SlowFrame {
+    fn drop(&mut self) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static LAST: AtomicU64 = AtomicU64::new(0);
+        let ms = self.0.elapsed().as_secs_f32() * 1000.0;
+        if ms > 12.0 {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            if now.saturating_sub(LAST.swap(now, Ordering::Relaxed)) >= 5 {
+                tracing::warn!("quadro demorado: {ms:.1} ms (o ponteiro pode ter travado)");
+            }
+        }
     }
 }
 
