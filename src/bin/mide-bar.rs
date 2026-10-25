@@ -1467,20 +1467,22 @@ impl Bar {
         let top = PANEL_TOP;
         let ph = menu.panel_height();
 
-        // Painel: vidro claro com borda fina e sombra suave.
+        // Painel: vidro claro com borda fina e sombra suave. Tahoe: menus com cantos de
+        // 12 e a central de controle (e os painéis grandes) com 22.
+        let radius = if menu_id == MenuId::Control { 22.0 } else { 12.0 };
         for i in 0..6 {
             let spread = 6.0 - i as f32;
-            fill_rounded(&mut pixmap, mx - spread, top - spread + 3.0, mw + 2.0 * spread, ph + 2.0 * spread, 10.0 + spread, rgba(0, 0, 0, 6));
+            fill_rounded(&mut pixmap, mx - spread, top - spread + 3.0, mw + 2.0 * spread, ph + 2.0 * spread, radius + spread, rgba(0, 0, 0, 6));
         }
         let glass = mide::control_client::panel_glass();
-        let panel = [(mx, top, mw, ph, 10.0)];
+        let panel = [(mx, top, mw, ph, radius)];
         self.glass_menu.set("mide-bar-menu", if glass { &panel } else { &[] });
         if glass {
-            mide::ui::draw::clear_rounded(&mut pixmap, mx, top, mw, ph, 10.0);
+            mide::ui::draw::clear_rounded(&mut pixmap, mx, top, mw, ph, radius);
         }
         let fill = pal().panel(if glass { 180 } else { 240 });
-        fill_rounded(&mut pixmap, mx, top, mw, ph, 10.0, rgba(fill[0], fill[1], fill[2], fill[3]));
-        if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, 10.0) {
+        fill_rounded(&mut pixmap, mx, top, mw, ph, radius, rgba(fill[0], fill[1], fill[2], fill[3]));
+        if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, radius - 0.5) {
             let mut border = Paint::default();
             border.set_color(pal().ink(40));
             border.anti_alias = true;
@@ -2048,7 +2050,8 @@ impl Bar {
     /// Central de controle, como a do macOS: ladrilhos de Wi-Fi e Bluetooth, Não
     /// perturbe, brilho da tela (se houver controle), som e as Configurações.
     fn panel_control(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
-        let tile = |p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| fill_rounded(p, x, y, w, h, 12.0, pal().tile());
+        // Tahoe: módulos bem arredondados.
+        let tile = |p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| fill_rounded(p, x, y, w, h, 18.0, pal().tile());
         let dark = pal().text;
         let gray = pal().secondary;
         // Botão redondo de ligar/desligar: azul quando ligado.
@@ -2089,23 +2092,24 @@ impl Bar {
         regions.push(((rx, gap, half, 104.0), PanelAction::ToggleDnd));
         let mut y = gap + 104.0 + gap;
         // Trilhos: brilho (se houver controle) e som.
+        // Tahoe: o deslizante é uma cápsula larga; a parte cheia é branca (no escuro,
+        // clara) e o valor anda com ela, sem bolinha.
         let mut slider = |this: &mut Self, p: &mut Pixmap, y: f32, title: &str, value: f32, action: PanelAction| {
             tile(p, gap, y, pw - 2.0 * gap, 60.0);
-            this.text.draw(p, title, gap + 14.0, y + 9.0, FONT, FontWeight::Semibold, dark);
-            let (tx, tw, ty) = (gap + 16.0, pw - 2.0 * gap - 32.0, y + 40.0);
-            fill_rounded(p, tx, ty - 5.0, tw, 10.0, 5.0, pal().ink(30));
-            // Parte preenchida no azul de destaque (como os trilhos das Configurações):
-            // branco sumia sobre o ladrilho claro.
-            fill_rounded(p, tx, ty - 5.0, (tw * value).max(10.0), 10.0, 5.0, pal().accent_color());
-            if let Some(knob) = PathBuilder::from_circle(tx + tw * value, ty, 9.0) {
+            this.text.draw(p, title, gap + 14.0, y + 8.0, FONT, FontWeight::Semibold, dark);
+            let (tx, tw, th) = (gap + 12.0, pw - 2.0 * gap - 24.0, 22.0);
+            let ty = y + 30.0;
+            fill_rounded(p, tx, ty, tw, th, th / 2.0, pal().ink(26));
+            let filled = (tw * value).max(th);
+            fill_rounded(p, tx, ty, filled, th, th / 2.0, if pal().dark { rgba(235, 235, 240, 255) } else { rgba(255, 255, 255, 255) });
+            if let Some(edge) = rounded_rect(tx + 0.5, ty + 0.5, tw - 1.0, th - 1.0, th / 2.0 - 0.5) {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
-                paint.set_color(rgba(255, 255, 255, 255));
-                p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
-                paint.set_color(rgba(0, 0, 0, 60));
-                p.stroke_path(&knob, &paint, &Stroke::default(), Transform::identity(), None);
+                paint.set_color(pal().ink(22));
+                p.stroke_path(&edge, &paint, &Stroke::default(), Transform::identity(), None);
             }
-            regions.push(((tx - 8.0, y + 26.0, tw + 16.0, 28.0), action));
+            // Com 8 de folga dos lados (`track_from_x` conta com ela).
+            regions.push(((tx - 8.0, ty - 3.0, tw + 16.0, th + 6.0), action));
         };
         if let Some(level) = self.status.brightness {
             slider(self, p, y, "Tela", level, PanelAction::BrightnessTrack);

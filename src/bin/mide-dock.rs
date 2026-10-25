@@ -1169,7 +1169,8 @@ impl Dock {
         }
         if self.zoom.is_none() {
             let extra = max - icon_size();
-            let size = (self.width + 4 * extra, dock_height() + extra);
+            // Em cima, espaço para o ícone ampliado pular (app abrindo).
+            let size = (self.width + 4 * extra, dock_height() + extra + BOUNCE_ROOM);
             let surface = self.compositor.create_surface(&self.qh);
             let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-zoom"), None);
             layer.set_anchor(Anchor::BOTTOM);
@@ -1275,8 +1276,11 @@ impl Dock {
         }
         self.zoom_slots = placed.clone();
         let pressed = self.press.as_ref().filter(|p| !p.dragged).map(|p| p.index);
+        // App abrindo: o próprio ícone ampliado pula (não uma cópia no tamanho normal).
+        let bouncing = self.bounce.as_ref().and_then(|b| self.items.iter().position(|a| a.id == b.app).map(|i| (i, bounce_height(b.start.elapsed().as_secs_f32()))));
         for (index, left, w) in placed {
-            let (x, y) = (dx + left, bottom - w);
+            let lift = bouncing.filter(|(i, _)| *i == index).map_or(0.0, |(_, h)| h * w / base);
+            let (x, y) = (dx + left, bottom - w - lift);
             let px = w.round().max(1.0) as u32;
             if index == LAUNCHER {
                 draw_launchpad_icon(&mut pixmap, x, y, w);
@@ -1395,8 +1399,13 @@ impl Dock {
         true
     }
 
-    /// Desenha o ícone na altura do pulo, na camada acima da dock.
+    /// Desenha o ícone na altura do pulo, na camada acima da dock. Com a ampliação
+    /// aberta, quem pula é o ícone ampliado (na camada dela) e esta fica vazia.
     fn paint_bounce(&mut self) {
+        let zooming = self.zoom.is_some();
+        if zooming {
+            self.paint_zoom();
+        }
         let Some(bounce) = self.bounce.as_mut() else {
             return;
         };
@@ -1410,7 +1419,7 @@ impl Dock {
         let lift = bounce_height(bounce.start.elapsed().as_secs_f32());
         let x = icon_x(&self.items, index) as i32;
         let y = (BOUNCE_ROOM as f32 + PADDING as f32 - lift).round() as i32;
-        if let Some(icon) = &self.items[index].icon {
+        if let (false, Some(icon)) = (zooming, &self.items[index].icon) {
             pixmap.draw_pixmap(x, y, icon.as_ref(), &Default::default(), Transform::identity(), None);
         }
         let Ok((buffer, canvas)) = bounce.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
