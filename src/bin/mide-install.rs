@@ -420,9 +420,7 @@ impl App for Install {
         let folder = self.folder.clone();
         ui.at(SIDE, STAGE_Y + STAGE_H + 14.0, w - 2.0 * SIDE, |ui| match &self.stage {
             Stage::Reading => {
-                ui.note("Lendo o AppImage…");
-                ui.space(6.0);
-                chosen = ui.dialog_buttons(&["Cancelar"]).map(|_| 0);
+                ui.centered_note("Lendo o AppImage…");
             }
             Stage::Ready => {
                 // Sem botões (arrastar instala); só a versão já instalada, se houver.
@@ -445,15 +443,13 @@ impl App for Install {
                     fill_rounded(pixmap, rect.0, rect.1 + 2.0, (rect.2 * progress).max(6.0), 6.0, 3.0, rgba(a[0], a[1], a[2], a[3]));
                 });
             }
+            // Sem botões (como as imagens de instalação do Mac): a janela fecha pela luz
+            // vermelha ou Esc; Enter abre o app instalado.
             Stage::Done(_) => {
-                ui.label(&format!("{name} foi instalado em {folder} e já aparece no launcher e na busca."));
-                ui.space(6.0);
-                chosen = ui.dialog_buttons(&["Fechar", "Abrir"]);
+                ui.centered_note(&format!("{name} foi instalado em {folder} e já aparece no launcher e na busca."));
             }
             Stage::Failed(err) => {
                 ui.error_note(err);
-                ui.space(6.0);
-                chosen = ui.dialog_buttons(&["Fechar"]).map(|_| 0);
             }
             Stage::Confirm(_) => {}
         });

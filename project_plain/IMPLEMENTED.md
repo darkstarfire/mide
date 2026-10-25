@@ -1761,3 +1761,8 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 ## Painel de prévia do Arquivos: maior e com o vídeo tocando (2026-10-25)
 
 - Pedido do usuário: a linha divisória do painel de prévia se arrasta (de 220 pontos até 60% da janela, destacada na cor de destaque com o ponteiro em cima) e a prévia cresce com o painel; nos vídeos, um botão de tocar no meio da prévia toca o vídeo ali, com som (pausar com o ponteiro em cima), parando ao escolher outro item.
+
+## Instalador sem botões no fim e ícone dos AppImages (2026-10-25)
+
+- Instalador de AppImage (o usuário achou os botões do fim sem sentido e cortados): nenhum botão em nenhuma etapa; no fim, uma linha centralizada diz que o app foi instalado (a janela fecha pela luz vermelha ou Esc; Enter abre o app instalado).
+- Ícone dos AppImages no Arquivos (o usuário viu o ícone do app instalado virar o genérico): a miniatura do sistema voltou (o ícone do próprio app); só a folha genérica em preto e branco que o gerador devolve para AppImages sem ícone é trocada pelo ícone de AppImage do tema (no mide-ui).
