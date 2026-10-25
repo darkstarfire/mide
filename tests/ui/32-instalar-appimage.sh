@@ -94,15 +94,16 @@ file_check "atalho gerado com Exec, Icon e a marca" grep -q "^X-Mide-AppImage=$I
 file_check "atalho aponta para o AppImage e o ícone copiados" sh -c "grep -qF 'Exec=\"$INSTALLED\" %F' '$DESK' && grep -q '^Icon=$XDG_DATA_HOME/mide/appimage-icons/org.exemplo.Editor.svg\$' '$DESK' && test -s '$XDG_DATA_HOME/mide/appimage-icons/org.exemplo.Editor.svg'"
 # Abrir, no fim, roda o app instalado (pelo atalho).
 inst_check "Abrir depois de instalar roda o app instalado" "executar \(teste\): $INSTALLED" "" \
-    "440 key enter; 500 key enter; 540 list" "$INSTALL '$APP'"
+    "440 press 210 234; 446 move 260 234; 452 move 350 234; 458 move 440 238; 464 release 446 234; 520 key enter; 560 list" "$INSTALL '$APP'"
 
-# Já instalado: oferece substituir pela versão nova; o botão (Enter) substitui.
+# Já instalado: oferece substituir pela versão nova; arrastar de novo substitui (sem
+# botões, como nas imagens de instalação do Mac).
 cp "$APP" "$IBASE/src/Editor-2.0-x86_64.AppImage"
 printf 'nova' >>"$IBASE/src/Editor-2.0-x86_64.AppImage"
 export FAKE_VERSION=2.0
 inst_check "versão nova: oferece substituir a instalada" 'já instalado: versão 1.0' "" "460 list" "$INSTALL '$IBASE/src/Editor-2.0-x86_64.AppImage'"
-inst_check "Substituir troca o AppImage instalado" 'instalar "Editor Bonito" \(botão\) @@ instalado: "Editor Bonito" em .*/Aplicativos/Editor Bonito.AppImage' "" \
-    "440 click 548 400; 520 list" "$INSTALL '$IBASE/src/Editor-2.0-x86_64.AppImage'"
+inst_check "Substituir troca o AppImage instalado" 'instalar "Editor Bonito" \(arrastado para a pasta\) @@ instalado: "Editor Bonito" em .*/Aplicativos/Editor Bonito.AppImage' "" \
+    "440 press 210 234; 446 move 260 234; 452 move 350 234; 458 move 440 238; 464 release 446 234; 520 list" "$INSTALL '$IBASE/src/Editor-2.0-x86_64.AppImage'"
 file_check "o AppImage instalado é a versão nova (mesmo nome, atalho com 2.0)" sh -c "tail -c 4 '$INSTALLED' | grep -q nova && grep -q '^X-AppImage-Version=2.0' '$DESK' && [ \$(ls '$MIDE_APPS_DIR' | wc -l) = 1 ]"
 unset FAKE_VERSION
 

@@ -38,6 +38,11 @@ pub fn make(path: &Path, size: u32) -> Option<Pixmap> {
     if meta.len() <= TEXT_LIMIT && crate::files::is_text(path) {
         return text_page(path, size);
     }
+    // AppImage: o gerador do sistema devolve uma folha preta genérica quando não acha o
+    // ícone do app; o ícone de AppImage do tema fica melhor.
+    if extension(path).is_some_and(|e| e == "appimage") {
+        return None;
+    }
     let png = system_thumbnail(path, &meta, if size > 128 { 256 } else { 128 })?;
     crate::icons::load_icon_file(&png.to_string_lossy(), size)
 }

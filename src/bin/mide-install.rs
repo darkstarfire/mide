@@ -33,10 +33,10 @@ use mide::{
 use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke};
 
 /// Tamanho dos ícones do palco (pontos).
-const ICON: f32 = 96.0;
+const ICON: f32 = 112.0;
 /// Palco: começo e altura (pontos).
-const STAGE_Y: f32 = 84.0;
-const STAGE_H: f32 = 176.0;
+const STAGE_Y: f32 = 96.0;
+const STAGE_H: f32 = 184.0;
 const SIDE: f32 = 24.0;
 
 /// Retângulo em pontos: x, y, largura, altura.
@@ -240,9 +240,9 @@ impl Install {
     /// Retângulos (pontos) do ícone do app e da pasta no palco.
     fn spots(w: f32) -> (Rect, Rect) {
         let inner = w - 2.0 * SIDE;
-        let y = STAGE_Y + 26.0;
-        let app = (SIDE + inner * 0.27 - ICON / 2.0, y, ICON, ICON);
-        let folder = (SIDE + inner * 0.73 - ICON / 2.0, y, ICON, ICON);
+        let y = STAGE_Y + 20.0;
+        let app = (SIDE + inner * 0.25 - ICON / 2.0, y, ICON, ICON);
+        let folder = (SIDE + inner * 0.75 - ICON / 2.0, y, ICON, ICON);
         (app, folder)
     }
 
@@ -259,18 +259,26 @@ fn inflate(r: Rect, by: f32) -> Rect {
 }
 
 /// Seta do palco, do ícone do app até a pasta.
+/// Seta grossa do instalador (como nas imagens de instalação do Mac): haste e ponta
+/// preenchidas, na cor dada.
 fn draw_arrow(pixmap: &mut Pixmap, x0: f32, x1: f32, y: f32, c: [u8; 4]) {
     let mut paint = Paint { anti_alias: true, ..Default::default() };
     paint.set_color(rgba(c[0], c[1], c[2], c[3]));
-    let stroke = Stroke { width: 2.5, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+    let head = 30.0;
+    let stroke = Stroke { width: 7.0, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
     let mut pb = PathBuilder::new();
     pb.move_to(x0, y);
-    pb.line_to(x1, y);
-    pb.move_to(x1 - 9.0, y - 8.0);
-    pb.line_to(x1, y);
-    pb.line_to(x1 - 9.0, y + 8.0);
+    pb.line_to(x1 - head + 4.0, y);
     if let Some(path) = pb.finish() {
         pixmap.stroke_path(&path, &paint, &stroke, tf(), None);
+    }
+    let mut pb = PathBuilder::new();
+    pb.move_to(x1 - head, y - 16.0);
+    pb.line_to(x1, y);
+    pb.line_to(x1 - head, y + 16.0);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, tf(), None);
     }
 }
 
@@ -314,9 +322,19 @@ impl App for Install {
             }
             parts.join(" · ")
         };
-        ui.at(SIDE, 18.0, w - 2.0 * SIDE, |ui| {
-            ui.title(&format!("Instalar {name}"));
-            ui.note(&detail);
+        // Como nas imagens de instalação do Mac: título grande no meio e, embaixo, o
+        // que fazer (sem botões: arrastar é o jeito de instalar).
+        let instruction = match &self.stage {
+            Stage::Ready if self.previous.is_some() => format!("Arraste o app para a pasta {} para substituir a versão instalada", self.folder),
+            Stage::Ready | Stage::Reading => format!("Arraste o app para a pasta {}", self.folder),
+            _ => detail.clone(),
+        };
+        let title = format!("Instalar {name}");
+        ui.paint_text(|pixmap, text, _| {
+            let tw = text.measure(&title, 24.0, FontWeight::Bold);
+            text.draw(pixmap, &title, (w - tw) / 2.0, 26.0, 24.0, FontWeight::Bold, t.text);
+            let iw = text.measure(&instruction, 14.0, FontWeight::Regular);
+            text.draw(pixmap, &instruction, (w - iw) / 2.0, 62.0, 14.0, FontWeight::Regular, t.text_secondary);
         });
 
         // Palco: o ícone, a seta e a pasta.
@@ -353,21 +371,14 @@ impl App for Install {
         let stage_name = name.clone();
         ui.paint_text(|pixmap, text, _| {
             let (sx, sw) = (SIDE, w - 2.0 * SIDE);
-            fill_rounded(pixmap, sx, STAGE_Y, sw, STAGE_H, t.radius, rgba(t.card[0], t.card[1], t.card[2], t.card[3]));
-            let line = t.line;
-            if let Some(path) = mide::ui::draw::rounded_rect(sx + 0.5, STAGE_Y + 0.5, sw - 1.0, STAGE_H - 1.0, t.radius) {
-                let mut paint = Paint { anti_alias: true, ..Default::default() };
-                paint.set_color(rgba(line[0], line[1], line[2], line[3]));
-                pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
-            }
+            let _ = (sx, sw);
             // A pasta acende com o ícone em cima dela (ou depois de instalar).
             if over_folder || done {
                 let a = t.accent;
                 fill_rounded(pixmap, folder_spot.0 - 12.0, folder_spot.1 - 10.0, ICON + 24.0, ICON + 20.0, 16.0, rgba(a[0], a[1], a[2], 48));
             }
             let arrow_y = app_spot.1 + ICON / 2.0;
-            let sec = t.text_secondary;
-            draw_arrow(pixmap, app_spot.0 + ICON + 22.0, folder_spot.0 - 22.0, arrow_y, sec);
+            draw_arrow(pixmap, app_spot.0 + ICON + 26.0, folder_spot.0 - 26.0, arrow_y, t.accent);
             if let Some((_, app_icon, folder_icon)) = &icons {
                 if let Some(f) = folder_icon {
                     blit(pixmap, f, folder_spot.0 as i32, folder_spot.1 as i32, 1.0);
@@ -414,19 +425,15 @@ impl App for Install {
                 chosen = ui.dialog_buttons(&["Cancelar"]).map(|_| 0);
             }
             Stage::Ready => {
-                let message = match (&previous, &new_version) {
-                    (Some(old), Some(new)) if old.version.as_deref() == Some(new.as_str()) => format!("Esta versão de {name} já está em {folder}. Arraste para instalar de novo."),
-                    (Some(old), new) => format!(
-                        "{name}{} já está em {folder}. Arraste para substituir{}.",
-                        old.version.as_deref().map(|v| format!(" {v}")).unwrap_or_default(),
-                        new.as_deref().map(|v| format!(" pela versão {v}")).unwrap_or_default()
-                    ),
-                    (None, _) => format!("Arraste {name} até a pasta {folder} para instalar."),
-                };
-                ui.label(&message);
-                ui.space(6.0);
-                let primary = if previous.is_some() { "Substituir" } else { "Instalar" };
-                chosen = ui.dialog_buttons(&["Cancelar", primary]);
+                // Sem botões (arrastar instala); só a versão já instalada, se houver.
+                if let Some(old) = &previous {
+                    let note = match (&old.version, &new_version) {
+                        (Some(o), Some(n)) if o == n => format!("Esta versão já está em {folder}."),
+                        (Some(o), Some(n)) => format!("Instalada: {o}. Esta: {n}."),
+                        _ => format!("{name} já está em {folder}."),
+                    };
+                    ui.centered_note(&note);
+                }
             }
             Stage::Copying => {
                 let pct = (progress * 100.0).round() as u32;
@@ -452,7 +459,7 @@ impl App for Install {
         });
         let _ = h;
         // Teclado: Enter é o botão principal; Esc fecha (menos durante a cópia).
-        if chosen.is_none() && input.key(Key::Enter) && !input.repeat && matches!(self.stage, Stage::Ready | Stage::Done(_)) {
+        if chosen.is_none() && input.key(Key::Enter) && !input.repeat && matches!(self.stage, Stage::Done(_)) {
             chosen = Some(1);
         }
         if chosen.is_none() && input.key(Key::Escape) && !matches!(self.stage, Stage::Copying) {
@@ -580,7 +587,7 @@ fn main() {
             let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
             let install = Install::new(path);
             let work = install.work.clone();
-            let window = Window::new(&format!("Instalar {}", install.name())).app_id("mide-install").size(560, 372).min_size(480, 360);
+            let window = Window::new(&format!("Instalar {}", install.name())).app_id("mide-install").size(620, 340).min_size(520, 330);
             let result = run(window, install);
             if let Some(dir) = work.lock().ok().and_then(|mut w| w.take()) {
                 let _ = std::fs::remove_dir_all(&dir);

@@ -142,6 +142,8 @@ struct Files {
     col_count: usize,
     /// Arquivo do "Abrir com…" (a lista dos apps aparece por cima).
     open_with: Option<PathBuf>,
+    /// "Abrir com": app escolhido (id), busca, "Sempre abrir com" e "mostrar todos".
+    open_with_pick: (Option<String>, String, bool, bool),
     /// Compactar e extrair rodam numa thread: o resultado chega aqui.
     jobs_tx: Sender<Result<PathBuf, String>>,
     jobs_rx: Receiver<Result<PathBuf, String>>,
@@ -218,6 +220,7 @@ impl Files {
             col_manual: None,
             col_count: 0,
             open_with: None,
+            open_with_pick: (None, String::new(), false, false),
             jobs_tx,
             jobs_rx,
             busy: 0,
@@ -1306,43 +1309,116 @@ impl Files {
     /// Diálogo (modal, vidro branco no meio da janela): nome, Cancelar e Criar.
     /// Cancelar (ou Esc) não cria nada; Enter confirma.
     /// "Abrir com…": os apps que abrem o tipo do arquivo (o padrão primeiro); clicar abre.
+    /// "Abrir com", como no Mac (Tahoe): o arquivo no topo, busca, os apps
+    /// recomendados numa grade de ícones (o padrão marcado), outros apps ao buscar ou
+    /// ao pedir todos, e "Sempre abrir com este app". Duplo clique abre.
     fn open_with_view(&mut self, ui: &mut Ui) {
         let Some(path) = self.open_with.clone() else {
             return;
         };
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let apps = mide::default_apps::apps_for(&self.apps, &path);
-        let default = mide::default_apps::mime_for(&path).and_then(|m| mide::default_apps::current(&m)).map(|d| d.trim_end_matches(".desktop").to_string());
-        let mut chosen = None;
+        let recommended = mide::default_apps::apps_for(&self.apps, &path);
+        let mime = mide::default_apps::mime_for(&path);
+        let default = mime.as_deref().and_then(mide::default_apps::current).map(|d| d.trim_end_matches(".desktop").to_string());
+        let (mut picked, mut query, mut always, mut show_all) = self.open_with_pick.clone();
+        let q = query.trim().to_string();
+        let matches = |app: &mide::apps::App| q.is_empty() || mide::apps::fold(&app.name).contains(&mide::apps::fold(&q));
+        // Sem repetidos (dois atalhos com o mesmo nome e o mesmo comando).
+        let mut seen = std::collections::HashSet::new();
+        let main: Vec<mide::apps::App> = recommended.iter().filter(|a| matches(a) && seen.insert((a.name.clone(), a.command.clone()))).map(|a| (*a).clone()).collect();
+        let others: Vec<mide::apps::App> = if show_all || !q.is_empty() {
+            self.apps.iter().filter(|a| !recommended.iter().any(|r| r.id == a.id) && matches(a)).cloned().collect()
+        } else {
+            Vec::new()
+        };
+        // O padrão já vem escolhido.
+        if picked.is_none() {
+            picked = default.clone().filter(|d| recommended.iter().any(|a| &a.id == d)).or_else(|| recommended.first().map(|a| a.id.clone()));
+        }
+        let entry_icon: String = self.entries.iter().find(|e| e.path == path).map(|e| e.icon_name().to_string()).unwrap_or_else(|| "text-x-generic".into());
+        let mut open_now = None;
         let mut cancel = ui.input().key(Key::Escape);
-        ui.modal(420.0, |ui| {
-            ui.strong(&format!("Abrir \"{}\" com", short(&name)));
-            if apps.is_empty() {
-                ui.note(if self.apps_rx.is_some() { "Procurando apps…" } else { "Nenhum app instalado abre este tipo de arquivo." });
-            }
-            ui.scroll_area((apps.len() as f32 * 42.0).clamp(42.0, 300.0), |ui| {
-                for app in &apps {
-                    let detail = if default.as_deref() == Some(app.id.as_str()) { "padrão" } else { "" };
-                    if ui.list_item(&app.name, detail).clicked() {
-                        chosen = Some((*app).clone());
+        let mut confirm = false;
+        ui.modal(560.0, |ui| {
+            // Cabeçalho: ícone do arquivo, título e explicação.
+            ui.columns(
+                56.0,
+                12.0,
+                |ui| ui.image_centered(None, &entry_icon, 48),
+                |ui| {
+                    ui.strong(&format!("Abrir \"{}\" com", short(&name)));
+                    ui.note("Escolha um app para abrir este arquivo.");
+                },
+            );
+            ui.search_field(&mut query, "Buscar apps");
+            let grid = |ui: &mut Ui, list: &[mide::apps::App], picked: &mut Option<String>, open_now: &mut Option<mide::apps::App>| {
+                ui.wrap(|ui| {
+                    for app in list {
+                        let icon = app.icon.clone().unwrap_or_else(|| "application-x-executable".into());
+                        let is_default = default.as_deref() == Some(app.id.as_str());
+                        let label = if is_default { format!("{} (padrão)", app.name) } else { app.name.clone() };
+                        let selected = picked.as_deref() == Some(app.id.as_str());
+                        let r = ui.tile(Tile::Icon(&icon), &label, selected, 56);
+                        if r.clicked {
+                            *picked = Some(app.id.clone());
+                        }
+                        if r.double_clicked {
+                            *open_now = Some(app.clone());
+                        }
                     }
+                });
+            };
+            // A grade cabe na janela, com o rodapé (opções e botões) sempre à vista.
+            let grid_h = (ui.window_size().1 - 400.0).clamp(100.0, 320.0);
+            ui.scroll_area(grid_h, |ui| {
+                if main.is_empty() && others.is_empty() {
+                    ui.note(if self.apps_rx.is_some() { "Procurando apps…" } else { "Nenhum app encontrado." });
+                }
+                if !main.is_empty() {
+                    ui.heading("Recomendados");
+                    grid(ui, &main, &mut picked, &mut open_now);
+                }
+                if !others.is_empty() {
+                    ui.heading("Outros apps");
+                    grid(ui, &others, &mut picked, &mut open_now);
                 }
             });
+            if q.is_empty() && !show_all && ui.button("Mostrar todos os apps").clicked() {
+                show_all = true;
+            }
+            if mime.is_some() {
+                ui.checkbox("Sempre abrir arquivos deste tipo com este app", &mut always);
+            }
             ui.row(|ui| {
-                ui.push_right(110.0);
-                ui.sized(110.0, |ui| cancel |= ui.button("Cancelar").clicked());
+                ui.push_right(2.0 * 120.0 + 8.0);
+                ui.sized(120.0, |ui| cancel |= ui.button("Cancelar").clicked());
+                ui.sized(120.0, |ui| confirm = ui.primary_button("Abrir").clicked() || ui.input().key(Key::Enter));
             });
         });
+        let all: Vec<&mide::apps::App> = self.apps.iter().collect();
+        let chosen = open_now.or_else(|| confirm.then(|| picked.as_ref().and_then(|id| all.iter().find(|a| &a.id == id).map(|a| (*a).clone()))).flatten());
         if let Some(app) = chosen {
             tracing::info!("abrir com {}: {}", app.name, path.display());
+            if always {
+                if let Some(mime) = &mime {
+                    match mide::default_apps::set_for_mime(mime, &format!("{}.desktop", app.id)) {
+                        Ok(()) => tracing::info!("app padrão de {mime}: {}", app.id),
+                        Err(err) => tracing::warn!("app padrão não gravado: {err}"),
+                    }
+                }
+            }
             if let Err(err) = mide::apps::open_with(&app, &path) {
                 self.message = Some(format!("Não foi possível abrir com {}: {err}", app.name));
             }
             self.open_with = None;
+            self.open_with_pick = (None, String::new(), false, false);
             ui.request_repaint();
         } else if cancel {
             self.open_with = None;
+            self.open_with_pick = (None, String::new(), false, false);
             ui.request_repaint();
+        } else {
+            self.open_with_pick = (picked, query, always, show_all);
         }
     }
 
