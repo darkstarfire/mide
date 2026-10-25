@@ -846,6 +846,16 @@ impl Settings {
     fn bar(&mut self, ui: &mut Ui) {
         ui.title("Barra superior");
         ui.card(|ui| {
+            // Tahoe: sem fundo por padrão (o texto fica sobre o papel de parede).
+            let mut bg = settings_file::flag("bar", "background", false);
+            if ui.switch_detail("Mostrar o fundo da barra", "Faixa translúcida atrás da barra; desligado, o texto fica direto sobre o papel de parede, como no macOS Tahoe", &mut bg).changed() {
+                match settings_file::set("bar", "background", bg.then_some(Value::Bool(true))) {
+                    Ok(()) => tracing::info!("barra superior: fundo {}", if bg { "ligado" } else { "desligado" }),
+                    Err(err) => tracing::warn!("fundo da barra não gravado: {err}"),
+                }
+            }
+        });
+        ui.card(|ui| {
             for (key, label, detail) in settings_file::BAR_ITEMS {
                 let mut on = settings_file::bar_item(key);
                 if ui.switch_detail(label, detail, &mut on).changed() {

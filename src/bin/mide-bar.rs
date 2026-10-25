@@ -728,6 +728,55 @@ thread_local! {
     static PALETTE: std::cell::Cell<Palette> = const { std::cell::Cell::new(Palette::LIGHT) };
 }
 
+/// O alto do papel de parede é escuro? (Na barra sem fundo, o texto fica branco.) A
+/// imagem é amostrada uma vez por arquivo; o gradiente padrão do mide é escuro em cima.
+fn wallpaper_top_dark() -> bool {
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<(String, Option<std::time::SystemTime>, bool)>> = const { std::cell::RefCell::new(None) };
+    }
+    let path = match mide::settings_file::cached("desktop", "wallpaper") {
+        Some(mide::settings_file::Value::Text(p)) if !p.trim().is_empty() => p,
+        _ => return true,
+    };
+    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    if let Some(dark) = CACHE.with(|c| c.borrow().as_ref().filter(|(p, m, _)| *p == path && *m == mtime).map(|(_, _, d)| *d)) {
+        return dark;
+    }
+    let dark = image::open(&path)
+        .map(|img| {
+            let small = img.thumbnail(256, 256).to_rgb8();
+            let rows = (small.height() / 25).max(1);
+            let mut sum = 0u64;
+            let mut n = 0u64;
+            for y in 0..rows {
+                for x in 0..small.width() {
+                    let p = small.get_pixel(x, y);
+                    sum += (p[0] as u64 * 299 + p[1] as u64 * 587 + p[2] as u64 * 114) / 1000;
+                    n += 1;
+                }
+            }
+            sum / n.max(1) < 145
+        })
+        .unwrap_or(true);
+    tracing::info!("barra: papel de parede {} em cima", if dark { "escuro" } else { "claro" });
+    CACHE.with(|c| *c.borrow_mut() = Some((path, mtime, dark)));
+    dark
+}
+
+/// O desenho com uma sombra de 1 pixel embaixo (cor `shade`, pela transparência dele).
+fn with_shadow(src: &Pixmap, shade: [u8; 4]) -> Pixmap {
+    let mut out = Pixmap::new(src.width(), src.height()).expect("tamanho");
+    let mut shadow = src.clone();
+    for p in shadow.pixels_mut() {
+        let a = (p.alpha() as u32 * shade[3] as u32 / 255) as u8;
+        let pm = |c: u8| (c as u32 * a as u32 / 255) as u8;
+        *p = tiny_skia::PremultipliedColorU8::from_rgba(pm(shade[0]), pm(shade[1]), pm(shade[2]), a).unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
+    }
+    out.draw_pixmap(0, 1, shadow.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+    out.draw_pixmap(0, 0, src.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+    out
+}
+
 fn pal() -> Palette {
     PALETTE.with(|p| p.get())
 }
@@ -1138,6 +1187,10 @@ impl Bar {
 
     fn paint_bar(&mut self) {
         refresh_palette();
+        // Tahoe: sem fundo (texto direto sobre o papel de parede); `[bar] background`
+        // traz o fundo translúcido de volta.
+        let no_bg = !mide::settings_file::flag("bar", "background", false);
+        let wall_dark = no_bg && wallpaper_top_dark();
         self.bar_dirty = false;
         if !self.configured || self.width == 0 {
             return;
@@ -1157,14 +1210,29 @@ impl Bar {
         // Cor do texto em 8 níveis: o cache de texto (por cor) guarda poucas versões.
         let level = (ease * 8.0).round() / 8.0;
         let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
-        let base = if pal().dark { 245 } else { 20 };
+        let base = if no_bg {
+            if wall_dark { 250 } else { 18 }
+        } else if pal().dark {
+            245
+        } else {
+            20
+        };
         let fg = [mix(base, 255), mix(base, 255), mix(base + 4, 255), mix(255, 250)];
         // Com o vidro ligado, o compositor desfoca o que está atrás da barra e o véu
         // claro fica mais leve (o texto escuro continua legível).
         let glass = mide::control_client::panel_glass() && ease < 0.5;
         let strip = [(0.0, 0.0, fw, fh, 0.0)];
-        self.glass_bar.set("mide-bar", if glass { &strip } else { &[] });
-        if ease < 1.0 {
+        if !no_bg {
+            self.glass_bar.set("mide-bar", if glass { &strip } else { &[] });
+        }
+        // Cápsula do item aberto: vidro claro sobre o papel de parede (sem fundo) ou o
+        // destaque de sempre.
+        let cap = if no_bg {
+            if wall_dark { rgba(255, 255, 255, 52) } else { rgba(255, 255, 255, 150) }
+        } else {
+            pal().ink(30)
+        };
+        if ease < 1.0 && !no_bg {
             let (top_a, bottom_a) = if mide::control_client::panel_glass() { (158.0, 150.0) } else { (225.0, 220.0) };
             let fade = 1.0 - ease;
             let (top_a, bottom_a) = ((top_a * fade) as u8, (bottom_a * fade) as u8);
@@ -1184,7 +1252,7 @@ impl Bar {
         let cy = fh / 2.0;
         let lx = LOGO_X + LOGO_W / 2.0;
         if self.menu.as_ref().is_some_and(|m| m.id == MenuId::System) {
-            fill_rounded(&mut pixmap, LOGO_X - 4.0, 3.0, LOGO_W + 8.0, fh - 6.0, 5.0, pal().ink(30));
+            fill_rounded(&mut pixmap, LOGO_X - 4.0, 3.0, LOGO_W + 8.0, fh - 6.0, 5.0, cap);
         }
         if let Some(ring) = PathBuilder::from_circle(lx, cy, 6.5) {
             let mut stroke_paint = Paint::default();
@@ -1220,7 +1288,7 @@ impl Bar {
         for (id, title, weight) in titles {
             let tw = self.text.measure(&title, FONT, weight);
             if open == Some(id) {
-                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, pal().ink(30));
+                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, cap);
             }
             self.text.draw(&mut pixmap, &title, tx, text_y, FONT, weight, fg);
             self.titles.push((id, tx - TITLE_GAP / 2.0, tx + tw + TITLE_GAP / 2.0));
@@ -1235,7 +1303,7 @@ impl Bar {
         // Bluetooth, Wi-Fi e som. Cada um abre o seu painel.
         let highlight = |pixmap: &mut Pixmap, id: MenuId, x0: f32, x1: f32| {
             if open == Some(id) {
-                fill_rounded(pixmap, x0, 3.0, x1 - x0, fh - 6.0, 5.0, pal().ink(30));
+                fill_rounded(pixmap, x0, 3.0, x1 - x0, fh - 6.0, 5.0, cap);
             }
         };
         let clock = self.clock.clone();
@@ -1360,6 +1428,22 @@ impl Bar {
             x = x0;
         }
 
+        if no_bg {
+            // Sombra leve atrás do texto e dos ícones (legíveis em qualquer papel de parede).
+            pixmap = with_shadow(&pixmap, if wall_dark { [0, 0, 0, 90] } else { [255, 255, 255, 110] });
+            // Vidro só atrás da cápsula do item aberto.
+            let glass_on = mide::control_client::panel_glass();
+            let open_rect: Vec<(f32, f32, f32, f32, f32)> = match open {
+                Some(MenuId::System) => vec![(LOGO_X - 4.0, 3.0, LOGO_W + 8.0, fh - 6.0, 5.0)],
+                // Menus da esquerda guardam o espaço entre eles; os da direita, a cápsula.
+                Some(id) if matches!(id, MenuId::App | MenuId::Native(_) | MenuId::File | MenuId::Edit | MenuId::Window) => {
+                    self.titles.iter().filter(|t| t.0 == id).map(|t| (t.1 + TITLE_GAP / 2.0 - 7.0, 3.0, t.2 - t.1 - TITLE_GAP + 14.0, fh - 6.0, 5.0)).collect()
+                }
+                Some(id) => self.titles.iter().filter(|t| t.0 == id).map(|t| (t.1, 3.0, t.2 - t.1, fh - 6.0, 5.0)).collect(),
+                None => Vec::new(),
+            };
+            self.glass_bar.set("mide-bar", if glass_on { &open_rect } else { &[] });
+        }
         self.present_layer(&pixmap, true);
     }
 
