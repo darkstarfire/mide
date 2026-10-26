@@ -354,7 +354,7 @@ pub fn write(doc: &Doc, layout: &Layout, layouter: &mut Layouter, fonts: &mut Fo
     w.obj(pages_id, format!("<< /Type /Pages /Kids [{kids}] /Count {} >>", page_ids.len()).as_bytes());
     w.obj(catalog, format!("<< /Type /Catalog /Pages {pages_id} 0 R >>").as_bytes());
     let info = w.reserve();
-    w.obj(info, b"<< /Producer (mide - Editor de Texto) /Creator (mide-text) >>");
+    w.obj(info, b"<< /Producer (mide Writer) /Creator (mide-writer) >>");
     let xref = w.buf.len();
     let mut tail = format!("xref\n0 {}\n0000000000 65535 f \n", w.offsets.len() + 1);
     for off in &w.offsets {

@@ -258,6 +258,11 @@ pub struct State {
     /// Ícone de um arrasto entre apps (o app que arrasta manda a superfície) e o
     /// deslocamento dele em relação ao ponteiro.
     pub dnd_icon: Option<(WlSurface, smithay::utils::Point<i32, smithay::utils::Logical>)>,
+    /// Arrasto entre apps em andamento e a ação que o app sob o ponteiro escolheu
+    /// (`wl_data_offer.set_actions`): copiar mostra o ponteiro de "copiar" (o arquivo
+    /// vai ser importado ali); sem ação (o app não aceita), a seta.
+    pub dnd_source: Option<Option<smithay::reexports::wayland_server::backend::ClientId>>,
+    pub dnd_action: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     /// Sessão do backend DRM (trocar de console com Ctrl+Alt+F1…F12).
     pub session: Option<smithay::backend::session::libseat::LibSeatSession>,
     /// Gravação de atalho em andamento (tela Teclado das Configurações).
@@ -433,6 +438,8 @@ impl State {
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
             shake: Default::default(),
             dnd_icon: None,
+            dnd_source: None,
+            dnd_action: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction::None,
             session: None,
             shortcut_capture: None,
             test_ctrl: false,
@@ -995,12 +1002,30 @@ impl DataDeviceHandler for State {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.data_device_state
     }
+
+    /// O app sob o ponteiro disse o que fará com o que está sendo arrastado (copiar,
+    /// mover ou nada): o ponteiro mostra isso.
+    fn action_choice(
+        &mut self,
+        available: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
+        preferred: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
+    ) -> smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction {
+        let chosen = smithay::wayland::selection::data_device::default_action_chooser(available, preferred);
+        if self.dnd_source.is_some() && chosen != self.dnd_action {
+            tracing::debug!("arrasto: o destino escolheu {chosen:?}");
+            self.dnd_action = chosen;
+            crate::input::refresh_dnd_cursor(self);
+        }
+        chosen
+    }
 }
 
 impl ClientDndGrabHandler for State {
     /// Arrasto entre apps começou: guarda o ícone para desenhar junto do ponteiro.
-    fn started(&mut self, _: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>, icon: Option<WlSurface>, _: smithay::input::Seat<Self>) {
+    fn started(&mut self, source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>, icon: Option<WlSurface>, _: smithay::input::Seat<Self>) {
         tracing::info!("arrasto entre apps começou (ícone: {})", icon.is_some());
+        use smithay::reexports::wayland_server::Resource;
+        self.dnd_source = Some(source.and_then(|s| s.client()).map(|c| c.id()));
         // O app já mandou a imagem do ícone (com o deslocamento) antes de começar.
         self.dnd_icon = icon.map(|s| {
             let delta = smithay::wayland::compositor::with_states(&s, |st| {
@@ -1014,6 +1039,9 @@ impl ClientDndGrabHandler for State {
     fn dropped(&mut self, _: Option<WlSurface>, validated: bool, _: smithay::input::Seat<Self>) {
         tracing::info!("arrasto entre apps terminou (aceito: {validated})");
         self.dnd_icon = None;
+        self.dnd_source = None;
+        self.dnd_action = smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction::None;
+        self.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
         self.redraw = true;
     }
 }

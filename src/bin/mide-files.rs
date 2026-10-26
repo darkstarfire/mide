@@ -99,6 +99,9 @@ struct Files {
     /// Renomear no lugar (Enter, como no Finder): o item, o nome sendo digitado e se o
     /// campo ainda precisa receber o foco.
     inline: Option<(PathBuf, String, bool)>,
+    /// Pasta sob um arrasto e desde quando (pasta de mola: segurando, a janela entra
+    /// nela, como no Finder).
+    spring: Option<(PathBuf, std::time::Instant)>,
     /// Larguras das colunas Modificado, Tamanho e Tipo da lista (arrastáveis no
     /// cabeçalho, lembradas entre as janelas) e as últimas gravadas.
     list_widths: [f32; 3],
@@ -262,6 +265,7 @@ impl Files {
             dialog: None,
             focus_rename: false,
             inline: None,
+            spring: None,
             list_widths: ViewMemory::load().list_widths(),
             list_widths_saved: ViewMemory::load().list_widths(),
             tags: HashMap::new(),
@@ -424,6 +428,26 @@ impl Files {
         match &self.place {
             Place::Dir(dir) => Some(dir.clone()),
             Place::Trash => None,
+        }
+    }
+
+    /// Novo documento de um tipo (`mide::templates`: Word, Writer, Excel...) na pasta
+    /// `dir`, com o nome livre e o campo do nome aberto, como no Finder.
+    fn create_kind(&mut self, dir: &Path, ext: &str) {
+        match mide::templates::create(dir, ext) {
+            Ok(path) => {
+                tracing::info!("criado: {}", path.display());
+                self.remember(Undo::Created(vec![path.clone()]));
+                self.reload();
+                // Na pasta aberta, o nome já fica para editar; dentro de outra pasta (o
+                // item não está à vista), só cria.
+                if self.target_dir().as_deref() == Some(dir) {
+                    self.select_one(path.clone());
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.inline = Some((path, name, true));
+                }
+            }
+            Err(err) => self.message = Some(format!("Não foi possível criar: {err}")),
         }
     }
 
@@ -1144,6 +1168,7 @@ impl Files {
             if copy && !self.selection.is_empty() {
                 self.clipboard = self.selection.clone();
                 tracing::info!("copiado(s): {} item(ns)", self.clipboard.len());
+                copy_to_system(&self.clipboard);
             }
             if paste {
                 self.paste();
@@ -1685,6 +1710,18 @@ impl Files {
             let reveal = self.reveal.clone();
             let mut revealed = false;
             let inline_icon = size as f32;
+            // Para o menu (só com um menu aberto): os apps do "Abrir com" e os lugares
+            // do "Mover para"/"Copiar para".
+            let menu_is_open = ui.menu_open().is_some();
+            let apps_all = if menu_is_open { self.apps.clone() } else { Vec::new() };
+            let menu_apps = |entry: &Entry| -> Vec<(String, String, String)> {
+                mide::default_apps::apps_for(&apps_all, &entry.path)
+                    .into_iter()
+                    .take(12)
+                    .map(|a| (a.id.clone(), a.name.clone(), a.icon.clone().unwrap_or_else(|| "application-x-executable".into())))
+                    .collect()
+            };
+            let places_list = if menu_is_open { files::favorites() } else { Vec::new() };
             let mut item = |ui: &mut Ui, entry: &Entry, r: mide::kit::Response| {
                 rects.push((entry.path.clone(), r.rect));
                 // Renomear no lugar: o nome vira um campo de texto por cima dele.
@@ -1777,66 +1814,7 @@ impl Files {
                             None
                         }
                     } else {
-                        let is_zip = entry.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
-                        let mut chosen = None;
-                        if m.item(&if multi { format!("Abrir {count} itens") } else { "Abrir".into() }) {
-                            chosen = Some(Action::Open);
-                        }
-                        // Abrir com…: a lista dos apps que abrem o tipo do arquivo.
-                        if !multi && !entry.is_dir && m.item("Abrir com…") {
-                            chosen = Some(Action::OpenWith);
-                        }
-                        if !multi && entry.is_dir && m.item("Abrir no Terminal") {
-                            chosen = Some(Action::Terminal);
-                        }
-                        if !multi && entry.is_dir {
-                            m.separator();
-                            if m.item("Nova pasta aqui dentro") {
-                                chosen = Some(Action::NewFolderIn);
-                            }
-                            if m.item("Novo arquivo aqui dentro") {
-                                chosen = Some(Action::NewFileIn);
-                            }
-                        }
-                        m.separator();
-                        if !multi && m.item("Renomear…") {
-                            chosen = Some(Action::Rename);
-                        }
-                        if m.item(&if multi { format!("Duplicar {count} itens") } else { "Duplicar".into() }) {
-                            chosen = Some(Action::Duplicate);
-                        }
-                        if multi {
-                            if m.item(&format!("Comprimir {count} itens")) {
-                                chosen = Some(Action::Compress);
-                            }
-                        } else if is_zip {
-                            if m.item("Extrair aqui") {
-                                chosen = Some(Action::Extract);
-                            }
-                        } else if m.item("Comprimir") {
-                            chosen = Some(Action::Compress);
-                        }
-                        m.separator();
-                        if m.item(&if multi { format!("Copiar {count} itens") } else { "Copiar".into() }) {
-                            chosen = Some(Action::Copy);
-                        }
-                        if !multi && m.item("Copiar caminho") {
-                            chosen = Some(Action::CopyPath);
-                        }
-                        if !multi && m.item("Obter informações") {
-                            chosen = Some(Action::Info);
-                        }
-                        m.separator();
-                        if m.danger(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
-                            chosen = Some(Action::Trash);
-                        }
-                        // Etiquetas de cor, como no Finder (as marcadas com um anel).
-                        m.separator();
-                        let marked: Vec<bool> = (0..files::TAGS.len()).map(|i| entry_tags.contains(&i)).collect();
-                        if let Some(i) = m.tags("Etiquetas", &marked) {
-                            chosen = Some(Action::Tag(i));
-                        }
-                        chosen
+                        finder_menu(m, entry, if multi { count } else { 1 }, &entry_tags, &menu_apps(entry), &places_list)
                     };
                     if let Some(chosen) = chosen {
                         action = Some((chosen, entry.clone()));
@@ -1957,6 +1935,12 @@ impl Files {
                     let expandable = entry.is_dir && !in_trash;
                     let cols = [(date.as_str(), widths[0].1), (size.as_str(), widths[1].1), (kind.as_str(), widths[2].1)];
                     let (name, icon) = label_of(entry);
+                    // Escolhidos em sequência: um bloco só (cantos só nas pontas), como no Finder.
+                    if selected {
+                        let above = i > 0 && selection.contains(&rows[i - 1].1.path);
+                        let below = rows.get(i + 1).is_some_and(|(_, e)| selection.contains(&e.path));
+                        ui.join_selection(above, below);
+                    }
                     let (r, toggled) = ui.tree_row(*depth, expandable, open, &icon, &name, &cols, selected, i % 2 == 1);
                     // Itens da pasta que acabou de abrir: aparecem esmaecendo, de cima
                     // para baixo (cada linha começa um pouco depois da anterior).
@@ -2112,9 +2096,13 @@ impl Files {
                     if m.item("Nova pasta") {
                         empty_action = Some(Action::NewFolder);
                     }
-                    if m.item("Novo arquivo") {
-                        empty_action = Some(Action::NewFile);
-                    }
+                    m.submenu(None, "Novo arquivo", |m| {
+                        for (ext, label, _, icon) in mide::templates::KINDS {
+                            if m.item_icon(icon, label, None) {
+                                empty_action = Some(Action::NewKind(ext));
+                            }
+                        }
+                    });
                     if clipboard && m.item("Colar") {
                         empty_action = Some(Action::Paste);
                     }
@@ -2263,6 +2251,26 @@ impl Files {
         if ui.input().drag_ended {
             self.drag_out = None;
         }
+        // Pasta de mola: segurando um arrasto (daqui ou de outro app) em cima de uma pasta
+        // por um instante, a janela entra nela; dá para ir descendo pasta por pasta.
+        match (&drop_target, &self.spring) {
+            (Some(folder), Some((f, at))) if f == folder => {
+                if at.elapsed() >= std::time::Duration::from_millis(1100) {
+                    tracing::info!("pasta de mola: {}", folder.display());
+                    let folder = folder.clone();
+                    self.spring = None;
+                    self.go(Place::Dir(folder));
+                    ui.request_repaint();
+                } else {
+                    ui.request_tick();
+                }
+            }
+            (Some(folder), _) => {
+                self.spring = Some((folder.clone(), std::time::Instant::now()));
+                ui.request_tick();
+            }
+            (None, _) => self.spring = None,
+        }
         // Arquivos soltos na janela: numa pasta da lista ou na pasta aberta. Do próprio
         // Arquivos, move (com Ctrl, copia), como dentro da janela; de outro app, copia.
         if let Some(paths) = ui.input().dropped.clone() {
@@ -2357,6 +2365,7 @@ impl Files {
                 Action::Copy => {
                     self.clipboard = self.targets(&entry);
                     tracing::info!("copiado(s): {} item(ns)", self.clipboard.len());
+                    copy_to_system(&self.clipboard);
                 }
                 Action::Trash => {
                     for path in self.targets(&entry) {
@@ -2365,6 +2374,102 @@ impl Files {
                 }
                 Action::Restore => self.restore(&entry),
                 Action::Delete => self.delete_forever(&entry),
+                Action::OpenWithApp(id) => {
+                    if let Some(app) = self.apps.iter().find(|a| a.id == id).cloned() {
+                        if let Err(err) = mide::apps::open_with(&app, &entry.path) {
+                            self.message = Some(format!("Não foi possível abrir com {}: {err}", app.name));
+                        }
+                    }
+                }
+                Action::OpenNewWindow => {
+                    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-files"));
+                    let _ = std::process::Command::new(exe).arg(&entry.path).spawn();
+                }
+                Action::NewKindIn(ext) => self.create_kind(&entry.path, ext),
+                Action::NewFolderWithSelection => {
+                    // Como no Finder: os escolhidos vão para uma pasta nova, ao lado deles.
+                    let targets = self.targets(&entry);
+                    if let Some(dir) = entry.path.parent().map(Path::to_path_buf) {
+                        let name = files::numbered_name(&dir, "Nova pasta com itens", "");
+                        match files::create_named(&dir, &name, true) {
+                            Ok(folder) => {
+                                let mut moved = Vec::new();
+                                for path in &targets {
+                                    match files::move_into(path, &folder) {
+                                        Ok(to) => moved.push((path.clone(), to)),
+                                        Err(err) => self.message = Some(format!("Não foi possível mover: {err}")),
+                                    }
+                                }
+                                self.remember(Undo::Move(moved));
+                                self.reload();
+                                self.select_one(folder.clone());
+                                self.inline = Some((folder.clone(), name, true));
+                            }
+                            Err(err) => self.message = Some(err),
+                        }
+                    }
+                }
+                Action::Alias => {
+                    let mut made = Vec::new();
+                    for path in self.targets(&entry) {
+                        let Some(dir) = path.parent() else { continue };
+                        let stem = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        let link = dir.join(files::numbered_name(dir, &format!("{stem} atalho"), ""));
+                        match std::os::unix::fs::symlink(&path, &link) {
+                            Ok(()) => made.push(link),
+                            Err(err) => self.message = Some(format!("Não foi possível criar o atalho: {err}")),
+                        }
+                    }
+                    if !made.is_empty() {
+                        self.remember(Undo::Created(made.clone()));
+                        self.reload();
+                        self.selection = made;
+                    }
+                }
+                Action::QuickLook => self.quick_look = Some(entry.path.clone()),
+                Action::MoveTo(dir) | Action::CopyTo(dir) if !dir.is_dir() => {
+                    self.message = Some(format!("A pasta \"{}\" não existe.", dir.display()));
+                }
+                Action::MoveTo(dir) => {
+                    let targets = self.targets(&entry);
+                    self.drop_into(&targets, &dir, false);
+                }
+                Action::CopyTo(dir) => {
+                    let targets = self.targets(&entry);
+                    self.drop_into(&targets, &dir, true);
+                }
+                Action::Rotate(right) => {
+                    let result = image::open(&entry.path).map_err(|e| e.to_string()).and_then(|img| {
+                        let img = if right { img.rotate90() } else { img.rotate270() };
+                        img.save(&entry.path).map_err(|e| e.to_string())
+                    });
+                    match result {
+                        Ok(()) => {
+                            self.thumbs.retain(|(p, _), _| *p != entry.path);
+                            self.reload();
+                        }
+                        Err(err) => self.message = Some(format!("Não foi possível girar: {err}")),
+                    }
+                }
+                Action::Convert(ext) => {
+                    if let Some(dir) = entry.path.parent() {
+                        let stem = entry.path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        let target = dir.join(files::numbered_name(dir, &stem, ext));
+                        let result = image::open(&entry.path).map_err(|e| e.to_string()).and_then(|img| {
+                            // JPEG não tem transparência: vai sem o canal alfa.
+                            let img = if ext == "jpg" { image::DynamicImage::ImageRgb8(img.to_rgb8()) } else { img };
+                            img.save(&target).map_err(|e| e.to_string())
+                        });
+                        match result {
+                            Ok(()) => {
+                                self.remember(Undo::Created(vec![target.clone()]));
+                                self.reload();
+                                self.select_one(target);
+                            }
+                            Err(err) => self.message = Some(format!("Não foi possível converter: {err}")),
+                        }
+                    }
+                }
                 _ => {}
             }
             ui.request_repaint();
@@ -2373,6 +2478,11 @@ impl Files {
             match action {
                 Action::NewFolder => self.new_folder(),
                 Action::NewFile => self.new_file(),
+                Action::NewKind(ext) => {
+                    if let Some(dir) = self.target_dir() {
+                        self.create_kind(&dir, ext);
+                    }
+                }
                 Action::Paste => self.paste(),
                 Action::Terminal => {
                     if let Some(dir) = self.target_dir() {
@@ -2659,7 +2769,7 @@ impl Undo {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Action {
     Open,
     /// Abrir com…: escolher o app numa lista.
@@ -2686,6 +2796,165 @@ enum Action {
     ToggleHidden,
     CopyFolder,
     EmptyTrash,
+    /// Abrir com um app da lista (id do `.desktop`).
+    OpenWithApp(String),
+    /// Abrir a pasta numa janela nova do Arquivos.
+    OpenNewWindow,
+    /// Novo documento de um tipo (`mide::templates`), na pasta aberta.
+    NewKind(&'static str),
+    /// Novo documento de um tipo dentro da pasta clicada.
+    NewKindIn(&'static str),
+    NewFolderWithSelection,
+    /// Criar atalho (link simbólico ao lado).
+    Alias,
+    QuickLook,
+    MoveTo(PathBuf),
+    CopyTo(PathBuf),
+    /// Ações rápidas de imagem: girar (90° à esquerda/direita) e converter.
+    Rotate(bool),
+    Convert(&'static str),
+}
+
+/// Copiar: os endereços `file://` também vão para a área de transferência do sistema
+/// (a área de trabalho e outros apps colam).
+fn copy_to_system(paths: &[PathBuf]) {
+    let text: Vec<String> = paths.iter().map(|p| mide::thumbnails::file_uri(p)).collect();
+    places::copy_text(&text.join("\n"));
+}
+
+/// Menu de um item (como o do Finder): para um ou vários escolhidos, com os submenus
+/// Abrir com, Novo arquivo, Mover para, Copiar para e Ações rápidas.
+#[allow(clippy::too_many_arguments)]
+fn finder_menu(
+    m: &mut mide::kit::Menu,
+    entry: &Entry,
+    count: usize,
+    tags: &[usize],
+    apps: &[(String, String, String)],
+    places_list: &[(String, PathBuf, &'static str)],
+) -> Option<Action> {
+    let mut chosen = None;
+    let multi = count > 1;
+    let ext = entry.path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let is_zip = ext == "zip";
+    let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg");
+    if multi && m.item(&format!("Nova pasta com a seleção ({count} itens)")) {
+        chosen = Some(Action::NewFolderWithSelection);
+    }
+    if m.item(&if multi { format!("Abrir {count} itens") } else { "Abrir".into() }) {
+        chosen = Some(Action::Open);
+    }
+    if !multi && entry.is_dir {
+        if m.item("Abrir em nova janela") {
+            chosen = Some(Action::OpenNewWindow);
+        }
+        if m.item("Abrir no Terminal") {
+            chosen = Some(Action::Terminal);
+        }
+    }
+    if !multi && !entry.is_dir {
+        m.submenu(None, "Abrir com", |m| {
+            for (i, (id, name, icon)) in apps.iter().enumerate() {
+                let label = if i == 0 { format!("{name} (padrão)") } else { name.clone() };
+                if m.item_icon(icon, &label, None) {
+                    chosen = Some(Action::OpenWithApp(id.clone()));
+                }
+                if i == 0 && apps.len() > 1 {
+                    m.separator();
+                }
+            }
+            if !apps.is_empty() {
+                m.separator();
+            }
+            if m.item("Outro…") {
+                chosen = Some(Action::OpenWith);
+            }
+        });
+    }
+    m.separator();
+    if m.item(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
+        chosen = Some(Action::Trash);
+    }
+    m.separator();
+    if m.item("Obter informações") {
+        chosen = Some(Action::Info);
+    }
+    if !multi && m.item("Renomear…") {
+        chosen = Some(Action::Rename);
+    }
+    if !multi && is_zip {
+        if m.item("Extrair aqui") {
+            chosen = Some(Action::Extract);
+        }
+    } else if m.item(&if multi { format!("Comprimir {count} itens") } else { format!("Comprimir \"{}\"", entry.name) }) {
+        chosen = Some(Action::Compress);
+    }
+    if m.item("Duplicar") {
+        chosen = Some(Action::Duplicate);
+    }
+    if m.item("Criar atalho") {
+        chosen = Some(Action::Alias);
+    }
+    if !multi && m.item("Visualização Rápida") {
+        chosen = Some(Action::QuickLook);
+    }
+    m.separator();
+    if m.item(&if multi { format!("Copiar {count} itens") } else { format!("Copiar \"{}\"", entry.name) }) {
+        chosen = Some(Action::Copy);
+    }
+    if m.item("Copiar como caminho") {
+        chosen = Some(Action::CopyPath);
+    }
+    m.separator();
+    let marked: Vec<bool> = (0..files::TAGS.len()).map(|i| tags.contains(&i)).collect();
+    if let Some(i) = m.tags("Etiquetas…", &marked) {
+        chosen = Some(Action::Tag(i));
+    }
+    m.separator();
+    if !multi && is_image {
+        m.submenu(None, "Ações rápidas", |m| {
+            if m.item("Girar para a esquerda") {
+                chosen = Some(Action::Rotate(false));
+            }
+            if m.item("Girar para a direita") {
+                chosen = Some(Action::Rotate(true));
+            }
+            m.separator();
+            if ext != "png" && m.item("Converter em PNG") {
+                chosen = Some(Action::Convert("png"));
+            }
+            if ext == "png" && m.item("Converter em JPEG") {
+                chosen = Some(Action::Convert("jpg"));
+            }
+        });
+    }
+    if !multi && entry.is_dir {
+        if m.item("Nova pasta aqui dentro") {
+            chosen = Some(Action::NewFolderIn);
+        }
+        m.submenu(None, "Novo arquivo aqui dentro", |m| {
+            for (ext, label, _, icon) in mide::templates::KINDS {
+                if m.item_icon(icon, label, None) {
+                    chosen = Some(Action::NewKindIn(ext));
+                }
+            }
+        });
+    }
+    m.submenu(None, "Mover para", |m| {
+        for (name, path, icon) in places_list {
+            if m.item_icon(icon, name, None) {
+                chosen = Some(Action::MoveTo(path.clone()));
+            }
+        }
+    });
+    m.submenu(None, "Copiar para", |m| {
+        for (name, path, icon) in places_list {
+            if m.item_icon(icon, name, None) {
+                chosen = Some(Action::CopyTo(path.clone()));
+            }
+        }
+    });
+    chosen
 }
 
 /// Largura mínima de cada coluna da visualização em colunas.
@@ -2864,7 +3133,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.reveal = start.select.first().cloned();
         app.selection = start.select;
     }
-    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360).full_size_content();
+    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360).full_size_content().accepts_files();
     run(window, app)
 }
 

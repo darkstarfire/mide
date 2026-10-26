@@ -61,7 +61,7 @@ fi
 # Com dois layouts, Ctrl+Super+Espaço passa ao dos EUA: a tecla do acento do ABNT2
 # escreve "[".
 : > "$SCFG/layout.txt"
-timeout 150 "$SCEN" "400 click 400 300; 420 combo ctrl+super+space; 440 key leftbrace; 450 key a; 480 combo ctrl+s; 540 list" -- "$PWD/target/debug/mide-text '$SCFG/layout.txt'" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 400 300; 420 combo ctrl+super+space; 440 key leftbrace; 450 key a; 480 combo ctrl+s; 540 list" -- "$PWD/target/debug/mide-code '$SCFG/layout.txt'" >/dev/null 2>&1
 if [ "$(cat "$SCFG/layout.txt")" = "[a" ]; then
     echo "ok    Teclado: Ctrl+Super+Espaço troca o layout"; PASS=$((PASS + 1))
 else
@@ -69,7 +69,7 @@ else
 fi
 # Seletor na barra (B18): "BR" em (1256, 14); no menu, "Inglês (EUA)" em (1190, 78).
 : > "$SCFG/layout.txt"
-timeout 150 "$SCEN" "400 click 1256 14; 440 click 1190 78; 480 click 400 300; 500 key leftbrace; 510 key a; 540 combo ctrl+s; 600 list" -- "$PWD/target/debug/mide-text '$SCFG/layout.txt'" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 1256 14; 440 click 1190 78; 480 click 400 300; 500 key leftbrace; 510 key a; 540 combo ctrl+s; 600 list" -- "$PWD/target/debug/mide-code '$SCFG/layout.txt'" >/dev/null 2>&1
 if [ "$(cat "$SCFG/layout.txt")" = "[a" ]; then
     echo "ok    barra: seletor de layout troca o layout"; PASS=$((PASS + 1))
 else

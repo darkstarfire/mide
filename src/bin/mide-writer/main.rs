@@ -1,8 +1,14 @@
-//! Editor de Texto do mide (E2 e E2b), como o TextEdit do Mac: documentos formatados
-//! (RTF, com páginas, fontes, cores, alinhamento, listas, imagens e as normas ABNT, em
-//! `rich.rs`) e texto simples (.txt, código: com números de linha, buscar e
-//! substituir). Um documento por janela; abre pelo Arquivos ou com
-//! `mide-text <arquivo>`. Documento novo começa formatado, como no TextEdit.
+//! Writer do mide (E2b, `mide-writer`): o editor de documentos, para quem escreve
+//! (como o TextEdit e o Pages do Mac, no lugar do Word/Writer): documentos formatados
+//! (RTF, DOCX e ODT, com páginas, fontes, cores, alinhamento, listas, imagens e as
+//! normas ABNT, em `rich.rs`). Um documento por janela; abre pelo Arquivos ou com
+//! `mide-writer <arquivo>`.
+//!
+//! A interface é sempre a de documento: um arquivo de texto simples abre como
+//! documento (e volta a ser texto simples ao salvar como .txt); um arquivo vazio
+//! (criado por "novo arquivo vazio") abre como documento novo; um arquivo que não dá
+//! para ler mostra o aviso e abre um documento novo sem nome, para nunca gravar por
+//! cima do original. Para editar código e textos rápidos, o `mide-code`.
 
 mod rich;
 
@@ -56,6 +62,11 @@ fn is_rich_path(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["rtf", "docx", "odt"].iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
+/// Imagens que entram no documento (soltas na janela ou pelo "Inserir imagem").
+fn is_picture(path: &Path) -> bool {
+    matches!(ext_of(path).as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp")
+}
+
 fn ext_of(path: &Path) -> String {
     path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase()
 }
@@ -72,37 +83,41 @@ fn read_rich(path: &Path, data: &[u8]) -> Option<mide::richtext::Doc> {
 impl Editor {
     fn open(path: Option<PathBuf>) -> Self {
         let mut editor = Self { path: None, doc: TextDoc::default(), crlf: false, message: None, find: None, dialog: None, start: true, rich: None };
-        // Sem arquivo: documento formatado novo (como o TextEdit).
-        if path.is_none() {
-            editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new()));
-        }
-        if let Some(path) = path.clone().filter(|p| is_rich_path(p)) {
-            match std::fs::read(&path) {
-                Ok(data) => match read_rich(&path, &data) {
-                    Some(doc) => {
-                        tracing::info!("aberto (formatado): {} ({} parágrafos)", path.display(), doc.paras.len());
-                        editor.rich = Some(rich::Rich::new(doc));
-                    }
-                    None => editor.message = Some(format!("Não foi possível ler \"{}\" (arquivo danificado ou de outro formato).", path.display())),
-                },
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new())),
-                Err(err) => editor.message = Some(format!("Não foi possível abrir \"{}\": {err}", path.display())),
-            }
-            editor.path = Some(path);
+        // Sempre a interface de documento (documento novo enquanto nada foi lido).
+        editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new()));
+        let Some(path) = path else {
             return editor;
-        }
-        if let Some(path) = path {
-            match read_text(&path) {
+        };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match std::fs::read(&path) {
+            // Vazio (criado por "novo arquivo vazio" de outro programa) ou ainda não
+            // existe: documento novo, gravado nesse arquivo ao salvar.
+            Ok(data) if data.is_empty() => editor.path = Some(path),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => editor.path = Some(path),
+            Ok(data) if is_rich_path(&path) => match read_rich(&path, &data) {
+                Some(doc) => {
+                    tracing::info!("aberto (formatado): {} ({} parágrafos)", path.display(), doc.paras.len());
+                    editor.rich = Some(rich::Rich::new(doc));
+                    editor.path = Some(path);
+                }
+                // Não deu para ler: avisa e segue com um documento novo sem nome (salvar
+                // pergunta onde; o original fica como está).
+                None => {
+                    tracing::warn!("não foi possível ler {}", path.display());
+                    editor.message = Some(format!("Não foi possível ler \"{name}\" (arquivo danificado ou de outro formato). Você pode escrever num documento novo; o original não é alterado."));
+                }
+            },
+            // Texto simples: entra como documento (ao salvar como .txt, volta a ser texto).
+            Ok(_) => match read_text(&path) {
                 Ok((text, crlf)) => {
-                    tracing::info!("aberto: {}", path.display());
-                    editor.doc = TextDoc::new(text);
+                    tracing::info!("aberto (texto): {}", path.display());
+                    editor.rich = Some(rich::Rich::new(mide::richtext::Doc::from_plain(&text, mide::richtext::CharStyle::default())));
                     editor.crlf = crlf;
                     editor.path = Some(path);
                 }
-                // Arquivo que ainda não existe: começa vazio e cria ao salvar.
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => editor.path = Some(path),
-                Err(err) => editor.message = Some(format!("Não foi possível abrir \"{}\": {err}", path.display())),
-            }
+                Err(err) => editor.message = Some(format!("Não foi possível ler \"{name}\": {err}. Você pode escrever num documento novo; o original não é alterado.")),
+            },
+            Err(err) => editor.message = Some(format!("Não foi possível abrir \"{name}\": {err}")),
         }
         editor
     }
@@ -195,7 +210,7 @@ impl Editor {
             self.start = true;
             return;
         }
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-text"));
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-writer"));
         match std::process::Command::new(exe).arg(&path).spawn() {
             Ok(mut child) => {
                 tracing::info!("abrindo em outra janela: {}", path.display());
@@ -387,7 +402,7 @@ impl Editor {
             r.view(ui, top);
             if std::mem::take(&mut r.wants_image) {
                 let dir = mide::places::pictures_dir();
-                self.dialog = Some(Dialog::InsertImage(FileChooser::open("Inserir imagem", Some(&dir)).extensions(&["png", "jpg", "jpeg"])));
+                self.dialog = Some(Dialog::InsertImage(FileChooser::open("Inserir imagem", Some(&dir)).extensions(&["png", "jpg", "jpeg", "webp", "gif", "bmp"])));
             }
             if let Some(range) = r.wants_pdf_path.take() {
                 let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
@@ -514,7 +529,7 @@ impl Editor {
 
 impl App for Editor {
     fn view(&mut self, ui: &mut Ui) {
-        let title = format!("{}{} — Editor de Texto", if self.modified() { "• " } else { "" }, self.name());
+        let title = format!("{}{} — Writer", if self.modified() { "• " } else { "" }, self.name());
         ui.set_title(&title);
         // Atalhos do app: Ctrl+S salva (com Shift, "Salvar como"), Ctrl+O abre, Ctrl+F
         // busca. Itens dos menus do app na barra superior também.
@@ -525,7 +540,7 @@ impl App for Editor {
         if let Some(paths) = ui.input().dropped.clone() {
             for path in paths {
                 match self.rich.as_mut() {
-                    Some(r) if mide::places::is_image(&path) => r.insert_image(&path),
+                    Some(r) if is_picture(&path) => r.insert_image(&path),
                     _ => self.open_chosen(path),
                 }
             }
@@ -537,8 +552,6 @@ impl App for Editor {
                     continue;
                 }
             match action.as_str() {
-                "texto-simples" if self.rich.is_some() => self.to_plain(),
-                "texto-formatado" if self.rich.is_none() => self.to_rich(),
                 "abrir" if self.dialog.is_none() => self.ask_open(),
                 "salvar" if self.dialog.is_none() => {
                     self.save(false);
@@ -546,7 +559,7 @@ impl App for Editor {
                 "salvar-como" if self.dialog.is_none() => self.ask_save_as(false),
                 "buscar" => self.toggle_find(),
                 "nova" => {
-                    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-text"));
+                    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-writer"));
                     if let Ok(mut child) = std::process::Command::new(exe).spawn() {
                         std::thread::spawn(move || {
                             let _ = child.wait();
@@ -684,7 +697,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     let path = std::env::args().nth(1).map(PathBuf::from);
     let editor = Editor::open(path);
-    let window = Window::new("Editor de Texto").app_id("mide-text").size(1040, 660).min_size(560, 360).full_size_content();
+    let window = Window::new("Writer").app_id("mide-writer").size(1040, 660).min_size(560, 360).full_size_content().accepts_files();
     run(window, editor)
 }
 
@@ -694,7 +707,7 @@ mod tests {
 
     #[test]
     fn salvar_mantem_permissoes_e_crlf() {
-        let dir = std::env::temp_dir().join(format!("mide-text-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mide-writer-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("nota.txt");
         std::fs::write(&path, "a\r\nb\r\n").unwrap();
@@ -710,7 +723,7 @@ mod tests {
 
     #[test]
     fn binario_nao_abre() {
-        let dir = std::env::temp_dir().join(format!("mide-text-bin-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mide-writer-bin-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("x.bin");
         std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();

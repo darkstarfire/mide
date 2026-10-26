@@ -1,4 +1,4 @@
-//! Modo formatado do Editor de Texto, como o TextEdit do Mac: páginas na tela, barra de
+//! Documento formatado do Writer (`mide-writer`), como o TextEdit do Mac: páginas na tela, barra de
 //! formatação (estilos, fonte, tamanho, cores, negrito/itálico/sublinhado,
 //! alinhamento, espaçamento, listas, imagem), configurar página e as normas ABNT.
 
@@ -711,7 +711,7 @@ impl Rich {
                 self.anchor = self.cursor;
                 tracing::info!("editor: imagem inserida ({})", path.display());
             }
-            None => self.message = Some("Formato de imagem não suportado (use PNG ou JPEG).".into()),
+            None => self.message = Some("Formato de imagem não suportado (use PNG, JPEG, WebP, GIF ou BMP).".into()),
         }
     }
 
@@ -1540,8 +1540,6 @@ impl Rich {
                     MenuItem::Separator,
                     MenuItem::action("configurar-pagina", "Configurar página…").shortcut("Ctrl+Shift+P"),
                     MenuItem::action("abnt", "Aplicar normas ABNT…"),
-                    MenuItem::Separator,
-                    MenuItem::action("texto-simples", "Converter em texto simples").shortcut("Ctrl+Shift+T"),
                 ],
             },
             MenuGroup {

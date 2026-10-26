@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Code
+Name[pt_BR]=Code
+GenericName=Text Editor
+GenericName[pt_BR]=Editor de Texto e Código
+Comment=Edit text files and code quickly
+Comment[pt_BR]=Edite arquivos de texto e código com rapidez
+Exec=mide-code %F
+Icon=mide-text
+Categories=Utility;TextEditor;Development;
+MimeType=text/plain;text/markdown;text/x-log;application/json;application/toml;application/x-yaml;text/csv;text/x-csrc;text/x-chdr;text/x-c++src;text/x-python;text/x-rust;text/x-go;text/x-java;text/x-script;application/x-shellscript;text/html;text/css;application/javascript;application/xml;
+StartupWMClass=mide-code
+OnlyShowIn=mide;

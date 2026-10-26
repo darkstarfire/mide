@@ -1421,7 +1421,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let text = a.to_string_lossy();
         mide::places::path_from_uri(&text).unwrap_or_else(|| PathBuf::from(a))
     });
-    let window = Window::new("Editor de Capturas").app_id("mide-screenshot-editor").size(1000, 640).min_size(760, 440).full_size_content();
+    let window = Window::new("Editor de Capturas").app_id("mide-screenshot-editor").size(1000, 640).min_size(760, 440).full_size_content().accepts_files();
     run(window, Editor::new(path))
 }
 

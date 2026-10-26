@@ -4,9 +4,15 @@
 # ~/.config/mide-mimeapps.list e vence esta.
 [Default Applications]
 inode/directory=mide-files.desktop
-text/plain=mide-text.desktop
-text/markdown=mide-text.desktop
-text/x-log=mide-text.desktop
+text/plain=mide-code.desktop
+text/markdown=mide-code.desktop
+text/x-log=mide-code.desktop
+application/json=mide-code.desktop
+application/x-shellscript=mide-code.desktop
+text/rtf=mide-writer.desktop
+application/rtf=mide-writer.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=mide-writer.desktop
+application/vnd.oasis.opendocument.text=mide-writer.desktop
 video/mp4=mide-player.desktop
 video/x-matroska=mide-player.desktop
 video/webm=mide-player.desktop

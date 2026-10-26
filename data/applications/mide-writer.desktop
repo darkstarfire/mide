@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Writer
+Name[pt_BR]=Writer
+GenericName=Word Processor
+GenericName[pt_BR]=Editor de Documentos
+Comment=Write documents, books and papers (RTF, DOCX, ODT)
+Comment[pt_BR]=Escreva documentos, livros e trabalhos (RTF, DOCX, ODT)
+Exec=mide-writer %F
+Icon=x-office-document
+Categories=Office;WordProcessor;
+MimeType=text/rtf;application/rtf;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.oasis.opendocument.text;
+StartupWMClass=mide-writer
+OnlyShowIn=mide;

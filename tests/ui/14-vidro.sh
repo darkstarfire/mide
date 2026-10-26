@@ -58,10 +58,10 @@ file_check "Esc no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ] && [ ! 
 # Botão Cancelar do diálogo em (495, 306).
 file_check "Cancelar no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 311; 470 click 495 306; 510 list"
 file_check "Criar sem mudar o nome: Nova pasta, depois Nova pasta (1)" '[ -d "$FDIR/Nova pasta" ] && [ -d "$FDIR/Nova pasta (1)" ]' "400 rclick 600 450; 430 click 650 311; 460 key enter; 500 rclick 600 450; 530 click 650 311; 560 key enter; 600 list"
-# Menu de um arquivo (não pasta): "Abrir com…" logo depois de "Abrir"; com "Obter
-# informações" (B25) o menu sobe para caber: "Mover para a Lixeira" em y=567.
-file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 569 102; 430 rclick 500 293; 460 click 550 567; 500 list"
-file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 515 220; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
+# Menu do Finder de um arquivo (não pasta): Abrir, Abrir com ›, Mover para a Lixeira
+# (y=159 na lista, com o menu subindo para caber), Obter informações...
+file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 569 102; 430 rclick 500 293; 460 click 580 159; 500 list"
+file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 520 246; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
 file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 281; 500 list"
 # Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
 # dentro aparece na linha seguinte (y=241).
@@ -70,14 +70,15 @@ file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf"
 file_check "lista: setinha fecha a pasta (as linhas de dentro saem)" '[ -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/Projetos" ]' "400 click 569 102; 430 click 303 215; 480 click 303 215; 540 click 500 241; 560 key delete; 600 list"
 file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 569 102; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
 # Fundo em (600, 450): o menu abre para cima (não cabe embaixo), com "Nova pasta" em
-# y=311 e "Novo arquivo" em y=337. O nome vem todo selecionado e
-# digitar define a extensão.
-file_check "menu do fundo → Novo arquivo com a extensão digitada" '[ -f "$FDIR/leiame.md" ] && [ ! -e "$FDIR/Novo arquivo.txt" ]' "400 rclick 600 450; 430 click 650 337; 470 type leiame.md; 490 key enter; 530 list"
-# Menu de "Projetos" (pasta, em (581, 190)), que sobe para caber: "Nova pasta aqui
-# dentro" em y=159, "Novo arquivo aqui dentro" em y=185, "Comprimir" em y=272.
+# y=311 e o submenu "Novo arquivo ›" em y=337, que abre à esquerda: Markdown em
+# (430, 363). O documento novo vem com o nome (sem a extensão) escolhido.
+file_check "menu do fundo → Novo arquivo › Markdown com o nome digitado" '[ -f "$FDIR/leiame.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 600 450; 430 move 650 337; 450 click 430 363; 490 type leiame; 500 key enter; 540 list"
+# Menu de "Projetos" (pasta, em (581, 190)), que sobe para caber: "Comprimir" em
+# y=272, "Nova pasta aqui dentro" em y=498 e "Novo arquivo aqui dentro ›" em y=524
+# (o submenu abre à esquerda: Markdown em (450, 364)).
 file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 272; 560 list"
-file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 159; 470 type rascunhos; 490 key enter; 530 list"
-file_check "menu da pasta → Novo arquivo aqui dentro" '[ -f "$FDIR/Projetos/ideias.md" ] && [ ! -e "$FDIR/ideias.md" ]' "400 rclick 581 190; 430 click 630 185; 470 type ideias.md; 490 key enter; 530 list"
+file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 498; 470 type rascunhos; 490 key enter; 530 list"
+file_check "menu da pasta → Novo arquivo aqui dentro › Markdown" '[ -f "$FDIR/Projetos/Novo documento.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 581 190; 430 move 650 524; 450 click 450 364; 500 list"
 # Barra lateral de vidro (acesso rápido): o compositor desfoca atrás da janela.
 check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
 file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581 310; 430 combo ctrl+d; 470 list"
@@ -89,15 +90,15 @@ file_check "Ctrl+clique escolhe vários e Delete leva todos para a Lixeira" '[ !
 file_check "Shift+clique escolhe o intervalo (e Ctrl+C/Ctrl+V copia todos)" '[ -f "$FDIR/Projetos/por do sol.png" ] && [ -f "$FDIR/Projetos/praia.jpg" ] && [ -f "$FDIR/Projetos/relatorio.pdf" ]' "400 click 345 310; 420 keydown shift; 430 click 581 310; 440 keyup shift; 450 combo ctrl+c; 470 click 581 190; 476 click 581 190; 510 combo ctrl+v; 550 list"
 # Arrastar relatorio.pdf (581, 310) até a pasta Fotos (463, 190) move o arquivo.
 file_check "arrastar um arquivo para uma pasta move" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ ! -e "$FDIR/relatorio.pdf" ]' "400 move 581 310; 410 press 581 310; 420 move 560 290; 430 move 520 240; 440 move 470 200; 450 move 463 190; 460 release 463 190; 500 list"
-# Abrir com…: com um app de teste (num XDG_DATA_DIRS próprio) que grava o caminho
-# recebido; "Abrir com…" no menu de relatorio.pdf (o menu abre ao lado, subindo:
-# (640, 230)) e o app na lista (335, 265).
+# Abrir com ›: com um app de teste (num XDG_DATA_DIRS próprio) que grava o caminho
+# recebido; o submenu "Abrir com" do menu de relatorio.pdf (650, 135) abre à
+# esquerda, com o app em (450, 135).
 fixture
 OW="$(mktemp -d)"
 mkdir -p "$OW/applications"
 printf '#!/bin/sh\necho "$1" > "%s/aberto.txt"\n' "$OW" > "$OW/app.sh"; chmod +x "$OW/app.sh"
 printf '[Desktop Entry]\nType=Application\nName=Leitor Teste\nExec=%s/app.sh %%F\nMimeType=application/pdf;\n' "$OW" > "$OW/applications/leitor-teste.desktop"
-timeout 150 "$SCEN" "400 rclick 581 310; 430 click 640 230; 470 click 335 265; 520 list" -- "env -u MIDE_OPEN_DRY_RUN XDG_DATA_DIRS='$OW' $FILES '$FDIR'" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 rclick 581 310; 430 move 650 135; 450 click 450 135; 520 list" -- "env -u MIDE_OPEN_DRY_RUN XDG_DATA_DIRS='$OW' $FILES '$FDIR'" >/dev/null 2>&1
 if [ "$(cat "$OW/aberto.txt" 2>/dev/null)" = "$FDIR/relatorio.pdf" ]; then
     echo "ok    Abrir com… abre o arquivo no app escolhido"; PASS=$((PASS + 1))
 else

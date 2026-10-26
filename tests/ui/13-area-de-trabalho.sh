@@ -47,14 +47,17 @@ fi
 # Enter renomeia no lugar, como no Finder (o nome sem a extensão vem escolhido),
 # com uma janela na frente: a camada sobe e recebe o teclado.
 rm -rf "$DESK"/* ; echo oi >"$DESK/x.txt"
-MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" timeout 150 "$SCEN" "300 click 680 380; 340 click 1298 76; 380 key enter; 420 key n; 425 key o; 430 key v; 435 key a; 470 key enter; 520 list" -- mide-text >/dev/null 2>&1
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" timeout 150 "$SCEN" "300 click 680 380; 340 click 1298 76; 380 key enter; 420 key n; 425 key o; 430 key v; 435 key a; 470 key enter; 520 list" -- mide-writer >/dev/null 2>&1
 if [ -e "$DESK/nova.txt" ]; then
     echo "ok    Enter renomeia no lugar (sem a extensão) com uma janela na frente"; PASS=$((PASS + 1))
 else
     echo "FALHA Enter renomeia no lugar (sem a extensão) com uma janela na frente"; FAIL=$((FAIL + 1))
 fi
-# Arrastar o ícone para dentro do Editor de Texto abre o arquivo nele (o ícone vai
+# Arrastar o ícone para dentro do Writer abre o arquivo nele (o ícone vai
 # por cima da janela, pelo arrasto do Wayland).
 rm -rf "$DESK"/* ; echo "texto" >"$DESK/arrastado.txt"
-MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "arrastar o ícone para o Editor de Texto abre o arquivo" 'janela "arrastado.txt — Editor de Texto"' "300 press 1298 76; 306 move 1280 100; 312 move 1100 200; 318 move 800 350; 324 move 700 400; 340 release 700 400; 420 list" mide-text
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "arrastar o ícone para o Writer abre o arquivo" 'janela "arrastado.txt — Writer"' "300 press 1298 76; 306 move 1280 100; 312 move 1100 200; 318 move 800 350; 324 move 700 400; 340 release 700 400; 420 list" mide-writer
+# Pasta de mola: segurar o arrasto em cima de uma pasta abre a pasta no Arquivos.
+rm -rf "$DESK"/* ; mkdir "$DESK/Pasta"; echo x >"$DESK/notas.txt"
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "segurar o arrasto em cima de uma pasta abre a pasta (pasta de mola)" "abrir \(teste\): .*/Pasta$" "300 press 1298 182; 306 move 1290 160; 312 move 1295 100; 318 move 1298 80; 330 move 1299 78; 400 move 1298 79; 470 move 1299 79; 540 release 900 400; 580 list"
 rm -rf "$DESK" "$DSTATE"

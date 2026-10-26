@@ -50,7 +50,7 @@ touch "$PLACES/dl/projeto"
 # O editor aparece por volta do quadro 900; sob carga, mais tarde (folga até o 1200).
 # O roteiro conta quadros e o cenário espera por tempo: sob a carga da bateria saem
 # menos quadros por segundo, então a espera e o limite vão com sobra.
-SCENARIO_WAIT=45 SCENARIO_TIMEOUT=75 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1200 click 400 300; 1220 combo ctrl+v; 1250 combo ctrl+s; 1300 list" -- "sleep 12; $PWD/target/debug/mide-text '$CPY'" >/dev/null 2>&1
+SCENARIO_WAIT=45 SCENARIO_TIMEOUT=75 timeout 150 "$SCEN" "400 click 756 728; 440 rclick 756 563; 480 click 821 662; 1200 click 400 300; 1220 combo ctrl+v; 1250 combo ctrl+s; 1300 list" -- "sleep 12; $PWD/target/debug/mide-code '$CPY'" >/dev/null 2>&1
 if grep -q "/dl/projeto" "$CPY"; then
     echo "ok    Copiar caminho da dock cola em outro app"; PASS=$((PASS + 1))
 else

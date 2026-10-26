@@ -593,8 +593,8 @@ O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de s
 
 ## Campo de texto, área de transferência e Editor de Texto — automáticos
 
-- `cargo test`: `kit::textedit` (digitar no meio, acentos, seleção com Shift, palavras, tudo selecionado, duplo clique, cursor fora do texto), `kit::textarea` (linhas, coluna por largura, desfazer juntando a digitação, recuo), `files::is_text`, `mide-text` (salvar mantém CRLF, binário não abre, buscar e substituir com desfazer).
-- `cargo test --bin mide-text`: diálogo de tamanho da imagem e proporção; nomes das faces Regular/Bold/Italic/Bold Italic; editor simples.
+- `cargo test`: `kit::textedit` (digitar no meio, acentos, seleção com Shift, palavras, tudo selecionado, duplo clique, cursor fora do texto), `kit::textarea` (linhas, coluna por largura, desfazer juntando a digitação, recuo), `files::is_text`, `mide-writer` (antes `mide-text`: salvar mantém CRLF, binário não abre, buscar e substituir com desfazer).
+- `cargo test --bin mide-writer`: diálogo de tamanho da imagem e proporção; nomes das faces Regular/Bold/Italic/Bold Italic; editor simples.
 - `cargo test --lib richtext::layout::tests::tabulacao_usa_parada_personalizada`; testes `grava_e_le_de_volta` do RTF, `grava_e_le_docx` e `grava_e_le_odt`: posição aplicada no layout e round-trip das paradas.
 - `tests/ui.sh` (editor de texto): editar no fim e salvar com Ctrl+S; copiar num editor e colar em outro (Wayland) e salvar; título com "•" quando alterado; fechar com alteração pergunta (a janela continua).
 
@@ -614,8 +614,8 @@ O `timeout 120` encerra o mide sozinho em 2 minutos no primeiro teste (rede de s
 - [ ] Editor formatado: rolar o documento com a roda e conferir que a folha não passa por cima da barra de título, das cápsulas Abrir/Salvar/Buscar nem da barra de formatação.
 
 ### Como validar o Editor formatado sem a sessão (feito na 4i)
-- Compilar e testar: `systemd-run --user --scope -p MemoryMax=9G -p MemorySwapMax=2G nice -n 10 cargo test --bin mide-text` (7 testes) e `cargo test --lib richtext` (layout, DOCX, ODT, RTF).
-- Quadro de teste: `SCENARIO_OUT=/tmp/ed-shot tests/scenario.sh "300 click 600 300; 320 type ola; 330 wheel down; 331 wheel down; 340 list" 380 -- "$PWD/target/debug/mide-text"` e abrir `/tmp/ed-shot/frame.png` (compile antes `cargo build --bin mide --bin mide-text`).
+- Compilar e testar: `systemd-run --user --scope -p MemoryMax=9G -p MemorySwapMax=2G nice -n 10 cargo test --bin mide-writer` (7 testes) e `cargo test --lib richtext` (layout, DOCX, ODT, RTF).
+- Quadro de teste: `SCENARIO_OUT=/tmp/ed-shot tests/scenario.sh "300 click 600 300; 320 type ola; 330 wheel down; 331 wheel down; 340 list" 380 -- "$PWD/target/debug/mide-writer"` e abrir `/tmp/ed-shot/frame.png` (compile antes `cargo build --bin mide --bin mide-writer`).
 - Resultado conhecido, **não comparado com a base**: `cargo test` tem 1 falha em `thumbnails::tests::folha_de_texto_tem_linhas_escuras` (fora do editor) e `tests/ui.sh editor` falhou 2 vezes em 3 fluxos do editor simples ("copiar num app e colar em outro", "Abrir… pelo seletor", "Salvar como…"). Para saber se é regressão: `git worktree add /tmp/base HEAD`, compilar lá e rodar `tests/ui.sh editor`.
 - [ ] Abrir um app e digitar logo em seguida: as teclas vão para ele (não para a área de trabalho).
 
@@ -834,7 +834,7 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Manual (sessão de verdade): gedit/Gnome Text Editor, Inkscape e outros apps GTK com barra de menus mostram os menus na barra do mide; apps Qt com o tema do KDE (`QT_QPA_PLATFORMTHEME=kde`) também.
 - `tests/ui.sh`: "Aparência: tema escuro grava e a janela muda na hora" (Configurações → Aparência → Escuro; o fundo da janela fica (30, 30, 32) sem reabrir); `cargo test` `banco_do_tema_escuro`.
 - Manual (sessão de verdade): trocar para Escuro e ver barras de título, barra superior, menus, central de controle e notificações escuras; abrir um app GTK (gedit, Nautilus) e um Qt depois da troca: escuros; voltar para Claro.
-- `tests/ui.sh`: "teclas mortas: ´ + a = á e ~ + o = õ (idioma C)" no mide-text (pula se o teclado do sistema não for ABNT2); `cargo test` `dano_so_onde_mudou`.
+- `tests/ui.sh`: "teclas mortas: ´ + a = á e ~ + o = õ (idioma C)" no mide-code (pula se o teclado do sistema não for ABNT2); `cargo test` `dano_so_onde_mudou`.
 - `tests/ui.sh`: "editor: Abrir… pelo seletor de arquivos" (Ctrl+O, duplo clique em nota.txt abre outra janela) e "editor: Salvar como… pelo seletor de arquivos" (sem título, Ctrl+S, nome "novo" em Documentos de uma pasta pessoal de teste); `cargo test` `pastas_primeiro_e_filtro`.
 - Manual: no Editor de Texto, Abrir… → navegar pelos lugares e pela pasta de cima, Esc cancela; Salvar como… por cima de um arquivo existente pergunta antes de substituir; tema escuro com o seletor aberto.
 - Manual/cenário: `[monitors.outputs."HEADLESS-1"] scale = 1.25` (e `2.0`) num `XDG_CONFIG_HOME` de teste, abrir Configurações, Arquivos e o seletor do Editor: texto e ícones nítidos, layout igual ao de escala 1, clique no interruptor "Sombras" grava; botões da barra de título redondos a 2x. `cargo test` `dano_so_onde_mudou`.
@@ -970,3 +970,11 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Bateria inteira (`tests/ui.sh -j 3`, com teto de memória): 532 ok, 3 falhas que são deste PC (Zorin) e não destas mudanças: a Calculadora do GNOME abre com 497 de altura (a bateria espera 509: versão do GTK) e a grade do terminal não acha os ícones da Nerd Font. Depois dos menus: `vidro`, `configuracoes`, `dock-pastas` passando e `cargo test` passando.
 - Configurações (Tahoe): quadro conferido; `configuracoes` (30), `monitores` e `01-barra` passando, com a busca em (162, 146) e o maximizar em (115, 102).
 - Abas, popover e dica conferidos por quadro na galeria; `arquivos`, `vidro`, `area-de-trabalho` (61) e `cargo test` passando depois da seleção nova.
+
+## Arquivos e área de trabalho como o Finder, Writer e Code (2026-10-26)
+
+- `cargo test`: `templates` (documentos novos de cada tipo válidos e lidos de volta), `image_format_tests` (WebP/GIF/BMP viram PNG), `code::` (linguagens, realce, cliente LSP com um servidor de mentira em Python, preferências, busca do projeto); `cargo test --bin mide-desktop` (grade, lugares guardados, lugar livre mais perto, discos do `mountinfo`).
+- `tests/ui.sh area`: arrastar muda o lugar, soltar numa pasta move, Enter renomeia com uma janela na frente, arrastar o ícone para o Writer abre o arquivo, pasta de mola (`abrir (teste): .../Pasta`). Discos de teste: `MIDE_DESKTOP_MOUNTINFO=arquivo` no formato do `/proc/self/mountinfo`.
+- `tests/ui.sh editor` (agora no Code): editar e salvar, copiar numa janela e colar em outra (clique na margem dos números de linha), teclas mortas, Abrir… (abre em aba), Salvar como…, título com "•", fechar com alteração pergunta.
+- Code com LSP de mentira: `XDG_CONFIG_HOME` de teste com `[[servers]] languages = ["rust"] command = "python3" args = ["fake.py"]` (o script do teste `conversa_com_servidor` em `src/code/lsp.rs`): erro sublinhado, mensagem no fim da linha, "1 erro(s)" no rodapé.
+- Manual (sessão de verdade): na área de trabalho, retângulo de seleção, Ctrl+clique, Nova pasta pelo botão direito no meio da tela (aparece ali), Ctrl+V (vai para o canto), pendrive aparece e Ejetar, foto com borda branca, arrastar vários, segurar um arquivo em cima de uma pasta (abre o Arquivos) e continuar arrastando para dentro de outra pasta; no Arquivos, vários seguidos escolhidos em bloco, menu com submenus (Abrir com, Mover para, Novo arquivo), girar uma foto; ponteiro com "+" ao arrastar para o Writer ou o Code; Writer com um .docx criado pelo Novo arquivo e com imagens WebP; Code com o rust-analyzer instalado (`rustup component add rust-analyzer`): erros, Ctrl+Espaço, F12.

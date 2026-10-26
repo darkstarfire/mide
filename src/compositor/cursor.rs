@@ -161,6 +161,8 @@ fn names_for(name: &str) -> Vec<&str> {
         "nesw-resize" => &["fd_double_arrow", "size_bdiag"],
         "pointer" => &["hand2", "hand1"],
         "text" => &["xterm"],
+        // Arrasto que vai copiar/importar: seta com o "+" (nomes de temas antigos).
+        "copy" => &["dnd-copy", "1081e37283d90000800003c07f3ef6bf", "6407b0e94181790501fd1e167b474872"],
         _ => &[],
     };
     std::iter::once(name).chain(legacy.iter().copied()).collect()

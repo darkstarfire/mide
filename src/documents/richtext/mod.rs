@@ -168,12 +168,19 @@ impl Image {
     /// Lê uma imagem PNG ou JPEG; o tamanho começa no da imagem a 96 pontos por
     /// polegada, limitado a `max_width`.
     pub fn from_bytes(data: Vec<u8>, max_width: f32) -> Option<Self> {
-        let format = match image::guess_format(&data).ok()? {
-            image::ImageFormat::Png => "png",
-            image::ImageFormat::Jpeg => "jpeg",
-            _ => return None,
+        let loaded = image::load_from_memory(&data).ok()?;
+        // PNG e JPEG ficam como vieram; WebP, GIF e BMP (comuns em imagens da internet)
+        // viram PNG, o que o RTF, o DOCX e o ODT guardam.
+        let (format, data) = match image::guess_format(&data).ok()? {
+            image::ImageFormat::Png => ("png", data),
+            image::ImageFormat::Jpeg => ("jpeg", data),
+            _ => {
+                let mut png = std::io::Cursor::new(Vec::new());
+                loaded.write_to(&mut png, image::ImageFormat::Png).ok()?;
+                ("png", png.into_inner())
+            }
         };
-        let decoded = image::load_from_memory(&data).ok()?.to_rgba8();
+        let decoded = loaded.to_rgba8();
         let (w, h) = decoded.dimensions();
         let mut pixmap = Pixmap::new(w, h)?;
         for (dst, src) in pixmap.pixels_mut().iter_mut().zip(decoded.pixels()) {
@@ -981,6 +988,25 @@ impl Doc {
             }
         }
         (words, chars, no_spaces)
+    }
+}
+
+#[cfg(test)]
+mod image_format_tests {
+    use super::*;
+
+    /// Imagens BMP, GIF e WebP entram no documento como PNG (o que os formatos de
+    /// documento guardam); PNG continua PNG.
+    #[test]
+    fn imagens_de_outros_formatos_viram_png() {
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 6, image::Rgba([10, 20, 30, 255])));
+        for format in [image::ImageFormat::Bmp, image::ImageFormat::Gif, image::ImageFormat::WebP, image::ImageFormat::Png] {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, format).unwrap();
+            let pic = Image::from_bytes(buf.into_inner(), 500.0).unwrap_or_else(|| panic!("{format:?}"));
+            assert_eq!(pic.format, "png", "{format:?}");
+            assert_eq!(image::guess_format(&pic.data).unwrap(), image::ImageFormat::Png);
+        }
     }
 }
 

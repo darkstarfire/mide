@@ -925,6 +925,7 @@ impl Calculator {
             size: Some(FONT),
             placeholder: "Escreva uma conta e termine com “=” (por exemplo, 120 × 3 =)",
             decorate: Some(&mut decorate),
+            ..Default::default()
         };
         let r = ui.text_area_with(session.doc(), area_h, look);
         // Clique direito: o menu do resultado da linha (a de quando abriu) e o de editar.

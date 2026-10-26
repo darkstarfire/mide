@@ -732,6 +732,12 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         state.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
         state.wake();
     }
+    // Arrastando entre apps: ao trocar de janela, a ação escolhida pela anterior
+    // não vale mais (a nova ainda vai dizer se aceita).
+    if state.dnd_source.is_some() && changed {
+        state.dnd_action = smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction::None;
+        refresh_dnd_cursor(state);
+    }
     let serial = SERIAL_COUNTER.next_serial();
     pointer.motion(
         state,
@@ -1292,4 +1298,20 @@ fn resize_to(state: &mut State, grab: &ResizeGrab, pos: Point<f64, Logical>) {
     toplevel.with_pending_state(|s| s.size = Some((w, h).into()));
     toplevel.send_configure();
     state.space.map_element(grab.window.clone(), (x, y), false);
+}
+
+/// Ponteiro durante um arrasto entre apps: "copiar" (seta com o "+") quando o app
+/// sob o ponteiro aceita copiar (vai importar o arquivo), a seta nos outros casos
+/// (mover dentro do mesmo app, ou um app que não aceita).
+pub fn refresh_dnd_cursor(state: &mut State) {
+    use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+    use smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction;
+    if state.dnd_source.is_none() {
+        return;
+    }
+    let icon = if matches!(state.dnd_action, DndAction::Copy | DndAction::Ask) { CursorIcon::Copy } else { CursorIcon::Default };
+    if !matches!(&state.cursor_status, CursorImageStatus::Named(i) if *i == icon) {
+        state.cursor_status = CursorImageStatus::Named(icon);
+        state.wake();
+    }
 }

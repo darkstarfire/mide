@@ -352,7 +352,8 @@ compositor).
 | Arquivos (`mide-files`) | Tahoe (falta o checklist do Finder, B26) |
 | Configurações (`mide-settings`) | Tahoe na janela e na barra lateral; faltam o cabeçalho de página e as linhas 44 dos cartões |
 | Calculadora | Tahoe |
-| Editor de Texto (`mide-text`) | Tahoe |
+| Writer (`mide-writer`, antes `mide-text`) | Tahoe |
+| Code (`mide-code`) | Tahoe (barra de ferramentas e Preferências); gaveta e editor no estilo do TextMate |
 | Editor de Capturas | Tahoe (Marcação) |
 | Sobre este computador | Tahoe |
 | Terminal (`mide-terminal`) | **falta**: barra do compositor; abas e Preferências no visual antigo |

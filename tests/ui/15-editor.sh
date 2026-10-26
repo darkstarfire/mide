@@ -1,7 +1,7 @@
 # Seção da bateria (tests/ui.sh); usa as funções de tests/ui/comum.sh.
-echo "== editor de texto (mide-text)"
+echo "== editor de texto e código (mide-code)"
 TDIR="$(mktemp -d)"
-TEXT_APP="$PWD/target/debug/mide-text"
+TEXT_APP="$PWD/target/debug/mide-code"
 printf 'fn main() {\n    println!("olá");\n}\n' > "$TDIR/teste.rs"
 # Abre com o foco no texto: Ctrl+End vai ao fim, Enter e digitar, Ctrl+S salva.
 timeout 150 "$SCEN" "400 list; 420 combo ctrl+end; 440 key enter; 450 type editado; 470 combo ctrl+s; 520 list" -- "$TEXT_APP '$TDIR/teste.rs'" >/dev/null 2>&1
@@ -11,12 +11,13 @@ else
     echo "FALHA editor: editar no fim e salvar com Ctrl+S"; FAIL=$((FAIL + 1))
 fi
 # Copiar num editor e colar em outro (área de transferência do Wayland). O primeiro
-# fica em (48, 76) e o segundo em (80, 108), por cima: barra do primeiro em (300, 61),
-# texto do segundo visível em (925, 400).
+# fica em (48, 76) e o segundo em (80, 108), por cima: a margem dos números de linha
+# do primeiro, em (60, 400), continua à vista e traz ele para a frente; a beirada
+# direita do segundo, em (1100, 400), também, e o traz de volta.
 printf 'copiar isto' > "$TDIR/a.txt"; : > "$TDIR/b.txt"
 # O segundo abre ~3 s depois do primeiro: os passos começam no quadro 2000 (o
 # autoteste conta quadros, e sem GPU eles passam rápido).
-SCENARIO_WAIT=40 timeout 150 "$SCEN" "2000 list; 2020 click 300 61; 2040 combo ctrl+a; 2050 combo ctrl+c; 2070 click 925 400; 2090 combo ctrl+v; 2120 combo ctrl+s; 2180 list" -- "$TEXT_APP '$TDIR/a.txt'" "sleep 1; $TEXT_APP '$TDIR/b.txt'" >/dev/null 2>&1
+SCENARIO_WAIT=40 timeout 150 "$SCEN" "2000 list; 2020 click 60 400; 2040 combo ctrl+a; 2050 combo ctrl+c; 2070 click 1100 400; 2090 combo ctrl+v; 2120 combo ctrl+s; 2180 list" -- "$TEXT_APP '$TDIR/a.txt'" "sleep 1; $TEXT_APP '$TDIR/b.txt'" >/dev/null 2>&1
 if [ "$(cat "$TDIR/b.txt")" = "copiar isto" ]; then
     echo "ok    copiar num app e colar em outro"; PASS=$((PASS + 1))
 else
@@ -34,9 +35,9 @@ else
     echo "FALHA teclas mortas ($(cat "$TDIR/acentos.txt"))"; FAIL=$((FAIL + 1))
 fi
 # Abrir… (Ctrl+O) pelo seletor de arquivos: pasta com Sub/, b.md e nota.txt; duplo
-# clique em "nota.txt" (190, 443) abre outra janela (a atual já tem documento).
+# clique em "nota.txt" abre numa aba nova (o título passa a ser o dela).
 mkdir -p "$TDIR/abrir/Sub"; printf 'outro\n' > "$TDIR/abrir/b.md"; printf 'nota\n' > "$TDIR/abrir/nota.txt"
-check "editor: Abrir… pelo seletor de arquivos" 'janela "nota.txt — Editor de Texto"' "400 click 400 300; 420 combo ctrl+o; 480 click 190 443; 485 click 190 443; 600 list" "$TEXT_APP '$TDIR/abrir/b.md'"
+check "editor: Abrir… pelo seletor de arquivos" 'janela "nota.txt — Code"' "400 click 400 300; 420 combo ctrl+o; 480 click 420 438; 485 click 420 438; 600 list" "$TEXT_APP '$TDIR/abrir/b.md'"
 # Salvar sem título: o seletor abre em Documentos (pasta pessoal de teste) com o nome
 # sugerido; Ctrl+A, "novo" e Enter salvam lá.
 mkdir -p "$TDIR/home/Documentos"
@@ -47,5 +48,5 @@ else
     echo "FALHA editor: Salvar como… pelo seletor de arquivos"; FAIL=$((FAIL + 1))
 fi
 check "editor: alteração não salva marca o título" 'janela "• teste.rs' "400 type x; 460 list" "$TEXT_APP '$TDIR/teste.rs'"
-check "fechar com alteração pergunta antes (janela continua)" 'janela "• teste.rs' "400 type x; 430 click 63 61; 480 list" "$TEXT_APP '$TDIR/teste.rs'"
+check "fechar com alteração pergunta antes (janela continua)" 'janela "• teste.rs' "400 type x; 430 click 75 102; 480 list" "$TEXT_APP '$TDIR/teste.rs'"
 rm -rf "$TDIR"

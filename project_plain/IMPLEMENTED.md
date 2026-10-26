@@ -1787,3 +1787,43 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 - **Nomes longos** (no mide-ui, vale para todos os apps): nos ícones, o nome ocupa até duas linhas e é cortado no meio guardando a extensão ("prestaç…do.pdf"); escolhido, aparece inteiro, por cima dos vizinhos (na camada de cima); com o ponteiro em cima, uma dica mostra o nome completo. Nas listas (`tree_row`, `list_row`), nome cortado mostra a dica. O cabeçalho da lista do Arquivos tem as divisórias arrastáveis (`list_header_resizable`): a coluna Nome cresce quando as outras encolhem; as larguras ficam guardadas em `files-view.toml` (`list_widths`).
 - **Som da Lixeira** (pedido do usuário): esvaziar a Lixeira e apagar um item para sempre tocam o mesmo som de mandar para a Lixeira (também no tema de sons `trash-empty`, versão 5).
 - Testes: seção 13 com 10/10 (novo: arrastar o ícone para o Editor de Texto abre o arquivo); seções 02, 25 e 33 sem falhas; 26 com a falha antiga do ShowItemProperties (não tocada). Capturas conferidas: nomes em duas linhas, nome inteiro escolhido, dica e coluna Nome alargada.
+
+## Arquivos e área de trabalho como o Finder, menus de vidro, Writer e o novo Code (2026-10-26)
+
+Pedidos do usuário (com fotos do Finder e da mesa do Mac): seleção de vários itens com o visual do Mac, menus com todas as opções e translúcidos, retângulo de seleção na área de trabalho, arquivos criados onde se clicou, discos no canto, Novo arquivo com tipos que abrem de verdade, ponteiro de "importar" ao arrastar, pastas que abrem ao segurar o arrasto, o editor que caía na interface simples, imagens que não entravam no editor e um editor de código como o TextMate.
+
+**mide-ui (para todos os apps)**
+- Menus de contexto de vidro: o conteúdo da janela atrás deles é desfocado (três passadas de média) e clareado; numa camada transparente (área de trabalho), o compositor desfoca o que está atrás. Largura automática até o texto mais longo caber.
+- Submenus (`m.submenu(ícone, "Abrir com", |m| ...)`), abertos com o ponteiro em cima, com a setinha.
+- Seleção em bloco nas listas (`ui.join_selection`): itens seguidos escolhidos viram um bloco com os cantos só nas pontas; o azul da seleção é o tom forte do Finder (`selection_tone`).
+- Ladrilho escolhido sobre o papel de parede como na mesa do Mac (quadrado escuro translúcido com borda clara; uma cápsula azul por linha do nome).
+- `Window::accepts_files()`: só as janelas que recebem arquivos aceitam o arrasto (o compositor mostra "copiar" só nelas).
+- Área de texto: `current_line`, `indent`; `ui.set_mono_font`, `ui.mono_fonts`, `ui.take_key`.
+
+**Compositor**
+- Ponteiro do arrasto pelo evento do protocolo: quando o app sob o ponteiro escolhe "copiar" (`wl_data_offer.set_actions`, recebido pelo `action_choice`), o ponteiro vira o de copiar (seta com "+"); trocando de janela, volta à seta até a nova dizer que aceita.
+
+**Arquivos**
+- Menu de contexto do Finder para um ou vários itens: Nova pasta com a seleção, Abrir, Abrir com › (apps, com o padrão primeiro, e "Outro…"), Abrir em nova janela, Abrir no Terminal, Mover para a Lixeira, Obter informações, Renomear, Comprimir/Extrair, Duplicar, Criar atalho, Visualização Rápida, Copiar, Copiar como caminho, Etiquetas, Ações rápidas › (girar imagens e converter PNG/JPEG), Nova pasta e Novo arquivo › aqui dentro, Mover para › e Copiar para › (as pastas do usuário).
+- Novo arquivo › por tipo, no vazio e nas pastas, criando documentos válidos (`mide::templates`).
+- Seleção em bloco na lista; pastas de mola (segurando um arrasto, daqui ou de outro app, em cima de uma pasta por ~1 s, a janela entra nela); Copiar também vai para a área de transferência do sistema (endereços `file://`).
+
+**Área de trabalho** (reescrita)
+- Vários escolhidos (clique, Ctrl+clique, Ctrl+A) e o retângulo de seleção do Mac (véu claro, borda branca).
+- O que o menu do botão direito cria (Nova pasta, Novo arquivo › tipos, Colar) aparece no lugar do clique; o que chega pelo teclado (Ctrl+V) ou de outros programas vai para o próximo lugar livre a partir do canto de cima à direita.
+- Discos (pendrives, HDs externos, CDs/DVDs montados em `/media`, `/run/media` e `/mnt`) aparecem primeiro, no canto de cima à direita, com Abrir e Ejetar (`udisksctl`, ou `gio mount -u`).
+- Miniaturas de fotos, PDFs e vídeos com a borda branca; menu do Finder (como no Arquivos); Copiar/Colar; Organizar; arrastar vários (mantendo a distância entre eles); pasta de mola (segurar o arrasto numa pasta abre a pasta no Arquivos, e o arrasto continua lá).
+
+**Writer** (`mide-writer`, antes `mide-text`)
+- Renomeado (pedido do usuário: ferramenta de quem escreve). A interface é sempre a de documento: texto simples entra como documento; arquivo vazio (o "novo arquivo" de antes, com zero bytes, que causava o erro) abre como documento novo; arquivo que não dá para ler mostra o aviso e abre um documento novo sem nome, para não gravar por cima do original.
+- Imagens: PNG e JPEG já entravam (conferido com o botão da barra e uma foto `.JPG`); agora WebP, GIF e BMP também (viram PNG, o que o DOCX/ODT/RTF guardam), pelo botão, pelo menu e soltando na janela.
+
+**Code** (`mide-code`, novo, inspirado no TextMate)
+- Núcleo `mide::code`: `lang` (mais de 25 linguagens, pelo nome, extensão ou primeira linha), `highlight` (leitor próprio por família: C e parecidas, `#`, SQL, Lua, dados, marcação, Markdown), `lsp` (cliente próprio: JSON-RPC com `Content-Length`, `initialize` pedindo UTF-8, abrir/mudar/salvar/fechar, diagnósticos, completar, definição, hover; posições convertidas de UTF-16), `config` (`~/.config/mide/code.toml`), `project` (lista do projeto sem pastas geradas e busca aproximada).
+- App: gaveta com a árvore do projeto, abas, Ir para arquivo/linha, buscar e substituir, comentar, duplicar, linguagem no menu Visualizar, Preferências (fonte, tamanho, números de linha, linha atual, recuo, gaveta, servidores de linguagem com adicionar/editar/remover e o estado de cada um), erros sublinhados com a mensagem no fim da linha e a contagem no rodapé, completar perto do cursor, ir para a definição, dica do símbolo. Padrão para texto e código na sessão (`mide-mimeapps.list`); o Writer fica com RTF/DOCX/ODT.
+- Testes: 12 testes do núcleo (inclusive um servidor LSP de mentira em Python que manda um diagnóstico); no app, conferido por captura com o servidor de mentira (sublinhado, mensagem "ruim" e "1 erro(s)"). O rust-analyzer desta máquina é só o atalho do rustup (não instalado), e o Code mostra "não disponível".
+
+**Testes**: seções 13 (11/11, com a pasta de mola), 15 (7/7, agora no Code), 25, 26 (a falha antiga do ShowItemProperties), 33; capturas conferidas: retângulo de seleção, pendrive, submenu de vidro, lista em bloco, menu do Finder, Writer com aviso, Code com cores e diagnóstico.
+
+**Documentação**: README com a seção "Instalação manual (para testar)" (pedido do usuário); E13 (enviar arquivos por Bluetooth e Wi-Fi) registrado para depois.
+- Bateria completa (2026-10-26): 480 ok, 68 falhas, todas em seções que já falhavam antes (calculadora, seletor do portal, janela com a gnome-calculator, barra, configurações, atalhos, buscador, terminal, captura, senha); a seção 22 e a 31 passaram a fechar inteiras. As falhas novas eram da seção 14 (posições do menu antigo do Arquivos) e foram corrigidas: 30/31 (a que sobra, "barra superior sobre vidro", falha igual com os programas de antes das mudanças). A seção 04 travou de novo num `mide-portal` de teste que segurava a saída do cenário (encerrado à mão). Submenus passaram a tolerar a passagem por outras linhas (300 ms) indo até eles.

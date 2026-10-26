@@ -516,7 +516,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|info| video::fit(&info, (960, 540)))
         .map(|(w, h)| (w.max(480), h.max(270)))
         .unwrap_or((800, 450));
-    let mut window = Window::new("Player de Vídeo").app_id("mide-player").size(size.0, size.1).min_size(400, 225).full_size_content();
+    let mut window = Window::new("Player de Vídeo").app_id("mide-player").size(size.0, size.1).min_size(400, 225).full_size_content().accepts_files();
     let mut theme = Theme::dark();
     theme.accent = mide::kit::system_accent(true);
     window.theme = theme;
