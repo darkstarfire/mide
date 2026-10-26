@@ -4,7 +4,9 @@ check "barra no topo, largura total" 'camada "mide-bar" em \(0, 0\) 1366x28' "40
 check "janela nova nasce abaixo da barra" "$FOOT posição=\(48, 76\)" "400 list" "$TERMINAL"
 check "menu abre ao clicar na marca" 'camada "mide-bar-menu"' "400 click 25 14; 430 list"
 check_count "menu fecha ao clicar fora" 'camada "mide-bar-menu"' 0 "400 click 25 14; 430 click 600 400; 460 list"
-check "arrastar para cima para na barra" "$FOOT posição=\(48, 58\)" "400 press 400 61; 405 move 400 30; 410 move 400 5; 415 release 400 5; 440 list" "$TERMINAL"
+# O Terminal desenha a própria barra de título (visual do Tahoe): arrasta por ela, em y=90,
+# e solta abaixo da borda da tela (lá em cima vira o encaixe pelo topo).
+check "arrastar para cima para na barra" "$FOOT posição=\(48, 28\)" "400 press 400 90; 405 move 400 60; 410 move 400 36; 415 release 400 36; 440 list" "$TERMINAL"
 # App que esconde a janela sem fechar e mostra de novo (como o Chromium/Brave em
 # segundo plano; `MIDE_KIT_TEST_HIDE` faz o kit esconder 2 s e mostrar 2 s depois).
 SCENARIO_WAIT=14 check "janela escondida pelo app volta quando ele mostra" "janela mostrada de novo pelo app" "150 list; 600 list" "MIDE_KIT_TEST_HIDE=1 $CALCULATOR"
@@ -18,7 +20,7 @@ if python3 -c "
 import sys
 from PIL import Image
 im = Image.open(sys.argv[1]).convert('RGB')
-sys.exit(0 if im.getpixel((500, 500)) != (255, 255, 255) and im.getpixel((150, 300)) == (36, 36, 40) else 1)" "$OPC/scen/frame.png" 2>/dev/null; then
+sys.exit(0 if im.getpixel((500, 500)) != (255, 255, 255) and im.getpixel((150, 300)) == (30, 30, 32) else 1)" "$OPC/scen/frame.png" 2>/dev/null; then
     echo "ok    janela sem foco translúcida ([opacity] inactive), a com foco opaca"; PASS=$((PASS + 1))
 else
     echo "FALHA janela sem foco translúcida ([opacity] inactive)"; FAIL=$((FAIL + 1))
@@ -27,14 +29,15 @@ rm -rf "$OPC"
 # Clique numa janela por cima da barra de título de outra (Calculadora em (48, 46),
 # Terminal arrastado para cobrir a barra dela): o clique é do Terminal, a de trás não sobe.
 check_last "clique não atravessa para a barra de título de trás" 'janela "Terminal"' "400 press 400 93; 405 move 400 60; 410 move 400 20; 415 release 400 20; 460 click 200 68; 490 list" "$CALCULATOR" "$TERMINAL"
-# Menus padrão do mide (o Arquivos não publica menus): "Editar" em x=213, "Janela" em 268.
+# Menus do Arquivos (publicados por ele, num barramento de teste): Arquivo, Editar em
+# x=213, Visualizar, Ir, Janela em x=375; no menu, Zoom é a segunda linha (y=79).
 FILES_APP="$PWD/target/debug/mide-files"
-check "menu Editar abre pela barra" "menu aberto: Edit" "400 click 213 14; 440 list" "$FILES_APP"
-check "Janela > Zoom maximiza" 'janela "Pasta pessoal" popups=0 posição=\(0, 28\) visível=1366x673' "400 click 268 14; 430 click 280 73; 480 list" "$FILES_APP"
+SCEN=tests/scenario-dbus.sh check "menu Editar abre pela barra" "menu aberto: " "500 click 213 14; 540 list" "$FILES_APP"
+SCEN=tests/scenario-dbus.sh check "Janela > Zoom maximiza" 'janela "Pasta pessoal" popups=0 posição=\(0, 28\) visível=1366x673' "500 click 375 14; 540 click 390 79; 600 list" "$FILES_APP"
 # Menus do próprio Terminal (dbusmenu, num barramento de teste): Shell em x=140,
 # Editar 194, Janela 382; no menu, a primeira linha em y=55 e a segunda em y=79.
 RUST_LOG="mide=debug,mide_bar=info" SCEN=tests/scenario-dbus.sh check "a barra mostra os menus do Terminal" "menu do app mide-terminal: Shell, Editar, Visualizar, Perfis, Janela" "500 list" "$TERMINAL"
-SCEN=tests/scenario-dbus.sh check "Terminal: Janela > Zoom pelo menu do app" "$FOOT posição=\(0, 58\) visível=1366x643" "500 click 382 14; 540 click 400 79; 600 list" "$TERMINAL"
+SCEN=tests/scenario-dbus.sh check "Terminal: Janela > Zoom pelo menu do app" "$FOOT posição=\(0, 28\) visível=1366x673" "500 click 382 14; 540 click 400 79; 600 list" "$TERMINAL"
 check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" "$TERMINAL"
 # "Sobre este computador" tem tamanho fixo (330x610): abre no meio da tela (A26) e não
 # muda de tamanho puxando o canto.

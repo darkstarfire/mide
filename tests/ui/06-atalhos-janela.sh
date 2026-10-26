@@ -2,9 +2,9 @@
 echo "== atalhos de janela (como no GNOME)"
 # Dois Terminais: a de cima (80, 108) tem o foco. Alt+Tab escolhe a outra ao soltar o Alt.
 check "Alt+Tab foca a outra janela" "alternador: janela [0-9]+ escolhida" "500 combo alt+tab; 560 list" "$TERMINAL" "$TERMINAL"
-check "Super+← põe a janela na metade esquerda" "$FOOT posição=\(0, 58\) visível=683x643" "500 combo super+left; 560 list" "$TERMINAL"
-check "Super+→ põe a janela na metade direita" "$FOOT posição=\(683, 58\) visível=683x643" "500 combo super+right; 560 list" "$TERMINAL"
-check "Super+↑ maximiza" "$FOOT posição=\(0, 58\) visível=1366x643" "500 combo super+up; 560 list" "$TERMINAL"
+check "Super+← põe a janela na metade esquerda" "$FOOT posição=\(0, 28\) visível=683x673" "500 combo super+left; 560 list" "$TERMINAL"
+check "Super+→ põe a janela na metade direita" "$FOOT posição=\(683, 28\) visível=683x673" "500 combo super+right; 560 list" "$TERMINAL"
+check "Super+↑ maximiza" "$FOOT posição=\(0, 28\) visível=1366x673" "500 combo super+up; 560 list" "$TERMINAL"
 check "Super+↓ restaura" "$FOOT posição=\(48, 76\) visível=700x500" "500 combo super+up; 560 combo super+down; 640 list" "$TERMINAL"
 check "Super+H minimiza" "janela minimizada" "500 combo super+h; 560 list" "$TERMINAL"
 # Teclas multimídia (A23): do mide, com qualquer app em foco (nos testes, os comandos

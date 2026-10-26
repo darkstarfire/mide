@@ -65,7 +65,9 @@ run_section() {
     local name="$1"
     local t0
     t0=$(date +%s)
-    MIDE_TEST_SOCKET="mide-ui-$name" SCENARIO_OUT="$RUN/$name/out" \
+    # O socket leva o número desta execução: duas baterias ao mesmo tempo (outra cópia
+    # do repositório, outro agente) não podem dividir o socket de uma seção.
+    MIDE_TEST_SOCKET="mide-ui-$$-$name" SCENARIO_OUT="$RUN/$name/out" \
         bash -c 'source tests/ui/comum.sh; source "tests/ui/$1.sh"; echo "seção: $PASS $FAIL"' _ "$name" \
         >"$RUN/$name.txt" 2>&1
     local got
