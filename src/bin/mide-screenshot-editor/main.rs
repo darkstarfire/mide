@@ -1250,6 +1250,13 @@ impl App for Editor {
         for action in ui.input().menu.clone() {
             self.command(&action, ui);
         }
+        // Imagem solta na janela: abre (nesta, se está vazia; senão, numa nova).
+        if let Some(paths) = ui.input().dropped.clone() {
+            for path in paths.into_iter().filter(|p| mide::places::is_image(p)) {
+                self.open_chosen(path);
+            }
+            ui.request_repaint();
+        }
         if self.dialog.is_none() && !ui.typing() && self.pop.is_none() {
             self.keys(ui);
         }

@@ -53,4 +53,8 @@ if [ -e "$DESK/nova.txt" ]; then
 else
     echo "FALHA Enter renomeia no lugar (sem a extensão) com uma janela na frente"; FAIL=$((FAIL + 1))
 fi
+# Arrastar o ícone para dentro do Editor de Texto abre o arquivo nele (o ícone vai
+# por cima da janela, pelo arrasto do Wayland).
+rm -rf "$DESK"/* ; echo "texto" >"$DESK/arrastado.txt"
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "arrastar o ícone para o Editor de Texto abre o arquivo" 'janela "arrastado.txt — Editor de Texto"' "300 press 1298 76; 306 move 1280 100; 312 move 1100 200; 318 move 800 350; 324 move 700 400; 340 release 700 400; 420 list" mide-text
 rm -rf "$DESK" "$DSTATE"

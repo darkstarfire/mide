@@ -59,7 +59,11 @@ struct Desktop {
     /// Ícone apertado: caminho, ponto onde o botão desceu e distância do ponteiro ao
     /// canto do ícone. Vira arrasto quando o ponteiro anda mais que alguns pontos.
     press: Option<Press>,
-    dragging: bool,
+    /// Ícone sendo arrastado pelo arrasto do Wayland (caminho e distância do ponteiro
+    /// ao canto dele): o compositor desenha o ícone por cima das janelas, e quem recebe
+    /// é a janela sob o ponteiro (o Editor de Texto abre o arquivo) ou a própria área
+    /// de trabalho (muda o lugar do ícone).
+    drag_out: Option<(PathBuf, (f32, f32))>,
 }
 
 /// Ícone apertado: caminho, onde o botão desceu e distância do ponteiro ao canto.
@@ -137,7 +141,7 @@ enum Action {
 
 impl Desktop {
     fn new() -> Self {
-        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, inline: None, workarea: None, asked_at: None, prompt: None, labels: Labels::default(), cells: HashMap::new(), press: None, dragging: false };
+        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, inline: None, workarea: None, asked_at: None, prompt: None, labels: Labels::default(), cells: HashMap::new(), press: None, drag_out: None };
         app.cells = cells_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_cells(&t)).unwrap_or_default();
         app.reload();
         app
@@ -316,6 +320,19 @@ impl Desktop {
         self.save_cells();
     }
 
+    /// Imagem do ícone que segue o ponteiro no arrasto (um pouco transparente).
+    fn drag_icon(icon: &str) -> Option<tiny_skia::Pixmap> {
+        const SIZE: u32 = 72;
+        let base = mide::icons::load_icon(icon, 64)?;
+        let mut canvas = tiny_skia::Pixmap::new(SIZE, SIZE)?;
+        let scale = (60.0 / base.width().max(base.height()) as f32).min(1.0);
+        let (w, h) = (base.width() as f32 * scale, base.height() as f32 * scale);
+        let paint = tiny_skia::PixmapPaint { opacity: 0.85, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate((SIZE as f32 - w) / 2.0, (SIZE as f32 - h) / 2.0);
+        canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tf, None);
+        Some(canvas)
+    }
+
     fn keys(&mut self, ui: &mut Ui) {
         if ui.typing() || self.inline.is_some() || self.prompt.is_some() {
             return;
@@ -360,20 +377,26 @@ impl App for Desktop {
         let placed: Vec<(Entry, (usize, usize))> = self.entries.iter().cloned().zip(layout(&names, &self.cells, cols, rows)).collect();
         let mut action: Option<(Action, Option<Entry>)> = None;
         let mut select = None;
-        // Arrasto: começa quando o ponteiro anda mais que 5 pontos com o botão no ícone.
-        let (pointer, pressed, down, released) = {
+        // Arrasto: começa quando o ponteiro anda mais que 5 pontos com o botão no ícone,
+        // e vira o arrasto do Wayland (por cima das janelas, para qualquer app).
+        let (pointer, pressed, down, released, drop_hover) = {
             let input = ui.input();
-            (input.pointer, input.pressed, input.down, input.released)
+            (input.pointer, input.pressed, input.down, input.released, input.drop_hover)
         };
-        if let (Some((_, start, _)), Some(p)) = (&self.press, pointer)
+        if let (Some((path, start, offset)), Some(p)) = (&self.press, pointer)
             && down
-            && !self.dragging
             && ((p.0 - start.0).powi(2) + (p.1 - start.1).powi(2)).sqrt() > 5.0
         {
-            self.dragging = true;
+            let icon = match self.entries.iter().find(|e| &e.path == path) {
+                Some(e) => self.labels.get(&e.path, e.modified).map(|(_, icon)| icon).unwrap_or_else(|| e.icon_name().to_string()),
+                None => "text-x-generic".into(),
+            };
+            tracing::info!("área de trabalho: arrastando {}", path.display());
+            ui.start_drag(std::slice::from_ref(path), Self::drag_icon(&icon));
+            self.drag_out = Some((path.clone(), *offset));
+            self.selected = Some(path.clone());
+            self.press = None;
         }
-        let dragged = self.press.as_ref().filter(|_| self.dragging).map(|(p, _, offset)| (p.clone(), *offset));
-        let mut ghost = None;
         // Renomear no lugar: o estado sai do app durante o desenho e volta depois.
         let mut inline = self.inline.take();
         let inline_was_focusing = inline.as_ref().is_some_and(|(_, _, f)| *f);
@@ -382,15 +405,10 @@ impl App for Desktop {
             let (x, y) = Self::cell_pos(*cell, area);
             let selected = self.selected.as_ref() == Some(&entry.path);
             let (name, icon) = self.labels.get(&entry.path, entry.modified).unwrap_or_else(|| (entry.name.clone(), entry.icon_name().to_string()));
-            // O arrastado vai junto com o ponteiro (desenhado por último, por cima).
-            if let (Some((path, offset)), Some(p)) = (&dragged, pointer)
-                && path == &entry.path
-            {
-                ghost = Some(((p.0 - offset.0, p.1 - offset.1), name, icon));
-                continue;
-            }
-            // Pasta sob o ícone arrastado: destacada, como quem vai receber o item.
-            let drop_here = dragged.is_some() && entry.is_dir && pointer.is_some_and(|p| p.0 >= x && p.0 < x + CELL.0 && p.1 >= y && p.1 < y + CELL.1);
+            // Pasta sob um arrasto (deste ou de outro app): destacada, como quem vai
+            // receber o item.
+            let dragging_this = self.drag_out.as_ref().is_some_and(|(p, _)| p == &entry.path);
+            let drop_here = drop_hover && !dragging_this && entry.is_dir && pointer.is_some_and(|p| p.0 >= x && p.0 < x + CELL.0 && p.1 >= y && p.1 < y + CELL.1);
             let mut response = None;
             ui.at(x, y, CELL.0, |ui| {
                 response = Some(ui.tile(Tile::Icon(&icon), &name, selected || drop_here, ICON));
@@ -456,12 +474,6 @@ impl App for Desktop {
                 }
             });
         }
-        if let Some(((gx, gy), name, icon)) = ghost {
-            ui.at(gx, gy, CELL.0, |ui| {
-                ui.tile(Tile::Icon(&icon), &name, true, ICON);
-            });
-            ui.request_repaint();
-        }
         // Renomear no lugar: Enter confirma, Esc cancela e clicar fora (o campo perde o
         // foco) também confirma, como no Finder.
         let mut renamed_now = false;
@@ -480,16 +492,35 @@ impl App for Desktop {
             }
             ui.request_repaint();
         }
-        // Botão solto: termina o arrasto (ou só esquece o aperto, num clique comum).
-        let just_dropped = self.dragging && (released || !down);
-        if released || (!down && self.press.is_some()) {
-            if let (Some((path, _, offset)), true, Some(p)) = (self.press.take(), self.dragging, pointer) {
-                self.selected = Some(path.clone());
-                self.drop_icon(path, (p.0 - offset.0, p.1 - offset.1), p, &placed, area);
-                ui.request_repaint();
-            }
+        // Botão solto sem arrastar: só esquece o aperto (clique comum).
+        if released || !down {
             self.press = None;
-            self.dragging = false;
+        }
+        // Arquivos soltos na área de trabalho: o ícone arrastado daqui muda de lugar (ou
+        // entra na pasta onde caiu); de outro app, são copiados para a pasta sob o
+        // ponteiro ou para a área de trabalho.
+        let dropped = ui.input().dropped.clone();
+        let just_dropped = dropped.is_some();
+        if let (Some(paths), Some(p)) = (dropped, pointer) {
+            let own = self.drag_out.take().filter(|(path, _)| paths.len() == 1 && &paths[0] == path);
+            if let Some((path, offset)) = own {
+                self.drop_icon(path, (p.0 - offset.0, p.1 - offset.1), p, &placed, area);
+            } else {
+                let folder = placed.iter().find(|(e, cell)| {
+                    let (x, y) = Self::cell_pos(*cell, area);
+                    e.is_dir && p.0 >= x && p.0 < x + CELL.0 && p.1 >= y && p.1 < y + CELL.1
+                });
+                if let Some(dir) = folder.map(|(e, _)| e.path.clone()).or_else(|| self.dir.clone()) {
+                    for path in &paths {
+                        match files::copy_into(path, &dir) {
+                            Ok(copy) => tracing::info!("área de trabalho: copiado {} → {}", path.display(), copy.display()),
+                            Err(err) => tracing::warn!("não foi copiado: {err}"),
+                        }
+                    }
+                }
+                self.reload();
+            }
+            ui.request_repaint();
         }
         if let Some(path) = select {
             self.selected = Some(path);

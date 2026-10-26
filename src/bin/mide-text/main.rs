@@ -519,6 +519,18 @@ impl App for Editor {
         // Atalhos do app: Ctrl+S salva (com Shift, "Salvar como"), Ctrl+O abre, Ctrl+F
         // busca. Itens dos menus do app na barra superior também.
         let (save, find, open) = (ui.input().shortcut_shift("s"), ui.input().shortcut("f"), ui.input().shortcut("o"));
+        // Arquivos soltos na janela (da área de trabalho, do Arquivos, de outro app):
+        // imagem num documento formatado entra no texto, como no TextEdit; o resto abre
+        // (nesta janela, se ela está vazia; senão, numa janela nova).
+        if let Some(paths) = ui.input().dropped.clone() {
+            for path in paths {
+                match self.rich.as_mut() {
+                    Some(r) if mide::places::is_image(&path) => r.insert_image(&path),
+                    _ => self.open_chosen(path),
+                }
+            }
+            ui.request_repaint();
+        }
         for action in ui.input().menu.clone() {
             if let Some(r) = self.rich.as_mut()
                 && r.command(&action, ui) {

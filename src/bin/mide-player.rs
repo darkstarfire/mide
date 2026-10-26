@@ -236,6 +236,12 @@ impl App for VideoApp {
     fn view(&mut self, ui: &mut Ui) {
         let (w, h) = ui.window_size();
         let now = Instant::now();
+        // Vídeo solto na janela (da área de trabalho, do Arquivos): toca nela.
+        if let Some(path) = ui.input().dropped.clone().and_then(|paths| paths.into_iter().find(|p| mide::media::video::is_video(p))) {
+            self.chooser = None;
+            self.open(path);
+            ui.request_repaint();
+        }
         // Ações dos menus da barra.
         for action in ui.input().menu.clone() {
             match action.as_str() {

@@ -141,7 +141,14 @@ pub struct ViewMemory {
     seq: u64,
     #[serde(default)]
     folder: Vec<Folder>,
+    /// Larguras das colunas Modificado, Tamanho e Tipo da lista (arrastadas no
+    /// cabeçalho); valem para todas as pastas.
+    #[serde(default)]
+    list_widths: Option<[f32; 3]>,
 }
+
+/// Larguras padrão das colunas da lista (Modificado, Tamanho, Tipo).
+pub const LIST_WIDTHS: [f32; 3] = [165.0, 85.0, 150.0];
 
 impl ViewMemory {
     /// Visualização de uma pasta: a dela, se foi ajustada, senão o padrão.
@@ -155,6 +162,24 @@ impl ViewMemory {
 
     pub fn default_view(&self) -> View {
         self.default.clean()
+    }
+
+    /// Larguras das colunas da lista (as guardadas ou as padrão).
+    pub fn list_widths(&self) -> [f32; 3] {
+        self.list_widths.filter(|w| w.iter().all(|v| v.is_finite() && (40.0..=2000.0).contains(v))).unwrap_or(LIST_WIDTHS)
+    }
+
+    /// Guarda as larguras das colunas relendo o disco antes (outra janela pode ter
+    /// gravado).
+    pub fn record_list_widths(widths: [f32; 3]) -> std::io::Result<()> {
+        let file = path().ok_or_else(|| std::io::Error::other("sem pasta de estado"))?;
+        let mut memory = match std::fs::read_to_string(&file) {
+            // Arquivo estragado: não sobrescreve (o próximo `record` guarda a cópia).
+            Ok(text) => Self::parse(&text).ok_or_else(|| std::io::Error::other("visualizações ilegíveis"))?,
+            Err(_) => Self::default(),
+        };
+        memory.list_widths = Some(widths.map(|w| w.round()));
+        memory.save_to(&file)
     }
 
     pub fn len(&self) -> usize {

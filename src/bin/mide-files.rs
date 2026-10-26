@@ -99,6 +99,10 @@ struct Files {
     /// Renomear no lugar (Enter, como no Finder): o item, o nome sendo digitado e se o
     /// campo ainda precisa receber o foco.
     inline: Option<(PathBuf, String, bool)>,
+    /// Larguras das colunas Modificado, Tamanho e Tipo da lista (arrastáveis no
+    /// cabeçalho, lembradas entre as janelas) e as últimas gravadas.
+    list_widths: [f32; 3],
+    list_widths_saved: [f32; 3],
     message: Option<String>,
     /// O que dá para desfazer (Ctrl+Z, como o ⌘Z do Finder), da mais antiga para a mais
     /// nova, com a hora (operações seguidas no mesmo instante, como mandar vários itens
@@ -258,6 +262,8 @@ impl Files {
             dialog: None,
             focus_rename: false,
             inline: None,
+            list_widths: ViewMemory::load().list_widths(),
+            list_widths_saved: ViewMemory::load().list_widths(),
             tags: HashMap::new(),
             message: None,
             undo: Vec::new(),
@@ -1650,6 +1656,13 @@ impl Files {
             }
         }
         let tags_map = self.tags.clone();
+        // Colunas da lista redimensionadas: grava quando o botão é solto.
+        if self.list_widths != self.list_widths_saved && !ui.input().down {
+            self.list_widths_saved = self.list_widths;
+            if let Err(err) = ViewMemory::record_list_widths(self.list_widths) {
+                tracing::warn!("larguras das colunas não gravadas: {err}");
+            }
+        }
         // Renomear no lugar: o estado sai do app durante o desenho e volta depois.
         let mut inline = self.inline.take();
         let inline_was_focusing = inline.as_ref().is_some_and(|(_, _, f)| *f);
@@ -1900,9 +1913,12 @@ impl Files {
             } else if in_list {
                 // Lista no estilo do Finder: cabeçalho que ordena e linhas alternadas,
                 // com a setinha das pastas.
-                let widths = [("Modificado", 165.0), ("Tamanho", 85.0), ("Tipo", 150.0)];
+                // As divisórias do cabeçalho se arrastam (como no Finder): o Nome cresce
+                // quando as outras colunas encolhem.
+                let mut widths = [("Modificado", self.list_widths[0]), ("Tamanho", self.list_widths[1]), ("Tipo", self.list_widths[2])];
                 if !shown.is_empty() {
-                    sort_by = ui.list_header("Nome", &widths, self.sort);
+                    sort_by = ui.list_header_resizable("Nome", &mut widths, self.sort, 60.0);
+                    self.list_widths = [widths[0].1, widths[1].1, widths[2].1];
                 }
                 // Pasta abrindo ou fechando na lista (sanfona): quantas linhas de dentro
                 // aparecem agora; a linha que está entrando é um espaço que cresce, e
