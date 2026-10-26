@@ -1894,3 +1894,10 @@ Pedido do usuário: a barra lateral do Arquivos (Favoritos e Lugares) muda de la
 - **Writer:** salvar um `.txt` que usava CRLF (fim de linha do Windows) gravava com LF desde que o Writer passou a abrir tudo como documento; agora mantém o CRLF. O teste de unidade passou a editar pelo documento formatado.
 - **Barra superior sobre vidro:** o teste liga o fundo da barra (`[bar] background = true`), já que no visual do Tahoe a barra vem sem faixa de fundo.
 - **"Obter informações" pelo portal:** o `mide-files --info` registra no log a mesma linha do menu do Arquivos.
+
+## Editor de Capturas: zoom e o quadrado do Esboço (2026-10-26)
+
+- Pedido do usuário: zoom na imagem do editor e o quadrado desenhado que virava círculo.
+- **Quadrado virando oval**: o reconhecimento do Esboço (`mide::annotate::recognize`) separava retângulo de oval só pela fração da caixa que o traço cobre (retângulo a partir de 0,86); um quadrado feito à mão (cantos arredondados, bordas tremidas) fica perto de 0,8 e caía na oval. Agora, para formas fechadas que cobrem a caixa, ganha a que fica mais perto do traço: a distância média dos pontos às bordas da caixa contra a distância à elipse inscrita (`box_and_ellipse_error`). Teste de unidade com um quadrado tremido de cantos arredondados (retângulo) e uma oval tremida (oval).
+- **Zoom**: Ctrl+roda (em volta do ponteiro), Ctrl+= e Ctrl+−, Ctrl+0 (ajustar à janela), Ctrl+1 (tamanho real) e o menu Visualizar (Ampliar, Reduzir, Tamanho real, Ajustar à janela), de 1x até 16x; ampliada, a roda desloca a imagem (Shift+roda para os lados). Por dentro, a "parte mostrada" passa a ser só o pedaço visível da imagem (`zoomed`), então o cache da imagem, as formas, o recorte e o desenho continuam iguais. Zoom volta a 1 ao abrir outra imagem.
+- Testes: seção 28 com "quadrado à mão no Esboço vira retângulo" e "Ctrl+= amplia a imagem" (zoom 156%); as falhas "recortar e salvar" e "lápis" da seção já vinham de antes (a imagem passou a abrir em (300, 191), e os testes esperam (270, 171)).

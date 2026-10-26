@@ -196,6 +196,13 @@ struct Editor {
     message: Option<String>,
     view: Option<ViewCache>,
     last_mapping: Option<Mapping>,
+    /// Zoom da imagem: 1 é a imagem inteira na janela; acima disso, ampliada em volta de
+    /// `center` (ponto da imagem no meio da vista).
+    zoom: f32,
+    center: Option<(f32, f32)>,
+    /// Pedidos de zoom do teclado e dos menus para o próximo desenho (fator, ou 0 para
+    /// caber na janela, ou -1 para o tamanho real).
+    zoom_request: Option<f32>,
     /// Medidas do texto (caixas de texto) e o resultado ao salvar.
     text: Text,
 }
@@ -221,6 +228,9 @@ impl Editor {
             message: None,
             view: None,
             last_mapping: None,
+            zoom: 1.0,
+            center: None,
+            zoom_request: None,
             text: Text::new(),
         };
         match path {
@@ -236,6 +246,8 @@ impl Editor {
                 tracing::info!("editor da captura aberto: {} ({}x{})", path.display(), image.width(), image.height());
                 self.doc = Some(Doc::new(image));
                 self.path = Some(path);
+                self.zoom = 1.0;
+                self.center = None;
                 self.message = None;
                 self.cropping = None;
                 self.drag = None;
@@ -466,6 +478,10 @@ impl Editor {
                     tracing::info!("editor: forma apagada");
                 }
             }
+            "ampliar" => self.zoom_request = Some(1.25),
+            "reduzir" => self.zoom_request = Some(0.8),
+            "caber" => self.zoom_request = Some(0.0),
+            "tamanho-real" => self.zoom_request = Some(-1.0),
             "selecionar" => self.set_tool(Tool::Select),
             "esboco" => self.set_tool(Tool::Sketch),
             "desenho" => self.set_tool(Tool::Draw),
@@ -524,6 +540,11 @@ impl Editor {
             Some(true) => actions.push("refazer"),
             Some(false) => actions.push("desfazer"),
             None => {}
+        }
+        for (letter, action) in [("=", "ampliar"), ("+", "ampliar"), ("-", "reduzir"), ("0", "caber"), ("1", "tamanho-real")] {
+            if input.shortcut(letter) {
+                actions.push(action);
+            }
         }
         for (letter, action) in [("y", "refazer"), ("o", "abrir"), ("c", "copiar"), ("k", "recortar")] {
             if input.shortcut(letter) {
@@ -770,6 +791,64 @@ impl Editor {
     }
 
     /// A imagem, as formas, o recorte e o desenho em andamento; o ponteiro na imagem.
+    /// Zoom: Ctrl+roda (em volta do ponteiro), Ctrl +/−, Ctrl+0 (caber), Ctrl+1 (tamanho
+    /// real) e os itens do menu Visualizar; ampliada, a roda desloca a imagem (com Shift,
+    /// para os lados).
+    fn zoom_input(&mut self, ui: &mut Ui, area: RectF, fit: Mapping) {
+        let input = ui.input().clone();
+        let max_zoom = 16.0;
+        let old_s = fit.s * self.zoom;
+        let mut want = self.zoom;
+        let mut anchor = None;
+        match self.zoom_request.take() {
+            Some(f) if f > 0.0 => want = self.zoom * f,
+            Some(f) if f == 0.0 => want = 1.0,
+            Some(_) => want = (1.0 / mide::ui::draw::scale()) / fit.s,
+            None => {}
+        }
+        if input.scroll != 0.0 && input.pointer.is_some_and(|p| inside(area, p)) {
+            if input.ctrl {
+                // Roda para cima amplia (cada passo de 15%).
+                let steps = -input.scroll / 40.0;
+                want = self.zoom * 1.15f32.powf(steps.clamp(-4.0, 4.0));
+                anchor = input.pointer;
+                ui.take_scroll();
+            } else if self.zoom > 1.0 {
+                let map = self.last_mapping.unwrap_or(fit);
+                if let Some(c) = self.center.as_mut() {
+                    let d = input.scroll / map.s;
+                    if input.shift {
+                        c.0 += d;
+                    } else {
+                        c.1 += d;
+                    }
+                }
+                ui.take_scroll();
+                ui.request_repaint();
+            }
+        }
+        let want = want.clamp(1.0, max_zoom);
+        if (want - self.zoom).abs() > 1e-4 {
+            let map = self.last_mapping.unwrap_or(fit);
+            let center = self.center.unwrap_or((map.source.0 + map.source.2 / 2.0, map.source.1 + map.source.3 / 2.0));
+            let new_s = fit.s * want;
+            // O ponto da imagem sob o ponteiro continua sob o ponteiro.
+            self.center = Some(match anchor {
+                Some(p) => {
+                    let img = map.to_image(p);
+                    (img.0 + (center.0 - img.0) * old_s / new_s, img.1 + (center.1 - img.1) * old_s / new_s)
+                }
+                None => center,
+            });
+            if want <= 1.0 {
+                self.center = None;
+            }
+            self.zoom = want;
+            tracing::info!("editor: zoom {:.0}%", want * fit.s * mide::ui::draw::scale() * 100.0);
+            ui.request_repaint();
+        }
+    }
+
     fn canvas(&mut self, ui: &mut Ui, area: RectF) {
         let Some(doc) = self.doc.as_ref() else {
             return;
@@ -782,7 +861,13 @@ impl Editor {
                 (c.x() as f32, c.y() as f32, c.width() as f32, c.height() as f32)
             }
         };
-        let map = Mapping::fit(area, source, 1.0 / mide::ui::draw::scale());
+        let native = 1.0 / mide::ui::draw::scale();
+        let fit = Mapping::fit(area, source, native);
+        let blocked_now = self.dialog.is_some() || ui.menu_open().is_some() || self.pop.is_some();
+        if !blocked_now {
+            self.zoom_input(ui, area, fit);
+        }
+        let map = zoomed(area, source, fit.s, self.zoom, &mut self.center);
         if self.last_mapping != Some(map) {
             let d = map.display;
             tracing::info!("editor: imagem em ({}, {}) {}x{} na escala {:.3}", d.0, d.1, d.2.round(), d.3.round(), map.s);
@@ -1323,6 +1408,15 @@ impl App for Editor {
                     MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C").enabled(has),
                 ],
             },
+            MenuGroup {
+                title: "Visualizar".into(),
+                items: vec![
+                    MenuItem::action("ampliar", "Ampliar").shortcut("Ctrl+=").enabled(has),
+                    MenuItem::action("reduzir", "Reduzir").shortcut("Ctrl+-").enabled(has && self.zoom > 1.0),
+                    MenuItem::action("tamanho-real", "Tamanho real").shortcut("Ctrl+1").enabled(has),
+                    MenuItem::action("caber", "Ajustar à janela").shortcut("Ctrl+0").enabled(has && self.zoom > 1.0),
+                ],
+            },
             MenuGroup { title: "Ferramentas".into(), items: tools },
             window_menu(Vec::new()),
         ]
@@ -1360,6 +1454,23 @@ pub fn shrink(src: &Pixmap, w: u32, h: u32) -> Pixmap {
         Some(cur) => stretch(&cur, w, h),
         None => stretch(src, w, h),
     }
+}
+
+/// A vista com zoom: em 1, a imagem inteira cabendo em `area` (escala `fit_s`); acima
+/// disso, só o pedaço visível de `whole`, em volta de `center` (que fica preso para a
+/// vista não passar da imagem).
+fn zoomed(area: RectF, whole: RectF, fit_s: f32, zoom: f32, center: &mut Option<(f32, f32)>) -> Mapping {
+    let s = fit_s * zoom.max(1.0);
+    let (vw, vh) = ((area.2 / s).min(whole.2), (area.3 / s).min(whole.3));
+    let c = center.unwrap_or((whole.0 + whole.2 / 2.0, whole.1 + whole.3 / 2.0));
+    let cx = c.0.clamp(whole.0 + vw / 2.0, whole.0 + whole.2 - vw / 2.0);
+    let cy = c.1.clamp(whole.1 + vh / 2.0, whole.1 + whole.3 - vh / 2.0);
+    if zoom > 1.0 {
+        *center = Some((cx, cy));
+    }
+    let source = (cx - vw / 2.0, cy - vh / 2.0, vw, vh);
+    let (w, h) = (vw * s, vh * s);
+    Mapping { display: ((area.0 + (area.2 - w) / 2.0).round(), (area.1 + (area.3 - h) / 2.0).round(), w, h), source, s }
 }
 
 /// `src` esticada (ou encolhida) para `w`×`h` pixels de uma vez, pelo filtro bilinear.

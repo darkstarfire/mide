@@ -143,4 +143,20 @@ if [ ! -e "$ED/apagar.png" ] && [ -f "$MIN/apagar/data/Trash/files/apagar.png" ]
 else
     echo "FALHA editor: Mover para a Lixeira"; FAIL=$((FAIL + 1))
 fi
+# Esboço: um quadrado feito à mão (cantos arredondados e tremor) vira retângulo, não
+# oval; Ctrl+= amplia a imagem (zoom de 125%).
+make_png "$ED/esboco.png"
+SCENARIO_OUT="$MIN/esboco" timeout 150 "$SCEN" "400 key s; 420 press 446 292; 421 move 460 291; 422 move 469 288; 423 move 480 289; 424 move 494 291; 425 move 507 292; 426 move 515 290; 427 move 527 288; 428 move 542 289; 429 move 553 291; 430 move 562 292; 431 move 564 290; 432 move 570 291; 433 move 575 295; 434 move 579 300; 435 move 580 306; 436 move 582 305; 437 move 579 316; 438 move 579 329; 439 move 582 343; 440 move 581 354; 441 move 578 364; 442 move 579 375; 443 move 582 389; 444 move 580 402; 445 move 578 413; 446 move 580 423; 447 move 580 424; 448 move 579 430; 449 move 575 435; 450 move 570 439; 451 move 564 440; 452 move 562 439; 453 move 551 441; 454 move 542 442; 455 move 529 440; 456 move 515 438; 457 move 505 439; 458 move 495 441; 459 move 481 442; 460 move 468 440; 461 move 459 438; 462 move 448 439; 463 move 446 440; 464 move 440 439; 465 move 435 435; 466 move 431 430; 467 move 430 424; 468 move 430 426; 469 move 432 414; 470 move 430 400; 471 move 428 388; 472 move 431 379; 473 move 432 369; 474 move 429 357; 475 move 429 343; 476 move 432 331; 477 move 431 322; 478 move 428 312; 480 release 428 312; 520 list" -- "$EDITOR '$ED/esboco.png' >'$ED/esboco.log' 2>&1" >/dev/null 2>&1
+if sed 's/\x1b\[[0-9;]*m//g' "$ED/esboco.log" | grep -q "editor: esboço reconhecido como Rect"; then
+    echo "ok    editor: quadrado à mão no Esboço vira retângulo"; PASS=$((PASS + 1))
+else
+    echo "FALHA editor: quadrado à mão no Esboço vira retângulo"; FAIL=$((FAIL + 1))
+fi
+make_png "$ED/zoom.png"
+SCENARIO_OUT="$MIN/zoom" timeout 150 "$SCEN" "400 click 900 600; 420 combo ctrl+=; 440 combo ctrl+=; 470 list" -- "$EDITOR '$ED/zoom.png' >'$ED/zoom.log' 2>&1" >/dev/null 2>&1
+if sed 's/\x1b\[[0-9;]*m//g' "$ED/zoom.log" | grep -q "editor: zoom 156%"; then
+    echo "ok    editor: Ctrl+= amplia a imagem"; PASS=$((PASS + 1))
+else
+    echo "FALHA editor: Ctrl+= amplia a imagem"; FAIL=$((FAIL + 1))
+fi
 rm -rf "$MIN"

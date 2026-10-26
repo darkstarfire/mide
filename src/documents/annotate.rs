@@ -403,16 +403,34 @@ pub fn recognize(points: &[(f32, f32)]) -> Option<(ShapeKind, Vec<(f32, f32)>)> 
     if corners.len() == 3 && fill < 0.68 {
         return Some((ShapeKind::Triangle, boxed));
     }
-    if fill >= 0.86 && corners.len() <= 6 {
-        return Some((ShapeKind::Rect, boxed));
-    }
-    if (0.6..0.9).contains(&fill) {
-        return Some((ShapeKind::Oval, boxed));
+    // Retângulo ou oval: a forma que fica mais perto do traço. A fração da caixa sozinha
+    // confunde um quadrado feito à mão (cantos arredondados e bordas tremidas, ~0,8)
+    // com uma oval (~0,79); a distância média dos pontos às bordas da caixa e à elipse
+    // que cabe nela separa os dois.
+    if fill >= 0.6 {
+        let (rect_err, oval_err) = box_and_ellipse_error(loop_pts, (x0, y0, x1, y1));
+        return Some((if rect_err <= oval_err { ShapeKind::Rect } else { ShapeKind::Oval }, boxed));
     }
     if (0.4..0.68).contains(&fill) && corners.len() <= 4 {
         return Some((ShapeKind::Triangle, boxed));
     }
     None
+}
+
+/// Distância média (relativa ao tamanho) dos pontos às bordas da caixa e à elipse
+/// inscrita nela.
+fn box_and_ellipse_error(points: &[(f32, f32)], (x0, y0, x1, y1): (f32, f32, f32, f32)) -> (f32, f32) {
+    let (a, b) = (((x1 - x0) / 2.0).max(1.0), ((y1 - y0) / 2.0).max(1.0));
+    let (cx, cy) = (x0 + a, y0 + b);
+    let scale = a.min(b);
+    let (mut rect, mut oval) = (0.0, 0.0);
+    for &(x, y) in points {
+        rect += (x - x0).abs().min((x1 - x).abs()).min((y - y0).abs()).min((y1 - y).abs());
+        let r = ((x - cx) / a).hypot((y - cy) / b);
+        oval += (r - 1.0).abs() * scale;
+    }
+    let n = points.len().max(1) as f32;
+    (rect / n / scale, oval / n / scale)
 }
 
 /// Traço aberto: linha (quase reta) ou seta (reta até a ponta e a cabeça em volta dela).
@@ -508,6 +526,50 @@ mod tests {
         let r = recognize(&pts).expect("reconhecido");
         assert_eq!(r.0, ShapeKind::Arrow);
         assert!((r.1[1].0 - 200.0).abs() < 1.0, "ponta em {:?}", r.1[1]);
+    }
+
+    /// Quadrado à mão: cantos arredondados e bordas tremidas continuam retângulo; oval
+    /// à mão continua oval.
+    #[test]
+    fn quadrado_a_mao_nao_vira_oval() {
+        let mut pts = Vec::new();
+        let (s, r) = (160.0f32, 22.0f32);
+        // Lados retos com tremor e cantos em quarto de círculo de raio 22.
+        let wobble = |i: usize| ((i as f32 * 1.7).sin() * 2.5);
+        for i in 0..=30 {
+            let t = i as f32 / 30.0;
+            pts.push((r + t * (s - 2.0 * r), wobble(i)));
+        }
+        for k in 0..4 {
+            let (cx, cy, start) = match k {
+                0 => (s - r, r, -90.0f32),
+                1 => (s - r, s - r, 0.0),
+                2 => (r, s - r, 90.0),
+                _ => (r, r, 180.0),
+            };
+            for j in 0..=8 {
+                let ang = (start + j as f32 * 90.0 / 8.0).to_radians();
+                pts.push((cx + r * ang.cos(), cy + r * ang.sin()));
+            }
+            if k < 3 {
+                for i in 0..=30 {
+                    let t = i as f32 / 30.0;
+                    let w = wobble(i + 40 * k);
+                    pts.push(match k {
+                        0 => (s + w, r + t * (s - 2.0 * r)),
+                        1 => (s - r - t * (s - 2.0 * r), s + w),
+                        _ => (w, s - r - t * (s - 2.0 * r)),
+                    });
+                }
+            }
+        }
+        assert_eq!(recognize(&pts).map(|r| r.0), Some(ShapeKind::Rect));
+        let oval: Vec<(f32, f32)> = (0..=80).map(|i| {
+            let a = i as f32 / 80.0 * std::f32::consts::TAU;
+            let w = 1.0 + (i as f32 * 2.3).sin() * 0.02;
+            (100.0 + 90.0 * a.cos() * w, 70.0 + 55.0 * a.sin() * w)
+        }).collect();
+        assert_eq!(recognize(&oval).map(|r| r.0), Some(ShapeKind::Oval));
     }
 
     #[test]
