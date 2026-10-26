@@ -1773,3 +1773,9 @@ Estado: nada foi commitado. O diff mistura as refatorações de `let` encadeado 
 - Arrastar ícones: o ícone segue o ponteiro e cai na célula mais perto da grade (como o "Alinhar à grade" do Mac); se já havia outro ícone lá, os dois trocam de lugar. Os lugares ficam em `~/.local/state/mide/desktop-positions` (uma linha por item: coluna a partir da direita, linha, nome); renomear mantém o lugar; itens novos ocupam os primeiros lugares livres. Soltar em cima de uma pasta move o item para dentro dela (a pasta fica destacada durante o arrasto).
 - Diálogos (renomear, criar, confirmar um programa): a camada da área de trabalho sobe para a frente das janelas e pega o teclado enquanto o diálogo aparece, e volta para trás quando ele fecha. Novo no mide-ui: `Ui::set_raised` (troca a camada de Bottom para Overlay pelo `set_layer` do layer-shell).
 - Testes: 3 cenários novos na seção 13 (arrastar muda o lugar, soltar na pasta move, renomear com o Editor de Texto na frente); seção 13: 8/8.
+
+## Área de trabalho: renomear com Enter, como no Finder (2026-10-25)
+
+- Pedido do usuário: renomear com Enter como no Mac. Enter (e "Renomear…" no menu, e Ctrl+R) troca o nome embaixo do ícone por um campo de texto, com o nome sem a extensão já escolhido; Enter confirma, Esc cancela, clicar fora confirma. O campo é mais largo que o ícone e não passa da borda da tela. Abrir pelo teclado passou para Ctrl+O e Ctrl+↓ (⌘O/⌘↓), como no Finder.
+- "Nova pasta" e "Novo arquivo" criam na hora com um nome livre e já abrem o campo do nome (o diálogo de criar e renomear saiu). Enquanto o campo está aberto, a camada sobe para a frente das janelas (`Ui::set_raised`), para o nome digitado nunca ficar escondido.
+- Testes: seção 13 com 9/9 (Ctrl+O abre; Enter renomeia no lugar com o Editor de Texto na frente).

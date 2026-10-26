@@ -9,6 +9,7 @@ reset_desk
 export MIDE_DESKTOP_DIR="$DESK"
 check "área de trabalho aparece como camada de fundo" 'camada "mide-desktop"' "300 list"
 check "duplo clique no ícone abre o arquivo" "abrir \(teste\): .*notas.txt" "300 click 1298 76; 306 click 1298 76; 340 list"
+check "Ctrl+O abre o ícone escolhido" "abrir \(teste\): .*notas.txt" "300 click 1298 76; 340 combo ctrl+o; 380 list"
 unset MIDE_DESKTOP_DIR
 reset_desk
 MIDE_DESKTOP_DIR="$DESK" timeout 150 "$SCEN" "300 click 1298 76; 330 key delete; 380 list" >/dev/null 2>&1
@@ -43,12 +44,13 @@ if [ -e "$DESK/Pasta/notas.txt" ] && [ ! -e "$DESK/notas.txt" ]; then
 else
     echo "FALHA ícone solto numa pasta da área de trabalho vai para dentro dela"; FAIL=$((FAIL + 1))
 fi
-# Renomear com uma janela na frente: o diálogo vem para a frente e recebe o teclado.
+# Enter renomeia no lugar, como no Finder (o nome sem a extensão vem escolhido),
+# com uma janela na frente: a camada sobe e recebe o teclado.
 rm -rf "$DESK"/* ; echo oi >"$DESK/x.txt"
-MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" timeout 150 "$SCEN" "300 click 680 380; 340 click 1298 76; 380 combo ctrl+r; 420 key n; 425 key o; 430 key v; 435 key a; 470 key enter; 520 list" -- mide-text >/dev/null 2>&1
-if [ -e "$DESK/nova" ]; then
-    echo "ok    renomear na área de trabalho com uma janela na frente"; PASS=$((PASS + 1))
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" timeout 150 "$SCEN" "300 click 680 380; 340 click 1298 76; 380 key enter; 420 key n; 425 key o; 430 key v; 435 key a; 470 key enter; 520 list" -- mide-text >/dev/null 2>&1
+if [ -e "$DESK/nova.txt" ]; then
+    echo "ok    Enter renomeia no lugar (sem a extensão) com uma janela na frente"; PASS=$((PASS + 1))
 else
-    echo "FALHA renomear na área de trabalho com uma janela na frente"; FAIL=$((FAIL + 1))
+    echo "FALHA Enter renomeia no lugar (sem a extensão) com uma janela na frente"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$DESK" "$DSTATE"

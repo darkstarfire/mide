@@ -5,8 +5,8 @@
 //! Clique seleciona, duplo clique abre (pastas no Arquivos). Botão direito num ícone:
 //! Abrir, Renomear, Duplicar, Copiar caminho e Mover para a Lixeira; no vazio: Nova
 //! pasta, Novo arquivo, Abrir no Terminal, Mostrar no Arquivos e Mudar papel de
-//! parede. Teclado (depois de clicar na área de trabalho): Enter abre, Delete manda
-//! para a Lixeira, Ctrl+R renomeia.
+//! parede. Teclado (depois de clicar na área de trabalho): Enter renomeia, Ctrl+O
+//! abre, Delete manda para a Lixeira.
 //!
 //! Programas (E8): atalhos `.desktop` aparecem com o nome e o ícone do app; atalhos,
 //! AppImages, executáveis e scripts rodam com duplo clique (ou perguntam antes, como
@@ -15,8 +15,13 @@
 //! Arrastar um ícone muda o lugar dele na grade (como no Mac, com "Alinhar à grade"):
 //! o lugar fica guardado em `~/.local/state/mide/desktop-positions` e, se já houver
 //! outro ícone lá, os dois trocam de lugar. Soltar em cima de uma pasta move o item
-//! para dentro dela. Diálogos (renomear, criar) trazem a camada para a frente das
-//! janelas enquanto estão abertos.
+//! para dentro dela.
+//!
+//! Renomear é como no Finder: Enter (ou "Renomear", ou Ctrl+R) troca o nome embaixo
+//! do ícone por um campo com o nome sem a extensão escolhido; Enter confirma, Esc
+//! cancela, clicar fora confirma. Nova pasta e Novo arquivo criam com um nome livre e
+//! já abrem o campo. Abrir pelo teclado: Ctrl+O ou Ctrl+↓ (⌘O/⌘↓). Enquanto o campo
+//! está aberto, a camada vem para a frente das janelas.
 //!
 //! `MIDE_DESKTOP_DIR` troca a pasta (os testes usam uma pasta temporária).
 
@@ -39,8 +44,9 @@ struct Desktop {
     entries: Vec<Entry>,
     mtime: Option<std::time::SystemTime>,
     selected: Option<PathBuf>,
-    dialog: Option<Dialog>,
-    focus_dialog: bool,
+    /// Renomear no lugar (Enter, como no Finder): o item, o nome sendo digitado e se o
+    /// campo ainda precisa receber o foco.
+    inline: Option<(PathBuf, String, bool)>,
     /// Área útil da tela (sem a barra e a dock), perguntada ao compositor.
     workarea: Option<(f32, f32, f32, f32)>,
     asked_at: Option<std::time::Instant>,
@@ -115,20 +121,6 @@ fn layout(names: &[String], saved: &HashMap<String, (usize, usize)>, cols: usize
     out.into_iter().map(|c| c.unwrap_or((0, 0))).collect()
 }
 
-/// Diálogo de criar ou renomear (o mesmo jeito do Arquivos).
-struct Dialog {
-    kind: DialogKind,
-    suggestion: String,
-    name: String,
-    error: Option<String>,
-}
-
-enum DialogKind {
-    NewFolder,
-    NewFile,
-    Rename(PathBuf),
-}
-
 #[derive(Clone, Copy)]
 enum Action {
     Open,
@@ -145,7 +137,7 @@ enum Action {
 
 impl Desktop {
     fn new() -> Self {
-        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, dialog: None, focus_dialog: false, workarea: None, asked_at: None, prompt: None, labels: Labels::default(), cells: HashMap::new(), press: None, dragging: false };
+        let mut app = Self { dir: places::desktop_dir(), entries: Vec::new(), mtime: None, selected: None, inline: None, workarea: None, asked_at: None, prompt: None, labels: Labels::default(), cells: HashMap::new(), press: None, dragging: false };
         app.cells = cells_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_cells(&t)).unwrap_or_default();
         app.reload();
         app
@@ -185,50 +177,31 @@ impl Desktop {
         self.dir.as_ref().is_some_and(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok() != self.mtime)
     }
 
-    fn open_dialog(&mut self, kind: DialogKind, name: String) {
-        self.dialog = Some(Dialog { kind, suggestion: name.clone(), name, error: None });
-        self.focus_dialog = true;
+    /// Começa a renomear no lugar: o nome embaixo do ícone vira um campo de texto.
+    fn start_rename(&mut self, path: PathBuf) {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.selected = Some(path.clone());
+        self.inline = Some((path, name, true));
     }
 
-    /// Criar só com "Criar": sem mudar o nome, o próximo livre ("Nova pasta (1)"...).
-    fn confirm_dialog(&mut self) {
-        let (Some(dialog), Some(dir)) = (self.dialog.as_ref(), self.dir.clone()) else {
+    /// Termina de renomear no lugar (o ícone continua no mesmo lugar da grade).
+    fn finish_rename(&mut self, path: PathBuf, name: String) {
+        let current = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = name.trim();
+        if name.is_empty() || name == current {
             return;
-        };
-        let renamed_from = match &dialog.kind {
-            DialogKind::Rename(path) => path.file_name().map(|n| n.to_string_lossy().into_owned()),
-            _ => None,
-        };
-        let result = match &dialog.kind {
-            DialogKind::Rename(path) => files::rename(path, &dialog.name),
-            kind => {
-                let folder = matches!(kind, DialogKind::NewFolder);
-                let name = if dialog.name.trim() == dialog.suggestion {
-                    if folder { files::numbered_name(&dir, "Nova pasta", "") } else { files::numbered_name(&dir, "Novo arquivo", "txt") }
-                } else {
-                    dialog.name.trim().to_string()
-                };
-                files::create_named(&dir, &name, folder)
-            }
-        };
-        match result {
-            Ok(path) => {
-                tracing::info!("área de trabalho: {}", path.display());
-                // O ícone renomeado continua no mesmo lugar.
-                let new = path.file_name().map(|n| n.to_string_lossy().into_owned());
-                if let (Some(cell), Some(new)) = (renamed_from.and_then(|old| self.cells.remove(&old)), new) {
-                    self.cells.insert(new, cell);
+        }
+        match files::rename(&path, name) {
+            Ok(new_path) => {
+                tracing::info!("área de trabalho: {} → {}", path.display(), new_path.display());
+                if let Some(cell) = self.cells.remove(&current) {
+                    self.cells.insert(name.to_string(), cell);
                     self.save_cells();
                 }
-                self.dialog = None;
                 self.reload();
-                self.selected = Some(path);
+                self.selected = Some(new_path);
             }
-            Err(err) => {
-                if let Some(d) = self.dialog.as_mut() {
-                    d.error = Some(err);
-                }
-            }
+            Err(err) => tracing::warn!("não foi renomeado: {err}"),
         }
     }
 
@@ -242,7 +215,7 @@ impl Desktop {
                 Opened::Ask(prompt) => self.prompt = Some(prompt),
                 Opened::Failed(err) => tracing::warn!("{err}"),
             },
-            (Action::Rename, Some(e)) => self.open_dialog(DialogKind::Rename(e.path.clone()), e.name.clone()),
+            (Action::Rename, Some(e)) => self.start_rename(e.path.clone()),
             (Action::Duplicate, Some(e)) => {
                 if let Ok(copy) = files::duplicate(&e.path) {
                     self.reload();
@@ -257,8 +230,21 @@ impl Desktop {
                 }
                 self.reload();
             }
-            (Action::NewFolder, _) => self.open_dialog(DialogKind::NewFolder, "Nova pasta".into()),
-            (Action::NewFile, _) => self.open_dialog(DialogKind::NewFile, "Novo arquivo.txt".into()),
+            // Como no Finder: cria com um nome livre e já deixa o nome para editar.
+            (Action::NewFolder, _) | (Action::NewFile, _) => {
+                if let Some(dir) = dir {
+                    let folder = matches!(action, Action::NewFolder);
+                    let name = if folder { files::numbered_name(&dir, "Nova pasta", "") } else { files::numbered_name(&dir, "Novo arquivo", "txt") };
+                    match files::create_named(&dir, &name, folder) {
+                        Ok(path) => {
+                            tracing::info!("área de trabalho: {}", path.display());
+                            self.reload();
+                            self.start_rename(path);
+                        }
+                        Err(err) => tracing::warn!("não foi criado: {err}"),
+                    }
+                }
+            }
             (Action::Terminal, _) => {
                 if let Some(dir) = dir {
                     places::open_terminal(&dir);
@@ -331,64 +317,23 @@ impl Desktop {
     }
 
     fn keys(&mut self, ui: &mut Ui) {
-        if ui.typing() || self.dialog.is_some() || self.prompt.is_some() {
+        if ui.typing() || self.inline.is_some() || self.prompt.is_some() {
             return;
         }
         let input = ui.input();
+        // Como no Finder: Enter renomeia; abrir é ⌘O ou ⌘↓ (Ctrl+O, Ctrl+↓).
+        let ctrl_down = input.key_events().iter().any(|(k, ctrl, _)| *k == Key::Down && *ctrl);
         let (enter, delete, rename) = (input.key(Key::Enter), input.key(Key::Delete), input.shortcut("r"));
+        let open = input.shortcut("o") || ctrl_down;
         let chosen = self.selected.as_ref().and_then(|s| self.entries.iter().find(|e| &e.path == s)).cloned();
         if let Some(entry) = chosen {
-            if enter {
+            if open {
                 self.act(Action::Open, Some(entry));
+            } else if enter || rename {
+                self.act(Action::Rename, Some(entry));
             } else if delete {
                 self.act(Action::Trash, Some(entry));
-            } else if rename {
-                self.act(Action::Rename, Some(entry));
             }
-            ui.request_repaint();
-        }
-    }
-
-    fn dialog_view(&mut self, ui: &mut Ui) {
-        let Some(dialog) = self.dialog.as_ref() else {
-            return;
-        };
-        let (title, action) = match dialog.kind {
-            DialogKind::NewFolder => ("Nova pasta", "Criar"),
-            DialogKind::NewFile => ("Novo arquivo", "Criar"),
-            DialogKind::Rename(_) => ("Renomear", "Renomear"),
-        };
-        let focus = std::mem::take(&mut self.focus_dialog);
-        let mut name = dialog.name.clone();
-        let error = dialog.error.clone();
-        let mut done = false;
-        let mut cancel = ui.input().key(Key::Escape);
-        ui.modal(380.0, |ui| {
-            ui.strong(title);
-            if focus {
-                ui.focus_next_input();
-            }
-            done = ui.text_input(&mut name, "Nome").submitted();
-            if let Some(err) = &error {
-                ui.note(err);
-            }
-            ui.row(|ui| {
-                ui.push_right(2.0 * 110.0 + 8.0);
-                ui.sized(110.0, |ui| cancel |= ui.button("Cancelar").clicked());
-                ui.sized(110.0, |ui| done |= ui.primary_button(action).clicked());
-            });
-        });
-        if let Some(d) = self.dialog.as_mut() {
-            if d.name != name {
-                d.error = None;
-            }
-            d.name = name;
-        }
-        if cancel {
-            self.dialog = None;
-            ui.request_repaint();
-        } else if done {
-            self.confirm_dialog();
             ui.request_repaint();
         }
     }
@@ -429,6 +374,10 @@ impl App for Desktop {
         }
         let dragged = self.press.as_ref().filter(|_| self.dragging).map(|(p, _, offset)| (p.clone(), *offset));
         let mut ghost = None;
+        // Renomear no lugar: o estado sai do app durante o desenho e volta depois.
+        let mut inline = self.inline.take();
+        let inline_was_focusing = inline.as_ref().is_some_and(|(_, _, f)| *f);
+        let mut inline_done = false;
         for (entry, cell) in &placed {
             let (x, y) = Self::cell_pos(*cell, area);
             let selected = self.selected.as_ref() == Some(&entry.path);
@@ -449,6 +398,27 @@ impl App for Desktop {
             let Some(r) = response else {
                 continue;
             };
+            // O nome vira um campo de texto embaixo do ícone (mais largo que ele, como no
+            // Finder), com o nome sem a extensão já escolhido.
+            if let Some((path, name, focus)) = inline.as_mut()
+                && *path == entry.path
+            {
+                let width = 160.0;
+                // Centrado no ícone, sem passar da borda da tela (coluna da direita).
+                let fx = (r.rect.0 + (r.rect.2 - width) / 2.0).min(area.0 + area.2 - width - 6.0).max(area.0 + 6.0);
+                let fy = r.rect.1 + 16.0 + ICON as f32 - 9.0;
+                // O Enter que abriu o campo chega a ele no mesmo quadro: não confirma.
+                let just_opened = std::mem::take(focus);
+                if just_opened {
+                    let stem = if entry.is_dir { name.len() } else { name.rfind('.').filter(|i| *i > 0).unwrap_or(name.len()) };
+                    ui.focus_next_input_selecting(stem);
+                }
+                ui.at(fx, fy, width, |ui| {
+                    if ui.text_input(name, "").submitted() && !just_opened {
+                        inline_done = true;
+                    }
+                });
+            }
             if r.hovered()
                 && pressed
                 && self.press.is_none()
@@ -492,6 +462,24 @@ impl App for Desktop {
             });
             ui.request_repaint();
         }
+        // Renomear no lugar: Enter confirma, Esc cancela e clicar fora (o campo perde o
+        // foco) também confirma, como no Finder.
+        let mut renamed_now = false;
+        if let Some((path, name, focusing)) = inline {
+            let escape = ui.input().key(Key::Escape);
+            let lost = !inline_was_focusing && !focusing && !ui.typing();
+            if escape {
+                ui.blur();
+                renamed_now = true;
+            } else if inline_done || lost {
+                ui.blur();
+                self.finish_rename(path, name);
+                renamed_now = true;
+            } else {
+                self.inline = Some((path, name, focusing));
+            }
+            ui.request_repaint();
+        }
         // Botão solto: termina o arrasto (ou só esquece o aperto, num clique comum).
         let just_dropped = self.dragging && (released || !down);
         if released || (!down && self.press.is_some()) {
@@ -517,7 +505,7 @@ impl App for Desktop {
         // Clique no papel de parede (espaço vazio): o compositor afasta as janelas para
         // mostrar a mesa, ou as traz de volta (como no macOS). Numa thread: o desenho
         // não espera a resposta.
-        if bg.clicked() && !just_dropped {
+        if bg.clicked() && !just_dropped && !renamed_now {
             std::thread::spawn(|| {
                 let _ = mide::control_client::ask_compositor("reveal");
             });
@@ -552,10 +540,10 @@ impl App for Desktop {
             self.act(a, entry);
             ui.request_repaint();
         }
-        // Diálogo aberto (renomear, criar, confirmar um programa): a camada vem para a
-        // frente das janelas e pega o teclado; fechado, volta para trás delas.
-        ui.set_raised(self.dialog.is_some() || self.prompt.is_some());
-        self.dialog_view(ui);
+        // Renomeando ou com uma confirmação aberta: a camada vem para a frente das
+        // janelas e pega o teclado (o nome digitado nunca fica escondido); depois, volta
+        // para trás delas.
+        ui.set_raised(self.inline.is_some() || self.prompt.is_some());
         if let Some(answer) = self.prompt.as_mut().and_then(|p| p.view(ui)) {
             self.prompt = None;
             match answer {
