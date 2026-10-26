@@ -1160,7 +1160,14 @@ impl XdgDecorationHandler for State {
         set_server_side(&toplevel);
     }
 
-    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: Mode) {
+    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: Mode) {
+        // Pedido de "sem decoração" (no X11, as dicas do Motif repassadas pelo
+        // `xwayland-satellite`): guardado para reconhecer janelas de abertura (A26).
+        if mode == Mode::ClientSide {
+            with_states(toplevel.wl_surface(), |states| {
+                states.data_map.insert_if_missing_threadsafe(|| WantsNoDecoration);
+            });
+        }
         // O mide decide: sempre decoração de servidor, para ter a barra estilo mac.
         set_server_side(&toplevel);
     }
@@ -1184,6 +1191,10 @@ fn set_server_side(toplevel: &ToplevelSurface) {
 
 /// Marca de superfície que pediu decoração de servidor (o mide desenha a barra).
 pub struct SsdMarker;
+
+/// Marca de janela que pediu para não ter decoração (`xdg-decoration` em
+/// `client_side`): uma das pistas de janela de abertura (A26, `wm.rs`).
+pub struct WantsNoDecoration;
 
 /// Duração do esmaecer ao fechar uma janela.
 /// Duração da entrada dos menus.
