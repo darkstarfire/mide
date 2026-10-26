@@ -48,6 +48,27 @@ view_check "pasta que sumiu e voltou continua em lista" "visualização de $VDIR
 # Barra no fim (como vem de lançadores) é a mesma pasta.
 view_check "barra no fim guarda na mesma chave" "visualização guardada para $VDIR/Fotos2: lista" "400 click 569 102; 440 list" "$VDIR/Fotos2/"
 view_check "sem a barra: a escolha volta" "visualização de $VDIR/Fotos2: lista" "400 list" "$VDIR/Fotos2"
+# Barra lateral redimensionável: a borda (x=268 com a largura padrão de 220) se arrasta
+# 74 px para a direita; a largura vale para todas as pastas e volta na próxima janela.
+view_check "barra lateral começa com 220" "barra lateral: largura 220" "400 list" "$VDIR/Nova"
+view_check "arrastar a borda da barra lateral guarda a largura" "barra lateral: largura guardada 294" "400 move 266 300; 410 press 266 300; 420 move 300 300; 430 move 340 300; 440 release 340 300; 460 list" "$VDIR/Nova"
+if grep -q "^sidebar_width = 294" "$XDG_STATE_HOME/mide/files-view.toml" 2>/dev/null; then
+    echo "ok    largura da barra lateral no files-view.toml"; PASS=$((PASS + 1))
+else
+    echo "FALHA largura da barra lateral no files-view.toml"; FAIL=$((FAIL + 1))
+fi
+# Abrir de novo (outra pasta): a largura lembrada, conferida no quadro salvo: em
+# (300, 480) fica a barra lateral (vidro sobre o papel de parede), diferente do fundo
+# do conteúdo em (600, 480); com a largura padrão, os dois seriam o fundo.
+SIDE_OUT="$VBASE/lateral"
+: >"$APPLOG"
+SCENARIO_OUT="$SIDE_OUT" timeout 150 "$SCEN" "400 list" 420 -- "NO_COLOR=1 $FILES '$VDIR/Projetos' >'$APPLOG' 2>&1" >/dev/null 2>&1
+SIDE_PX="$(python3 -c "import sys; from PIL import Image; im = Image.open(sys.argv[1]).convert('RGB'); print('%d,%d,%d %d,%d,%d' % (im.getpixel((300, 480)) + im.getpixel((600, 480))))" "$SIDE_OUT/frame.png" 2>/dev/null)"
+if grep -q "barra lateral: largura 294" "$APPLOG" && [ -n "$SIDE_PX" ] && [ "${SIDE_PX% *}" != "${SIDE_PX#* }" ]; then
+    echo "ok    a largura da barra lateral volta ao abrir de novo (quadro: $SIDE_PX)"; PASS=$((PASS + 1))
+else
+    echo "FALHA a largura da barra lateral volta ao abrir de novo (quadro: ${SIDE_PX:-sem quadro})"; FAIL=$((FAIL + 1))
+fi
 if [ -f "$XDG_STATE_HOME/mide/files-view.toml" ] && ! ls "$XDG_STATE_HOME/mide/" | grep -q tmp; then
     echo "ok    estado em XDG_STATE_HOME/mide/files-view.toml, sem temporários"; PASS=$((PASS + 1))
 else

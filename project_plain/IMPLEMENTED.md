@@ -1879,3 +1879,12 @@ Continuação do E11, usando o que o mide-ui ganhou (janelas filhas, vidro em ja
 - Comando `features` no canal de controle, que responde `child_glass` (o mide-ui pergunta uma vez antes de pedir vidro numa filha).
 - `wp_cursor_shape_v1` (Smithay `CursorShapeManagerState`): os apps pedem a forma do ponteiro pelo nome (redimensionar nas divisórias do mide-ui) e o mide desenha com o tema dele.
 - A janela filha abre centrada sobre a principal pelo `center_dialog_once` que já existia (A26): conferido.
+
+## Arquivos: barra lateral redimensionável (2026-10-26)
+
+Pedido do usuário: a barra lateral do Arquivos (Favoritos e Lugares) muda de largura arrastando a borda dela.
+
+- A borda da barra lateral se arrasta (faixa de 9 pt na borda direita do painel de vidro); o ponteiro vira o de redimensionar ao passar nela e durante o arrasto (`ui.set_cursor(Cursor::ResizeHorizontal)`). Largura entre 150 e 360 pt, sempre deixando 340 pt para o conteúdo (numa janela estreita, a barra encolhe só na tela; a largura escolhida volta quando a janela cresce).
+- A largura fica guardada ao soltar, em `~/.local/state/mide/files-view.toml` (`sidebar_width`, junto da visualização das pastas e das larguras das colunas; `ViewMemory::sidebar_width` e `record_sidebar_width`, relendo o disco antes de gravar), e vale para todas as janelas do Arquivos.
+- Nomes que não cabem terminam com "…".
+- O visual continua o do Tahoe: painel de vidro solto da borda, botões da janela no topo, títulos de grupo, ícone na cor de destaque, escolhido numa pílula cinza, o vazio arrastando a janela e a lista rolando quando não cabe. Como a `sidebar_area` do mide-ui tem largura fixa (220) e o `sidebar_panel` não deixa os itens pegarem o ponteiro antes do arrasto da janela, a barra é desenhada pelo Arquivos com o que o kit oferece (`glass_fill`, `window_controls`, `scroll_area_showing`, `background`, `fixed_label`, `heading`, `window_drag_area`), e o conteúdo fica nas coordenadas da janela (`ui.at`), como antes.

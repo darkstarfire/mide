@@ -1000,3 +1000,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh editor centro` passando; `vidro` com 29/30: "barra superior sobre vidro" falha igual com o código anterior (já falhava desde a atualização do mide-ui, commit 65b7679), não é desta mudança.
 - Conferido por quadro salvo (1366x768): gaveta em vidro flutuante com os botões da janela, barra com as duas cápsulas de ícones, Preferências numa janela de vidro própria centrada sobre o Code, terminal embaixo e editor dividido lado a lado com as linhas do kit.
 - Manual (sessão de verdade): o ponteiro de redimensionar nas divisórias (gaveta, terminal, painéis), o vidro das Preferências sobre o papel de parede e a dica de cada botão da barra.
+
+## Arquivos: barra lateral redimensionável (2026-10-26)
+
+- `cargo test` (novo: `files_view::tests::largura_da_barra_lateral`: padrão 220, limites 150 a 360 para um arquivo editado à mão, e gravar a largura não apaga a visualização das pastas).
+- `tests/ui.sh 25-arquivos-visualizacao`, cenários novos: a barra começa com 220; arrastar a borda de x=266 até x=340 grava `barra lateral: largura guardada 294` e `sidebar_width = 294` no `files-view.toml`; abrir de novo outra pasta volta com 294, conferido no log e no quadro salvo (em (300, 480) a barra lateral, diferente do fundo do conteúdo em (600, 480)).
+- Conferido por quadro salvo (800x600): visual igual ao de antes com 220 (comparado com o quadro do código anterior), barra com 294 e com 150 (nomes cortados com "…", pílula do item sob o ponteiro), e arrastar o vazio da barra ainda move a janela.
+- Manual (sessão de verdade): o ponteiro de redimensionar na borda da barra lateral.

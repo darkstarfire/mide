@@ -36,11 +36,14 @@ use std::{
 use mide::{
     files::{self, Entry},
     files_view::{self, ViewMemory},
-    kit::{run, window_menu, App, Key, MenuGroup, MenuItem, Tile, Ui, Window},
+    kit::{run, window_menu, App, Cursor, Key, MenuGroup, MenuItem, Tile, Ui, Window},
     places,
     programs::{self, Answer, Labels, Opened, Prompt},
 };
 use tiny_skia::Pixmap;
+
+/// Largura que a barra lateral sempre deixa para o conteúdo, ao lado.
+const SIDEBAR_CONTENT_MIN: f32 = 340.0;
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +109,12 @@ struct Files {
     /// cabeçalho, lembradas entre as janelas) e as últimas gravadas.
     list_widths: [f32; 3],
     list_widths_saved: [f32; 3],
+    /// Largura da barra lateral (arrastando a borda dela, lembrada entre as janelas) e o
+    /// arrasto em andamento: onde o ponteiro apertou e a largura de então.
+    sidebar_width: f32,
+    sidebar_drag: Option<(f32, f32)>,
+    /// Ícones da barra lateral já carregados, por (nome, tamanho em pixels).
+    sidebar_icons: HashMap<(String, u32), Option<Pixmap>>,
     message: Option<String>,
     /// O que dá para desfazer (Ctrl+Z, como o ⌘Z do Finder), da mais antiga para a mais
     /// nova, com a hora (operações seguidas no mesmo instante, como mandar vários itens
@@ -268,6 +277,9 @@ impl Files {
             spring: None,
             list_widths: ViewMemory::load().list_widths(),
             list_widths_saved: ViewMemory::load().list_widths(),
+            sidebar_width: ViewMemory::load().sidebar_width(),
+            sidebar_drag: None,
+            sidebar_icons: HashMap::new(),
             tags: HashMap::new(),
             message: None,
             undo: Vec::new(),
@@ -277,9 +289,160 @@ impl Files {
             to_loader,
             from_loader,
         };
+        tracing::info!("barra lateral: largura {}", app.sidebar_width);
         app.apply_saved_view();
         app.reload();
         app
+    }
+
+    /// Borda da barra lateral em `area` (x, y, largura, altura da janela): o ponteiro
+    /// vira o de redimensionar sobre ela e arrastar muda a largura, gravada ao soltar.
+    /// Devolve a largura deste quadro (dentro dos limites e deixando lugar para o
+    /// conteúdo; a escolhida fica guardada para quando a janela crescer de novo).
+    fn sidebar_resize(&mut self, ui: &mut Ui, area: (f32, f32, f32, f32)) -> f32 {
+        let max = (area.2 - SIDEBAR_CONTENT_MIN).clamp(files_view::SIDEBAR_MIN, files_view::SIDEBAR_MAX);
+        let width = self.sidebar_width.clamp(files_view::SIDEBAR_MIN, max);
+        // Faixa que pega o ponteiro, quase toda dentro da barra (a margem da página
+        // fica do outro lado).
+        let hit = (area.0 + width - 6.0, area.1, 9.0, area.3);
+        let over = ui.background(hit).hovered;
+        let (pressed, down, pointer) = (ui.input().pressed, ui.input().down, ui.input().pointer);
+        if over
+            && pressed
+            && self.sidebar_drag.is_none()
+            && let Some(p) = pointer
+        {
+            self.sidebar_drag = Some((p.0, width));
+        }
+        let mut width = width;
+        if let Some((start, from)) = self.sidebar_drag {
+            if down {
+                if let Some(p) = pointer {
+                    let w = (from + p.0 - start).clamp(files_view::SIDEBAR_MIN, max).round();
+                    if w != width {
+                        width = w;
+                        self.sidebar_width = w;
+                        ui.request_repaint();
+                    }
+                }
+            } else {
+                self.sidebar_drag = None;
+                if (width - from).abs() >= 1.0 {
+                    self.sidebar_width = width;
+                    match ViewMemory::record_sidebar_width(width) {
+                        Ok(()) => tracing::info!("barra lateral: largura guardada {width}"),
+                        Err(err) => tracing::warn!("largura da barra lateral não gravada: {err}"),
+                    }
+                }
+            }
+        }
+        if over || self.sidebar_drag.is_some() {
+            ui.set_cursor(Cursor::ResizeHorizontal);
+        }
+        width
+    }
+
+    /// Barra lateral do Finder (Tahoe) em `rect`: painel de vidro solto da borda, com
+    /// os botões da janela no topo, títulos de grupo ("Favoritos"), itens com o ícone
+    /// na cor de destaque e o nome cortado com "…" quando não cabe, o escolhido numa
+    /// pílula cinza, e o vazio arrastando a janela. A lista rola quando não cabe.
+    /// Devolve o item clicado.
+    fn sidebar(&mut self, ui: &mut Ui, items: &[(String, &str)], current: usize, rect: (f32, f32, f32, f32)) -> Option<usize> {
+        use mide::ui::draw;
+        let (x, y0, sw, h) = rect;
+        let t = ui.theme().clone();
+        let rgba = |c: [u8; 4]| tiny_skia::Color::from_rgba8(c[0], c[1], c[2], c[3]);
+        let inset = 8.0;
+        let radius = mide::kit::RADIUS_WINDOW - inset;
+        let panel = (x + inset, y0 + inset, sw - inset, h - 2.0 * inset);
+        let background = t.background;
+        ui.paint(|canvas, _| draw::fill_rounded(canvas, x, y0, sw, h, 0.0, rgba(background)));
+        ui.glass_fill(panel, radius);
+        // Borda de luz do vidro.
+        let edge = if t.dark { [255, 255, 255, 34] } else { [0, 0, 0, 20] };
+        ui.paint(|canvas, _| {
+            if let Some(path) = draw::rounded_rect(panel.0 + 0.5, panel.1 + 0.5, panel.2 - 1.0, panel.3 - 1.0, radius - 0.5) {
+                let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+                paint.set_color(rgba(edge));
+                canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, draw::tf(), None);
+            }
+        });
+        ui.window_controls(x + 20.0, y0 + (mide::kit::TOOLBAR_HEIGHT - 14.0) / 2.0);
+        // Ícones dos itens (poucos, carregados uma vez no tamanho em pixels da tela).
+        let scale = draw::scale();
+        for (_, icon) in items.iter().filter(|(_, i)| !i.is_empty()) {
+            let size = if icon.ends_with("-symbolic") { 17 } else { 20 };
+            let px = (size as f32 * scale).round() as u32;
+            self.sidebar_icons.entry((icon.to_string(), px)).or_insert_with(|| mide::icons::load_themed_icon(&[icon], px));
+        }
+        let top = y0 + mide::kit::TOOLBAR_HEIGHT;
+        let list_h = (panel.1 + panel.3 - 8.0 - top).max(1.0);
+        let mut chosen = None;
+        let mut row_hovered = false;
+        let icons = &self.sidebar_icons;
+        ui.at(panel.0, top, panel.2, |ui| {
+            ui.scroll_area_showing(list_h, None, |ui| {
+                let region = ui.region();
+                let base = region.1 + region.3 - ui.remaining_height();
+                let mut row_y = base;
+                for (i, (name, icon)) in items.iter().enumerate() {
+                    // Item sem ícone é um título de grupo; nome vazio é só espaço.
+                    if icon.is_empty() {
+                        if name.is_empty() {
+                            row_y += 12.0;
+                            continue;
+                        }
+                        let gap = if i > 0 { 8.0 } else { 0.0 };
+                        ui.at(10.0, row_y + gap + 3.0, panel.2 - 20.0, |ui| ui.heading(name));
+                        row_y += if i > 0 { 28.0 } else { 22.0 };
+                        continue;
+                    }
+                    let row = (8.0, row_y, panel.2 - 16.0, 28.0);
+                    row_y += 30.0;
+                    // Fora da parte à vista (lista rolada): só conta o lugar.
+                    if row.1 + row.3 < 0.0 || row.1 > list_h {
+                        continue;
+                    }
+                    let r = ui.background(row);
+                    row_hovered |= r.hovered;
+                    if r.clicked() {
+                        chosen = Some(i);
+                    }
+                    let fill = if i == current {
+                        Some(t.shade(if t.dark { 40 } else { 22 }))
+                    } else if r.hovered {
+                        Some(t.control)
+                    } else {
+                        None
+                    };
+                    let size = if icon.ends_with("-symbolic") { 17.0 } else { 20.0 };
+                    let pix = icons.get(&(icon.to_string(), (size * scale).round() as u32)).and_then(Option::as_ref);
+                    let accent = t.accent;
+                    ui.paint(|canvas, _| {
+                        if let Some(fill) = fill {
+                            draw::fill_rounded(canvas, row.0, row.1, row.2, row.3, 8.0, rgba(fill));
+                        }
+                        if let Some(pix) = pix {
+                            let (ix, iy) = ((row.0 + 8.0).floor() as i32, (row.1 + (row.3 - size) / 2.0).floor() as i32);
+                            if icon.ends_with("-symbolic") {
+                                draw::blit_tinted(canvas, pix, ix, iy, [accent[0], accent[1], accent[2]]);
+                            } else {
+                                draw::blit(canvas, pix, ix, iy, 1.0);
+                            }
+                        }
+                    });
+                    // O nome (cortado com "…" se não couber), centrado na linha.
+                    let room = (row.2 - 34.0 - 2.0).max(10.0);
+                    ui.at(row.0 + 34.0, row.1 + (row.3 - t.row.max(30.0)) / 2.0, room, |ui| ui.fixed_label(name, room));
+                }
+                ui.space(row_y - base);
+            });
+        });
+        // O vazio da barra lateral arrasta a janela (os itens e a borda têm prioridade).
+        if !row_hovered && self.sidebar_drag.is_none() {
+            ui.window_drag_area((panel.0, panel.1, panel.2 - 6.0, panel.3));
+        }
+        chosen
     }
 
     /// Chave da pasta atual na memória das visualizações.
@@ -3042,9 +3205,14 @@ impl App for Files {
             Place::Dir(dir) if dir == Path::new("/") => favorites + 2,
             Place::Dir(dir) => self.favorites.iter().position(|(_, p, _)| p == dir).map(|i| i + 1).unwrap_or(usize::MAX),
         };
-        let refs: Vec<(&str, &str)> = items.iter().map(|(n, i)| (n.as_str(), *i)).collect();
-        ui.glass_sidebar();
-        let chosen = ui.sidebar_area(&refs, current, |ui, _| self.content(ui));
+        // Barra lateral de vidro com a largura escolhida (arrastando a borda dela) e o
+        // conteúdo à direita, até o fim da janela.
+        let region = ui.region();
+        let y0 = region.1 + region.3 - ui.remaining_height();
+        let area = (region.0, y0, region.2, ui.remaining_height());
+        let side_w = self.sidebar_resize(ui, area);
+        let chosen = self.sidebar(ui, &items, current, (area.0, area.1, side_w, area.3)).unwrap_or(current);
+        ui.at(area.0 + side_w, y0, (area.2 - side_w).max(1.0), |ui| self.content(ui));
         // Arrasto em andamento: a miniatura dos itens segue o ponteiro, por cima de tudo.
         if self.drag.is_none() {
             self.drag_pix = None;

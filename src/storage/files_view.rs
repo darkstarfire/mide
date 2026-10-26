@@ -145,7 +145,16 @@ pub struct ViewMemory {
     /// cabeçalho); valem para todas as pastas.
     #[serde(default)]
     list_widths: Option<[f32; 3]>,
+    /// Largura da barra lateral (Favoritos e Lugares), arrastada pela borda dela; vale
+    /// para todas as janelas.
+    #[serde(default)]
+    sidebar_width: Option<f32>,
 }
+
+/// Largura padrão da barra lateral e os limites do arrasto.
+pub const SIDEBAR_WIDTH: f32 = 220.0;
+pub const SIDEBAR_MIN: f32 = 150.0;
+pub const SIDEBAR_MAX: f32 = 360.0;
 
 /// Larguras padrão das colunas da lista (Modificado, Tamanho, Tipo).
 pub const LIST_WIDTHS: [f32; 3] = [165.0, 85.0, 150.0];
@@ -180,6 +189,26 @@ impl ViewMemory {
         };
         memory.list_widths = Some(widths.map(|w| w.round()));
         memory.save_to(&file)
+    }
+
+    /// Largura da barra lateral (a guardada, dentro dos limites, ou a padrão).
+    pub fn sidebar_width(&self) -> f32 {
+        self.sidebar_width.filter(|w| w.is_finite()).map(|w| w.clamp(SIDEBAR_MIN, SIDEBAR_MAX)).unwrap_or(SIDEBAR_WIDTH)
+    }
+
+    /// Guarda a largura da barra lateral relendo o disco antes (como as colunas).
+    pub fn record_sidebar_width(width: f32) -> std::io::Result<()> {
+        let file = path().ok_or_else(|| std::io::Error::other("sem pasta de estado"))?;
+        Self::record_sidebar_width_in(&file, width)
+    }
+
+    pub fn record_sidebar_width_in(file: &Path, width: f32) -> std::io::Result<()> {
+        let mut memory = match std::fs::read_to_string(file) {
+            Ok(text) => Self::parse(&text).ok_or_else(|| std::io::Error::other("visualizações ilegíveis"))?,
+            Err(_) => Self::default(),
+        };
+        memory.sidebar_width = Some(width.clamp(SIDEBAR_MIN, SIDEBAR_MAX).round());
+        memory.save_to(file)
     }
 
     pub fn len(&self) -> usize {
@@ -407,6 +436,24 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!(m.view_for("/a"), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT });
         assert_eq!(m.view_for("/b"), View::default());
+    }
+
+    #[test]
+    fn largura_da_barra_lateral() {
+        assert_eq!(ViewMemory::default().sidebar_width(), SIDEBAR_WIDTH);
+        // Fora dos limites (arquivo editado à mão): fica dentro deles.
+        assert_eq!(ViewMemory::from_toml("sidebar_width = 9000.0\n").sidebar_width(), SIDEBAR_MAX);
+        assert_eq!(ViewMemory::from_toml("sidebar_width = 10.0\n").sidebar_width(), SIDEBAR_MIN);
+        let dir = std::env::temp_dir().join(format!("mide-files-view-lateral-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("files-view.toml");
+        // Guardar a largura não apaga as visualizações das pastas.
+        ViewMemory::record_in(&file, "/a", LIST_BY_DATE, false).unwrap();
+        ViewMemory::record_sidebar_width_in(&file, 271.4).unwrap();
+        let m = ViewMemory::load_from(&file);
+        assert_eq!(m.sidebar_width(), 271.0);
+        assert_eq!(m.view_for("/a"), LIST_BY_DATE);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
