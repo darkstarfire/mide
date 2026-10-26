@@ -1850,3 +1850,16 @@ Pedidos do usuário (com fotos do Finder e da mesa do Mac): seleção de vários
 - Cursor de redimensionar sobre as divisórias (o mide-ui não expõe a forma do ponteiro); barra lateral em vidro líquido (4), Preferências como janela filha (3) e ícones sempre do tema do mide (2); múltiplos cursores.
 - Terminal integrado simples: um shell só, sem seleção com o mouse, abas, imagens nem quadros desenhados (os caracteres de quadro vêm da fonte).
 - Divisão em no máximo dois painéis; o mesmo arquivo nos dois painéis divide o mesmo estado (cursor e rolagem).
+## Janelas de abertura e diálogos no centro (A26, 2026-10-26)
+
+Pedido do usuário: os splashs de apps X11 não abriam no meio da tela.
+
+**Compositor** (`wm.rs`, `State::center_dialog_once`, no primeiro quadro com conteúdo de cada janela)
+- Diálogo com janela-pai (`xdg_toplevel.set_parent`; nos apps X11, o `WM_TRANSIENT_FOR` que o `xwayland-satellite` repassa como pai): abre centrado sobre a pai, sem sair da área útil da tela dela.
+- Janela de abertura (splash) sem pai: abre no meio da área útil da tela onde está o ponteiro. Como é reconhecida: tamanho fixo (mínimo == máximo; o satellite manda assim as janelas `_NET_WM_WINDOW_TYPE_SPLASH`) ou pedido de "sem decoração" no `xdg-decoration` (modo `client_side`, que o satellite usa para as dicas do Motif) com menos de 2/3 da tela nas duas medidas. O pedido fica guardado na marca `WantsNoDecoration` (`state.rs`); o mide continua desenhando a barra dele.
+- A cascata das janelas comuns não mudou; o seletor de arquivos e o pedido de senha continuam no meio como antes. O "Sobre este computador" (tamanho fixo) passou a abrir no meio.
+- Funções puras `centered_in`, `centered_over` e `is_small`, com testes de unidade.
+
+**Testes**: exemplo `examples/mide-janela-teste.rs` (sctk: janela fixa, sem decoração, pai com diálogo e comum) e a seção `tests/ui/36-centro.sh` (6 verificações, também com duas telas e o ponteiro na segunda). Seção `01-barra` com as verificações do "Sobre" atualizadas (posição nova, tamanho 330x610, minimizar pelo Super+H).
+
+**Falta**: o usuário conferir com apps X11 de verdade (IDEs da JetBrains, GIMP, LibreOffice) e Wayland na sessão.

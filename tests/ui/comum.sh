@@ -9,6 +9,9 @@
 #
 # Coordenadas (saída 1366x768, a tela mais comum no Brasil; barra superior de 28 px):
 # - A primeira janela nasce em (48, 76) e a segunda em (80, 108).
+# - Janela de abertura (tamanho fixo, ou pequena e pedindo "sem decoração") nasce no
+#   meio da tela do ponteiro, e diálogo com pai, centrado sobre a pai (A26, seção 34).
+#   "Sobre este computador" (330x610, tamanho fixo) fica em (518, 59).
 # - Barra do mide numa janela em (48, 76): moldura em y=46, botões no centro
 #   y=61: fechar x=63, minimizar x=83, maximizar x=103.
 # - Calculadora (360x509, cabeçalho próprio, configurações padrão do GTK: só o X) em

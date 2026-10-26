@@ -489,9 +489,15 @@ impl State {
         tracing::info!("janela restaurada");
     }
 
-    /// Seletor de arquivos dos apps (`mide-chooser`, B25) e pedido de senha de
-    /// administrador (`mide-auth`, C7): no primeiro quadro com conteúdo, vão para o meio
-    /// da área útil da tela, como um diálogo (ainda não se ligam à janela de quem pediu).
+    /// Posição no primeiro quadro com conteúdo (cada janela é conferida uma vez):
+    /// - diálogo com janela-pai (`xdg_toplevel.set_parent`; no X11, o `WM_TRANSIENT_FOR`
+    ///   que o `xwayland-satellite` repassa): centrado sobre a pai (A26);
+    /// - janela de abertura (splash, A26): no meio da tela onde está o ponteiro;
+    /// - seletor de arquivos dos apps (`mide-chooser`, B25) e pedido de senha de
+    ///   administrador (`mide-auth`, C7): no meio da área útil da tela da janela (ainda
+    ///   não se ligam à janela de quem pediu).
+    ///
+    /// As outras janelas ficam onde a cascata as pôs (`map_new_window`).
     pub(crate) fn center_dialog_once(&mut self, window: &Window) {
         if window.geometry().size.w <= 0 {
             return;
@@ -499,26 +505,55 @@ impl State {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
+        if !with_states(toplevel.wl_surface(), |s| s.data_map.insert_if_missing_threadsafe(|| CenterChecked)) {
+            return;
+        }
         let app_id = with_states(toplevel.wl_surface(), |s| {
             s.data_map
                 .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
                 .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
         })
         .unwrap_or_default();
-        if app_id != "mide-chooser" && app_id != "mide-auth" {
+        let size = window.geometry().size;
+        let bar_h = bar_height_for(window);
+
+        // Diálogo com janela-pai: centrado sobre ela, sem sair da área útil da tela dela.
+        if let Some(parent) = toplevel.parent().and_then(|p| self.window_for(&p))
+            && let (Some(ploc), Some(area)) = (self.space.element_location(&parent), self.area_for(&parent))
+        {
+            let pbar = bar_height_for(&parent);
+            let psize = parent.geometry().size;
+            let parent_frame = smithay::utils::Rectangle::new((ploc.x, ploc.y - pbar).into(), (psize.w, psize.h + pbar).into());
+            let at = centered_over(parent_frame, area, size, bar_h);
+            self.space.map_element(window.clone(), at, true);
+            tracing::info!("diálogo centrado sobre a janela-pai em ({}, {})", at.x, at.y);
             return;
         }
-        if !with_states(toplevel.wl_surface(), |s| s.data_map.insert_if_missing_threadsafe(|| CenterChecked)) {
+
+        let splash = toplevel.parent().is_none() && {
+            let screen = self.output_at(self.pointer_location).and_then(|o| self.space.output_geometry(&o));
+            looks_like_splash(window, screen.map(|g| g.size))
+        };
+        if splash {
+            // Janela de abertura: no meio da tela onde está o ponteiro.
+            let Some(area) = self.output_at(self.pointer_location).and_then(|o| self.usable_area_of(&o)) else {
+                return;
+            };
+            let at = centered_in(area, size, bar_h);
+            self.space.map_element(window.clone(), at, true);
+            tracing::info!("janela de abertura no meio da tela em ({}, {})", at.x, at.y);
+            return;
+        }
+
+        if app_id != "mide-chooser" && app_id != "mide-auth" {
             return;
         }
         let Some(area) = self.area_for(window) else {
             return;
         };
-        let size = window.geometry().size;
-        let x = area.loc.x + (area.size.w - size.w).max(0) / 2;
-        let y = area.loc.y + bar_height_for(window) + (area.size.h - size.h - bar_height_for(window)).max(0) / 2;
-        self.space.map_element(window.clone(), (x, y), true);
-        tracing::info!("diálogo {app_id} no meio da tela em ({x}, {y})");
+        let at = centered_in(area, size, bar_h);
+        self.space.map_element(window.clone(), at, true);
+        tracing::info!("diálogo {app_id} no meio da tela em ({}, {})", at.x, at.y);
     }
 
     /// Primeira janela com conteúdo de um app aberto pela dock: sai do ícone dele com o
@@ -641,12 +676,98 @@ impl State {
 
 }
 
+/// Janela de abertura (splash), pelo que o app pede (A26). Os apps X11 chegam pelo
+/// `xwayland-satellite` como `xdg_toplevel` comuns: ele manda as janelas
+/// `_NET_WM_WINDOW_TYPE_SPLASH` com o tamanho mínimo igual ao máximo, e as que pedem
+/// "sem decoração" pelas dicas do Motif com o modo `client_side` do `xdg-decoration`.
+/// A regra: tamanho fixo (mínimo == máximo), ou "sem decoração" e pequena (menos de
+/// 2/3 da tela nas duas medidas, para não pegar janelas principais que desenham a
+/// própria barra). Quem chama confere antes que a janela não tem pai.
+fn looks_like_splash(window: &Window, screen: Option<Size<i32, Logical>>) -> bool {
+    if crate::state::fixed_size(window) {
+        return true;
+    }
+    let Some(toplevel) = window.toplevel() else {
+        return false;
+    };
+    let no_decoration = with_states(toplevel.wl_surface(), |s| s.data_map.get::<crate::state::WantsNoDecoration>().is_some());
+    let Some(screen) = screen else {
+        return false;
+    };
+    no_decoration && is_small(window.geometry().size, screen)
+}
+
+/// Menor que 2/3 da tela nas duas medidas.
+fn is_small(size: Size<i32, Logical>, screen: Size<i32, Logical>) -> bool {
+    size.w * 3 < screen.w * 2 && size.h * 3 < screen.h * 2
+}
+
+/// Posição (do conteúdo) para a janela, com a barra do mide em cima (`bar_h`), ficar
+/// no meio da área útil. Maior que a área, encosta no canto de cima à esquerda.
+fn centered_in(
+    area: smithay::utils::Rectangle<i32, Logical>,
+    size: Size<i32, Logical>,
+    bar_h: i32,
+) -> Point<i32, Logical> {
+    let x = area.loc.x + (area.size.w - size.w).max(0) / 2;
+    let y = area.loc.y + bar_h + (area.size.h - size.h - bar_h).max(0) / 2;
+    (x, y).into()
+}
+
+/// Posição (do conteúdo) para o diálogo ficar centrado sobre a moldura da janela-pai
+/// (`parent_frame`, com a barra dela), sem sair da área útil (`area`).
+fn centered_over(
+    parent_frame: smithay::utils::Rectangle<i32, Logical>,
+    area: smithay::utils::Rectangle<i32, Logical>,
+    size: Size<i32, Logical>,
+    bar_h: i32,
+) -> Point<i32, Logical> {
+    let frame_h = size.h + bar_h;
+    let x = parent_frame.loc.x + (parent_frame.size.w - size.w) / 2;
+    let y = parent_frame.loc.y + (parent_frame.size.h - frame_h) / 2;
+    // Dentro da área útil: a barra do diálogo nunca fica embaixo da barra superior.
+    let x = x.min(area.loc.x + area.size.w - size.w).max(area.loc.x);
+    let y = y.min(area.loc.y + area.size.h - frame_h).max(area.loc.y);
+    (x, y + bar_h).into()
+}
+
 /// Escala final da janela ao minimizar, em relação ao tamanho natural.
 pub const MINIMIZE_SCALE: f32 = 0.12;
 
 #[cfg(test)]
 mod tests {
-    use super::cascade_position;
+    use super::{cascade_position, centered_in, centered_over, is_small};
+    use smithay::utils::Rectangle;
+
+    #[test]
+    fn abertura_no_meio_da_area_util() {
+        // Tela 1366x768 com a barra (28) e a dock: área útil (0, 28) 1366x673.
+        let area = Rectangle::new((0, 28).into(), (1366, 673).into());
+        assert_eq!(centered_in(area, (300, 200).into(), 30), (533, 279).into());
+        // Sem a barra do mide.
+        assert_eq!(centered_in(area, (300, 200).into(), 0), (533, 264).into());
+        // Maior que a área: no canto.
+        assert_eq!(centered_in(area, (2000, 900).into(), 30), (0, 58).into());
+    }
+
+    #[test]
+    fn dialogo_centrado_sobre_a_pai() {
+        let area = Rectangle::new((0, 28).into(), (1366, 673).into());
+        // Pai em (48, 76) 600x400 com barra: moldura (48, 46) 600x430.
+        let pai = Rectangle::new((48, 46).into(), (600, 430).into());
+        assert_eq!(centered_over(pai, area, (300, 200).into(), 30), (198, 176).into());
+        // Diálogo maior que a pai, perto do canto: não passa da área útil.
+        let pai = Rectangle::new((0, 28).into(), (200, 100).into());
+        assert_eq!(centered_over(pai, area, (400, 300).into(), 30), (0, 58).into());
+    }
+
+    #[test]
+    fn pequena_e_menos_de_dois_tercos() {
+        let tela = (1366, 768).into();
+        assert!(is_small((400, 300).into(), tela));
+        assert!(!is_small((1000, 300).into(), tela));
+        assert!(!is_small((400, 600).into(), tela));
+    }
 
     #[test]
     fn primeira_janela_fica_na_margem() {

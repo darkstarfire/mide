@@ -36,7 +36,9 @@ check "Janela > Zoom maximiza" 'janela "Pasta pessoal" popups=0 posição=\(0, 2
 RUST_LOG="mide=debug,mide_bar=info" SCEN=tests/scenario-dbus.sh check "a barra mostra os menus do Terminal" "menu do app mide-terminal: Shell, Editar, Visualizar, Perfis, Janela" "500 list" "$TERMINAL"
 SCEN=tests/scenario-dbus.sh check "Terminal: Janela > Zoom pelo menu do app" "$FOOT posição=\(0, 58\) visível=1366x643" "500 click 382 14; 540 click 400 79; 600 list" "$TERMINAL"
 check "app > Encerrar fecha o app" "janela fechada" "400 click 65 14; 430 click 90 82" "$TERMINAL"
-check "janela Sobre redimensiona" 'janela "Sobre este computador" .*visível=580x400' "400 click 25 14; 430 click 100 49; 520 list; 530 press 587 435; 535 move 607 455; 540 move 627 475; 545 release 627 475; 580 list"
+# "Sobre este computador" tem tamanho fixo (330x610): abre no meio da tela (A26) e não
+# muda de tamanho puxando o canto.
+check "janela Sobre abre no meio e não redimensiona" 'janela "Sobre este computador" popups=0 posição=\(518, 59\) visível=330x610' "400 click 25 14; 430 click 100 49; 520 list; 530 press 846 667; 535 move 866 687; 540 move 886 697; 545 release 886 697; 580 list"
 check "relógio abre o calendário" "menu aberto: Calendar" "400 click 1331 14; 440 list"
 # Calendário (x 1078..1358): "Formato da hora…" em y=323; nas opções, "Segundos" em (1323, 213).
 check "calendário: Formato da hora liga os segundos" "relógio: Segundos ligado" "400 click 1331 14; 440 click 1218 323; 470 click 1323 213; 500 list"
@@ -62,5 +64,5 @@ fi
 check "Wi-Fi: interruptor desliga (simulado)" "sistema \(teste\): nmcli radio wifi off" "400 click 1221 14; 440 click 1306 61; 470 list"
 check "som: trilho muda o volume (simulado)" "sistema \(teste\): wpctl set-volume @DEFAULT_AUDIO_SINK@ 0\.[0-9]+" "400 click 1185 14; 440 click 1197 96; 470 list"
 check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 1257 14; 440 click 1216 99; 470 list"
-check "Sobre minimizada aparece na dock e volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 click 83 61; 600 click 726 728; 700 list"
+check "Sobre minimizada (Super+H) volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 combo super+h; 600 restore; 700 list"
 check "Sobre este computador abre" 'janela "Sobre este computador"' "400 click 25 14; 430 click 100 49; 520 list"
