@@ -1,6 +1,12 @@
 # Seção da bateria (tests/ui.sh); usa as funções de tests/ui/comum.sh.
 echo "== vidro em barras e menus"
-check "barra superior sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-bar#0\)' "300 list"
+# A barra do Tahoe vem sem faixa de fundo; com `[bar] background = true` (Configurações →
+# Barra superior → fundo) ela volta e pede o vidro.
+BARBG="$(mktemp -d)"
+mkdir -p "$BARBG/mide"
+printf '[bar]\nbackground = true\n' > "$BARBG/mide/config.toml"
+XDG_CONFIG_HOME="$BARBG" check "barra superior sobre vidro (com o fundo ligado)" 'vidro: desfoque refeito \([^:]*:mide-bar#0\)' "300 list"
+rm -rf "$BARBG"
 check "menu da barra sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-bar-menu#0\)' "300 click 25 14; 360 list"
 check "menu da dock sobre vidro" 'vidro: desfoque refeito \([^:]*:mide-dock-menu#0\)' "300 rclick 799 728; 360 list"
 GCFG="$(mktemp -d)"

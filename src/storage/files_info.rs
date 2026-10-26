@@ -19,6 +19,8 @@ use crate::{
 /// Abre a janela de informações de `path`.
 pub fn run_info(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let name = display_name(&path);
+    // A mesma linha do "Obter informações" de dentro do Arquivos (a bateria confere as duas).
+    tracing::info!("informações de {}", path.display());
     let app = Info::new(path);
     let window = Window::new(&format!("Informações de {name}")).app_id("mide-files-info").size(360, 640).min_size(320, 420);
     run(window, app)

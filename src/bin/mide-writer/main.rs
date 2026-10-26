@@ -142,6 +142,7 @@ impl Editor {
             self.ask_save_as(then_close);
             return false;
         };
+        let crlf = self.crlf;
         if let Some(r) = self.rich.as_mut() {
             // A célula em edição volta para a tabela antes de gravar.
             r.leave_cell();
@@ -150,6 +151,8 @@ impl Editor {
                 "docx" => mide::richtext::docx::write(&r.doc),
                 "odt" => mide::richtext::odt::write(&r.doc),
                 "rtf" | "" => mide::richtext::rtf::write(&r.doc).into_bytes(),
+                // Texto simples: com o fim de linha que o arquivo tinha (CRLF do Windows).
+                _ if crlf => r.doc.all_plain().replace('\n', "\r\n").into_bytes(),
                 _ => r.doc.all_plain().into_bytes(),
             };
             return match mide::files::write_atomic(&path, &data) {
@@ -713,11 +716,12 @@ mod tests {
         std::fs::write(&path, "a\r\nb\r\n").unwrap();
         let (text, crlf) = read_text(&path).unwrap();
         assert_eq!((text.as_str(), crlf), ("a\nb\n", true));
+        // O texto abre como documento: a edição vai pelo documento formatado.
         let mut editor = Editor::open(Some(path.clone()));
-        editor.doc.type_text("x");
+        editor.rich = Some(rich::Rich::new(mide::richtext::Doc::from_plain("xa\nb\n", mide::richtext::CharStyle::default())));
         assert!(editor.save(false));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "xa\r\nb\r\n");
-        assert!(!editor.doc.modified);
+        assert!(!editor.rich.as_ref().unwrap().modified());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

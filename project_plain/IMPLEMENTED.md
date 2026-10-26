@@ -1888,3 +1888,9 @@ Pedido do usuário: a barra lateral do Arquivos (Favoritos e Lugares) muda de la
 - A largura fica guardada ao soltar, em `~/.local/state/mide/files-view.toml` (`sidebar_width`, junto da visualização das pastas e das larguras das colunas; `ViewMemory::sidebar_width` e `record_sidebar_width`, relendo o disco antes de gravar), e vale para todas as janelas do Arquivos.
 - Nomes que não cabem terminam com "…".
 - O visual continua o do Tahoe: painel de vidro solto da borda, botões da janela no topo, títulos de grupo, ícone na cor de destaque, escolhido numa pílula cinza, o vazio arrastando a janela e a lista rolando quando não cabe. Como a `sidebar_area` do mide-ui tem largura fixa (220) e o `sidebar_panel` não deixa os itens pegarem o ponteiro antes do arrasto da janela, a barra é desenhada pelo Arquivos com o que o kit oferece (`glass_fill`, `window_controls`, `scroll_area_showing`, `background`, `fixed_label`, `heading`, `window_drag_area`), e o conteúdo fica nas coordenadas da janela (`ui.at`), como antes.
+
+## Testes desatualizados e o CRLF do Writer (2026-10-26)
+
+- **Writer:** salvar um `.txt` que usava CRLF (fim de linha do Windows) gravava com LF desde que o Writer passou a abrir tudo como documento; agora mantém o CRLF. O teste de unidade passou a editar pelo documento formatado.
+- **Barra superior sobre vidro:** o teste liga o fundo da barra (`[bar] background = true`), já que no visual do Tahoe a barra vem sem faixa de fundo.
+- **"Obter informações" pelo portal:** o `mide-files --info` registra no log a mesma linha do menu do Arquivos.
