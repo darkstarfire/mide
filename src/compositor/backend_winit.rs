@@ -202,7 +202,7 @@ pub fn init(
                 let physical = backend.window_size();
                 let size = (physical.w, physical.h).into();
                 crate::input::handle_event(state, event, size);
-                backend.window().set_cursor(winit_cursor(state.cursor));
+                backend.window().set_cursor(winit_cursor(state.cursor, &state.cursor_status));
                 backend.window().request_redraw();
             }
             // Janela do mide perdeu o foco no desktop de baixo (Alt+Tab, Super): o
@@ -217,10 +217,16 @@ pub fn init(
     Ok(())
 }
 
-/// Forma do ponteiro do mide na janela do anfitrião.
-fn winit_cursor(shape: CursorShape) -> CursorIcon {
+/// Forma do ponteiro na janela do anfitrião: a das bordas das janelas do mide e, fora
+/// delas, a que o app sob o ponteiro pediu pelo nome (`wp_cursor_shape` ou o tema, como o
+/// de redimensionar nas divisórias do Code). Um cursor desenhado pelo app (superfície)
+/// não passa para o anfitrião: fica a seta.
+fn winit_cursor(shape: CursorShape, status: &smithay::input::pointer::CursorImageStatus) -> CursorIcon {
     match shape {
-        CursorShape::Default => CursorIcon::Default,
+        CursorShape::Default => match status {
+            smithay::input::pointer::CursorImageStatus::Named(icon) => *icon,
+            _ => CursorIcon::Default,
+        },
         CursorShape::ResizeHorizontal => CursorIcon::EwResize,
         CursorShape::ResizeVertical => CursorIcon::NsResize,
         CursorShape::ResizeNwse => CursorIcon::NwseResize,
@@ -236,6 +242,9 @@ fn render(
     state: &mut State,
     scene: &mut Scene,
 ) -> Result<(), Box<dyn Error>> {
+    // O app pede o ponteiro depois do movimento que o levou até ele: aplicado também a
+    // cada quadro, a troca não espera o próximo movimento do mouse.
+    backend.window().set_cursor(winit_cursor(state.cursor, &state.cursor_status));
     if sim_drm() {
         render_sim_drm(backend, output, damage_tracker, state, scene)?;
     } else {
