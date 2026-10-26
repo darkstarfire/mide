@@ -81,6 +81,24 @@ file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rasc
 file_check "menu da pasta → Novo arquivo aqui dentro › Markdown" '[ -f "$FDIR/Projetos/Novo documento.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 581 190; 430 move 650 524; 450 click 450 364; 500 list"
 # Barra lateral de vidro (acesso rápido): o compositor desfoca atrás da janela.
 check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
+# Vidro do menu de contexto dentro da janela (mide-ui, frost): na lista, com
+# "Documentos antigos" clicado e o menu aberto em notas.txt (y=293), o borrão azul da
+# seleção atrás do menu fica na altura da linha (e não duas linhas acima, como quando
+# o borrão era tirado da imagem da lista, com outra origem).
+fixture
+FROST="$(mktemp -d)"
+SCENARIO_OUT="$FROST/scen" timeout 150 "$SCEN" "400 click 569 102; 430 click 500 189; 460 rclick 500 293; 520 list" 510 -- "$FILES '$FDIR'" >/dev/null 2>&1
+if python3 -c "
+import sys
+from PIL import Image
+im = Image.open(sys.argv[1]).convert('RGB')
+blue = lambda y: (lambda p: p[2] - p[0] > 40)(im.getpixel((620, y)))
+sys.exit(0 if blue(293) and not blue(245) and not blue(319) else 1)" "$FROST/scen/frame.png" 2>/dev/null; then
+    echo "ok    vidro do menu: borrão da seleção na altura da linha"; PASS=$((PASS + 1))
+else
+    echo "FALHA vidro do menu: borrão da seleção na altura da linha"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$FROST"
 file_check "Ctrl+D duplica" '[ -f "$FDIR/relatorio cópia.pdf" ]' "400 click 581 310; 430 combo ctrl+d; 470 list"
 file_check "Ctrl+C e Ctrl+V copiam para outra pasta" '[ -f "$FDIR/Fotos/relatorio.pdf" ] && [ -f "$FDIR/relatorio.pdf" ]' "400 click 581 310; 420 combo ctrl+c; 440 click 463 190; 446 click 463 190; 480 combo ctrl+v; 520 list"
 # Seleção múltipla (B8): relatorio.pdf e, com Ctrl, praia.jpg; Delete leva os dois.
