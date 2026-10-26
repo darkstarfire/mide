@@ -2515,7 +2515,6 @@ impl Files {
                     }
                 }
                 Action::NewFolderIn => self.open_dialog(DialogKind::NewFolder(entry.path.clone()), "Nova pasta".into()),
-                Action::NewFileIn => self.open_dialog(DialogKind::NewFile(entry.path.clone()), "Novo arquivo.txt".into()),
                 Action::Compress => {
                     let targets = self.targets(&entry);
                     if targets.len() > 1 {
@@ -2640,7 +2639,6 @@ impl Files {
         if let Some(action) = empty_action {
             match action {
                 Action::NewFolder => self.new_folder(),
-                Action::NewFile => self.new_file(),
                 Action::NewKind(ext) => {
                     if let Some(dir) = self.target_dir() {
                         self.create_kind(&dir, ext);
@@ -2938,7 +2936,6 @@ enum Action {
     /// Abrir com…: escolher o app numa lista.
     OpenWith,
     NewFolderIn,
-    NewFileIn,
     Terminal,
     Rename,
     Duplicate,
@@ -2946,7 +2943,6 @@ enum Action {
     Extract,
     Copy,
     Paste,
-    NewFile,
     CopyPath,
     /// Obter informações (Ctrl+I).
     Info,
