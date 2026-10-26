@@ -412,3 +412,15 @@
 - **Menus de vidro dentro da janela (2026-10-26):** o compositor só desfoca o que está atrás da janela; para o menu mostrar o conteúdo da própria janela borrado, o mide-ui copia o pedaço da tela da janela e desfoca no processador (`frost_region`, só enquanto o menu está aberto) antes de pintar o véu.
 - **Testes com duas janelas de conteúdo inteiro (2026-10-26):** clicar na faixa de cima de uma janela do mide-ui começa a mover a janela (e o compositor pode encaixá-la); para dar foco, clique numa parte da janela que não arrasta (margem dos números de linha, conteúdo).
 - **`derive(Copy)` com `String` (2026-10-26):** um enum `Copy` que ganha um campo `String`/`PathBuf` deixa de compilar; tirar o `Copy` (fica `Clone`) e clonar onde o valor era reaproveitado.
+
+## Code (E11, 2026-10-26)
+
+- **Atalhos que o compositor pega antes do app:** Ctrl+Espaço (buscador) e F12 (terminal de atalho) nunca chegam ao Code, nem nos testes. O completar ganhou Alt+Espaço e a definição o Ctrl+clique (`TextAreaResponse::pointer_index`). Escolher atalhos novos de apps conferindo `DEFAULT_KEYBINDINGS` em `src/compositor/config.rs`.
+- **Alt+letra digita:** a área de texto do mide-ui recebe o texto mesmo com Alt (Alt+Espaço põe um espaço). O Code tira esse espaço depois da área de texto (`eat_space`), sem mexer no desfazer.
+- **Shift+Tab chega como ISO_Left_Tab (0xfe20)** e não vira `Key::Tab` no mide-ui: tratar pelas `input().presses`.
+- **Dica em botões de `toolbar_buttons`:** o grupo não devolve uma resposta por botão; o Code monta um `Response` para cada pedaço de 40 pontos a partir do `ui.last_rect()` (na janela; tirar o deslocamento da área) com um `id` alto e fixo, e chama `ui.tooltip`.
+- **Divisórias arrastáveis sem componente do kit:** faixa de 6 pontos fora das áreas dos componentes (a gaveta é desenhada 6 pontos mais estreita) para o clique não cair numa linha da árvore; apertar dentro da faixa começa, `input().down` acompanha e soltar grava. O mide-ui não muda a forma do ponteiro (fica a seta).
+- **Arrastar dentro da janela:** o `memory.active` do mide-ui fica com o componente apertado (linha da árvore, aba), então os outros não reagem enquanto o botão está segurado; o Code guarda o começo (`Drag`) e só vira arrasto depois de 8 pontos. O retângulo das abas sai do `last_rect()` da `tab_bar` (faixa menos 36 pontos do +, dividida igualmente; o × nos primeiros 24 pontos de cada aba).
+- **Roteiro `type` com espaço:** `type touch criado` só digitou "touch" no teste; usar `type touch_criado` (o `_` vira espaço).
+- **Dois agentes rodando cenários ao mesmo tempo:** o `tests/scenario.sh` usa o socket `mide-test` por padrão e encerra os processos dele; com outro agente testando (worktree em `.claude/worktrees`), passar um `MIDE_TEST_SOCKET` próprio. A bateria (`tests/ui.sh`) já usa um socket por seção.
+- **Log do Code nos testes:** `tests/ui/code-comum.sh` abre o Code com `RUST_LOG=mide_code=info,mide_ui=info` e a saída num arquivo (`$CLOG`); as mensagens de teste do `places` (copiar, Lixeira, abrir) vêm do `mide_ui`.
