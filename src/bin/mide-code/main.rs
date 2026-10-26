@@ -48,14 +48,13 @@ use mide::code::{
 use mide::kit::{
     run,
     textarea::{line_of, Decorations, TextDoc},
-    window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, Response, TabAction, TextAreaLook, Ui, Window,
+    window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, TabAction, TextAreaLook, Tool, Ui, Window,
 };
 
 /// Arquivos maiores que isso não abrem (o histórico guarda cópias do texto).
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
-/// Largura da faixa da divisória (entre a gaveta e o editor, entre os painéis e acima
-/// do terminal), que se arrasta.
-const GRIP: f32 = 6.0;
+/// Id da janela filha das Preferências.
+const PREFS: &str = "prefs";
 /// Altura da barra de status.
 const STATUS_H: f32 = 26.0;
 
@@ -101,7 +100,6 @@ enum Overlay {
     GoToLine { text: String, focus: bool },
     /// Buscar (e substituir) no projeto inteiro.
     ProjectFind(ProjectFind),
-    Prefs,
 }
 
 #[derive(Default)]
@@ -159,13 +157,6 @@ pub(crate) enum DragWhat {
     Path(PathBuf),
 }
 
-/// Divisória sendo arrastada.
-#[derive(Clone, Copy, PartialEq)]
-enum Grip {
-    Drawer,
-    Split,
-    Terminal,
-}
 
 pub(crate) struct Code {
     docs: Vec<Doc>,
@@ -189,7 +180,6 @@ pub(crate) struct Code {
     last_edit: Option<Instant>,
     split: Option<Split>,
     drag: Option<Drag>,
-    grip: Option<Grip>,
     /// Terminal integrado (aberto ou não) e se tem o foco do teclado.
     terminal: Option<term::TermPanel>,
     terminal_open: bool,
@@ -218,22 +208,6 @@ fn comment_prefix(lang: &Language) -> &str {
     }
 }
 
-/// Resposta de um pedaço de um grupo de botões (para a dica de cada botão).
-fn piece(ui: &Ui, rect: (f32, f32, f32, f32), id: u64) -> Response {
-    let origin = ui.to_window((0.0, 0.0, 0.0, 0.0));
-    Response { hovered: ui.input().over(rect), rect: (rect.0 - origin.0, rect.1 - origin.1, rect.2, rect.3), id, ..Default::default() }
-}
-
-/// Dicas (`ui.tooltip`) dos botões do último `toolbar_buttons` (segmentos de 40 pontos).
-fn tips(ui: &mut Ui, texts: &[&str], base: u64) {
-    let r = ui.last_rect();
-    for (i, text) in texts.iter().enumerate() {
-        let seg = (r.0 + 2.0 + i as f32 * 40.0, r.1, 40.0, r.3);
-        let resp = piece(ui, seg, base + i as u64);
-        ui.tooltip(&resp, text);
-    }
-}
-
 impl Code {
     fn new(args: Vec<PathBuf>) -> Self {
         let mut app = Self {
@@ -255,7 +229,6 @@ impl Code {
             last_edit: None,
             split: None,
             drag: None,
-            grip: None,
             terminal: None,
             terminal_open: false,
             terminal_focus: false,
@@ -957,7 +930,15 @@ impl Code {
             "hover" => self.show_hover(),
             "next-problem" => self.next_problem(true),
             "prev-problem" => self.next_problem(false),
-            "prefs" => self.overlay = if matches!(self.overlay, Overlay::Prefs) { Overlay::None } else { Overlay::Prefs },
+            // Preferências numa janela filha de vidro (o compositor a centra sobre a
+            // principal); de novo, fecha.
+            "prefs" => {
+                if ui.is_window_open(PREFS) {
+                    ui.close_window(PREFS);
+                } else {
+                    ui.open_window(PREFS, Window::new("Preferências do Code").size(560, 470).min_size(480, 400).glass());
+                }
+            }
             "edit-servers" => {
                 self.overlay = Overlay::None;
                 match self.config.ensure_servers_file() {
@@ -1160,7 +1141,6 @@ impl Code {
                 }
             }
             Overlay::ProjectFind(_) => self.project_find(ui, esc),
-            Overlay::Prefs => self.prefs(ui, esc),
         }
     }
 
@@ -1229,17 +1209,18 @@ impl Code {
         ui.request_repaint();
     }
 
-    /// Preferências: aparência do editor e servidores de linguagem.
-    fn prefs(&mut self, ui: &mut Ui, esc: bool) {
-        let mut c = self.config.clone();
-        let mut close = esc;
+    /// Preferências (janela filha `PREFS`): aparência do editor e servidores de
+    /// linguagem. As mudanças valem na hora; o arquivo é gravado ao fechar a janela
+    /// (`window_closed`).
+    fn prefs(&mut self, ui: &mut Ui) {
+        let c = &mut self.config;
+        let mut close = ui.input().key(Key::Escape);
         let mut edit_servers = false;
         let fonts: Vec<String> = std::iter::once("Fonte do sistema".to_string()).chain(ui.mono_fonts()).collect();
         let mut font_i = c.font.as_ref().and_then(|f| fonts.iter().position(|x| x == f)).unwrap_or(0);
         let servers_running: Vec<String> = self.servers.keys().cloned().collect();
         let servers_file = "code-servers.toml";
-        ui.modal(560.0, |ui| {
-            ui.strong("Preferências do Code");
+        ui.page(|ui| {
             ui.card(|ui| {
                 if ui.dropdown("Fonte", &fonts, &mut font_i).changed() {
                     c.font = (font_i > 0).then(|| fonts[font_i].clone());
@@ -1272,16 +1253,16 @@ impl Code {
                 ui.sized(110.0, |ui| close |= ui.primary_button("Pronto").clicked());
             });
         });
-        if c != self.config {
-            self.config = c;
-            if let Err(err) = self.config.save() {
-                self.say(format!("Preferências não gravadas: {err}"));
-            }
-        }
         if edit_servers {
-            self.command("edit-servers", ui);
-        } else if close {
-            self.overlay = Overlay::None;
+            // O arquivo abre numa aba da janela principal.
+            match self.config.ensure_servers_file() {
+                Ok(path) => self.open_path(path),
+                Err(err) => self.say(format!("Não foi possível criar o arquivo dos servidores: {err}")),
+            }
+            close = true;
+        }
+        if close {
+            ui.close();
         }
     }
 
@@ -1436,35 +1417,12 @@ impl Code {
         }
     }
 
-    /// Divisórias arrastáveis (gaveta, painéis e terminal): começa, acompanha e acaba
-    /// o arrasto. `zones` são as faixas de cada uma neste quadro.
-    fn grips(&mut self, ui: &mut Ui, zones: &[(Grip, panes::Rect)], layout: Layout) {
-        let input = ui.input().clone();
-        if self.grip.is_none() && input.pressed && self.drag.is_none() && self.dialog.is_none() && matches!(self.overlay, Overlay::None) {
-            self.grip = zones.iter().find(|(_, r)| input.over(*r)).map(|(g, _)| *g);
-        }
-        let Some(grip) = self.grip else {
-            return;
-        };
-        if let Some((px, py)) = input.pointer {
-            match grip {
-                Grip::Drawer => self.config.drawer_width = px.clamp(DRAWER_MIN, DRAWER_MAX.min(layout.win.0 - 300.0).max(DRAWER_MIN)),
-                Grip::Terminal => self.config.terminal_height = (layout.status_y - py).clamp(80.0, (layout.status_y - layout.top - 120.0).max(80.0)),
-                Grip::Split => {
-                    if let Some(s) = self.split.as_mut() {
-                        let r = layout.editor;
-                        s.ratio = if s.side_by_side { (px - r.0) / r.2.max(1.0) } else { (py - r.1) / r.3.max(1.0) }.clamp(0.15, 0.85);
-                    }
-                }
-            }
-        }
-        ui.request_repaint();
-        if !input.down {
-            self.grip = None;
-            tracing::info!("divisória: gaveta {:.0}, terminal {:.0}", self.config.drawer_width, self.config.terminal_height);
-            if let Err(err) = self.config.save() {
-                self.say(format!("Preferências não gravadas: {err}"));
-            }
+    /// Uma divisória do kit (gaveta ou terminal) acabou de ser arrastada: grava os
+    /// tamanhos novos.
+    fn divider_moved(&mut self) {
+        tracing::info!("divisória: gaveta {:.0}, terminal {:.0}", self.config.drawer_width, self.config.terminal_height);
+        if let Err(err) = self.config.save() {
+            self.say(format!("Preferências não gravadas: {err}"));
         }
     }
 
@@ -1659,14 +1617,6 @@ impl Code {
     }
 }
 
-/// Lugares deste quadro (para as divisórias e o arrasto).
-#[derive(Clone, Copy)]
-struct Layout {
-    win: (f32, f32),
-    top: f32,
-    status_y: f32,
-    editor: (f32, f32, f32, f32),
-}
 
 impl App for Code {
     fn view(&mut self, ui: &mut Ui) {
@@ -1701,60 +1651,83 @@ impl App for Code {
             ui.wake_after(Duration::from_millis(120));
         }
         let dark = ui.theme().dark;
-        // Barra de ferramentas: gaveta, título e os botões (cada um com a dica).
+        let (win_w, win_h) = ui.window_size();
+        let top = mide::kit::TOOLBAR_HEIGHT;
+        let status_y = win_h - STATUS_H;
+        let drawer_on = self.config.drawer && self.root.is_some();
+        // Gaveta do projeto: a barra lateral de vidro do kit (flutuante, com os botões da
+        // janela no topo, como a do Arquivos) e a divisória arrastável. A árvore é
+        // desenhada dentro dela; o resto da janela é desenhado depois, nas coordenadas da
+        // janela, e daqui só sai onde começa (`left`).
+        let mut left = 0.0;
+        if drawer_on {
+            let mut width = self.config.drawer_width;
+            let max = DRAWER_MAX.min(win_w - 300.0).max(DRAWER_MIN);
+            let mut content_x = 0.0;
+            let r = {
+                // Os dois desenhos precisam do `self`: um `RefCell` empresta a um de
+                // cada vez (o kit chama um depois do outro), como um mutex sem threads.
+                let this = std::cell::RefCell::new(&mut *self);
+                ui.sidebar_panel(
+                    &mut width,
+                    DRAWER_MIN,
+                    max,
+                    |ui| {
+                        let (_, _, w, h) = ui.region();
+                        this.borrow_mut().drawer(ui, 0.0, w, h);
+                    },
+                    |ui| content_x = ui.to_window(ui.region()).0,
+                )
+            };
+            self.config.drawer_width = width;
+            left = content_x;
+            if r.submitted() {
+                self.divider_moved();
+            }
+        }
+        let width = win_w - left;
+        // Barra de ferramentas (à direita da gaveta; sem ela, com os botões da janela):
+        // grupos de botões de ícone, cada um com a dica.
         let mut clicked = None;
         let title = self.docs.get(self.cur).map(Doc::title).unwrap_or_default();
-        let drawer_on = self.config.drawer && self.root.is_some();
         let finding = self.find.is_some();
         let term_on = self.terminal_open;
-        ui.toolbar(|ui| {
-            if ui.toolbar_buttons(&[("view-sidebar-start-symbolic", "▤", drawer_on, true)]).is_some() {
-                clicked = Some("drawer");
-            }
-            tips(ui, &["Mostrar ou esconder a gaveta do projeto"], 0xC0DE_0000);
-            ui.toolbar_title(&title, 360.0);
-            ui.push_right(3.0 * 40.0 + 4.0 + 3.0 * 44.0 + 3.0 * 8.0 + 16.0);
-            match ui.toolbar_buttons(&[("text-x-generic-symbolic", "↥", false, true), ("folder-open-symbolic", "▱", false, true), ("document-save-symbolic", "↓", false, true)]) {
-                Some(0) => clicked = Some("open"),
-                Some(1) => clicked = Some("open-folder"),
-                Some(2) => clicked = Some("save"),
-                _ => {}
-            }
-            tips(ui, &["Abrir arquivo (Ctrl+O)", "Abrir pasta (Ctrl+Shift+O)", "Salvar (Ctrl+S)"], 0xC0DE_0010);
-            if ui.toolbar_buttons(&[("edit-find-symbolic", "⌕", finding, true)]).is_some() {
-                clicked = Some("find");
-            }
-            tips(ui, &["Buscar e substituir (Ctrl+F)"], 0xC0DE_0020);
-            if ui.toolbar_buttons(&[("utilities-terminal-symbolic", ">_", term_on, true)]).is_some() {
-                clicked = Some("terminal");
-            }
-            tips(ui, &["Terminal (Ctrl+J)"], 0xC0DE_0030);
-            if ui.toolbar_buttons(&[("preferences-system-symbolic", "⚙", false, true)]).is_some() {
-                clicked = Some("prefs");
-            }
-            tips(ui, &["Preferências (Ctrl+,)"], 0xC0DE_0040);
+        ui.at(left, 0.0, width, |ui| {
+            ui.toolbar(|ui| {
+                if ui.tool_toggle("view-sidebar-start-symbolic", "Mostrar ou esconder a gaveta do projeto", drawer_on).clicked() {
+                    clicked = Some("drawer");
+                }
+                ui.toolbar_title(&title, 360.0);
+                ui.push_right(2.0 * (3.0 * 40.0 + 4.0) + 8.0 + 8.0);
+                match ui.tool_group(&[
+                    Tool::new("document-open-symbolic", "Abrir arquivo (Ctrl+O)"),
+                    Tool::new("folder-open-symbolic", "Abrir pasta (Ctrl+Shift+O)"),
+                    Tool::new("document-save-symbolic", "Salvar (Ctrl+S)"),
+                ]) {
+                    Some(0) => clicked = Some("open"),
+                    Some(1) => clicked = Some("open-folder"),
+                    Some(2) => clicked = Some("save"),
+                    _ => {}
+                }
+                match ui.tool_group(&[
+                    Tool::new("edit-find-symbolic", "Buscar e substituir (Ctrl+F)").on(finding),
+                    Tool::new("utilities-terminal-symbolic", "Terminal (Ctrl+J)").on(term_on),
+                    Tool::new("preferences-system-symbolic", "Preferências (Ctrl+,)"),
+                ]) {
+                    Some(0) => clicked = Some("find"),
+                    Some(1) => clicked = Some("terminal"),
+                    Some(2) => clicked = Some("prefs"),
+                    _ => {}
+                }
+            });
         });
         if let Some(action) = clicked {
             self.command(action, ui);
         }
-        let (win_w, win_h) = ui.window_size();
-        let top = mide::kit::TOOLBAR_HEIGHT;
-        let status_y = win_h - STATUS_H;
-        let drawer_w = if drawer_on { self.config.drawer_width.clamp(DRAWER_MIN, (win_w - 300.0).max(DRAWER_MIN)) } else { 0.0 };
-        let left = drawer_w;
-        let width = win_w - left;
-        let term_h = if self.terminal_open && self.terminal.is_some() { self.config.terminal_height.min((status_y - top - 120.0).max(80.0)) } else { 0.0 };
-        let body_bottom = status_y - term_h;
         // Tamanho das barras de cima do editor (abas e busca) do quadro anterior não é
         // conhecido antes de desenhar: a área do editor é medida depois delas.
         let input = ui.input().clone();
-        if drawer_on {
-            self.drawer(ui, top, drawer_w - GRIP, status_y - top);
-            // Divisória: uma linha fina; a faixa toda se arrasta.
-            let line = ui.theme().line;
-            ui.paint(|pixmap, (ox, oy)| mide::ui::draw::fill_rounded(pixmap, ox + drawer_w - 1.0, oy + top, 1.0, status_y - top, 0.0, mide::ui::draw::rgba(line[0], line[1], line[2], line[3])));
-        }
-        let mut editor_rect = (left, top, width, body_bottom - top);
+        let mut body_top = top;
         ui.at(left, top, width, |ui| {
             // Abas (com mais de um arquivo); apertar numa começa um arrasto possível.
             if self.docs.len() > 1 {
@@ -1832,14 +1805,37 @@ impl App for Code {
                     self.start = true;
                 }
             }
-            editor_rect = (left, ui_cursor(ui), width, 0.0);
+            body_top = ui_cursor(ui);
         });
-        editor_rect.1 = editor_rect.1.max(top);
-        editor_rect.3 = (body_bottom - editor_rect.1).max(60.0);
+        body_top = body_top.max(top);
+        // Editor em cima e terminal embaixo, com a divisória do kit (o ponteiro vira o
+        // de redimensionar). Como na gaveta, os painéis são desenhados depois, nas
+        // coordenadas da janela; aqui só se medem os retângulos.
+        let body = (left, body_top, width, (status_y - body_top).max(60.0));
+        let mut editor_rect = body;
+        let mut term_rect = (left, status_y, width, 0.0);
+        if self.terminal_open && self.terminal.is_some() {
+            let mut height = self.config.terminal_height;
+            let max = (body.3 - 120.0).max(80.0);
+            let mut moved = None;
+            ui.clip(body, |ui| {
+                moved = Some(ui.split_vertical(
+                    &mut height,
+                    80.0,
+                    max,
+                    |ui| editor_rect = ui.to_window(ui.region()),
+                    |ui| term_rect = ui.to_window(ui.region()),
+                ));
+            });
+            self.config.terminal_height = height;
+            if moved.is_some_and(|r| r.submitted()) {
+                self.divider_moved();
+            }
+        }
+        let term_h = term_rect.3;
         // Clique num painel do editor tira o foco do terminal; clique no terminal o dá.
-        let term_rect = (left, body_bottom, width, term_h);
         if input.pressed && self.dialog.is_none() && matches!(self.overlay, Overlay::None) {
-            if term_h > 0.0 && input.over((term_rect.0, term_rect.1 + GRIP, term_rect.2, term_rect.3 - GRIP)) {
+            if term_h > 0.0 && input.over(term_rect) {
                 if !self.terminal_focus {
                     self.terminal_focus = true;
                     ui.blur();
@@ -1848,10 +1844,26 @@ impl App for Code {
                 self.terminal_focus = false;
             }
         }
-        // Painéis do editor (um ou dois).
-        let panes_rects: Vec<(usize, (f32, f32, f32, f32))> = match &self.split {
+        // Painéis do editor (um ou dois), com a divisória do kit entre eles.
+        let panes_rects: Vec<(usize, (f32, f32, f32, f32))> = match self.split.as_mut() {
             Some(s) => {
-                let (a, b) = panes::split_rects(editor_rect, s.side_by_side, s.ratio, GRIP);
+                let (mut a, mut b) = (editor_rect, editor_rect);
+                let along = if s.side_by_side { editor_rect.2 } else { editor_rect.3 }.max(1.0);
+                // O kit guarda o tamanho do primeiro painel (lado a lado) ou do de baixo.
+                let mut size = if s.side_by_side { s.ratio } else { 1.0 - s.ratio } * along;
+                let (min, max) = (along * 0.15, along * 0.85);
+                let mut moved = false;
+                ui.clip(editor_rect, |ui| {
+                    let r = if s.side_by_side {
+                        ui.split(&mut size, min, max, |ui| a = ui.to_window(ui.region()), |ui| b = ui.to_window(ui.region()))
+                    } else {
+                        ui.split_vertical(&mut size, min, max, |ui| a = ui.to_window(ui.region()), |ui| b = ui.to_window(ui.region()))
+                    };
+                    moved = r.changed();
+                });
+                if moved {
+                    s.ratio = if s.side_by_side { size / along } else { 1.0 - size / along }.clamp(0.15, 0.85);
+                }
                 vec![(s.docs[0].min(self.docs.len() - 1), a), (s.docs[1].min(self.docs.len() - 1), b)]
             }
             None => vec![(self.cur.min(self.docs.len() - 1), editor_rect)],
@@ -1886,13 +1898,10 @@ impl App for Code {
             }
         }
         if let Some(s) = &self.split {
-            // Divisória entre os painéis e a marca do painel em foco.
-            let (a, b) = (panes_rects[0].1, panes_rects[1].1);
-            let gap = if s.side_by_side { (a.0 + a.2, a.1, GRIP, a.3) } else { (a.0, a.1 + a.3, a.2, GRIP) };
+            // Marca do painel em foco (a divisória é do kit).
+            let f = panes_rects[s.focus.min(1)].1;
             let t = ui.theme().clone();
-            let f = if s.focus == 0 { a } else { b };
             ui.paint(|pixmap, (ox, oy)| {
-                mide::ui::draw::fill_rounded(pixmap, ox + gap.0, oy + gap.1, gap.2, gap.3, 0.0, mide::ui::draw::rgba(t.sidebar[0], t.sidebar[1], t.sidebar[2], 255));
                 mide::ui::draw::fill_rounded(pixmap, ox + f.0, oy + f.1, f.2, 2.0, 0.0, mide::ui::draw::rgba(t.accent[0], t.accent[1], t.accent[2], 200));
             });
         }
@@ -1901,8 +1910,6 @@ impl App for Code {
         if term_h > 0.0 {
             let size = self.config.size;
             let focused = self.terminal_focus;
-            let t = ui.theme().clone();
-            ui.paint(|pixmap, (ox, oy)| mide::ui::draw::fill_rounded(pixmap, ox + term_rect.0, oy + term_rect.1, term_rect.2, GRIP, 0.0, mide::ui::draw::rgba(t.sidebar[0], t.sidebar[1], t.sidebar[2], 255)));
             if let Some(panel) = self.terminal.as_mut() {
                 if panel.read() {
                     tracing::debug!("terminal:\n{}", panel.screen_text());
@@ -1916,7 +1923,7 @@ impl App for Code {
                     let presses: Vec<_> = presses.into_iter().filter(|p| !(p.ctrl && p.shift && (p.keysym == 0x56 || p.keysym == 0x76))).collect();
                     panel.keys(&presses, input.paste.as_deref());
                 }
-                panel.draw(ui, (term_rect.0, term_rect.1 + GRIP, term_rect.2, term_rect.3 - GRIP), size, dark, focused);
+                panel.draw(ui, term_rect, size, dark, focused);
             }
             ui.wake_after(Duration::from_millis(500));
         }
@@ -1963,20 +1970,7 @@ impl App for Code {
                 self.hover = None;
             }
         }
-        // Divisórias e arrasto de arquivos/abas para as bordas do editor.
-        let layout = Layout { win: (win_w, win_h), top, status_y, editor: editor_rect };
-        let mut zones = Vec::new();
-        if drawer_on {
-            zones.push((Grip::Drawer, (drawer_w - GRIP, top, GRIP, status_y - top)));
-        }
-        if term_h > 0.0 {
-            zones.push((Grip::Terminal, (term_rect.0, term_rect.1, term_rect.2, GRIP)));
-        }
-        if let Some(s) = &self.split {
-            let a = panes_rects[0].1;
-            zones.push((Grip::Split, if s.side_by_side { (a.0 + a.2, a.1, GRIP, a.3) } else { (a.0, a.1 + a.3, a.2, GRIP) }));
-        }
-        self.grips(ui, &zones, layout);
+        // Arrasto de arquivos/abas para as bordas do editor.
         self.drag_step(ui, editor_rect);
         self.overlays(ui);
         self.dialogs(ui);
@@ -1986,6 +1980,23 @@ impl App for Code {
             ui.wake_after(Duration::from_millis(300));
         }
         self.keep_session();
+    }
+
+    /// Janelas filhas: só as Preferências.
+    fn window_view(&mut self, id: &str, ui: &mut Ui) {
+        if id == PREFS {
+            self.prefs(ui);
+        }
+    }
+
+    /// Preferências fechadas: grava o que mudou.
+    fn window_closed(&mut self, id: &str) {
+        if id == PREFS {
+            tracing::info!("preferências fechadas e gravadas");
+            if let Err(err) = self.config.save() {
+                self.say(format!("Preferências não gravadas: {err}"));
+            }
+        }
     }
 
     /// Menus do app na barra superior (como os do TextMate).

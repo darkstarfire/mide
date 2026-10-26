@@ -358,6 +358,10 @@ impl State {
         // Pedidos de recorte e escala de superfície (wp_viewporter) e posição lógica das
         // saídas (xdg-output): o XWayland (xwayland-satellite) precisa dos dois.
         smithay::wayland::viewporter::ViewporterState::new::<Self>(&display_handle);
+        // Forma do ponteiro pedida por nome (wp_cursor_shape_v1): o mide-ui pede a seta de
+        // redimensionar nas divisórias e o mide desenha com o tema dele, sem o app ler o
+        // tema de cursores do sistema.
+        smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(&display_handle);
         smithay::wayland::output::OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         // Captura de tela pelos apps (OBS e outros, pelo portal wlr).
         crate::screencopy::init(&display_handle);
@@ -1154,6 +1158,9 @@ delegate_layer_shell!(State);
 
 delegate_output!(State);
 smithay::delegate_viewporter!(State);
+smithay::delegate_cursor_shape!(State);
+// O cursor_shape também serve às mesas digitalizadoras; o mide não muda a imagem da caneta.
+impl smithay::wayland::tablet_manager::TabletSeatHandler for State {}
 
 impl XdgDecorationHandler for State {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {

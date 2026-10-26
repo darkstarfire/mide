@@ -4,8 +4,9 @@
 # arquivo dos servidores aberto pelas Preferências e lido de novo ao salvar; buscar e
 # substituir no projeto; mover linhas, ir para a linha e salvar tudo.
 #
-# Coordenadas (1366x768; a janela do Code nasce em (48, 76)): Preferências (Ctrl+,)
-# com "Editar servidores de linguagem…" em (420, 642). Buscar no projeto
+# Coordenadas (1366x768; a janela do Code nasce em (48, 76)): Preferências (Ctrl+,),
+# janela filha centrada sobre a principal, com "Editar servidores de linguagem…" em
+# (436, 565). Buscar no projeto
 # (Ctrl+Shift+F): "Substituir por" em (568, 336), "Substituir em tudo" em
 # (627, 378) e a primeira linha encontrada em (320, 444).
 echo "== Code: completar, servidores de linguagem, busca e edição (mide-code)"
@@ -37,7 +38,7 @@ fi
 # Preferências → "Editar servidores de linguagem…" abre o code-servers.toml no Code;
 # salvar com erro avisa a linha; desfeito o erro, os servidores valem de novo.
 rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml"
-code_run "300 click 600 400; 320 combo ctrl+,; 360 click 420 642; 420 combo ctrl+end; 430 type x; 440 combo ctrl+s; 480 key backspace; 490 combo ctrl+s; 540 list" -- "'$CDIR/proj'"
+code_run "300 click 600 400; 320 combo ctrl+,; 360 click 436 565; 420 combo ctrl+end; 430 type x; 440 combo ctrl+s; 480 key backspace; 490 combo ctrl+s; 540 list" -- "'$CDIR/proj'"
 ok_if "code: Preferências abrem o code-servers.toml no editor" grep -q 'aberto: .*code-servers.toml' "$CLOG"
 ok_if "code: erro no code-servers.toml mostra a linha" grep -q 'Erro no code-servers.toml, linha' "$CLOG"
 ok_if "code: code-servers.toml salvo vale na hora" grep -q 'Servidores de linguagem atualizados (6)' "$CLOG"

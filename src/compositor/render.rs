@@ -673,19 +673,10 @@ fn window_elements(
             0.0
         };
         if glass_ok {
-            let app_id = p
-                .window
-                .toplevel()
-                .and_then(|t| {
-                    smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
-                        s.data_map
-                            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
-                            .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
-                    })
-                })
-                .unwrap_or_default();
+            let key = glass_key(&p.window);
+            let app_id = key.trim_start_matches("app:");
             let content_top = p.surface_origin.y + p.window.geometry().loc.y;
-            for (i, (rect, _, _)) in state.glass.get(&format!("app:{app_id}")).into_iter().flatten().enumerate() {
+            for (i, (rect, _, _)) in state.glass.get(&key).into_iter().flatten().enumerate() {
                 let mut r = Rectangle::new(p.surface_origin + rect.loc, rect.size);
                 let pad = radius.ceil() as i32;
                 if r.loc.y <= content_top {
@@ -1070,4 +1061,47 @@ fn toplevel_title(toplevel: &smithay::wayland::shell::xdg::ToplevelSurface) -> S
             .and_then(|data| data.lock().ok().and_then(|attrs| attrs.title.clone()))
     })
     .unwrap_or_default()
+}
+
+/// Nome das regiões de vidro de uma janela no canal de controle: `app:<app_id>` para a
+/// janela sem pai e `app:<app_id>><título>` para as filhas (Preferências de um app do
+/// mide-ui), que têm o mesmo `app_id` da principal. No título, espaço vira `%20` e `%`
+/// vira `%25`, como o mide-ui manda (as palavras do canal são separadas por espaço).
+fn glass_key(window: &smithay::desktop::Window) -> String {
+    let Some(toplevel) = window.toplevel() else {
+        return "app:".into();
+    };
+    let (app_id, title) = smithay::wayland::compositor::with_states(toplevel.wl_surface(), |s| {
+        s.data_map
+            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+            .and_then(|d| d.lock().ok().map(|a| (a.app_id.clone().unwrap_or_default(), a.title.clone().unwrap_or_default())))
+            .unwrap_or_default()
+    });
+    if toplevel.parent().is_some() {
+        format!("app:{app_id}>{}", encode_glass_title(&title))
+    } else {
+        format!("app:{app_id}")
+    }
+}
+
+/// Título no nome do vidro: espaços como `%20` e `%` como `%25`.
+pub(crate) fn encode_glass_title(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    for c in title.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            c if c.is_whitespace() => out.push_str("%20"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod glass_key_tests {
+    #[test]
+    fn titulo_codificado() {
+        assert_eq!(super::encode_glass_title("Preferências do Code"), "Preferências%20do%20Code");
+        assert_eq!(super::encode_glass_title("50% zoom"), "50%25%20zoom");
+    }
 }

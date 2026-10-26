@@ -1863,3 +1863,19 @@ Pedido do usuário: os splashs de apps X11 não abriam no meio da tela.
 **Testes**: exemplo `examples/mide-janela-teste.rs` (sctk: janela fixa, sem decoração, pai com diálogo e comum) e a seção `tests/ui/36-centro.sh` (6 verificações, também com duas telas e o ponteiro na segunda). Seção `01-barra` com as verificações do "Sobre" atualizadas (posição nova, tamanho 330x610, minimizar pelo Super+H).
 
 **Falta**: o usuário conferir com apps X11 de verdade (IDEs da JetBrains, GIMP, LibreOffice) e Wayland na sessão.
+
+## Code com o mide-ui novo e vidro nas janelas filhas (E11, 2026-10-26)
+
+Continuação do E11, usando o que o mide-ui ganhou (janelas filhas, vidro em janelas, divisórias com cursor, botões com dica e símbolos embutidos).
+
+**Code** (`src/bin/mide-code/main.rs`)
+- Barra de ferramentas com `tool_toggle` (gaveta) e dois `tool_group`: Abrir arquivo (ícone de documento), Abrir pasta (pasta) e Salvar; Buscar, Terminal e Preferências. Todos com a dica e os atalhos; os ícones são os símbolos embutidos do kit (iguais em qualquer tema). Saíram as dicas montadas à mão (`tips`, `piece`).
+- Preferências numa janela filha própria (`ui.open_window("prefs", Window::new("Preferências do Code").glass())`, conteúdo em `App::window_view`): abre pelo botão, por Ctrl+, e pelo menu Code → Preferências… (de novo, fecha); as mudanças valem na hora e o `code.toml` é gravado ao fechar (`App::window_closed`); Esc e "Pronto" fecham; "Editar servidores de linguagem…" abre o arquivo numa aba da principal e fecha as Preferências.
+- Gaveta do projeto na barra lateral de vidro do kit (`ui.sidebar_panel`): flutuante, com os botões da janela no topo, como a do Arquivos, e a divisória do kit (largura guardada ao soltar). A barra de ferramentas fica à direita dela; sem gaveta, com os botões da janela.
+- Terminal embaixo do editor com `ui.split_vertical` e a divisão do editor com `ui.split` (lado a lado) e `ui.split_vertical` (em cima/embaixo): o ponteiro vira o de redimensionar sobre as divisórias, que são do kit. Saíram as divisórias feitas à mão (`Grip`, `grips`, `Layout`, `GRIP`). Os painéis continuam desenhados nas coordenadas da janela: as divisórias do kit só medem os retângulos (dentro de um `ui.clip`).
+
+**Compositor**
+- Vidro por janela filha (`render.rs`, `glass_key`): as regiões de vidro da janela sem pai vêm de `app:<app_id>`, e as de uma janela filha (com `set_parent`) de `app:<app_id>><título>` (espaço como `%20`, `%` como `%25`), o nome que o mide-ui manda. Antes, a filha (mesmo `app_id`) usaria o vidro da principal.
+- Comando `features` no canal de controle, que responde `child_glass` (o mide-ui pergunta uma vez antes de pedir vidro numa filha).
+- `wp_cursor_shape_v1` (Smithay `CursorShapeManagerState`): os apps pedem a forma do ponteiro pelo nome (redimensionar nas divisórias do mide-ui) e o mide desenha com o tema dele.
+- A janela filha abre centrada sobre a principal pelo `center_dialog_once` que já existia (A26): conferido.

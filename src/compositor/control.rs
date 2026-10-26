@@ -79,7 +79,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
     // tela; os outros comandos pedem um quadro.
     let query = matches!(
         command.split_whitespace().next(),
-        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea")
+        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features")
     ) || matches!(command.trim(), "launcher state" | "shortcuts captured");
     if !query {
         state.wake();
@@ -87,6 +87,9 @@ pub fn handle(state: &mut State, command: &str) -> String {
     let mut words = command.split_whitespace();
     match words.next() {
         Some("list") => list(state),
+        // Recursos que este compositor tem, uma palavra cada (o mide-ui pergunta uma vez):
+        // `child_glass` = vidro por janela filha, pelo nome `app:<app_id>><título>`.
+        Some("features") => "child_glass\n".into(),
         // Onde está o menu da janela em foco (apps GTK e Qt no Wayland): `gtk<TAB>bus
         // <TAB>barra<TAB>app<TAB>janela`, `dbusmenu<TAB>serviço<TAB>objeto` ou vazio.
         Some("appmenu") => {
