@@ -314,9 +314,30 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
             entry("Colar", "Ctrl+V", keys("ctrl+v")),
             entry("Selecionar tudo", "Ctrl+A", keys("ctrl+a")),
         ],
+        // Como o menu Janela do Mac (o mesmo do `window_menu` do mide-ui); os submenus
+        // aparecem com recuo, como os dos apps. As telas e as janelas do app entram em
+        // `Bar::window_extras`.
         MenuId::Window => vec![
-            entry("Minimizar", "", window("minimize")),
-            entry("Zoom", "", window("zoom")),
+            entry("Minimizar", "Super+H", window("minimize")),
+            entry("Preencher", "", window("fill")),
+            entry("Centralizar", "", window("center")),
+            MenuItem::Separator,
+            entry("Mover e redimensionar", "", None),
+            entry("    Metade esquerda", "", window("left")),
+            entry("    Metade direita", "", window("right")),
+            entry("    Metade de cima", "", window("top")),
+            entry("    Metade de baixo", "", window("bottom")),
+            entry("    Canto superior esquerdo", "", window("top-left")),
+            entry("    Canto superior direito", "", window("top-right")),
+            entry("    Canto inferior esquerdo", "", window("bottom-left")),
+            entry("    Canto inferior direito", "", window("bottom-right")),
+            entry("    Voltar ao tamanho anterior", "", window("restore")),
+            entry("Lado a lado na tela", "", None),
+            entry("    À esquerda da tela", "", window("left")),
+            entry("    À direita da tela", "", window("right")),
+            MenuItem::Separator,
+            entry("Minimizar todas", "", window("minimize-all")),
+            entry("Trazer todas para a frente", "", window("front")),
         ],
         MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("energy")))],
         // Itens vêm dos layouts escolhidos (`Bar::layout_items`).
@@ -973,6 +994,44 @@ impl Bar {
         self.draw_bar();
     }
 
+    /// Partes do menu Janela que mudam: "Mover para" as outras telas e a lista das
+    /// janelas do app em foco (✓ na atual; clique traz a janela), como no Mac.
+    fn window_extras(&self) -> Vec<MenuItem> {
+        let mut out = Vec::new();
+        let outputs: Vec<(String, String)> = ask_compositor("window-outputs")
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (f.len() >= 3 && f[2] == "other").then(|| (f[0].to_string(), f[1].to_string()))
+            })
+            .collect();
+        if !outputs.is_empty() {
+            out.push(MenuItem::Separator);
+            for (name, desc) in outputs {
+                let label = if desc.trim().is_empty() { name.clone() } else { desc };
+                out.push(entry(format!("Mover para {label}"), "", Some(MenuAction::Compositor(format!("window output={name}")))));
+            }
+        }
+        let wins: Vec<(String, String, bool)> = ask_compositor("windows")
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (f.len() >= 4 && !self.focused_id.is_empty() && f[1].eq_ignore_ascii_case(&self.focused_id)).then(|| (f[0].to_string(), f[2].to_string(), f[3] == "focused"))
+            })
+            .collect();
+        if !wins.is_empty() {
+            out.push(MenuItem::Separator);
+            for (id, title, focused) in wins {
+                let title = if title.chars().count() > 48 { format!("{}…", title.chars().take(47).collect::<String>()) } else { title };
+                let label = if focused { format!("✓ {title}") } else { format!("    {title}") };
+                out.push(entry(label, "", Some(MenuAction::Compositor(format!("focus {id}")))));
+            }
+        }
+        out
+    }
+
     /// Itens de um menu do app (lidos de novo ao abrir: o app pode ter mudado o menu).
     /// Submenus aparecem logo abaixo do título deles, com recuo.
     fn native_items(&mut self, index: usize) -> Vec<MenuItem> {
@@ -1576,12 +1635,21 @@ impl Bar {
             return;
         }
         let app = self.focused_name.clone();
+        // O menu Janela (o da barra ou o do app): ganha as outras telas e as janelas do app.
+        let window_menu = match id {
+            MenuId::Window => true,
+            MenuId::Native(i) => self.native.as_ref().and_then(|(_, _, top)| top.get(i as usize)).is_some_and(|m| matches!(m.label.replace('_', "").as_str(), "Janela" | "Window")),
+            _ => false,
+        };
         let mut items = match id {
             MenuId::Native(i) => self.native_items(i as usize),
             MenuId::Tray(i) => self.tray_menu_items(i as usize),
             MenuId::Layout => self.layout_items(),
             _ => menu_items(id, &app),
         };
+        if window_menu {
+            items.extend(self.window_extras());
+        }
         if id == MenuId::Battery {
             if let Some((level, charging)) = self.battery {
                 let state = if charging { "carregando" } else { "na bateria" };

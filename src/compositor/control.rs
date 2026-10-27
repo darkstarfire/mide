@@ -79,7 +79,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
     // tela; os outros comandos pedem um quadro.
     let query = matches!(
         command.split_whitespace().next(),
-        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features")
+        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs")
     ) || matches!(command.trim(), "launcher state" | "shortcuts captured");
     if !query {
         state.wake();
@@ -335,6 +335,9 @@ pub fn handle(state: &mut State, command: &str) -> String {
         }
         // Janelas, uma por linha: `id<TAB>app_id<TAB>título<TAB>focused|normal|minimized`.
         Some("windows") => windows(state),
+        // Telas, uma por linha: `nome<TAB>descrição<TAB>here` (a da janela em foco) ou
+        // `other`, para o menu Janela → Mover para.
+        Some("window-outputs") => outputs_for_menu(state),
         // Foca a janela pelo número, restaurando se estiver minimizada.
         Some("focus") => {
             let id = words.next().and_then(|w| w.parse::<u64>().ok()).unwrap_or(0);
@@ -551,6 +554,32 @@ fn activate(state: &mut State, ids: &[String]) -> bool {
     false
 }
 
+fn outputs_for_menu(state: &State) -> String {
+    let focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
+    let here = focus.as_ref().and_then(|f| state.window_for(f)).and_then(|w| {
+        let loc = state.space.element_location(&w)?;
+        let c = loc + smithay::utils::Point::from((w.geometry().size.w / 2, w.geometry().size.h / 2));
+        state.space.output_under(c.to_f64()).next().map(|o| o.name())
+    });
+    let mut out = String::new();
+    for o in state.space.outputs() {
+        // Como no Mac ("Mover para Tela integrada"): a tela do notebook pelo tipo, as
+        // outras pelo modelo (o nome do conector se não houver).
+        let name = o.name();
+        let model = o.physical_properties().model;
+        let desc = if ["eDP", "LVDS", "DSI"].iter().any(|p| name.starts_with(p)) {
+            "Tela integrada".to_string()
+        } else if !model.trim().is_empty() && !model.eq_ignore_ascii_case("unknown") {
+            model.trim().to_string()
+        } else {
+            name.clone()
+        };
+        let mark = if Some(o.name()) == here { "here" } else { "other" };
+        out.push_str(&format!("{}\t{}\t{mark}\n", o.name(), desc));
+    }
+    out
+}
+
 fn windows(state: &State) -> String {
     let focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
     let mut out = String::new();
@@ -626,6 +655,45 @@ fn focused_window_action(state: &mut State, action: &str) -> bool {
         "close" => state.request_close(&window),
         "minimize" => state.minimize(toplevel.wl_surface()),
         "zoom" => crate::input::toggle_maximize(state, toplevel),
+        // Menu Janela (como o do Mac): preencher a tela, centralizar, metades e quartos,
+        // voltar ao tamanho anterior, outra tela, e todas as janelas do app.
+        "fill" => {
+            if let Some(area) = state.usable_area_for_surface(toplevel.wl_surface()) {
+                state.maximize_in(&toplevel, area);
+            }
+        }
+        "center" => state.center_window(&toplevel),
+        "restore" => state.unmaximize(&toplevel),
+        "left" => state.place_part(&toplevel, (0.0, 0.0, 0.5, 1.0)),
+        "right" => state.place_part(&toplevel, (0.5, 0.0, 0.5, 1.0)),
+        "top" => state.place_part(&toplevel, (0.0, 0.0, 1.0, 0.5)),
+        "bottom" => state.place_part(&toplevel, (0.0, 0.5, 1.0, 0.5)),
+        "top-left" => state.place_part(&toplevel, (0.0, 0.0, 0.5, 0.5)),
+        "top-right" => state.place_part(&toplevel, (0.5, 0.0, 0.5, 0.5)),
+        "bottom-left" => state.place_part(&toplevel, (0.0, 0.5, 0.5, 0.5)),
+        "bottom-right" => state.place_part(&toplevel, (0.5, 0.5, 0.5, 0.5)),
+        "minimize-all" | "front" => {
+            let app = identity(&window).0;
+            let same: Vec<smithay::desktop::Window> = state.space.elements().filter(|w| identity(w).0 == app).cloned().collect();
+            for w in same {
+                if let Some(t) = w.toplevel().cloned() {
+                    if action == "minimize-all" {
+                        state.minimize(t.wl_surface());
+                    } else if w != window {
+                        state.space.raise_element(&w, false);
+                    }
+                }
+            }
+            if action == "front" {
+                // A janela em foco fica na frente das outras do app.
+                state.space.raise_element(&window, true);
+            }
+        }
+        other if other.starts_with("output=") => {
+            if !state.move_to_output(&toplevel, &other["output=".len()..]) {
+                return false;
+            }
+        }
         // Forçar encerrar: termina o processo do app (quando ele não responde).
         "kill" => {
             use smithay::reexports::wayland_server::Resource;

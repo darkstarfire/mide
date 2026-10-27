@@ -181,6 +181,73 @@ impl State {
         self.fill_area(surface, &window, rect, Some(left));
     }
 
+    /// Põe a janela numa parte da área útil da tela dela: `part` em frações (x, y,
+    /// largura, altura), como as metades e os quartos do menu Janela → Mover e
+    /// redimensionar.
+    pub fn place_part(&mut self, surface: &ToplevelSurface, part: (f32, f32, f32, f32)) {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w)) else {
+            return;
+        };
+        let Some(area) = self.area_for(&window) else {
+            return;
+        };
+        let (w, h) = (area.size.w as f32, area.size.h as f32);
+        let x = area.loc.x + (part.0 * w).round() as i32;
+        let y = area.loc.y + (part.1 * h).round() as i32;
+        let rect = smithay::utils::Rectangle::new((x, y).into(), (((part.2 * w).round() as i32).max(80), ((part.3 * h).round() as i32).max(60)).into());
+        tracing::info!("janela em {:?} da tela", part);
+        self.fill_area(surface, &window, rect, Some(part.0 == 0.0));
+    }
+
+    /// Área útil da tela de uma janela (pela superfície).
+    pub fn usable_area_for_surface(&self, surface: &WlSurface) -> Option<smithay::utils::Rectangle<i32, Logical>> {
+        let window = self.window_for(surface)?;
+        self.area_for(&window)
+    }
+
+    /// Centraliza a janela na tela dela, sem mudar o tamanho (como o "Centralizar" do
+    /// menu Janela do Mac).
+    pub fn center_window(&mut self, surface: &ToplevelSurface) {
+        let Some(window) = self.window_for(surface.wl_surface()) else {
+            return;
+        };
+        let Some(area) = self.area_for(&window) else {
+            return;
+        };
+        let size = window.geometry().size;
+        let loc = (area.loc.x + (area.size.w - size.w).max(0) / 2, area.loc.y + (area.size.h - size.h).max(0) / 2);
+        self.space.map_element(window, loc, true);
+        tracing::info!("janela centralizada");
+    }
+
+    /// Leva a janela para a tela `name`, no mesmo lugar relativo (maximizada ou numa
+    /// parte, continua ocupando a mesma parte da tela nova).
+    pub fn move_to_output(&mut self, surface: &ToplevelSurface, name: &str) -> bool {
+        let Some(window) = self.window_for(surface.wl_surface()) else {
+            return false;
+        };
+        let Some(target) = self.space.outputs().find(|o| o.name() == name).cloned() else {
+            return false;
+        };
+        let (Some(from), Some(to)) = (self.area_for(&window), self.usable_area_of(&target)) else {
+            return false;
+        };
+        let maximized = surface.current_state().states.contains(XdgState::Maximized);
+        if maximized {
+            self.maximize_in(surface, to);
+        } else {
+            let loc = self.space.element_location(&window).unwrap_or(from.loc);
+            let size = window.geometry().size;
+            let fx = (loc.x - from.loc.x) as f32 / from.size.w.max(1) as f32;
+            let fy = (loc.y - from.loc.y) as f32 / from.size.h.max(1) as f32;
+            let x = to.loc.x + ((fx * to.size.w as f32) as i32).clamp(0, (to.size.w - size.w).max(0));
+            let y = to.loc.y + ((fy * to.size.h as f32) as i32).clamp(0, (to.size.h - size.h).max(0));
+            self.space.map_element(window, (x, y), true);
+        }
+        tracing::info!("janela levada para a tela {name}");
+        true
+    }
+
     /// Ocupa `area` (maximizada, ou numa metade com `tiled`), guardando a posição e o
     /// tamanho de antes para restaurar.
     fn fill_area(&mut self, surface: &ToplevelSurface, window: &Window, area: smithay::utils::Rectangle<i32, Logical>, tiled: Option<bool>) {
