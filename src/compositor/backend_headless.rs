@@ -146,6 +146,12 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
                 if let Err(err) = result {
                     tracing::warn!("falha ao desenhar a tela {}: {err}", head.name);
                 }
+                // Sem vblank: o quadro desenhado conta como apresentado agora (a
+                // frequência anunciada é a do modo da tela virtual, 60 Hz). Quadro que
+                // falhou: os pedidos ficam para o próximo.
+                if head.drawn {
+                    crate::presentation::present_now(crate::presentation::collect(state, output), output);
+                }
                 if let Err(err) = send_frames(state, output) {
                     tracing::debug!("avisos de quadro: {err}");
                 }

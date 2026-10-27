@@ -1043,3 +1043,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Também rodadas: `janela`, `atalhos`, `centro`, `x11` e `menu-janela` (tudo ok; a `centro` falhou uma vez com a máquina carregada, por a dock ainda não ter reservado o espaço, e passou isolada).
 - Reproduzir à mão: `tests/scenario.sh "300 list; 320 press 956 40; 325 move 956 300; 340 list; 400 release 956 300; 420 list" -- "target/debug/examples/mide-janela-teste csd max"` (com `MIDE_WINIT_SIZE=1366x768`); antes da correção o log dizia "volta a 0x0" e a janela ia para x=956.
 - Na sessão de verdade: VS Code, Eclipse e Zed maximizados (abertos já maximizados e maximizados pelo mide), arrastar pela barra própria e pela do mide: a janela volta ao tamanho de antes com o ponteiro no mesmo ponto proporcional da barra.
+
+## Aviso de apresentação (`wp_presentation`, 2026-10-27)
+
+- `cargo test`: `presentation::tests` (intervalo de 60/144/59,94 Hz, hora do vblank monotônica ou convertida do tempo real, sem hora do kernel).
+- `tests/ui.sh apresentacao`: o `mide-presentation-teste` recebe 60 `presented` seguidos no backend sem tela, com `clock=1` (monotônico), `refresh_ns=16666666`, números crescentes e intervalo médio entre 15 e 39 ms (medido: 17,3 ms, o relógio de 16 ms do backend de teste).
+- `tests/ui.sh vidro janela`: sem mudança.
+- Manual (sessão de verdade, DRM): rolar o histórico de uma conversa longa no WhatsApp Web no Chrome nativo no Wayland; deve ficar liso como no Cinnamon. Para conferir o protocolo: `WAYLAND_DEBUG=1 google-chrome --ozone-platform=wayland 2>&1 | grep -m5 wp_presentation_feedback` mostra os `presented` com `refresh` de ~16666666 (60 Hz) e flags 7 (`vsync|hw_clock|hw_completion`).

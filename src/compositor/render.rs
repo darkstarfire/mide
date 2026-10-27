@@ -963,26 +963,26 @@ fn dump_frame_if_requested(
 pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Error>> {
     let elapsed = state.start_time.elapsed();
     crate::activation::update_scales(state, output);
-    for window in state.space.elements() {
-        window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
+    // Cada janela recebe o aviso no ritmo da tela principal dela (a primeira que ela
+    // toca): com duas telas de frequências diferentes, o app não desenha no ritmo das
+    // duas somadas. Janela fora de todas as telas (`None`) recebe a cada quadro de
+    // qualquer tela (limiar zero): fica num ritmo menor, mas não para.
+    let primaries: Vec<Option<Output>> =
+        state.space.elements().map(|w| crate::presentation::primary_output(state, w)).collect();
+    for (window, primary) in state.space.elements().zip(&primaries) {
+        window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| primary.clone());
     }
     // Camadas e popups também precisam do frame callback para redesenhar depois de
     // receber teclas ou cliques.
     for layer in layer_map_for_output(output).layers() {
         layer.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
     }
-    for window in state.space.elements() {
+    for (window, primary) in state.space.elements().zip(&primaries) {
         let Some(toplevel) = window.toplevel() else {
             continue;
         };
         for (popup, _) in PopupManager::popups_for_surface(toplevel.wl_surface()) {
-            send_frames_surface_tree(
-                popup.wl_surface(),
-                output,
-                elapsed,
-                Some(Duration::ZERO),
-                |_, _| Some(output.clone()),
-            );
+            send_frames_surface_tree(popup.wl_surface(), output, elapsed, Some(Duration::ZERO), |_, _| primary.clone());
         }
     }
     // Tela de bloqueio desta saída.
