@@ -20,7 +20,7 @@ use smithay::{
         },
     },
     input::pointer::{CursorImageAttributes, CursorImageStatus},
-    utils::{Logical, Physical, Point, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Transform},
     wayland::compositor::with_states,
 };
 
@@ -88,25 +88,37 @@ impl Cursors {
             (CursorShape::Default, CursorImageStatus::Named(icon)) => icon.name().to_string(),
             (shape, _) => shape_name(shape).to_string(),
         };
-        // Ponteiro agitado: o cursor grande (imagem do tema no tamanho mais próximo,
-        // ajustada até o tamanho pedido).
-        // Para a animação ser contínua: uma imagem de alta resolução (e a metade dela,
-        // dos mesmos pixels) escalada pela placa a cada quadro; o ponto quente acompanha
-        // sem arredondar.
+        // Ponteiro agitado: o cursor grande. Uma imagem de alta resolução do tema (e a
+        // metade dela, dos mesmos pixels, para reduzir sem serrilhado) escalada pela GPU
+        // a cada quadro; tamanho e ponto quente vêm sempre da imagem grande, então trocar
+        // a metade pela inteira não mexe na geometria, só na amostragem.
         let grow = state.shake.scale(std::time::Instant::now());
         let base = self.size;
-        let image = if grow > 1.001 {
+        if grow > 1.001 {
             let target = base as f32 * grow;
             let (half, full) = self.hidpi(&name);
-            if target <= half.nominal as f32 { half } else { full }
-        } else {
-            self.image(&name)
-        };
-        let k = if grow > 1.001 { base as f32 * grow / image.nominal.max(1) as f32 } else { 1.0 };
-        let hotspot = Point::<f64, Logical>::from((image.hotspot.x as f64 * k as f64, image.hotspot.y as f64 * k as f64));
-        let size = (grow > 1.001).then(|| smithay::utils::Size::<i32, Logical>::from(((image.size.0 as f32 * k).round() as i32, (image.size.1 as f32 * k).round() as i32)));
-        let location = (pointer.to_f64() - hotspot).to_physical(crate::clip::scale());
-        match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, size, Kind::Cursor) {
+            let image = if target <= half.nominal as f32 { half } else { full };
+            // Proporção em relação à imagem inteira: o ponto quente fica exato (a metade
+            // tem o ponto quente arredondado).
+            let k = target as f64 / full.nominal.max(1) as f64;
+            let hotspot = Point::<f64, Logical>::from((full.hotspot.x as f64 * k, full.hotspot.y as f64 * k));
+            let size = smithay::utils::Size::<i32, Logical>::from(((full.size.0 as f64 * k).round() as i32, (full.size.1 as f64 * k).round() as i32));
+            let location = (pointer.to_f64() - hotspot).to_physical(crate::clip::scale());
+            // `src` é a imagem inteira: sem ele, o Smithay usa o `size` como recorte da
+            // imagem (o cursor aparecia cortado e "trocando de imagem" em vez de escalar).
+            let src = Rectangle::<f64, Logical>::from_size((image.size.0 as f64, image.size.1 as f64).into());
+            tracing::debug!("cursor agitado: escala {grow:.3} imagem {} tamanho {}x{} canto {:.2},{:.2}", image.nominal, size.w, size.h, location.x, location.y);
+            return match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, Some(src), Some(size), Kind::Cursor) {
+                Ok(element) => vec![MideRenderElement::Title(element)],
+                Err(err) => {
+                    tracing::warn!("cursor não desenhado: {err}");
+                    Vec::new()
+                }
+            };
+        }
+        let image = self.image(&name);
+        let location = (pointer.to_f64() - image.hotspot.to_f64()).to_physical(crate::clip::scale());
+        match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, None, Kind::Cursor) {
             Ok(element) => vec![MideRenderElement::Title(element)],
             Err(err) => {
                 tracing::warn!("cursor não desenhado: {err}");

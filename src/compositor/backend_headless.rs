@@ -90,7 +90,10 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
         .enumerate()
         .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, global: None, target: None, damage_tracker: None, drawn: false })
         .collect();
+    // `MIDE_SCENE_CURSOR=1`: a cena desenha o cursor, como no DRM sem o plano de cursor
+    // (para medir o ponteiro agitado e o custo do cursor na cena).
     let scene = Scene::new(&mut renderer, state)?;
+    let scene = if std::env::var_os("MIDE_SCENE_CURSOR").is_some() { scene.with_cursor() } else { scene };
     let gpu = Rc::new(RefCell::new(Gpu { renderer, scene, heads }));
     // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador.
     {

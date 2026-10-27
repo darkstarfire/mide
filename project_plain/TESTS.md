@@ -1024,3 +1024,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 
 - Testes de interface também com escala fracionária: além de 1366x768 em 100%, conferir 2560x1440 (ou 2560x1600) com escala 1,5 (150%) e 1,25 (125%), olhando a nitidez da barra superior (ícones e letras), dos ícones da dock e do texto dos apps mide-ui.
 - Problema conhecido: no 2K do usuário (Chromebook), a barra superior a 150% perdeu definição e proporção em alguns pontos. Conferir com um quadro (`tests/scenario.sh ... QUADRO`) depois da correção.
+
+## Ponteiro agitado fluido (2026-10-27)
+
+- `cargo test --bin mide shake`: cresce com a intensidade (poucos vaivéns crescem pouco), a escala por quadro é contínua a 60 Hz e com quadros irregulares (4 a 45 ms), nunca passa de 4x nem fica abaixo de 1, volta a 1 e, chacoalhando no meio do voltar, continua de onde está.
+- Bateria, seção `vidro`: "ponteiro agitado cresce e volta sem saltos" (com `MIDE_SCENE_CURSOR=1`, agitando sobre a dock: tamanho até ≥ 90 px, de volta a ≤ 30 px, sem mudar mais de 12 px entre quadros).
+- Ver a animação quadro a quadro: `MIDE_SCENE_CURSOR=1 MIDE_DUMP_FRAME=/caminho/f MIDE_DUMP_AT=105 MIDE_DUMP_COUNT=110 tests/scenario.sh "<vaivéns de move>"` salva `f.NNN.LxA.rgba` (de baixo para cima).
+- Na sessão de verdade: agitar o mouse sobre a mesa, a barra e a dock; o cursor deve crescer junto com o chacoalhar, sempre a seta inteira, e voltar suave; parado, volta ao plano de cursor da placa (sem quadros novos).

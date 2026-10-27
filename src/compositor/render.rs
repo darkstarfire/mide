@@ -100,7 +100,7 @@ impl Scene {
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela
     /// fechando): o backend continua pedindo quadros.
     pub fn moving(&self, state: &State) -> bool {
-        state.shake.scale(std::time::Instant::now()) > 1.001
+        state.shake.animating(std::time::Instant::now())
             || !state.animations.is_empty()
             || state.launcher_anim.is_some()
             || self.wallpapers.values().any(|w| w.busy())
@@ -931,9 +931,14 @@ fn dump_frame_if_requested(
         return Ok(());
     }
     let at: u32 = std::env::var("MIDE_DUMP_AT").ok().and_then(|v| v.parse().ok()).unwrap_or(120);
-    if FRAMES.fetch_add(1, Ordering::Relaxed) != at {
+    // `MIDE_DUMP_COUNT=N`: N quadros seguidos a partir de `at` (para ver uma animação),
+    // cada um com o número no nome.
+    let count: u32 = std::env::var("MIDE_DUMP_COUNT").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+    let frame = FRAMES.fetch_add(1, Ordering::Relaxed);
+    if frame < at || frame >= at + count {
         return Ok(());
     }
+    let path = if count > 1 { format!("{path}.{:03}", frame - at) } else { path };
     let Some(mode) = output.current_mode() else {
         return Ok(());
     };

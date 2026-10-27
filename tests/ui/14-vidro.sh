@@ -130,3 +130,22 @@ else
 fi
 rm -rf "$OW"
 rm -rf "$(dirname "$FDIR")"
+
+# Ponteiro agitado (o cursor cresce e volta): a cena desenha o cursor (como no DRM sem o
+# plano da placa); a imagem inteira escalada, crescendo até 4x e voltando, sem saltos
+# entre quadros (antes o Smithay recortava a imagem em vez de escalar).
+SHAKE="100 move 600 728"
+SX=600
+for i in $(seq 1 16); do
+    if [ $SX = 600 ]; then SX=700; else SX=600; fi
+    SHAKE="$SHAKE; $((100 + i * 2)) move $SX 728"
+done
+SHAKE="$SHAKE; 200 list"
+# A linha de depuração não passa pelo filtro do scenario.sh: lida direto do mide.log.
+MIDE_SCENE_CURSOR=1 timeout 150 "$SCEN" "$SHAKE" >/dev/null 2>&1
+SLOG="$(sed 's/\x1b\[[0-9;]*m//g' "${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log" | grep -oE 'cursor agitado: escala [0-9.]+ imagem [0-9]+ tamanho [0-9]+x' | grep -oE '[0-9]+x$' | tr -d x)"
+if echo "$SLOG" | awk 'NR > 1 { d = $1 - p; if (d < 0) d = -d; if (d > 12) bad = 1 } { p = $1; if ($1 > m) m = $1 } END { exit !(NR > 20 && m >= 90 && p <= 30 && !bad) }'; then
+    echo "ok    ponteiro agitado cresce e volta sem saltos"; PASS=$((PASS + 1))
+else
+    echo "FALHA ponteiro agitado cresce e volta sem saltos"; echo "      tamanhos: $(echo $SLOG | tr '\n' ' ' | cut -c1-200)"; FAIL=$((FAIL + 1))
+fi
