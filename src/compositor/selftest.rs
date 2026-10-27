@@ -18,6 +18,8 @@
 //! - `combo ctrl+shift+space`: atalho, passando pelos atalhos do compositor
 //! - `wheel down` / `wheel up` (ou um número de passos): roda do mouse
 //! - `mclick x y`: clique do botão do meio
+//! - `unplug HEADLESS-N` / `plug HEADLESS-N`: finge o monitor da tela virtual N
+//!   desconectado ou conectado de novo (a tela sai depois da folga, como no DRM)
 //!
 //! Exemplo: `MIDE_SELFTEST="300 list; 320 click 540 160"`.
 
@@ -48,6 +50,8 @@ enum Step {
     /// Roda do mouse: passos (positivo = para baixo).
     Wheel(i32),
     MiddleClick(f64, f64),
+    /// Tela virtual `HEADLESS-N` conectada (`true`) ou desconectada.
+    Plug(u32, bool),
 }
 
 /// Roteiro de autoteste em andamento.
@@ -156,6 +160,10 @@ fn parse_one(part: &str) -> Option<(u32, Step)> {
                     other => other.and_then(|w| w.parse().ok())?,
                 }),
                 "mclick" => Step::MiddleClick(coord(2)?, coord(3)?),
+                "plug" | "unplug" => {
+                    let n = words.get(2)?.strip_prefix("HEADLESS-")?.parse().ok()?;
+                    Step::Plug(n, words[1] == "plug")
+                }
                 other => {
                     tracing::warn!("autoteste: ação desconhecida '{other}'");
                     return None;
@@ -197,6 +205,16 @@ fn run(state: &mut State, step: Step, frame: u32) {
             input::pointer_motion(state, at(x, y), time);
             input::button(state, 0x112, ButtonState::Pressed, time);
             input::button(state, 0x112, ButtonState::Released, time + 40);
+        }
+        Step::Plug(n, on) => {
+            let name = format!("HEADLESS-{n}");
+            state.test_unplugged.retain(|u| *u != name);
+            if !on {
+                state.test_unplugged.push(name);
+            }
+            if let Some(waker) = &state.outputs_waker {
+                waker.ping();
+            }
         }
         Step::Resize(w, h) => {
             // Simula a janela do host mudando de tamanho: novo modo da saída e o mesmo

@@ -244,6 +244,11 @@ pub struct State {
     /// Globais `wl_output` de telas desligadas: já escondidos dos apps, removidos de vez
     /// na próxima mudança de telas (`outputs::retire_global`).
     pub retired_output_globals: Vec<smithay::reexports::wayland_server::backend::GlobalId>,
+    /// Janelas tiradas de uma tela que saiu, com de onde vieram: voltam a ela quando
+    /// a tela voltar (`outputs::place`).
+    pub displaced: Vec<crate::outputs::Displaced<Window>>,
+    /// Telas virtuais "desconectadas" pelo autoteste (`unplug`/`plug`).
+    pub test_unplugged: Vec<String>,
     /// Pede ao backend para reaplicar o mouse e o trackpad (`[input]`, depois do `reload`).
     pub input_waker: Option<smithay::reexports::calloop::ping::Ping>,
     /// Tela onde estão a barra, a dock e a área de trabalho (para reabri-los quando a
@@ -458,6 +463,8 @@ impl State {
             appearing: Vec::new(),
             outputs_waker: None,
             retired_output_globals: Vec::new(),
+            displaced: Vec::new(),
+            test_unplugged: Vec::new(),
             input_waker: None,
             shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),

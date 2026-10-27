@@ -276,6 +276,8 @@ impl State {
         let Some(target) = self.space.outputs().find(|o| o.name() == name).cloned() else {
             return false;
         };
+        // Levada de propósito: não volta sozinha à tela de onde saiu.
+        self.displaced.retain(|d| d.window != window);
         let (Some(from), Some(to)) = (self.area_for(&window), self.usable_area_of(&target)) else {
             return false;
         };
@@ -474,6 +476,8 @@ impl State {
             return;
         }
         self.tiled.retain(|s| s != surface.wl_surface());
+        // Restaurada pelo usuário: não volta sozinha à tela de onde saiu.
+        self.displaced.retain(|d| d.window != window);
         // Pede de volta o tamanho que a janela tinha antes de maximizar, para a
         // animação saber o destino. Sem registro, o app escolhe o tamanho.
         // Janela que nasceu maximizada (sem tamanho de antes): dois terços do tamanho de

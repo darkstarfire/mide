@@ -74,6 +74,10 @@ struct Head {
     internal: bool,
     /// Cursor no plano de cursor da placa: imagem enviada, nome dela e posição.
     cursor: HwCursor,
+    /// Desde quando a placa não mostra mais o monitor conectado: a tela continua
+    /// ligada (sem desenhar) pela folga de `outputs::UNPLUG_GRACE`, porque monitores
+    /// derrubam o "conectado" por um instante ao acordar do DPMS.
+    missing: Option<Instant>,
 }
 
 /// Cursor de hardware de uma tela (comandos de cursor do DRM): a imagem vai uma vez
@@ -455,17 +459,50 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) {
         .map(|(_, c)| c.handle)
         .collect();
 
-    // Telas que sumiram ou foram desligadas.
+    // Telas que sumiram ou foram desligadas. Desligada nas Configurações sai na hora;
+    // monitor que a placa não mostra mais conectado espera a folga (ao acordar do
+    // DPMS, HDMI e DP somem por ~1 s e voltam: antes isso levava as janelas da tela
+    // para a principal a cada vez que as telas apagavam).
     crate::outputs::sweep_globals(state);
     let mut retired = Vec::new();
-    gpu.heads.retain(|head| {
-        let stays = keep.contains(&head.connector);
-        if !stays {
+    let mut recheck: Option<Duration> = None;
+    let now = Instant::now();
+    let blanked = gpu.blanked;
+    gpu.heads.retain_mut(|head| {
+        let present = found.iter().any(|c| c.handle == head.connector);
+        if present && !keep.contains(&head.connector) {
             tracing::info!("tela {} desligada", head.output.name());
             retired.push(head.global.clone());
+            return false;
         }
-        stays
+        match crate::outputs::presence(&mut head.missing, present, blanked, now) {
+            crate::outputs::Presence::Here => true,
+            crate::outputs::Presence::Back => {
+                tracing::info!("monitor {} voltou: a tela continua como estava", head.output.name());
+                // O monitor pode ter perdido o modo e o cursor: refaz tudo no próximo quadro.
+                if let Err(err) = head.surface.surface().reset_state() {
+                    tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
+                }
+                head.surface.reset_buffers();
+                head.pending = false;
+                head.cursor = HwCursor::default();
+                true
+            }
+            crate::outputs::Presence::Wait(after) => {
+                tracing::info!("monitor {} sumiu: esperando {:.1} s antes de tirar a tela", head.output.name(), after.as_secs_f32());
+                recheck = Some(recheck.map_or(after, |r| r.min(after)));
+                true
+            }
+            crate::outputs::Presence::Gone => {
+                tracing::info!("tela {} desligada (monitor desconectado)", head.output.name());
+                retired.push(head.global.clone());
+                false
+            }
+        }
     });
+    if let Some(after) = recheck {
+        crate::outputs::recheck_later(state, after);
+    }
     for id in retired {
         crate::outputs::retire_global(state, id);
     }
@@ -567,7 +604,7 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
     let damage_tracker = OutputDamageTracker::from_output(&output);
     // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
     let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
-    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, internal, cursor: HwCursor::default() })
+    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, internal, cursor: HwCursor::default(), missing: None })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).
@@ -830,6 +867,15 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         if !state.blanked {
             reset_heads(gpu);
             state.redraw = true;
+            // Monitor que sumiu com as telas apagadas: a folga começa agora, ao acender.
+            let mut any_missing = false;
+            for head in gpu.heads.iter_mut().filter(|h| h.missing.is_some()) {
+                head.missing = Some(Instant::now());
+                any_missing = true;
+            }
+            if any_missing {
+                crate::outputs::recheck_later(state, crate::outputs::UNPLUG_GRACE);
+            }
         }
     }
     // Voltou da suspensão: uma troca de quadro em andamento pode ter se perdido (o mide
@@ -850,6 +896,10 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     let mut again = false;
     let Gpu { renderer, heads, scene, drm, gbm, cursor_size, .. } = gpu;
     for head in heads.iter_mut() {
+        // Monitor sumido (na folga antes de a tela sair): nada a entregar ao conector.
+        if head.missing.is_some() {
+            continue;
+        }
         if head.pending {
             // Esta tela desenha no próximo vblank dela.
             again |= wanted;

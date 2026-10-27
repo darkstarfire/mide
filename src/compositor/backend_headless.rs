@@ -53,6 +53,9 @@ struct Head {
     /// O alvo já tem um quadro (é sempre o mesmo: o conteúdo é o do quadro anterior,
     /// idade 1). Assim os testes desenham só o que mudou, como o DRM.
     drawn: bool,
+    /// "Desconectada" pelo autoteste (`unplug`) desde quando: como no DRM, a tela só
+    /// sai depois da folga de `outputs::UNPLUG_GRACE`.
+    missing: Option<std::time::Instant>,
 }
 
 struct Gpu {
@@ -88,7 +91,7 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
     let heads = sizes
         .iter()
         .enumerate()
-        .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, global: None, target: None, damage_tracker: None, drawn: false })
+        .map(|(i, size)| Head { name: format!("HEADLESS-{}", i + 1), native: *size, output: None, global: None, target: None, damage_tracker: None, drawn: false, missing: None })
         .collect();
     // `MIDE_SCENE_CURSOR=1`: a cena desenha o cursor, como no DRM sem o plano de cursor
     // (para medir o ponteiro agitado e o custo do cursor na cena).
@@ -172,9 +175,26 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) -> Result<(), Box<dyn Error>>
     let monitors = state.config.monitors.clone();
     let any_enabled = gpu.heads.iter().any(|h| monitors.outputs.get(&h.name).is_none_or(|m| m.enabled));
     crate::outputs::sweep_globals(state);
+    let now = std::time::Instant::now();
+    let mut recheck: Option<Duration> = None;
     for (i, head) in gpu.heads.iter_mut().enumerate() {
         let config = monitors.outputs.get(&head.name);
-        let enabled = config.is_none_or(|m| m.enabled) || (!any_enabled && i == 0);
+        // Monitor "desconectado" pelo autoteste: espera a folga, como no DRM.
+        let connected = !state.test_unplugged.contains(&head.name);
+        let gone = match crate::outputs::presence(&mut head.missing, connected, state.blanked, now) {
+            crate::outputs::Presence::Wait(after) if head.output.is_some() => {
+                tracing::info!("monitor {} sumiu: esperando {:.1} s antes de tirar a tela", head.name, after.as_secs_f32());
+                recheck = Some(recheck.map_or(after, |r| r.min(after)));
+                false
+            }
+            crate::outputs::Presence::Back if head.output.is_some() => {
+                tracing::info!("monitor {} voltou: a tela continua como estava", head.name);
+                false
+            }
+            crate::outputs::Presence::Here | crate::outputs::Presence::Back => false,
+            _ => true,
+        };
+        let enabled = !gone && (config.is_none_or(|m| m.enabled) || (!any_enabled && i == 0));
         if !enabled {
             if head.output.take().is_some() {
                 tracing::info!("tela {} desligada", head.name);
@@ -214,6 +234,9 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) -> Result<(), Box<dyn Error>>
             head.damage_tracker = Some(OutputDamageTracker::from_output(output));
             tracing::info!("tela {}: {}x{}", head.name, size.0, size.1);
         }
+    }
+    if let Some(after) = recheck {
+        crate::outputs::recheck_later(state, after);
     }
     let live: Vec<Output> = gpu.heads.iter().filter_map(|h| h.output.clone()).collect();
     crate::outputs::place(state, &live);
