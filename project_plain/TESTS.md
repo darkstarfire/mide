@@ -1019,3 +1019,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Retângulo de seleção conferido por quadro (`tests/scenario.sh ... QUADRO`): no Arquivos em ícones, véu cinza com borda e os itens tocados escolhidos; na lista, arrastar a divisória entre Nome e Modificado muda a coluna sem retângulo. `cargo test` do mide-ui: `band_touches`.
 - Seletor no Player por quadro (escuro e claro): no meio, compacto, ícones da barra lateral na cor de destaque.
 - Na sessão: seletor de arquivos do Player e de outros apps; menu Janela de vários apps (Arquivos, Terminal, um app GTK/X11), Mover para com os dois monitores; retângulo na mesa e no Arquivos (claro e escuro); "sombra" do menu da gaveta do Code sumida; agitar o mouse.
+
+## HiDPI (pedido do usuário em 2026-10-27)
+
+- Testes de interface também com escala fracionária: além de 1366x768 em 100%, conferir 2560x1440 (ou 2560x1600) com escala 1,5 (150%) e 1,25 (125%), olhando a nitidez da barra superior (ícones e letras), dos ícones da dock e do texto dos apps mide-ui.
+- Problema conhecido: no 2K do usuário (Chromebook), a barra superior a 150% perdeu definição e proporção em alguns pontos. Conferir com um quadro (`tests/scenario.sh ... QUADRO`) depois da correção.
