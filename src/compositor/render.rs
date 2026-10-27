@@ -69,6 +69,8 @@ pub struct Scene {
     pub draw_cursor: bool,
     /// Ícones do aviso de volume e brilho.
     osd_icons: crate::osd::Icons,
+    /// Quando medir o tom atrás da barra superior, por tela.
+    tone: std::collections::HashMap<String, crate::bar_tone::Probe>,
 }
 
 impl Scene {
@@ -83,7 +85,7 @@ impl Scene {
         // Compila o shader do papel de parede já aqui, para o erro aparecer na partida.
         crate::wallpaper::Wallpaper::new(renderer, None).map_err(|e| format!("falha ao compilar o shader do papel de parede: {e}"))?;
         let _ = state;
-        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true, osd_icons: Default::default() })
+        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true, osd_icons: Default::default(), tone: Default::default() })
     }
 
     /// A cena desenha o cursor (backends sem anfitrião).
@@ -109,6 +111,8 @@ impl Scene {
             || state.preview.as_ref().is_some_and(|p| p.appearing())
             || self.genie.glass_since.borrow().values().any(|t| t.elapsed() < crate::genie::GLASS_FADE)
             || state.osd.as_ref().is_some_and(|o| o.moving(state.config.effects.transitions))
+            // Medida do tom atrás da barra adiada (intervalo mínimo): mais um quadro.
+            || self.tone.values().any(|p| p.pending)
     }
 
     /// Desenha um quadro no alvo `framebuffer`: prévias, popups, camadas, janelas,
@@ -127,7 +131,7 @@ impl Scene {
         state: &mut State,
         age: usize,
     ) -> Result<(smithay::backend::renderer::sync::SyncPoint, Option<Vec<Rectangle<i32, Physical>>>), Box<dyn Error>> {
-        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor, osd_icons } = self;
+        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor, osd_icons, tone } = self;
         // Cada tela tem o seu papel de parede (textura no tamanho dela).
         let output_name = output.name();
         if !wallpapers.contains_key(&output_name) {
@@ -214,7 +218,7 @@ impl Scene {
         custom.extend(snap_front);
         custom.extend(popup_elements(renderer, state, origin).into_iter().map(MideRenderElement::from));
         let before_layers = custom.len();
-        let (layers, mut glass) = layer_elements(renderer, output, state, blur, wallpaper);
+        let (layers, mut glass, bar) = layer_elements(renderer, output, state, blur, wallpaper);
         for region in &mut glass {
             region.at += before_layers;
         }
@@ -228,6 +232,11 @@ impl Scene {
             region
         }));
         glass.extend(osd_glass);
+        // Tom atrás da barra superior (antes de o vidro entrar na lista): o que está
+        // atrás dela é tudo depois dos elementos dela.
+        if let Some((end, rect)) = bar {
+            measure_bar_tone(renderer, blur, tone.entry(output_name.clone()).or_default(), state, &output_name, &custom[before_layers + end..], rect, scale, output, wallpaper.generation());
+        }
         // Vidro (dock, barra, menus): o que está atrás de cada região (tudo depois dela
         // na lista) é desenhado numa textura, desfocado e posto logo atrás da camada.
         // De trás para a frente: o vidro de um menu vê a dock já com o vidro dela.
@@ -735,19 +744,71 @@ fn window_elements(
     (elements, glass)
 }
 
+/// Mede o brilho do que está atrás da barra superior (`behind`, a cena sem a barra e o
+/// que fica na frente dela) e guarda em `state.bar_tone` se a faixa é escura, com
+/// histerese. Só mede quando o que está atrás mudou (assinatura dos elementos e do
+/// papel de parede) e no máximo a cada `bar_tone::MIN_INTERVAL`.
+#[allow(clippy::too_many_arguments)]
+fn measure_bar_tone(
+    renderer: &mut GlesRenderer,
+    blur: &crate::blur::Blur,
+    probe: &mut crate::bar_tone::Probe,
+    state: &mut State,
+    output_name: &str,
+    behind: &[MideRenderElement],
+    rect: Rectangle<i32, Logical>,
+    scale: f64,
+    output: &Output,
+    wallpaper_generation: u64,
+) {
+    let px = Rectangle::<i32, Logical>::new(
+        (crate::clip::phys(rect.loc).x, crate::clip::phys(rect.loc).y).into(),
+        ((rect.size.w as f64 * scale).round() as i32, (rect.size.h as f64 * scale).round() as i32).into(),
+    );
+    let out_size = output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
+    let Some(px) = px.intersection(Rectangle::from_size(out_size)) else {
+        return;
+    };
+    let key = backdrop_key(behind, px) ^ wallpaper_generation.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let now = std::time::Instant::now();
+    if !probe.due(key, now) {
+        return;
+    }
+    probe.done(key, now);
+    let src = blur_source(px, out_size);
+    let src = Rectangle::<i32, Logical>::new((src.loc.x as i32, src.loc.y as i32).into(), px.size);
+    let Some(luma) = blur.region_luma(renderer, behind, px, src, out_size) else {
+        return;
+    };
+    let before = state.bar_tone.get(output_name).copied();
+    let dark = crate::bar_tone::decide(before, luma);
+    if before != Some(dark) {
+        tracing::info!("barra: atrás dela {} em {output_name} (brilho {luma:.0})", if dark { "escuro" } else { "claro" });
+        state.bar_tone.insert(output_name.to_string(), dark);
+    } else {
+        tracing::debug!("barra: brilho atrás dela {luma:.0} em {output_name}");
+    }
+}
+
 /// Superfícies de camada (barra, dock, buscador) que ficam acima das janelas.
 /// As camadas de fundo ainda não são desenhadas: ficam para quando o desktop tiver papel de parede.
+/// Elementos das camadas, regiões de vidro e onde acabam os da barra (`mide-bar`), com a
+/// área dela: a medida do tom da barra olha o que fica atrás desse ponto da lista.
+type LayerScene = (Vec<MideRenderElement>, Vec<GlassRegion>, Option<(usize, Rectangle<i32, Logical>)>);
+
 fn layer_elements(
     renderer: &mut GlesRenderer,
     output: &Output,
     state: &State,
     blur: &crate::blur::Blur,
     wallpaper: &crate::wallpaper::Wallpaper,
-) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
+) -> LayerScene {
     let source = state.layer_output(output);
     let map = layer_map_for_output(&source);
     let mut elements: Vec<MideRenderElement> = Vec::new();
     let mut glass = Vec::new();
+    // Barra superior: onde os elementos dela acabam na lista e a área dela na tela.
+    let mut bar = None;
     // Do topo para o fundo, como a lista de render.
     for layer in crate::state::front_layers(&map).iter() {
         let Some(geo) = map.layer_geometry(layer) else {
@@ -778,6 +839,9 @@ fn layer_elements(
             elements.extend(surface.into_iter().map(|e| MideRenderElement::Scaled(RescaleRenderElement::from_element(e, center, zoom))));
         } else {
             elements.extend(surface.into_iter().map(MideRenderElement::from));
+        }
+        if layer.namespace() == "mide-bar" {
+            bar = Some((elements.len(), geo));
         }
         match layer.namespace() {
             // Atrás do launcher, o papel de parede desfocado (como o Launchpad).
@@ -826,7 +890,7 @@ fn layer_elements(
             _ => {}
         }
     }
-    (elements, glass)
+    (elements, glass, bar)
 }
 
 /// Vidro atrás de uma camada ou janela: posição na lista de render (logo depois dos

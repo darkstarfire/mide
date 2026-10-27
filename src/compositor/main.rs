@@ -6,6 +6,7 @@
 mod activation;
 mod app_menus;
 mod backend_headless;
+mod bar_tone;
 mod backend_udev;
 mod backend_winit;
 mod blur;

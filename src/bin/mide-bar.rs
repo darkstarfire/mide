@@ -397,6 +397,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         titles: Vec::new(),
         over_launcher: false,
         launcher_k: 0.0,
+        tone_dark: None,
+        tone_k: if wallpaper_top_dark() { 1.0 } else { 0.0 },
         clock: String::new(),
         items: Vec::new(),
         appmenu: mide::appmenu::start_registrar(),
@@ -513,6 +515,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 last_refresh = std::time::Instant::now();
             }
             let animating = bar.step_launcher_fade();
+            let animating = bar.step_tone() || animating;
             TimeoutAction::ToDuration(Duration::from_millis(if animating { 16 } else { 50 }))
         })
         .map_err(|e| e.to_string())?;
@@ -873,6 +876,12 @@ struct Bar {
     over_launcher: bool,
     /// Transição para o launcher: 0 barra normal, 1 sem fundo e com texto branco.
     launcher_k: f32,
+    /// O compositor diz se o que está atrás da barra é escuro (`None`: não disse, vale
+    /// o alto do papel de parede).
+    tone_dark: Option<bool>,
+    /// Transição do texto da barra sem fundo: 0 = texto escuro (fundo claro), 1 = texto
+    /// branco (fundo escuro).
+    tone_k: f32,
     clock: String,
     /// Quais itens de `BAR_ITEMS` estão à mostra (para redesenhar quando mudam).
     items: Vec<bool>,
@@ -940,10 +949,39 @@ impl Bar {
         true
     }
 
+    /// O fundo atrás da barra é escuro? O que o compositor mediu ou, sem a medida
+    /// (compositor antigo), o alto do papel de parede.
+    fn behind_dark(&self) -> bool {
+        self.tone_dark.unwrap_or_else(wallpaper_top_dark)
+    }
+
+    /// Um passo da troca de cor do texto da barra sem fundo (claro ↔ escuro), com a
+    /// duração das transições curtas; sem "Transições suaves", troca de uma vez.
+    /// Devolve se ainda está animando.
+    fn step_tone(&mut self) -> bool {
+        let target = if self.behind_dark() { 1.0 } else { 0.0 };
+        if (self.tone_k - target).abs() < f32::EPSILON {
+            return false;
+        }
+        let step = if mide::settings_file::effect("transitions") { 16.0 / mide::motion::VIEW_SWITCH.as_millis() as f32 } else { 1.0 };
+        self.tone_k = if target > self.tone_k { (self.tone_k + step).min(1.0) } else { (self.tone_k - step).max(0.0) };
+        // Só a barra sem fundo muda de cor; com fundo, a cor vem do tema.
+        if !mide::settings_file::flag("bar", "background", false) {
+            self.draw_bar();
+        }
+        (self.tone_k - target).abs() >= f32::EPSILON
+    }
+
     fn refresh_launcher(&mut self) {
-        let open = ask_compositor("launcher state")
-            .and_then(|lines| lines.first().cloned())
-            .is_some_and(|l| l == "open");
+        let reply = ask_compositor("launcher state").unwrap_or_default();
+        let open = reply.first().is_some_and(|l| l == "open");
+        // Segunda linha: o tom atrás da barra (`tone dark|light`), medido pelo
+        // compositor na hora em que o que está atrás muda.
+        let tone = reply.iter().find_map(|l| l.strip_prefix("tone ")).map(|t| t == "dark");
+        if tone.is_some() && tone != self.tone_dark {
+            tracing::info!("barra: fundo atrás {}", if tone == Some(true) { "escuro (texto branco)" } else { "claro (texto escuro)" });
+            self.tone_dark = tone;
+        }
         if open != self.over_launcher {
             self.over_launcher = open;
             if open {
@@ -1285,7 +1323,11 @@ impl Bar {
         // Tahoe: sem fundo (texto direto sobre o papel de parede); `[bar] background`
         // traz o fundo translúcido de volta.
         let no_bg = !mide::settings_file::flag("bar", "background", false);
-        let wall_dark = no_bg && wallpaper_top_dark();
+        // Tom do que está atrás da barra (medido pelo compositor), com transição: 0 =
+        // fundo claro (texto escuro), 1 = fundo escuro (texto branco). Em 8 níveis,
+        // como a cor do texto do launcher (o cache de texto guarda poucas cores).
+        let tone = if no_bg { (mide::motion::smooth(self.tone_k) * 8.0).round() / 8.0 } else { 0.0 };
+        let wall_dark = no_bg && tone >= 0.5;
         self.bar_dirty = false;
         if !self.configured || self.width == 0 {
             return;
@@ -1306,7 +1348,7 @@ impl Bar {
         let level = (ease * 8.0).round() / 8.0;
         let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * level).round() as u8;
         let base = if no_bg {
-            if wall_dark { 250 } else { 18 }
+            (18.0 + (250.0 - 18.0) * tone).round() as u8
         } else if pal().dark {
             245
         } else {
@@ -1323,7 +1365,7 @@ impl Bar {
         // Cápsula do item aberto: vidro claro sobre o papel de parede (sem fundo) ou o
         // destaque de sempre.
         let cap = if no_bg {
-            if wall_dark { rgba(255, 255, 255, 52) } else { rgba(255, 255, 255, 150) }
+            rgba(255, 255, 255, (150.0 - (150.0 - 52.0) * tone).round() as u8)
         } else {
             pal().ink(30)
         };

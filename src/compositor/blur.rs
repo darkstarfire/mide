@@ -252,6 +252,32 @@ impl Blur {
         Some((blurred, size, id))
     }
 
+    /// Brilho médio (0 a 255) dos elementos `behind` na área `area` da tela (pixels):
+    /// desenha a área na textura de fundo de sempre e lê só ela (`src`, a mesma área
+    /// nas coordenadas da textura), amostrando um pixel a cada poucos.
+    pub fn region_luma<E: RenderElement<GlesRenderer>>(
+        &self,
+        renderer: &mut GlesRenderer,
+        behind: &[E],
+        area: Rectangle<i32, Logical>,
+        src: Rectangle<i32, Logical>,
+        out_size: Size<i32, Logical>,
+    ) -> Option<f32> {
+        use smithay::backend::renderer::ExportMem;
+        if area.size.w <= 0 || area.size.h <= 0 {
+            return None;
+        }
+        let target = self.target(renderer, out_size, Some((0, "")))?;
+        let mut texture = render_region(renderer, behind, area, out_size, target)?;
+        let mapping = {
+            let fb = renderer.bind(&mut texture).ok()?;
+            let region = Rectangle::new((src.loc.x, src.loc.y).into(), (src.size.w, src.size.h).into());
+            renderer.copy_framebuffer(&fb, region, Fourcc::Abgr8888).ok()?
+        };
+        let bytes = renderer.map_texture(&mapping).ok()?;
+        crate::bar_tone::mean_luma(bytes, 7)
+    }
+
     /// Desenha a região `src` de `texture` (de tamanho total `tex_size`) inteira em
     /// `target` (de tamanho `size`), com um dos programas de passada.
     fn pass(

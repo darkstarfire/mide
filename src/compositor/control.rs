@@ -472,7 +472,18 @@ pub fn handle(state: &mut State, command: &str) -> String {
             "ok\n".into()
         }
         Some("launcher") => match words.next() {
-            Some("state") => if state.launcher_open() { "open\n".into() } else { "closed\n".into() },
+            // Segunda linha: o tom atrás da barra superior (`tone dark|light`), na tela
+            // principal (com telas espelhadas, a barra aparece em todas). Quem lê só a
+            // primeira linha (a captura) não muda; a barra pergunta isto a cada 50 ms.
+            Some("state") => {
+                let open = if state.launcher_open() { "open" } else { "closed" };
+                let primary = state.primary_output().map(|o| o.name());
+                let tone = primary.and_then(|name| state.bar_tone.get(&name).copied()).or_else(|| state.bar_tone.values().next().copied());
+                match tone {
+                    Some(dark) => format!("{open}\ntone {}\n", if dark { "dark" } else { "light" }),
+                    None => format!("{open}\n"),
+                }
+            }
             Some("close") => {
                 if state.launcher_open() {
                     state.toggle_launcher();
