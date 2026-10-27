@@ -152,8 +152,15 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // sem fechar as janelas; `restart all` reinicia também o compositor (as janelas
         // dos apps fecham, a sessão de login continua).
         Some("restart") => match words.next() {
+            // `restart shell mide-bar mide-dock`: só esses (o `mide-update` passa os que
+            // mudaram ao recompilar); sem nomes, todos.
             Some("shell") => {
-                crate::restart_shell();
+                let names: Vec<&str> = words.collect();
+                if names.is_empty() {
+                    crate::restart_shell();
+                } else {
+                    crate::restart_shell_only(&names);
+                }
                 "ok\n".into()
             }
             Some("all") => {
@@ -162,7 +169,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 state.quit_requested = true;
                 "ok\n".into()
             }
-            _ => "uso: restart shell|all\n".into(),
+            _ => "uso: restart shell [programas...]|all\n".into(),
         },
         // `copy <texto>`: o compositor guarda o texto na área de transferência.
         Some("copy") => {

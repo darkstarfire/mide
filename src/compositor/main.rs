@@ -239,7 +239,19 @@ fn wants_polkit_agent() -> bool {
 /// Encerra os programas do DE abertos pelo mide e espera eles saírem (até 2 s), para
 /// os novos não brigarem com os antigos (o nome das notificações no D-Bus, por exemplo).
 fn stop_shell() {
-    let running: Vec<(String, u32)> = SHELL.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default();
+    stop_shell_only(None);
+}
+
+/// Encerra os programas do DE (só os de `only`, se dado) e espera eles saírem.
+fn stop_shell_only(only: Option<&[&str]>) {
+    let running: Vec<(String, u32)> = SHELL
+        .lock()
+        .map(|mut s| {
+            let (stop, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut *s).into_iter().partition(|(name, _)| only.is_none_or(|o| o.contains(&name.as_str())));
+            *s = keep;
+            stop
+        })
+        .unwrap_or_default();
     for (_, pid) in &running {
         let _ = std::process::Command::new("kill").args(["-TERM", &pid.to_string()]).status();
     }
@@ -264,6 +276,25 @@ pub fn restart_shell() {
     }
     if wants_polkit_agent() {
         spawn_client("mide-polkit-agent");
+    }
+}
+
+/// Reinicia só os programas do DE pedidos (os que mudaram ao recompilar, pelo
+/// `mide-update`), sem mexer nos outros nem nas janelas. Nomes que não são do DE
+/// (apps comuns) ficam de fora: valem na próxima vez que o app abrir.
+pub fn restart_shell_only(names: &[&str]) {
+    let ours: Vec<&str> = names
+        .iter()
+        .copied()
+        .filter(|n| SHELL_CLIENTS.contains(n) || (*n == "mide-portal" && wants_portal()) || (*n == "mide-polkit-agent" && wants_polkit_agent()))
+        .collect();
+    if ours.is_empty() {
+        return;
+    }
+    tracing::info!("reiniciando só: {}", ours.join(", "));
+    stop_shell_only(Some(&ours));
+    for name in ours {
+        spawn_client(name);
     }
 }
 

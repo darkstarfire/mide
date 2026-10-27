@@ -1,14 +1,31 @@
 #!/bin/sh
 # Recompila o mide deste projeto e atualiza a sessão aberta, sem sair dela.
 #
-# Uso: data/mide-update          barra, dock, área de trabalho, notificações e
-#                                   launcher com os programas novos (as janelas ficam)
-#      data/mide-update --all   também o compositor: as janelas dos apps fecham,
-#                                   mas a sessão continua (sem voltar ao login)
+# Uso: data/mide-update        recompila e reinicia só os programas do DE que mudaram
+#                                (barra, dock, área de trabalho, notificações...), sem
+#                                fechar janelas; o compositor e os apps que mudaram valem
+#                                na próxima vez (entrar de novo / abrir o app de novo)
+#      data/mide-update --all  também o compositor: as janelas dos apps fecham, mas a
+#                                sessão continua (sem voltar ao login)
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."
 PATH="$HOME/.cargo/bin:$PATH"
+
+# Impressão digital de cada programa do mide (nome e soma do conteúdo), antes e depois
+# de compilar: o que mudou é o que muda de soma.
+programas() {
+    for f in target/release/mide target/release/mide-*; do
+        case "$f" in *.d) continue ;; esac
+        [ -f "$f" ] && [ -x "$f" ] && printf '%s %s\n' "$(basename "$f")" "$(sha256sum < "$f" | cut -c1-16)"
+    done | sort
+}
+antes="$(mktemp)"
+depois="$(mktemp)"
+trap 'rm -f "$antes" "$depois"' EXIT
+programas > "$antes"
 cargo build --release
+programas > "$depois"
+mudaram="$(comm -13 "$antes" "$depois" | cut -d' ' -f1 | tr '\n' ' ')"
 
 # Tema de ícones do mide (fork do WhiteSur: github.com/fabioaacarneiro/mide-icons), na
 # versão fixada em data/icons.version. Só instala de novo quando a versão muda.
@@ -62,7 +79,28 @@ command -v ffmpeg >/dev/null ||
 if [ "${1:-}" = "--all" ] || [ "${1:-}" = "--tudo" ]; then
     echo "reiniciando o compositor (as janelas abertas vão fechar)..."
     target/release/mide-ctl restart all
-else
-    target/release/mide-ctl restart shell
-    echo "barra, dock e afins atualizados. Para atualizar também o compositor: $0 --all"
+    exit 0
 fi
+if [ -z "$mudaram" ]; then
+    echo "nenhum programa do mide mudou: nada a reiniciar"
+    exit 0
+fi
+# Programas do DE que ficam abertos: reiniciados na hora, só os que mudaram (as janelas
+# ficam). O compositor e os apps não são reiniciados: fechariam o que está aberto.
+shell=""
+apps=""
+compositor=""
+for nome in $mudaram; do
+    case "$nome" in
+        mide-desktop | mide-dock | mide-bar | mide-notifications | mide-portal | mide-polkit-agent) shell="$shell $nome" ;;
+        mide) compositor=1 ;;
+        mide-ctl) ;;
+        *) apps="$apps $nome" ;;
+    esac
+done
+if [ -n "$shell" ]; then
+    target/release/mide-ctl restart shell $shell && echo "reiniciados:$shell"
+fi
+[ -n "$apps" ] && echo "apps com versão nova (valem ao abrir de novo):$apps"
+[ -n "$compositor" ] && echo "o compositor mudou: vale ao entrar de novo na sessão (ou $0 --all, que fecha as janelas)"
+exit 0
