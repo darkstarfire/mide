@@ -54,7 +54,9 @@ use crate::{
     state::{OutputInfo, State},
 };
 
-type Surface = GbmBufferedSurface<GbmAllocator<DrmDeviceFd>, ()>;
+/// Cada quadro entregue leva os pedidos de aviso de apresentação (`wp_presentation`)
+/// das superfícies desenhadas nele, devolvidos no vblank.
+type Surface = GbmBufferedSurface<GbmAllocator<DrmDeviceFd>, smithay::desktop::utils::OutputPresentationFeedback>;
 type DrmMode = smithay::reexports::drm::control::Mode;
 
 /// Uma tela ligada.
@@ -172,12 +174,20 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     // Vblank: o quadro entregue foi para a tela; desenha o próximo se algo mudou.
     {
         let gpu = gpu.clone();
-        loop_handle.insert_source(drm_notifier, move |event, _, state| match event {
+        loop_handle.insert_source(drm_notifier, move |event, meta, state| match event {
             DrmEvent::VBlank(crtc) => {
                 let mut gpu = gpu.borrow_mut();
                 if let Some(head) = gpu.heads.iter_mut().find(|h| h.crtc == crtc) {
-                    if let Err(err) = head.surface.frame_submitted() {
-                        tracing::warn!("vblank: {err}");
+                    match head.surface.frame_submitted() {
+                        // O quadro está na tela: os apps dele recebem a hora da troca
+                        // de página (`wp_presentation`), a frequência e o número do vblank.
+                        Ok(Some(feedback)) => {
+                            let (time, hw_clock) = crate::presentation::vblank_time(meta.as_ref());
+                            let seq = meta.as_ref().map_or(0, |m| u64::from(m.sequence));
+                            crate::presentation::present_vblank(feedback, &head.output, time, hw_clock, seq);
+                        }
+                        Ok(None) => {}
+                        Err(err) => tracing::warn!("vblank: {err}"),
                     }
                     head.pending = false;
                 }
@@ -876,7 +886,10 @@ fn render(gpu: &mut Gpu, state: &mut State) {
                 Some(rects) if !internal && !full && !rects.is_empty() => rects,
                 _ => vec![Rectangle::from_size(size)],
             };
-            surface.queue_buffer(Some(sync), Some(clips), ())?;
+            // Os pedidos de aviso das superfícies deste quadro vão com ele até o vblank
+            // (se o quadro não chegar à tela, o Smithay os descarta).
+            let feedback = crate::presentation::collect(state, output);
+            surface.queue_buffer(Some(sync), Some(clips), feedback)?;
             Ok(())
         })();
         match result {

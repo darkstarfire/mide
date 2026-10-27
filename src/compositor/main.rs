@@ -27,6 +27,7 @@ mod session;
 mod shake;
 mod snap;
 mod preview;
+mod presentation;
 mod render;
 mod state;
 mod title;
@@ -108,6 +109,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config = config::Config::load()?;
     tracing::info!("{} atalho(s) configurado(s)", config.bindings.len());
     let mut state = State::new(display_handle, config, loop_handle.clone())?;
+    // Aviso de quando cada quadro apareceu na tela (o Chrome alinha a rolagem por ele).
+    presentation::init(&state.display_handle);
 
     // DRM: o mide direto na tela (iniciado de um console de texto). Winit: numa janela
     // dentro do desktop atual (desenvolvimento). `MIDE_BACKEND=drm|winit|headless` escolhe;

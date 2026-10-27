@@ -262,6 +262,8 @@ fn render(
     // Apresenta o quadro inteiro. Com dano parcial, o buffer de trás pode ter pixels
     // de quadros antigos, e a diferença aparece como padrão pontilhado nas sombras.
     backend.submit(None)?;
+    // Sem a hora do vblank do anfitrião: o quadro conta como apresentado ao entregá-lo.
+    crate::presentation::present_now(crate::presentation::collect(state, output), output);
 
     send_frames(state, output)
 }
