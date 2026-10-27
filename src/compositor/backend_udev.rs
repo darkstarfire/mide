@@ -859,6 +859,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     // registrado, no máximo uma vez a cada 5 s, para achar a causa.
     let started = std::time::Instant::now();
     let _slow = SlowFrame(started);
+    crate::watchdog::phase("render");
     // Tela apagada (tempo sem uso): desliga os monitores e não desenha; ao acender,
     // liga de novo e recomeça os quadros (o que esperava o vblank não vai chegar).
     if state.blanked != gpu.blanked {

@@ -33,6 +33,7 @@ mod render;
 mod state;
 mod title;
 mod wallpaper;
+mod watchdog;
 mod wm;
 mod xwayland;
 
@@ -189,7 +190,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!("pronto. Teste com: WAYLAND_DISPLAY={} <app-wayland>", socket_name());
 
     let stop = event_loop.get_signal();
+    watchdog::start();
     event_loop.run(Duration::from_millis(16), &mut state, |state| {
+        watchdog::beat();
         if let Err(err) = state.display_handle.flush_clients() {
             tracing::warn!("falha ao enviar eventos: {err}");
         }
