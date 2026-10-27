@@ -2063,11 +2063,18 @@ impl Files {
                 // com a setinha das pastas.
                 // As divisórias do cabeçalho se arrastam (como no Finder): o Nome cresce
                 // quando as outras colunas encolhem.
-                let mut widths = [("Modificado", self.list_widths[0]), ("Tamanho", self.list_widths[1]), ("Tipo", self.list_widths[2])];
+                // Larguras guardadas numa janela larga (no monitor grande) podem não caber
+                // agora: as colunas extras encolhem na mesma proporção até o Nome ter
+                // pelo menos 40% da lista (só na tela; o guardado só muda num arrasto).
+                let shown_widths = fit_list_widths(self.list_widths, ui.available_width());
+                let mut widths = [("Modificado", shown_widths[0]), ("Tamanho", shown_widths[1]), ("Tipo", shown_widths[2])];
                 if !shown.is_empty() {
                     sort_by = ui.list_header_resizable("Nome", &mut widths, self.sort, 60.0);
                     header_rect = Some(ui.last_rect());
-                    self.list_widths = [widths[0].1, widths[1].1, widths[2].1];
+                    let after = [widths[0].1, widths[1].1, widths[2].1];
+                    if after != shown_widths {
+                        self.list_widths = after;
+                    }
                 }
                 // Pasta abrindo ou fechando na lista (sanfona): quantas linhas de dentro
                 // aparecem agora; a linha que está entrando é um espaço que cresce, e
@@ -3364,8 +3371,28 @@ fn veil(ui: &mut Ui, rect: (f32, f32, f32, f32), k: f32) {
     });
 }
 
+/// Larguras das colunas extras da lista (Modificado, Tamanho, Tipo) que cabem em
+/// `width`: se a soma deixa o Nome com menos de 40% da largura, todas encolhem na mesma
+/// proporção (mínimo de 60 pontos cada).
+fn fit_list_widths(widths: [f32; 3], width: f32) -> [f32; 3] {
+    let total: f32 = widths.iter().sum();
+    let room = (width * 0.6).max(180.0);
+    if total <= room || total <= 0.0 {
+        return widths;
+    }
+    let k = room / total;
+    widths.map(|w| (w * k).max(60.0).round())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn colunas_largas_encolhem_para_caber() {
+        let fitted = super::fit_list_widths([687.0, 165.0, 150.0], 640.0);
+        assert!(fitted.iter().sum::<f32>() <= 640.0 * 0.6 + 4.0, "{fitted:?}");
+        assert_eq!(super::fit_list_widths([200.0, 100.0, 100.0], 1200.0), [200.0, 100.0, 100.0]);
+    }
+
     use super::*;
 
     #[test]
