@@ -99,7 +99,10 @@ impl State {
         }
     }
 
-    /// O app pediu para ser arrastado (barra desenhada por ele).
+    /// O app pediu para ser arrastado (barra desenhada por ele: apps Wayland com
+    /// decoração própria e apps X11 pelo `xwayland-satellite`, que repassa o
+    /// `_NET_WM_MOVERESIZE` como `move`). Daqui em diante o arrasto é igual ao da barra
+    /// do mide: o mesmo `MoveGrab`, o mesmo desencaixe e o mesmo encaixe pelo topo.
     pub fn begin_move(&mut self, surface: &ToplevelSurface) {
         let Some(window) = self.window_for(surface.wl_surface()) else {
             return;
@@ -107,11 +110,55 @@ impl State {
         let Some(loc) = self.space.element_location(&window) else {
             return;
         };
+        // Pedido atrasado (o botão já foi solto): sem arrasto, senão a janela seguiria
+        // o ponteiro sem botão nenhum apertado.
+        if !self.left_button_held() {
+            return;
+        }
         // O app só pede para mover depois de o ponteiro andar alguns pixels. O arrasto
         // é medido a partir do ponto onde o botão foi pressionado, para não perder esse trecho.
         let anchor = self.press_location.unwrap_or(self.pointer_location);
         let offset = anchor - loc.to_f64();
-        self.move_grab = Some(MoveGrab { window, offset });
+        self.unsnap_fix = None;
+        self.move_grab = Some(MoveGrab { window, offset, fraction: None });
+    }
+
+    /// O app pediu para ser redimensionado por uma borda (apps com borda própria, e
+    /// apps X11 pelo satellite): o mesmo redimensionamento das bordas do mide.
+    pub fn begin_resize(&mut self, surface: &ToplevelSurface, edges: smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge) {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
+        let Some(window) = self.window_for(surface.wl_surface()) else {
+            return;
+        };
+        let Some(loc) = self.space.element_location(&window) else {
+            return;
+        };
+        if !self.left_button_held() || self.is_snapped(surface) || crate::state::fixed_size(&window) {
+            return;
+        }
+        let edges = crate::decorations::Edges {
+            left: matches!(edges, ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft),
+            right: matches!(edges, ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight),
+            top: matches!(edges, ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight),
+            bottom: matches!(edges, ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight),
+        };
+        if !(edges.left || edges.right || edges.top || edges.bottom) {
+            return;
+        }
+        tracing::info!("redimensionar pedido pelo app");
+        let start_size = window.geometry().size;
+        self.resize_grab = Some(crate::state::ResizeGrab {
+            window,
+            edges,
+            start_pointer: self.press_location.unwrap_or(self.pointer_location),
+            start_loc: loc,
+            start_size,
+        });
+    }
+
+    /// O botão esquerdo está apertado (a pega implícita do Smithay está ativa).
+    fn left_button_held(&self) -> bool {
+        self.seat.get_pointer().is_some_and(|p| p.is_grabbed())
     }
 
     /// Área útil da tela onde a janela está (sem a barra e a dock, se estiverem nela).
@@ -257,7 +304,11 @@ impl State {
         let from_loc = self.space.element_location(&window);
         let from_size = window.geometry().size;
         // Já maximizada ou numa metade: o "antes" continua o de quando estava solta.
-        if !already {
+        // Maximizada antes do primeiro quadro (app que lembra que estava maximizado, como
+        // o VS Code, o Zed e o Eclipse): ainda não há tamanho de antes; um 0x0 aqui fazia
+        // o desencaixe pedir 0x0 e grudar o canto da janela no ponteiro (A27).
+        self.unsnap_fix = None;
+        if !already && from_size.w > 0 && from_size.h > 0 {
             if let Some(loc) = from_loc {
                 self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
                 self.restore_positions.push((surface.wl_surface().clone(), loc));
@@ -319,9 +370,22 @@ impl State {
         self.tiled.contains(surface.wl_surface()) || surface.with_pending_state(|s| s.states.contains(XdgState::Maximized))
     }
 
+    /// Tamanho para restaurar uma janela que nunca esteve solta (nasceu maximizada):
+    /// dois terços do tamanho de agora, como no GNOME.
+    fn fallback_restore_size(size: Size<i32, Logical>) -> Size<i32, Logical> {
+        ((size.w * 2 / 3).max(400), (size.h * 2 / 3).max(300)).into()
+    }
+
     /// Arrastando uma janela encaixada: ela volta ao tamanho de antes e fica sob o
     /// ponteiro, no mesmo ponto proporcional da barra (como no Mac e no Windows).
     /// Devolve o novo deslocamento do ponteiro em relação à janela.
+    ///
+    /// Vale igual para a barra do mide, para apps Wayland com barra própria e para apps
+    /// X11: o app só muda de tamanho quando responde ao configure, então até lá a janela
+    /// segue o ponteiro no tamanho que tem, com o ponteiro na mesma fração da largura, e
+    /// no quadro com o tamanho novo é reposta sob o ponteiro (`fix_unsnapped_drag`).
+    /// Assim nenhum quadro mostra a janela fora do lugar, e um app que escolhe outro
+    /// tamanho (ou demora a responder) também fica certo.
     pub fn unsnap_for_drag(&mut self, surface: &ToplevelSurface, window: &Window, pointer: Point<f64, Logical>, offset: Point<f64, Logical>) -> Point<f64, Logical> {
         let size = window.geometry().size;
         let restore = self
@@ -329,7 +393,8 @@ impl State {
             .iter()
             .position(|(s, _)| s == surface.wl_surface())
             .map(|i| self.restore_sizes.remove(i).1)
-            .unwrap_or_else(|| ((size.w * 2 / 3).max(400), (size.h * 2 / 3).max(300)).into());
+            .filter(|s| s.w > 0 && s.h > 0)
+            .unwrap_or_else(|| Self::fallback_restore_size(size));
         self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
         self.tiled.retain(|s| s != surface.wl_surface());
         self.animations.retain(|a| &a.surface != surface.wl_surface());
@@ -341,12 +406,58 @@ impl State {
             s.size = Some(restore);
         });
         surface.send_configure();
-        let fx = (offset.x / size.w.max(1) as f64).clamp(0.0, 1.0);
-        let new_offset = Point::<f64, Logical>::from((fx * restore.w as f64, offset.y));
-        let loc = (pointer - new_offset).to_i32_round();
-        self.space.map_element(window.clone(), loc, false);
-        tracing::info!("janela desencaixada pelo arrasto: volta a {}x{}", restore.w, restore.h);
-        new_offset
+        let fraction = (offset.x / size.w.max(1) as f64).clamp(0.0, 1.0);
+        // Altura do ponteiro a partir do topo: a mesma, sem passar da metade da janela
+        // restaurada (na barra do mide é negativa, dentro da barra).
+        let offset_y = offset.y.min(restore.h as f64 / 2.0);
+        self.unsnap_fix = Some(crate::state::UnsnapFix {
+            window: window.clone(),
+            from_size: size,
+            fraction,
+            offset_y,
+            pointer,
+            since: Instant::now(),
+        });
+        tracing::info!("janela desencaixada pelo arrasto: volta a {}x{} (ponteiro a {:.0}% da largura)", restore.w, restore.h, fraction * 100.0);
+        Point::<f64, Logical>::from((fraction * size.w as f64, offset_y))
+    }
+
+    /// Quadro novo de uma janela desencaixada pelo arrasto: quando chega o tamanho
+    /// novo (a resposta do app ao configure), ela é posta sob o ponteiro com ele na
+    /// mesma fração da largura. Também acerta o arrasto em andamento.
+    pub fn fix_unsnapped_drag(&mut self, window: &Window) {
+        let Some(fix) = self.unsnap_fix.as_ref().filter(|f| &f.window == window) else {
+            return;
+        };
+        // O app não respondeu (ou manteve o tamanho): desiste depois de um tempo, para um
+        // quadro qualquer bem depois não mexer na janela.
+        if fix.since.elapsed() > Duration::from_secs(5) {
+            self.unsnap_fix = None;
+            return;
+        }
+        let size = window.geometry().size;
+        if size == fix.from_size || size.w <= 0 || size.h <= 0 {
+            return;
+        }
+        let Some(fix) = self.unsnap_fix.take() else {
+            return;
+        };
+        let offset = Point::<f64, Logical>::from((fix.fraction * size.w as f64, fix.offset_y.min(size.h as f64 / 2.0)));
+        let mut loc: Point<i32, Logical> = (fix.pointer - offset).to_i32_round();
+        if let Some(area) = self.usable_area() {
+            loc.y = loc.y.max(area.loc.y + bar_height_for(window));
+        }
+        let dragging = self.move_grab.as_ref().is_some_and(|g| &g.window == window);
+        if dragging && let Some(grab) = self.move_grab.as_mut() {
+            grab.offset = offset;
+            grab.fraction = None;
+        }
+        // Sobre uma zona de encaixe a janela fica parada e vai para lá ao soltar.
+        if !(dragging && self.snap.is_some()) {
+            self.space.map_element(window.clone(), loc, false);
+        }
+        tracing::info!("janela desencaixada chegou a {}x{}: posta em ({}, {}) sob o ponteiro", size.w, size.h, loc.x, loc.y);
+        self.redraw = true;
     }
 
     /// Restaura a janela maximizada ao tamanho e posição anteriores, com animação.
@@ -365,11 +476,18 @@ impl State {
         self.tiled.retain(|s| s != surface.wl_surface());
         // Pede de volta o tamanho que a janela tinha antes de maximizar, para a
         // animação saber o destino. Sem registro, o app escolhe o tamanho.
-        let restore_size = self
+        // Janela que nasceu maximizada (sem tamanho de antes): dois terços do tamanho de
+        // agora, no meio da área, como no desencaixe pelo arrasto (A27). Sem pedir um
+        // tamanho, apps X11 pelo satellite ficavam do tamanho da tela.
+        self.unsnap_fix = None;
+        let saved = self
             .restore_sizes
             .iter()
             .position(|(s, _)| s == surface.wl_surface())
-            .map(|i| self.restore_sizes.remove(i).1);
+            .map(|i| self.restore_sizes.remove(i).1)
+            .filter(|s| s.w > 0 && s.h > 0);
+        let fallback = saved.is_none();
+        let restore_size = Some(saved.unwrap_or_else(|| Self::fallback_restore_size(window.geometry().size)));
         surface.with_pending_state(|s| {
             s.states.unset(XdgState::Maximized);
             for tiled in [XdgState::TiledLeft, XdgState::TiledRight, XdgState::TiledTop, XdgState::TiledBottom] {
@@ -384,6 +502,13 @@ impl State {
             .iter()
             .position(|(s, _)| s == surface.wl_surface())
             .map(|i| self.restore_positions.remove(i).1)
+            .filter(|_| !fallback)
+            .or_else(|| {
+                let area = self.area_for(&window)?;
+                let size = restore_size?;
+                let bar_h = bar_height_for(&window);
+                Some((area.loc.x + (area.size.w - size.w) / 2, area.loc.y + bar_h + (area.size.h - bar_h - size.h).max(0) / 2).into())
+            })
             .unwrap_or((48, 48).into());
 
         if let (Some(from_loc), Some(to_size), true) = (

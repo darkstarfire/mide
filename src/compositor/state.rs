@@ -170,6 +170,10 @@ pub struct State {
     pub press_location: Option<Point<f64, Logical>>,
     /// Janela sendo arrastada pelo cursor, enquanto o botão esquerdo está pressionado.
     pub move_grab: Option<MoveGrab>,
+    /// Janela desencaixada por um arrasto, esperando o app mandar o tamanho de antes:
+    /// no primeiro quadro com o tamanho novo ela é posta sob o ponteiro, na mesma
+    /// proporção da barra (A27). Vale também se o botão já foi solto (apps X11 demoram).
+    pub unsnap_fix: Option<UnsnapFix>,
     /// Posição de cada janela antes de maximizar, para restaurar depois.
     pub restore_positions: Vec<(WlSurface, Point<i32, Logical>)>,
     /// Tamanho de cada janela antes de maximizar, para pedir de volta ao restaurar.
@@ -349,6 +353,22 @@ impl ShortcutCapture {
 pub struct MoveGrab {
     pub window: Window,
     pub offset: Point<f64, Logical>,
+    /// Janela desencaixada no arrasto: o ponteiro fica nesta fração da largura real da
+    /// janela (a de agora, até o app mandar o tamanho de antes).
+    pub fraction: Option<f64>,
+}
+
+/// Desencaixe pelo arrasto esperando o tamanho novo do app (`State::unsnap_fix`).
+pub struct UnsnapFix {
+    pub window: Window,
+    /// Tamanho da janela encaixada (o quadro com outro tamanho é a resposta do app).
+    pub from_size: Size<i32, Logical>,
+    /// Fração da largura e altura (em pontos, a partir da origem) do ponteiro.
+    pub fraction: f64,
+    pub offset_y: f64,
+    /// Último ponto do ponteiro durante o arrasto.
+    pub pointer: Point<f64, Logical>,
+    pub since: Instant,
 }
 
 impl State {
@@ -407,6 +427,7 @@ impl State {
             pointer_location: (0.0, 0.0).into(),
             press_location: None,
             move_grab: None,
+            unsnap_fix: None,
             restore_positions: Vec::new(),
             restore_sizes: Vec::new(),
             tiled: Vec::new(),
@@ -674,6 +695,7 @@ impl CompositorHandler for State {
             window.on_commit();
             self.center_dialog_once(&window);
             self.open_animation_if_launched(&window);
+            self.fix_unsnapped_drag(&window);
             self.offer_clipboard_on_first_frame(surface);
         }
     }
@@ -819,6 +841,16 @@ impl XdgShellHandler for State {
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         self.begin_move(&surface);
+    }
+
+    fn resize_request(
+        &mut self,
+        surface: ToplevelSurface,
+        _seat: wl_seat::WlSeat,
+        _serial: Serial,
+        edges: smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
+    ) {
+        self.begin_resize(&surface, edges);
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {

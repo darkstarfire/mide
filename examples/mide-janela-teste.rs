@@ -5,7 +5,16 @@
 //!   `client_side` do `xdg-decoration` (as dicas do Motif dos apps X11);
 //! - `mide-janela-teste filho`: janela "Pai" 600x400 e, depois de ela aparecer, o
 //!   diálogo "Diálogo" 300x200 ligado a ela (`xdg_toplevel.set_parent`);
-//! - `mide-janela-teste comum`: janela "Comum" 400x300 sem nada disso (fica na cascata).
+//! - `mide-janela-teste comum`: janela "Comum" 400x300 sem nada disso (fica na cascata);
+//! - `mide-janela-teste csd [max] [lento] [propria]`: janela "CSD" 500x300 com a barra
+//!   desenhada pelo app (sem decoração do mide), como o Zed, o GTK e o VS Code pelo
+//!   XWayland: apertar nos 40 px de cima pede `xdg_toplevel.move` (A27). `max` pede
+//!   maximizada antes do primeiro quadro (app que lembra que estava maximizado); `lento`
+//!   demora 300 ms para responder a cada configure (como um app X11 pelo
+//!   `xwayland-satellite`); `propria` ignora o tamanho pedido ao sair de maximizada e
+//!   volta ao tamanho dela;
+//! - `mide-janela-teste ssd-max`: janela "SSD" 500x300 com a barra do mide, maximizada
+//!   antes do primeiro quadro.
 //!
 //! Cada janela é pintada de uma cor só; o programa sai sozinho em 20 s.
 
@@ -27,12 +36,24 @@ use smithay_client_toolkit::{
         },
         WaylandSurface,
     },
+    seat::{
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        Capability, SeatHandler, SeatState,
+    },
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
+use smithay_client_toolkit::reexports::client::protocol::{wl_pointer, wl_seat};
 
 struct Teste {
     registry: RegistryState,
     output: OutputState,
+    seat_state: SeatState,
+    seat: Option<wl_seat::WlSeat>,
+    pointer: Option<wl_pointer::WlPointer>,
+    /// Demora de propósito para responder a cada configure (`lento`).
+    slow: bool,
+    /// Fora de maximizada, ignora o tamanho pedido e volta ao seu (`propria`).
+    own_size: bool,
     shm: Shm,
     pool: SlotPool,
     compositor: CompositorState,
@@ -61,6 +82,12 @@ impl Teste {
     /// Cria uma janela; `fixed` pede tamanho fixo, `parent` liga a uma janela-pai.
     #[allow(clippy::too_many_arguments)]
     fn open(&mut self, qh: &QueueHandle<Self>, title: &str, w: u32, h: u32, deco: WindowDecorations, fixed: bool, parent: Option<usize>) {
+        self.open_with(qh, title, w, h, deco, fixed, parent, false);
+    }
+
+    /// Como `open`, e `maximized` pede maximizada antes do primeiro quadro.
+    #[allow(clippy::too_many_arguments)]
+    fn open_with(&mut self, qh: &QueueHandle<Self>, title: &str, w: u32, h: u32, deco: WindowDecorations, fixed: bool, parent: Option<usize>, maximized: bool) {
         let surface = self.compositor.create_surface(qh);
         let window = self.xdg.create_window(surface, deco, qh);
         window.set_title(title);
@@ -72,6 +99,9 @@ impl Teste {
         if let Some(i) = parent {
             window.set_parent(Some(&self.windows[i].0));
         }
+        if maximized {
+            window.set_maximized();
+        }
         window.commit();
         self.windows.push((window, w, h));
     }
@@ -82,11 +112,21 @@ impl WindowHandler for Teste {
         self.done = true;
     }
 
-    fn configure(&mut self, _: &Connection, qh: &QueueHandle<Self>, window: &Window, _: WindowConfigure, _: u32) {
+    fn configure(&mut self, _: &Connection, qh: &QueueHandle<Self>, window: &Window, configure: WindowConfigure, _: u32) {
         let Some(i) = self.windows.iter().position(|(w, _, _)| w == window) else {
             return;
         };
-        let (w, h) = (self.windows[i].1, self.windows[i].2);
+        if self.slow {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+        // O tamanho pedido pelo compositor vale; sem ele (ou com `propria` fora de
+        // maximizada), o tamanho natural da janela.
+        let (mut w, mut h) = (self.windows[i].1, self.windows[i].2);
+        if let (Some(cw), Some(ch)) = configure.new_size
+            && (configure.is_maximized() || !self.own_size)
+        {
+            (w, h) = (cw.get(), ch.get());
+        }
         let color = if i == 0 { 0xff2060e0 } else { 0xffff8a1f };
         let surface = self.windows[i].0.wl_surface().clone();
         paint(&mut self.pool, &surface, w, h, color);
@@ -94,6 +134,41 @@ impl WindowHandler for Teste {
         if i == 0 && self.child_pending {
             self.child_pending = false;
             self.open(qh, "Diálogo", 300, 200, WindowDecorations::RequestServer, false, Some(0));
+        }
+    }
+}
+
+impl SeatHandler for Teste {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+    fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            self.seat = Some(seat);
+        }
+    }
+    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, _: Capability) {}
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+}
+
+impl PointerHandler for Teste {
+    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        for event in events {
+            // Apertar na faixa de cima de uma janela "CSD" (a barra do app) pede ao
+            // compositor para arrastá-la, como fazem os apps com barra própria.
+            if let PointerEventKind::Press { button: 0x110, serial, .. } = event.kind {
+                let Some((window, _, _)) = self.windows.iter().find(|(w, _, _)| w.wl_surface() == &event.surface) else {
+                    continue;
+                };
+                if event.position.1 < 40.0
+                    && let Some(seat) = &self.seat
+                {
+                    window.move_(seat, serial);
+                    println!("arrasto pedido em {:?}", event.position);
+                }
+            }
         }
     }
 }
@@ -125,7 +200,7 @@ impl ProvidesRegistryState for Teste {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry
     }
-    registry_handlers![OutputState];
+    registry_handlers![OutputState, SeatState];
 }
 
 delegate_registry!(Teste);
@@ -143,6 +218,11 @@ fn main() {
     let mut app = Teste {
         registry: RegistryState::new(&globals),
         output: OutputState::new(&globals, &qh),
+        seat_state: SeatState::new(&globals, &qh),
+        seat: None,
+        pointer: None,
+        slow: std::env::args().any(|a| a == "lento"),
+        own_size: std::env::args().any(|a| a == "propria"),
         shm,
         pool,
         compositor,
@@ -158,6 +238,11 @@ fn main() {
             app.child_pending = true;
             app.open(&qh, "Pai", 600, 400, WindowDecorations::RequestServer, false, None);
         }
+        "csd" => {
+            let max = std::env::args().any(|a| a == "max");
+            app.open_with(&qh, "CSD", 500, 300, WindowDecorations::ClientOnly, false, None, max);
+        }
+        "ssd-max" => app.open_with(&qh, "SSD", 500, 300, WindowDecorations::RequestServer, false, None, true),
         _ => app.open(&qh, "Comum", 400, 300, WindowDecorations::RequestServer, false, None),
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);

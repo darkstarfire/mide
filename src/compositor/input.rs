@@ -691,8 +691,17 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
                 offset = state.unsnap_for_drag(&toplevel, &window, pos, offset);
                 if let Some(grab) = state.move_grab.as_mut() {
                     grab.offset = offset;
+                    grab.fraction = Some(offset.x / window.geometry().size.w.max(1) as f64);
                 }
             }
+        }
+        // Desencaixada esperando o tamanho novo do app: o ponteiro fica na mesma fração
+        // da largura que a janela tem agora (A27).
+        if let Some(fraction) = state.move_grab.as_ref().and_then(|g| g.fraction) {
+            offset.x = fraction * window.geometry().size.w as f64;
+        }
+        if let Some(fix) = state.unsnap_fix.as_mut().filter(|f| f.window == window) {
+            fix.pointer = pos;
         }
         // Encostando na barra superior: prévia do encaixe (metades, tela inteira, layouts).
         if !crate::state::fixed_size(&window) {
@@ -1175,9 +1184,11 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
             } else {
                 state.last_title_click = Some((window.clone(), now));
                 let loc = state.space.element_location(&window).unwrap_or_default();
+                state.unsnap_fix = None;
                 state.move_grab = Some(MoveGrab {
                     window,
                     offset: pos - loc.to_f64(),
+                    fraction: None,
                 });
             }
         }
