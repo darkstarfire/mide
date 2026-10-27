@@ -1,0 +1,146 @@
+[
+ {
+  "index": 2411,
+  "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__HDMI3__sink",
+  "description": "Alder Lake PCH-P High Definition Audio Controller HDMI / DisplayPort 3 Output",
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 65536,
+    "value_percent": "100%"
+   },
+   "front-right": {
+    "value": 65536,
+    "value_percent": "100%"
+   }
+  },
+  "ports": [
+   {
+    "name": "[Out] HDMI3",
+    "description": "HDMI / DisplayPort 3 Output",
+    "type": "HDMI",
+    "priority": 700,
+    "availability_group": "HDMI/DP,pcm=5",
+    "availability": "not available"
+   }
+  ],
+  "active_port": "[Out] HDMI3",
+  "properties": {
+   "device.class": "sound",
+   "device.icon_name": "video-display",
+   "device.id": "48",
+   "media.class": "Audio/Sink",
+   "device.description": "Alder Lake PCH-P High Definition Audio Controller",
+   "node.nick": "HDMI / DisplayPort 3 Output",
+   "device.bus": "pci"
+  }
+ },
+ {
+  "index": 2412,
+  "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__HDMI2__sink",
+  "description": "Alder Lake PCH-P High Definition Audio Controller HDMI / DisplayPort 2 Output",
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 65536,
+    "value_percent": "100%"
+   },
+   "front-right": {
+    "value": 65536,
+    "value_percent": "100%"
+   }
+  },
+  "ports": [
+   {
+    "name": "[Out] HDMI2",
+    "description": "HDMI / DisplayPort 2 Output",
+    "type": "HDMI",
+    "priority": 600,
+    "availability_group": "HDMI/DP,pcm=4",
+    "availability": "not available"
+   }
+  ],
+  "active_port": "[Out] HDMI2",
+  "properties": {
+   "device.class": "sound",
+   "device.icon_name": "video-display",
+   "device.id": "48",
+   "media.class": "Audio/Sink",
+   "device.description": "Alder Lake PCH-P High Definition Audio Controller",
+   "node.nick": "HDMI / DisplayPort 2 Output",
+   "device.bus": "pci"
+  }
+ },
+ {
+  "index": 2413,
+  "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__HDMI1__sink",
+  "description": "Alder Lake PCH-P High Definition Audio Controller HDMI / DisplayPort 1 Output",
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 65536,
+    "value_percent": "100%"
+   },
+   "front-right": {
+    "value": 65536,
+    "value_percent": "100%"
+   }
+  },
+  "ports": [
+   {
+    "name": "[Out] HDMI1",
+    "description": "HDMI / DisplayPort 1 Output",
+    "type": "HDMI",
+    "priority": 500,
+    "availability_group": "HDMI/DP,pcm=3",
+    "availability": "available"
+   }
+  ],
+  "active_port": "[Out] HDMI1",
+  "properties": {
+   "device.class": "sound",
+   "device.icon_name": "video-display",
+   "device.id": "48",
+   "media.class": "Audio/Sink",
+   "device.description": "Alder Lake PCH-P High Definition Audio Controller",
+   "node.nick": "HDMI / DisplayPort 1 Output",
+   "device.bus": "pci"
+  }
+ },
+ {
+  "index": 2414,
+  "name": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink",
+  "description": "Alder Lake PCH-P High Definition Audio Controller Speaker",
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 19656,
+    "value_percent": "30%"
+   },
+   "front-right": {
+    "value": 19656,
+    "value_percent": "30%"
+   }
+  },
+  "ports": [
+   {
+    "name": "[Out] Speaker",
+    "description": "Speaker",
+    "type": "Speaker",
+    "priority": 100,
+    "availability_group": "",
+    "availability": "availability unknown"
+   }
+  ],
+  "active_port": "[Out] Speaker",
+  "properties": {
+   "device.class": "sound",
+   "device.icon_name": "audio-speakers",
+   "device.id": "48",
+   "media.class": "Audio/Sink",
+   "device.description": "Alder Lake PCH-P High Definition Audio Controller",
+   "node.nick": "Speaker",
+   "device.bus": "pci"
+  }
+ }
+]

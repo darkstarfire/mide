@@ -8,12 +8,13 @@ OLD_SCFG="$XDG_CONFIG_HOME"
 export XDG_CONFIG_HOME="$SCFG"
 SETTINGS="$PWD/target/debug/mide-settings"
 # Papéis de parede do sistema de teste (os da máquina mudam de uma distribuição para
-# outra): só "Beach". Janela em (48, 76): miniatura "Beach" em (548, 185); interruptor
+# outra): só "Beach". Janela em (48, 76): miniatura "Beach" em (548, 250) (abaixo do
+# interruptor "Clicar no papel de parede mostra a mesa"); interruptor
 # de Sombras em (807, 169).
 export MIDE_BACKGROUNDS_DIR="$SCFG/backgrounds"
 mkdir -p "$MIDE_BACKGROUNDS_DIR"
 python3 -c 'import sys; from PIL import Image; Image.new("RGB", (640, 400), (40, 120, 200)).save(sys.argv[1])' "$MIDE_BACKGROUNDS_DIR/Beach.jpg"
-timeout 150 "$SCEN" "400 click 548 185; 460 list" -- "$SETTINGS wallpaper" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 548 250; 460 list" -- "$SETTINGS wallpaper" >/dev/null 2>&1
 if grep -q "wallpaper = \"$MIDE_BACKGROUNDS_DIR/Beach" "$SCFG/mide/config.toml" && grep -q "# terminal" "$SCFG/mide/config.toml"; then
     echo "ok    escolher papel de parede grava (e mantém os comentários)"; PASS=$((PASS + 1))
 else
@@ -93,8 +94,16 @@ else
     echo "FALHA Energia: suspender após 30 minutos grava"; FAIL=$((FAIL + 1))
 fi
 sed -i '/^suspend_minutes = 30/d' "$SCFG/mide/config.toml"
-# Som → "Som de alerta" em (794, 410) (apertar e soltar); "Gota" em (675, 474).
-timeout 150 "$SCEN" "300 move 794 410; 310 press 794 410; 320 release 794 410; 360 click 675 474; 420 list" -- "$SETTINGS sound" >/dev/null 2>&1
+# Som → saídas da placa simulada: "DELL U2717D" (HDMI 1) em (350, 327).
+# (o log do app vai para um arquivo: o roteiro só mostra o do compositor)
+timeout 150 "$SCEN" "300 click 350 327; 360 list" -- "RUST_LOG=mide=info $SETTINGS sound >'$SCFG/som.log' 2>&1" >/dev/null 2>&1
+if grep -aq "sistema (teste): pactl set-default-sink [^ ]*HiFi__HDMI1__sink" "$SCFG/som.log"; then
+    echo "ok    Som: escolher o monitor HDMI como saída (simulado)"; PASS=$((PASS + 1))
+else
+    echo "FALHA Som: escolher o monitor HDMI como saída (simulado)"; FAIL=$((FAIL + 1))
+fi
+# Som → rolar até o fim; "Som de alerta" em (794, 534) (apertar e soltar); "Gota" em (675, 445).
+timeout 150 "$SCEN" "300 move 600 400; 310 wheel 20; 340 move 794 534; 350 press 794 534; 360 release 794 534; 400 click 675 445; 440 list" -- "$SETTINGS sound" >/dev/null 2>&1
 if grep -q 'alert = "gota"' "$SCFG/mide/config.toml"; then
     echo "ok    Som: escolher o som de alerta grava"; PASS=$((PASS + 1))
 else
@@ -148,9 +157,10 @@ else
     echo "FALHA ocultar a dock grava no config.toml"; FAIL=$((FAIL + 1))
 fi
 sed -i '/autohide = true/d' "$SCFG/mide/config.toml"
-# Barra superior (B12): "Configurações" (engrenagem) é o primeiro interruptor, em
-# (807, 169). Escondido, some da barra na hora (a barra relê a cada meio segundo).
-RUST_LOG="mide=debug,mide_bar=info" check "Configurações → Barra superior: esconder a engrenagem tira o item da barra" "itens da barra: sound wifi bluetooth battery control$" "400 click 807 169; 520 list" "$SETTINGS bar"
+# Barra superior (B12): "Configurações" (engrenagem) é o primeiro interruptor da lista,
+# em (808, 237), abaixo de "Mostrar o fundo da barra". Escondido, some da barra na hora
+# (a barra relê a cada meio segundo).
+RUST_LOG="mide=debug,mide_bar=info" check "Configurações → Barra superior: esconder a engrenagem tira o item da barra" "itens da barra: sound wifi bluetooth battery control$" "400 click 808 237; 520 list" "$SETTINGS bar"
 if grep -q "gear = false" "$SCFG/mide/config.toml"; then
     echo "ok    esconder item da barra grava no config.toml"; PASS=$((PASS + 1))
 else

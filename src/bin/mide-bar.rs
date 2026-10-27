@@ -266,8 +266,9 @@ enum PanelAction {
     ClockPart(usize),
     /// Central de notificações: apagar o histórico.
     ClearNotifications,
-    /// Painel de som: tocar por esta saída (número do nó do PipeWire).
-    AudioOutput(u32),
+    /// Painel de som: tocar por esta saída / gravar por esta entrada (índice na lista).
+    AudioOutput(usize),
+    AudioInput(usize),
     /// Central de notificações: aviso clicado (índice no histórico).
     Notification(usize),
 }
@@ -436,16 +437,42 @@ fn main() -> Result<(), Box<dyn Error>> {
     // 2 s, ou na hora quando a barra pede (depois de uma ação ou ao abrir um painel).
     let (status_tx, status_rx) = channel::channel::<Status>();
     let now_flag = bar.status_now.clone();
-    std::thread::spawn(move || loop {
-        let status = system::read_status();
-        if status_tx.send(status).is_err() {
-            break;
-        }
-        for _ in 0..20 {
-            if now_flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+    std::thread::spawn(move || {
+        // Leitura anterior e a última troca automática (como o Mac: fone ligado vira a
+        // saída; tirado, volta aos alto-falantes). Uma tentativa por aparelho a cada
+        // 30 s, para não insistir se a troca não pegar.
+        let mut before: Option<Status> = None;
+        let mut tried: Vec<(String, std::time::Instant)> = Vec::new();
+        loop {
+            let status = system::read_status();
+            let empty = Status::default();
+            let prev = before.as_ref().unwrap_or(&empty);
+            // "Padrão sumiu" só conta se continuar na leitura seguinte (a troca de perfil
+            // tira o nó por um instante), e nada muda logo depois de uma escolha.
+            let lists = [(true, &status.outputs, &prev.outputs, status.output_gone && prev.output_gone), (false, &status.inputs, &prev.inputs, status.input_gone && prev.input_gone)];
+            for (output, now_list, prev_list, gone) in lists {
+                if system::recently_selected() {
+                    break;
+                }
+                if let Some(device) = mide::audio::follow(prev_list, now_list, gone) {
+                    tried.retain(|(_, at)| at.elapsed() < Duration::from_secs(30));
+                    if !tried.iter().any(|(k, _)| *k == device.key) {
+                        tracing::info!("som: {} automática → {}", if output { "saída" } else { "entrada" }, device.name);
+                        tried.push((device.key.clone(), std::time::Instant::now()));
+                        system::select_audio(&device, output);
+                    }
+                }
+            }
+            before = Some(status.clone());
+            if status_tx.send(status).is_err() {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(100));
+            for _ in 0..20 {
+                if now_flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
     });
     event_loop
@@ -456,6 +483,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // Durante o arrasto do volume, o valor local manda.
                     let dragging = bar.menu.as_ref().is_some_and(|m| m.dragging_volume);
                     let volume = bar.status.volume;
+                    if status.wired_primary() != bar.status.wired_primary() {
+                        tracing::info!("rede: ícone da barra = {}", if status.wired_primary() { "cabo" } else { "Wi-Fi" });
+                    }
                     bar.status = status;
                     if dragging {
                         bar.status.volume = volume;
@@ -1441,7 +1471,7 @@ impl Bar {
         }
         let icons: Vec<MenuId> = [
             (self.status.bluetooth.is_some() && shown("bluetooth"), MenuId::Bluetooth),
-            (self.status.wifi.is_some() && shown("wifi"), MenuId::Wifi),
+            ((self.status.wifi.is_some() || self.status.wired_connected().is_some()) && shown("wifi"), MenuId::Wifi),
             (self.status.volume.is_some() && shown("sound"), MenuId::Sound),
         ]
         .into_iter()
@@ -1453,6 +1483,7 @@ impl Bar {
             let cx = (x0 + x1) / 2.0;
             match id {
                 MenuId::Bluetooth => draw_bluetooth_icon(&mut pixmap, cx, cy, self.status.bluetooth.as_ref().is_some_and(|(on, _)| *on), fg),
+                MenuId::Wifi if self.status.wired_primary() => draw_ethernet_icon(&mut pixmap, cx, cy, fg),
                 MenuId::Wifi => {
                     let level = match (&self.status.wifi, self.status.active_network()) {
                         (Some((false, _)), _) | (None, _) => None,
@@ -2062,25 +2093,49 @@ impl Bar {
         if !outputs.is_empty() {
             self.text.draw(p, "Saída", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 22.0;
-            for device in &outputs {
-                let hovered = hover == Some(regions.len());
-                if hovered {
-                    fill_rounded(p, 6.0, y, pw - 12.0, 34.0, 8.0, pal().ink(18));
-                }
-                let circle = if device.default { pal().accent_color() } else { pal().ink(26) };
-                fill_rounded(p, 14.0, y + 4.0, 26.0, 26.0, 13.0, circle);
-                let fg = if device.default { [255, 255, 255, 255] } else { pal().text };
-                draw_speaker_icon(p, 27.0, y + 17.0, Some((0.5, false)), fg);
-                let name = fit_label(&mut self.text, &device.name, FONT, pw - 64.0);
-                self.text.draw(p, &name, 50.0, y + (34.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, pal().text);
-                regions.push(((6.0, y, pw - 12.0, 34.0), PanelAction::AudioOutput(device.id)));
-                y += 36.0;
+            for (i, device) in outputs.iter().enumerate() {
+                y = self.audio_row(p, pw, y, device, regions, hover, PanelAction::AudioOutput(i));
+            }
+            Self::panel_separator(p, pw, y);
+            y += 10.0;
+        }
+        // Entrada: os microfones, do mesmo jeito.
+        let inputs = self.status.inputs.clone();
+        if inputs.len() > 1 {
+            self.text.draw(p, "Entrada", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            y += 22.0;
+            for (i, device) in inputs.iter().enumerate() {
+                y = self.audio_row(p, pw, y, device, regions, hover, PanelAction::AudioInput(i));
             }
             Self::panel_separator(p, pw, y);
             y += 10.0;
         }
         self.panel_row(p, pw, y, 26.0, "Configurações de som…", regions, hover, PanelAction::Settings("sound"));
         y + 26.0 + 8.0
+    }
+
+    /// Uma saída ou entrada no painel de som: ícone do tipo num círculo (azul na
+    /// escolhida), nome e, se houver, a linha de baixo (conector, placa).
+    #[allow(clippy::too_many_arguments)]
+    fn audio_row(&mut self, p: &mut Pixmap, pw: f32, y: f32, device: &system::AudioDevice, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>, action: PanelAction) -> f32 {
+        let hovered = hover == Some(regions.len());
+        if hovered {
+            fill_rounded(p, 6.0, y, pw - 12.0, 34.0, 8.0, pal().ink(18));
+        }
+        let circle = if device.default { pal().accent_color() } else { pal().ink(26) };
+        fill_rounded(p, 14.0, y + 4.0, 26.0, 26.0, 13.0, circle);
+        let fg = if device.default { [255, 255, 255, 255] } else { pal().text };
+        draw_audio_kind_icon(p, 27.0, y + 17.0, device.kind, fg);
+        let name = fit_label(&mut self.text, &device.name, FONT, pw - 64.0);
+        if device.detail.is_empty() {
+            self.text.draw(p, &name, 50.0, y + (34.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, pal().text);
+        } else {
+            self.text.draw(p, &name, 50.0, y + 1.0, FONT, FontWeight::Regular, pal().text);
+            let detail = fit_label(&mut self.text, &device.detail, 11.0, pw - 64.0);
+            self.text.draw(p, &detail, 50.0, y + 18.0, 11.0, FontWeight::Regular, pal().secondary);
+        }
+        regions.push(((6.0, y, pw - 12.0, 34.0), action));
+        y + 36.0
     }
 
     fn panel_wifi(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
@@ -2112,9 +2167,36 @@ impl Bar {
             self.text.draw(p, "Wi-Fi desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         }
+        // Rede cabeada (como o Mac mostra a Ethernet): cada placa com cabo, o estado e
+        // o endereço.
+        let wired: Vec<system::Wired> = self.status.wired.iter().filter(|w| w.state != system::WiredState::Unplugged).cloned().collect();
+        if !wired.is_empty() {
+            Self::panel_separator(p, pw, y);
+            y += 10.0;
+            self.text.draw(p, "Rede cabeada", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            y += 22.0;
+            for w in &wired {
+                let connected = w.state == system::WiredState::Connected;
+                let circle = if connected { pal().accent_color() } else { pal().ink(26) };
+                fill_rounded(p, 14.0, y + 4.0, 26.0, 26.0, 13.0, circle);
+                draw_ethernet_icon(p, 27.0, y + 17.0, if connected { [255, 255, 255, 255] } else { pal().text });
+                self.text.draw(p, "Ethernet", 50.0, y + 1.0, FONT, FontWeight::Regular, pal().text);
+                let detail = match w.state {
+                    system::WiredState::Connected => match &w.address {
+                        Some(ip) => format!("Conectado · {ip}"),
+                        None => "Conectado".to_string(),
+                    },
+                    system::WiredState::Connecting => "Conectando…".to_string(),
+                    _ => "Cabo ligado, sem conexão".to_string(),
+                };
+                let detail = fit_label(&mut self.text, &detail, 11.0, pw - 64.0);
+                self.text.draw(p, &detail, 50.0, y + 18.0, 11.0, FontWeight::Regular, pal().secondary);
+                y += 36.0;
+            }
+        }
         Self::panel_separator(p, pw, y);
         y += 10.0;
-        self.panel_row(p, pw, y, 26.0, "Configurações de Wi-Fi…", regions, hover, PanelAction::Settings("wifi"));
+        self.panel_row(p, pw, y, 26.0, "Configurações de rede…", regions, hover, PanelAction::Settings("network"));
         y + 26.0 + 8.0
     }
 
@@ -2365,16 +2447,27 @@ impl Bar {
                     return;
                 }
             }
-            PanelAction::AudioOutput(id) => {
-                tracing::info!("som: saída {id}");
-                for d in &mut self.status.outputs {
-                    d.default = d.id == id;
+            PanelAction::AudioOutput(i) => {
+                if let Some(device) = self.status.outputs.get(i).cloned() {
+                    tracing::info!("som: saída {}", device.name);
+                    for (j, d) in self.status.outputs.iter_mut().enumerate() {
+                        d.default = j == i;
+                    }
+                    // O volume mostrado passa a ser o da saída escolhida.
+                    if let Some((_, m)) = self.status.volume {
+                        self.status.volume = Some((device.volume, m));
+                    }
+                    system::select_audio(&device, true);
                 }
-                // O volume mostrado passa a ser o da saída escolhida.
-                if let (Some(d), Some((_, m))) = (self.status.outputs.iter().find(|d| d.id == id), self.status.volume) {
-                    self.status.volume = Some((d.volume, m));
+            }
+            PanelAction::AudioInput(i) => {
+                if let Some(device) = self.status.inputs.get(i).cloned() {
+                    tracing::info!("som: entrada {}", device.name);
+                    for (j, d) in self.status.inputs.iter_mut().enumerate() {
+                        d.default = j == i;
+                    }
+                    system::select_audio(&device, false);
                 }
-                system::set_default_audio(id);
             }
             PanelAction::ToggleMute => {
                 if let Some((v, m)) = self.status.volume {
@@ -2684,6 +2777,76 @@ fn draw_speaker_icon(p: &mut Pixmap, cx: f32, cy: f32, volume: Option<(f32, bool
         if let Some(path) = pb.finish() {
             p.stroke_path(&path, &stroke_color(fg, alpha), &Stroke { width: 1.5, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, Transform::identity(), None);
         }
+    }
+}
+
+/// Rede cabeada: dois sinais de "maior e menor" com três pontos no meio.
+fn draw_ethernet_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx - 5.0, cy - 5.5);
+    pb.line_to(cx - 8.5, cy);
+    pb.line_to(cx - 5.0, cy + 5.5);
+    pb.move_to(cx + 5.0, cy - 5.5);
+    pb.line_to(cx + 8.5, cy);
+    pb.line_to(cx + 5.0, cy + 5.5);
+    if let Some(path) = pb.finish() {
+        let stroke = Stroke { width: 1.7, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+        p.stroke_path(&path, &stroke_color(fg, 255), &stroke, Transform::identity(), None);
+    }
+    for dx in [-2.6, 0.0, 2.6] {
+        if let Some(dot) = PathBuilder::from_circle(cx + dx, cy, 1.05) {
+            p.fill_path(&dot, &stroke_color(fg, 255), FillRule::Winding, Transform::identity(), None);
+        }
+    }
+}
+
+/// Ícone de uma saída/entrada de som pelo tipo: fones, monitor, microfone, Bluetooth
+/// ou alto-falante.
+fn draw_audio_kind_icon(p: &mut Pixmap, cx: f32, cy: f32, kind: system::AudioKind, fg: [u8; 4]) {
+    let line = Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+    match kind {
+        system::AudioKind::Headphones | system::AudioKind::Headset => {
+            // Arco por cima e as duas conchas.
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - 6.0, cy + 2.0);
+            pb.line_to(cx - 6.0, cy - 0.5);
+            pb.cubic_to(cx - 6.0, cy - 8.5, cx + 6.0, cy - 8.5, cx + 6.0, cy - 0.5);
+            pb.line_to(cx + 6.0, cy + 2.0);
+            if let Some(path) = pb.finish() {
+                p.stroke_path(&path, &stroke_color(fg, 255), &line, Transform::identity(), None);
+            }
+            fill_rounded(p, cx - 7.5, cy + 0.5, 4.0, 6.5, 1.6, rgba(fg[0], fg[1], fg[2], 255));
+            fill_rounded(p, cx + 3.5, cy + 0.5, 4.0, 6.5, 1.6, rgba(fg[0], fg[1], fg[2], 255));
+            if kind == system::AudioKind::Headset {
+                let mut pb = PathBuilder::new();
+                pb.move_to(cx - 5.5, cy + 6.5);
+                pb.quad_to(cx - 4.0, cy + 8.0, cx - 1.0, cy + 7.5);
+                if let Some(path) = pb.finish() {
+                    p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.2, ..line }, Transform::identity(), None);
+                }
+            }
+        }
+        system::AudioKind::Hdmi => {
+            // Monitor com pé.
+            if let Some(path) = rounded_rect(cx - 7.0, cy - 6.0, 14.0, 9.5, 1.5) {
+                p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.5, ..Default::default() }, Transform::identity(), None);
+            }
+            fill_rounded(p, cx - 0.75, cy + 3.5, 1.5, 2.5, 0.5, rgba(fg[0], fg[1], fg[2], 255));
+            fill_rounded(p, cx - 3.5, cy + 5.5, 7.0, 1.5, 0.75, rgba(fg[0], fg[1], fg[2], 255));
+        }
+        system::AudioKind::Mic => {
+            fill_rounded(p, cx - 2.5, cy - 7.0, 5.0, 9.0, 2.5, rgba(fg[0], fg[1], fg[2], 255));
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - 5.0, cy - 1.0);
+            pb.cubic_to(cx - 5.0, cy + 5.0, cx + 5.0, cy + 5.0, cx + 5.0, cy - 1.0);
+            pb.move_to(cx, cy + 3.5);
+            pb.line_to(cx, cy + 6.5);
+            if let Some(path) = pb.finish() {
+                p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.4, ..line }, Transform::identity(), None);
+            }
+        }
+        system::AudioKind::Bluetooth => draw_bluetooth_icon(p, cx, cy, true, fg),
+        _ => draw_speaker_icon(p, cx + 1.0, cy, Some((0.5, false)), fg),
     }
 }
 

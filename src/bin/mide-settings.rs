@@ -28,6 +28,7 @@ use tiny_skia::Pixmap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Section {
     Wifi,
+    Network,
     Bluetooth,
     Appearance,
     Sound,
@@ -50,6 +51,7 @@ enum Section {
 /// tema e cor do quadradinho.
 const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Wifi), "Wi-Fi", "network-wireless-symbolic", [10, 132, 255]),
+    (Some(Section::Network), "Rede", "network-wired-symbolic", [10, 132, 255]),
     (Some(Section::Bluetooth), "Bluetooth", "bluetooth-symbolic", [10, 132, 255]),
     (None, "", "", [0, 0, 0]),
     (Some(Section::Appearance), "Aparência", "preferences-desktop-appearance-symbolic", [72, 72, 80]),
@@ -93,6 +95,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Cor de destaque", "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite accent", Section::Appearance),
     ("Aparência", "tema claro escuro modo noturno dark cores", Section::Appearance),
     ("Wi-Fi", "rede internet wireless conectar senha", Section::Wifi),
+    ("Rede", "rede cabo cabeada ethernet internet endereco ip conexao", Section::Network),
     ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
     ("Volume de saída", "som audio alto-falante volume", Section::Sound),
     ("Sem som", "mudo silenciar som", Section::Sound),
@@ -366,6 +369,60 @@ impl Settings {
         });
     }
 
+    /// Rede: as placas cabeadas (estado, conexão e endereço) e o resumo do Wi-Fi, com
+    /// a conexão principal (por onde a internet sai) marcada, como em Ajustes → Rede.
+    fn network(&mut self, ui: &mut Ui) {
+        ui.title("Rede");
+        let wired = self.status.wired.clone();
+        let primary = self.status.primary.clone();
+        let wifi_net = self.status.active_network().map(|n| n.ssid.clone());
+        let wifi_on = self.status.wifi.as_ref().is_some_and(|(on, _)| *on);
+        let mut open_wifi = false;
+        ui.card(|ui| {
+            for w in &wired {
+                let state = match w.state {
+                    system::WiredState::Connected => match &w.address {
+                        Some(ip) => format!("Conectado · {ip}"),
+                        None => "Conectado".into(),
+                    },
+                    system::WiredState::Connecting => "Conectando…".into(),
+                    system::WiredState::Disconnected => "Cabo ligado, sem conexão".into(),
+                    system::WiredState::Unplugged => "Cabo desconectado".into(),
+                };
+                let main = primary.as_deref() == Some(w.device.as_str()) && w.state == system::WiredState::Connected;
+                let label = if wired.len() > 1 { format!("Ethernet ({})", w.device) } else { "Ethernet".to_string() };
+                ui.list_item(&label, &if main { format!("{state} · principal") } else { state });
+            }
+            let wifi_detail = match (&wifi_net, wifi_on) {
+                (_, false) => "Desligado".to_string(),
+                (None, true) => "Sem rede".to_string(),
+                (Some(ssid), true) => {
+                    let main = primary.as_ref().is_some_and(|p| !wired.iter().any(|w| w.device == *p));
+                    if main { format!("{ssid} · principal") } else { ssid.clone() }
+                }
+            };
+            if ui.list_item("Wi-Fi", &wifi_detail).clicked() {
+                open_wifi = true;
+            }
+        });
+        if wired.is_empty() {
+            ui.note("Nenhuma placa de rede cabeada encontrada.");
+        }
+        if let Some(w) = wired.iter().find(|w| w.state == system::WiredState::Connected && !w.connection.is_empty()) {
+            ui.heading("Conexão cabeada");
+            ui.card(|ui| {
+                ui.list_item("Nome da conexão", &w.connection);
+                ui.list_item("Interface", &w.device);
+                if let Some(ip) = &w.address {
+                    ui.list_item("Endereço IP", ip);
+                }
+            });
+        }
+        if open_wifi {
+            self.section = Section::Wifi;
+        }
+    }
+
     fn bluetooth(&mut self, ui: &mut Ui) {
         ui.title("Bluetooth");
         let (on, devices) = self.status.bluetooth.clone().unwrap_or((false, Vec::new()));
@@ -603,25 +660,26 @@ impl Settings {
         }
         // Por onde o som sai (como "Saída" nos Ajustes do Mac): os apps passam a tocar
         // no aparelho escolhido.
+        // Uma linha por saída de verdade (alto-falantes, fones, cada monitor), com o
+        // conector ou a placa como detalhe; escolher uma troca o perfil da placa se
+        // for preciso.
         let outputs = self.status.outputs.clone();
         if !outputs.is_empty() {
             let mut chosen = None;
             ui.card(|ui| {
-                for d in &outputs {
-                    if ui.choice_item(&d.name, "", d.default, true).clicked() && !d.default {
-                        chosen = Some(d.id);
+                for (i, d) in outputs.iter().enumerate() {
+                    if ui.choice_item(&d.name, &d.detail, d.default, true).clicked() && !d.default {
+                        chosen = Some(i);
                     }
                 }
             });
-            if let Some(id) = chosen {
-                tracing::info!("som: saída {id}");
-                for d in &mut self.status.outputs {
-                    d.default = d.id == id;
+            if let Some(d) = chosen.and_then(|i| outputs.get(i)) {
+                tracing::info!("som: saída {}", d.name);
+                for o in &mut self.status.outputs {
+                    o.default = o.key == d.key;
                 }
-                if let Some(d) = self.status.outputs.iter().find(|d| d.id == id) {
-                    self.volume = d.volume * 100.0;
-                }
-                system::set_default_audio(id);
+                self.volume = d.volume * 100.0;
+                system::select_audio(d, true);
             }
         }
         // Entrada: o microfone usado pelos apps, o volume dele e o mudo.
@@ -630,32 +688,30 @@ impl Settings {
             ui.heading("Entrada");
             let mut chosen = None;
             let mut mic = self.mic_volume;
-            let default_id = inputs.iter().find(|d| d.default).map(|d| d.id);
+            let current = inputs.iter().find(|d| d.default).cloned();
             ui.card(|ui| {
-                for d in &inputs {
-                    if ui.choice_item(&d.name, "", d.default, true).clicked() && !d.default {
-                        chosen = Some(d.id);
+                for (i, d) in inputs.iter().enumerate() {
+                    if ui.choice_item(&d.name, &d.detail, d.default, true).clicked() && !d.default {
+                        chosen = Some(i);
                     }
                 }
             });
             ui.card(|ui| {
-                if ui.slider("Volume de entrada", &mut mic, 0.0, 100.0).submitted() {
-                    if let Some(id) = default_id {
-                        tracing::info!("som: volume de entrada {:.0}", mic);
-                        system::set_device_volume(id, mic / 100.0);
-                    }
+                if ui.slider("Volume de entrada", &mut mic, 0.0, 100.0).submitted()
+                    && let Some(d) = &current
+                {
+                    tracing::info!("som: volume de entrada {:.0}", mic);
+                    system::set_device_volume(d, false, mic / 100.0);
                 }
             });
             self.mic_volume = mic;
-            if let Some(id) = chosen {
-                tracing::info!("som: entrada {id}");
-                for d in &mut self.status.inputs {
-                    d.default = d.id == id;
+            if let Some(d) = chosen.and_then(|i| inputs.get(i)) {
+                tracing::info!("som: entrada {}", d.name);
+                for o in &mut self.status.inputs {
+                    o.default = o.key == d.key;
                 }
-                if let Some(d) = self.status.inputs.iter().find(|d| d.id == id) {
-                    self.mic_volume = d.volume * 100.0;
-                }
-                system::set_default_audio(id);
+                self.mic_volume = d.volume * 100.0;
+                system::select_audio(d, false);
             }
         }
         // Efeitos sonoros do mide (`[sounds]`): ligados, volume e o som de alerta.
@@ -1777,6 +1833,7 @@ impl App for Settings {
             }
             match self.section {
                 Section::Wifi => self.wifi(ui),
+                Section::Network => self.network(ui),
                 Section::Bluetooth => self.bluetooth(ui),
                 Section::Appearance => self.appearance(ui),
                 Section::Sound => self.sound(ui),
@@ -2130,6 +2187,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("default-apps") => Section::DefaultApps,
         Some("login-items") => Section::LoginItems,
         Some("about") => Section::About,
+        Some("network") => Section::Network,
         _ => Section::Wifi,
     };
     tracing::info!("configurações abertas: {section:?}");

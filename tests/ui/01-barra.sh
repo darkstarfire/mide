@@ -66,6 +66,17 @@ else
 fi
 check "Wi-Fi: interruptor desliga (simulado)" "sistema \(teste\): nmcli radio wifi off" "400 click 1221 14; 440 click 1306 61; 470 list"
 check "som: trilho muda o volume (simulado)" "sistema \(teste\): wpctl set-volume @DEFAULT_AUDIO_SINK@ 0\.[0-9]+" "400 click 1185 14; 440 click 1197 96; 470 list"
+# Painel de som (x 1038..1318): saídas de verdade da placa simulada (SOF com dois
+# perfis): "Alto-falantes" em y=200 e o monitor "DELL U2717D" (HDMI 1) em y=236; com
+# um fone ligado (MIDE_SYSTEM_DRY_RUN_HEADPHONES), "Fones de ouvido" vem antes, em
+# y=200. Entrada: "Microfone estéreo" em y=341.
+check "som: monitor HDMI pelo nome vira a saída (simulado)" "sistema \(teste\): pactl set-default-sink [^ ]*HiFi__HDMI1__sink" "400 click 1185 14; 440 click 1150 236; 470 list"
+MIDE_SYSTEM_DRY_RUN_HEADPHONES=1 check "som: fone ligado aparece e escolher troca o perfil da placa (simulado)" "sistema \(teste\): pactl set-card-profile alsa_card[^ ]* HiFi \(HDMI1, HDMI2, HDMI3, Headphones" "400 click 1185 14; 440 click 1150 200; 470 list"
+check "som: escolher o microfone (simulado)" "sistema \(teste\): pactl set-default-source [^ ]*Mic2__source" "400 click 1185 14; 440 click 1150 341; 470 list"
+# Rede cabeada simulada como principal (MIDE_SYSTEM_DRY_RUN_WIRED): ícone do cabo no
+# lugar do Wi-Fi; no painel, "Configurações de rede…" em y=265.
+MIDE_SYSTEM_DRY_RUN_WIRED=1 check "rede: cabo principal mostra o ícone da rede cabeada" "rede: ícone da barra = cabo" "400 list"
+MIDE_SYSTEM_DRY_RUN_WIRED=1 check "rede: painel com a Ethernet abre Configurações → Rede" "sistema \(teste\): mide-settings network" "400 click 1221 14; 440 click 1150 265; 470 list"
 check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 1257 14; 440 click 1216 99; 470 list"
 check "Sobre minimizada (Super+H) volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 combo super+h; 600 restore; 700 list"
 check "Sobre este computador abre" 'janela "Sobre este computador"' "400 click 25 14; 430 click 100 49; 520 list"

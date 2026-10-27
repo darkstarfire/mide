@@ -161,6 +161,7 @@ pub fn word_starts_with(name: &str, q: &str) -> bool {
 /// ícone do tema.
 pub const SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("Wi-Fi", "wifi rede internet wireless", "wifi", "network-wireless"),
+    ("Rede", "rede cabo cabeada ethernet internet endereco ip", "network", "network-wired"),
     ("Bluetooth", "bluetooth fone mouse teclado sem fio", "bluetooth", "bluetooth"),
     ("Som", "som volume audio alto-falante microfone", "sound", "audio-volume-high"),
     ("Papel de parede", "papel de parede fundo wallpaper imagem", "wallpaper", "preferences-desktop-wallpaper"),

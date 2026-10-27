@@ -1,5 +1,6 @@
-//! Estado e ações do sistema para os ícones da barra: som (`wpctl`), Wi-Fi
-//! (`nmcli`) e Bluetooth (`bluetoothctl`).
+//! Estado e ações do sistema para os ícones da barra: som (`pactl`/`wpctl`, saídas e
+//! entradas em `audio.rs`), rede (`nmcli`, cabo em `network.rs`) e Bluetooth
+//! (`bluetoothctl`).
 //!
 //! Com `MIDE_SYSTEM_DRY_RUN` definido (testes), o estado é simulado e as ações só
 //! vão para o log: nada muda no computador de verdade.
@@ -40,18 +41,19 @@ pub struct Status {
     /// padrão marcada. Vazias sem o `wpctl`.
     pub outputs: Vec<AudioDevice>,
     pub inputs: Vec<AudioDevice>,
+    /// A saída/entrada padrão aponta para um conector sem nada ligado (ou sumiu): a
+    /// barra escolhe outra, como o Mac (ver `audio::follow`).
+    pub output_gone: bool,
+    pub input_gone: bool,
+    /// Placas de rede cabeada (sem as virtuais). Vazia sem NetworkManager.
+    pub wired: Vec<Wired>,
+    /// Interface da conexão principal (rota padrão de menor métrica).
+    pub primary: Option<String>,
 }
 
-/// Uma saída ou entrada de som do PipeWire.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct AudioDevice {
-    /// Número do nó no PipeWire (para o `wpctl`).
-    pub id: u32,
-    /// Nome para mostrar (o do aparelho, sem o perfil quando não há ambiguidade).
-    pub name: String,
-    pub default: bool,
-    pub volume: f32,
-}
+pub use super::audio::{AudioDevice, AudioKind};
+pub use super::network::{Wired, WiredState};
+use super::{audio, network};
 
 /// Lê as saídas (`Sinks`) e entradas (`Sources`) da parte "Audio" do `wpctl status`.
 pub fn parse_audio_devices(text: &str) -> (Vec<AudioDevice>, Vec<AudioDevice>) {
@@ -91,7 +93,7 @@ pub fn parse_audio_devices(text: &str) -> (Vec<AudioDevice>, Vec<AudioDevice>) {
             None => (after.trim().to_string(), ""),
         };
         let volume = tail.strip_prefix("[vol:").and_then(|v| v.trim().trim_end_matches(']').split_whitespace().next()?.parse().ok()).unwrap_or(1.0);
-        let device = AudioDevice { id, name, default, volume };
+        let device = AudioDevice { key: id.to_string(), node: id.to_string(), via_wpctl: true, name, default, volume, ..Default::default() };
         match section {
             "devices" => devices.push(device.name),
             "sinks" => sinks.push(device),
@@ -113,28 +115,103 @@ pub fn parse_audio_devices(text: &str) -> (Vec<AudioDevice>, Vec<AudioDevice>) {
     (sinks, sources)
 }
 
-/// Escolhe a saída ou entrada de som padrão (os apps passam a tocar nela).
-pub fn set_default_audio(id: u32) {
-    if dry_run() {
-        tracing::info!("sistema (teste): som padrão = {id}");
-        return;
-    }
-    run("wpctl", &["set-default", &id.to_string()]);
+static LAST_SELECT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Houve uma escolha de saída/entrada nos últimos 5 s (a troca de perfil ainda pode
+/// estar acontecendo): a troca automática espera.
+pub fn recently_selected() -> bool {
+    LAST_SELECT.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5))
 }
 
-/// Volume de uma saída ou entrada (0.0 a 1.0).
-pub fn set_device_volume(id: u32, value: f32) {
-    if dry_run() {
-        tracing::info!("sistema (teste): volume de {id} = {value:.2}");
+/// Escolhe a saída (`output`) ou entrada de som padrão (os apps passam a tocar
+/// nela). Se a porta é de outro perfil da placa, troca o perfil antes e espera o nó
+/// novo aparecer (numa thread: a troca leva alguns décimos de segundo).
+pub fn select_audio(device: &AudioDevice, output: bool) {
+    *LAST_SELECT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    let d = device.clone();
+    if d.via_wpctl {
+        run("wpctl", &["set-default", &d.node]);
         return;
     }
-    run("wpctl", &["set-volume", &id.to_string(), &format!("{:.2}", value.clamp(0.0, 1.0))]);
+    if dry_run() {
+        for cmd in audio::select_commands(&d, output) {
+            tracing::info!("sistema (teste): pactl {}", cmd.join(" "));
+        }
+        fake_audio(|f| {
+            if let Some(p) = &d.profile {
+                f.profile = p.clone();
+            }
+            if output {
+                f.output = d.key.clone();
+            } else {
+                f.input = d.key.clone();
+            }
+        });
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut node = d.node.clone();
+        if let Some(profile) = &d.profile {
+            run_wait("pactl", &["set-card-profile", &d.card, profile]);
+            // O nó da porta só existe depois da troca de perfil.
+            node.clear();
+            let what = if output { "sinks" } else { "sources" };
+            for _ in 0..30 {
+                let cards = output_text("pactl", &["-f", "json", "list", "cards"]).map(|t| audio::parse_cards(&t)).unwrap_or_default();
+                let nodes = output_text("pactl", &["-f", "json", "list", what]).map(|t| audio::parse_nodes(&t)).unwrap_or_default();
+                if let Some(n) = audio::node_for(&nodes, &cards, &d.card, &d.port) {
+                    node = n;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            if node.is_empty() {
+                tracing::warn!("som: o nó de {} não apareceu depois de trocar o perfil", d.port);
+                return;
+            }
+        }
+        for cmd in audio::select_commands(&d, output).into_iter().filter(|c| !c[0].starts_with("set-card-profile")) {
+            let args: Vec<String> = cmd.into_iter().map(|a| if a == "NODE" { node.clone() } else { a }).collect();
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            run_wait("pactl", &args);
+        }
+    });
+}
+
+/// Volume de uma saída ou entrada (0.0 a 1.0). Sem nó (porta de outro perfil), nada.
+pub fn set_device_volume(device: &AudioDevice, output: bool, value: f32) {
+    let value = value.clamp(0.0, 1.0);
+    if device.via_wpctl {
+        run("wpctl", &["set-volume", &device.node, &format!("{value:.2}")]);
+    } else if !device.node.is_empty() {
+        let percent = format!("{}%", (value * 100.0).round() as u32);
+        run("pactl", &[if output { "set-sink-volume" } else { "set-source-volume" }, &device.node, &percent]);
+    }
 }
 
 impl Status {
     /// Rede conectada agora, se houver.
     pub fn active_network(&self) -> Option<&Network> {
         self.wifi.as_ref().and_then(|(_, list)| list.iter().find(|n| n.active))
+    }
+
+    /// Placa cabeada conectada, se houver (a principal, quando há mais de uma).
+    pub fn wired_connected(&self) -> Option<&Wired> {
+        let mut connected = self.wired.iter().filter(|w| w.state == WiredState::Connected);
+        let first = connected.clone().next();
+        connected.find(|w| Some(&w.device) == self.primary.as_ref()).or(first)
+    }
+
+    /// A internet sai pelo cabo (como no Mac, a barra mostra o ícone de rede cabeada):
+    /// a rota padrão é a do cabo, ou não há rota conhecida e o Wi-Fi não está conectado.
+    pub fn wired_primary(&self) -> bool {
+        let Some(w) = self.wired_connected() else {
+            return false;
+        };
+        match &self.primary {
+            Some(dev) => *dev == w.device,
+            None => self.active_network().is_none(),
+        }
     }
 }
 
@@ -143,6 +220,10 @@ fn dry_run() -> bool {
 }
 
 /// Roda um comando com mensagens em inglês (saída estável para ler) e devolve a saída.
+fn output_text(program: &str, args: &[&str]) -> Option<String> {
+    output(program, args)
+}
+
 fn output(program: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(program).args(args).env("LC_ALL", "C").output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -156,7 +237,7 @@ pub fn parse_volume(text: &str) -> Option<(f32, bool)> {
 }
 
 /// Separa uma linha do `nmcli -t` (campos com `:`, e `\:` dentro de um campo).
-fn split_terse(line: &str) -> Vec<String> {
+pub(crate) fn split_terse(line: &str) -> Vec<String> {
     let mut fields = vec![String::new()];
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
@@ -213,8 +294,61 @@ pub fn parse_devices(text: &str) -> Vec<Device> {
         .collect()
 }
 
-/// Estado simulado dos testes.
+/// Som simulado dos testes: a placa do notebook com SOF (dois perfis, "Speaker" e
+/// "Headphones"), com o perfil ativo e o padrão mudando quando se escolhe outra
+/// saída. `MIDE_SYSTEM_DRY_RUN_HEADPHONES=1` liga um fone no conector.
+struct FakeAudio {
+    profile: String,
+    output: String,
+    input: String,
+}
+
+static FAKE_AUDIO: std::sync::Mutex<Option<FakeAudio>> = std::sync::Mutex::new(None);
+
+const FAKE_CARDS: &str = include_str!("testdata/pactl-cards.json");
+const FAKE_SINKS_SPEAKER: &str = include_str!("testdata/pactl-sinks.json");
+const FAKE_SINKS_HEADPHONES: &str = include_str!("testdata/pactl-sinks-headphones.json");
+const FAKE_SOURCES: &str = include_str!("testdata/pactl-sources.json");
+
+fn fake_audio<T>(f: impl FnOnce(&mut FakeAudio) -> T) -> T {
+    let mut guard = FAKE_AUDIO.lock().unwrap_or_else(|e| e.into_inner());
+    let state = guard.get_or_insert_with(|| {
+        let card = audio::parse_cards(FAKE_CARDS).into_iter().next().map(|c| (c.name, c.active_profile)).unwrap_or_default();
+        FakeAudio { profile: card.1, output: format!("{}|[Out] Speaker", card.0), input: format!("{}|[In] Mic1", card.0) }
+    });
+    f(state)
+}
+
+/// Saídas e entradas simuladas (pelo mesmo caminho do `pactl` de verdade).
+fn fake_audio_devices() -> (Vec<AudioDevice>, Vec<AudioDevice>, bool, bool) {
+    let (profile, out_key, in_key) = fake_audio(|f| (f.profile.clone(), f.output.clone(), f.input.clone()));
+    let mut cards = audio::parse_cards(FAKE_CARDS);
+    let headphones = std::env::var_os("MIDE_SYSTEM_DRY_RUN_HEADPHONES").is_some();
+    for c in &mut cards {
+        c.active_profile = profile.clone();
+        for p in &mut c.ports {
+            if p.name == "[Out] Headphones" && headphones {
+                p.availability = audio::Availability::Yes;
+            }
+        }
+    }
+    let sinks = audio::parse_nodes(if profile.contains("Headphones") { FAKE_SINKS_HEADPHONES } else { FAKE_SINKS_SPEAKER });
+    let sources = audio::parse_nodes(FAKE_SOURCES);
+    let node = |nodes: &[audio::Node], key: &str| key.split_once('|').and_then(|(card, port)| audio::node_for(nodes, &cards, card, port)).unwrap_or_default();
+    let (out_node, in_node) = (node(&sinks, &out_key), node(&sources, &in_key));
+    (
+        audio::build(&cards, &sinks, &out_node, true),
+        audio::build(&cards, &sources, &in_node, false),
+        audio::default_gone(&cards, &sinks, &out_node),
+        audio::default_gone(&cards, &sources, &in_node),
+    )
+}
+
+/// Estado simulado dos testes. A rede cabeada simulada está conectada; com
+/// `MIDE_SYSTEM_DRY_RUN_WIRED=1` ela é a principal (a barra mostra o ícone do cabo).
 fn fake_status() -> Status {
+    let (outputs, inputs, output_gone, input_gone) = fake_audio_devices();
+    let wired_primary = std::env::var_os("MIDE_SYSTEM_DRY_RUN_WIRED").is_some();
     Status {
         volume: Some((0.5, false)),
         wifi: Some((
@@ -233,11 +367,12 @@ fn fake_status() -> Status {
             ],
         )),
         brightness: Some(0.7),
-        outputs: vec![
-            AudioDevice { id: 50, name: "Alto-falantes".into(), default: true, volume: 0.5 },
-            AudioDevice { id: 51, name: "Fone USB".into(), default: false, volume: 0.8 },
-        ],
-        inputs: vec![AudioDevice { id: 52, name: "Microfone".into(), default: true, volume: 0.9 }],
+        outputs,
+        inputs,
+        output_gone,
+        input_gone,
+        wired: vec![Wired { device: "enp44s0".into(), connection: "Wired connection 1".into(), state: WiredState::Connected, address: Some("192.168.10.17".into()) }],
+        primary: Some(if wired_primary { "enp44s0" } else { "wlp43s0" }.into()),
     }
 }
 
@@ -275,8 +410,42 @@ pub fn read_status() -> Status {
         (on, devices)
     });
     let brightness = output("brightnessctl", &["-m", "-c", "backlight"]).and_then(|t| parse_brightness(&t));
+    let (outputs, inputs, output_gone, input_gone) = read_audio_devices();
+    let wired: Vec<Wired> = output("nmcli", &["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"])
+        .map(|t| network::parse_wired(&t))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|mut w| {
+            if w.state == WiredState::Connected {
+                w.address = output("nmcli", &["-t", "-f", "IP4.ADDRESS", "device", "show", &w.device]).and_then(|t| network::parse_address(&t));
+            }
+            w
+        })
+        .collect();
+    let primary = output("ip", &["route", "show", "default"]).and_then(|t| network::parse_primary(&t));
+    Status { volume, wifi, bluetooth, brightness, outputs, inputs, output_gone, input_gone, wired, primary }
+}
+
+/// Saídas e entradas pelo `pactl -f json` (portas das placas em todos os perfis); sem
+/// ele (pactl antigo ou ausente), pelo `wpctl status` (um nó por linha).
+fn read_audio_devices() -> (Vec<AudioDevice>, Vec<AudioDevice>, bool, bool) {
+    let json = |what: &str| output("pactl", &["-f", "json", "list", what]);
+    if let (Some(c), Some(sinks), Some(sources)) = (json("cards"), json("sinks"), json("sources")) {
+        let cards = audio::parse_cards(&c);
+        let (sinks, sources) = (audio::parse_nodes(&sinks), audio::parse_nodes(&sources));
+        let default = |what: &str| output("pactl", &[what]).map(|t| t.trim().to_string()).unwrap_or_default();
+        let (sink, source) = (default("get-default-sink"), default("get-default-source"));
+        if !cards.is_empty() || !sinks.is_empty() {
+            return (
+                audio::build(&cards, &sinks, &sink, true),
+                audio::build(&cards, &sources, &source, false),
+                audio::default_gone(&cards, &sinks, &sink),
+                audio::default_gone(&cards, &sources, &source),
+            );
+        }
+    }
     let (outputs, inputs) = output("wpctl", &["status"]).map(|t| parse_audio_devices(&t)).unwrap_or_default();
-    Status { volume, wifi, bluetooth, brightness, outputs, inputs }
+    (outputs, inputs, false, false)
 }
 
 /// Executa uma ação em segundo plano (ou só registra, nos testes).
@@ -519,7 +688,7 @@ pub fn toggle_device(device: &Device) {
 /// programa atual ou no PATH); as outras, nas do GNOME.
 pub fn open_settings(panel: &str) {
     // Vazio: abre as Configurações na seção inicial.
-    const OWN: &[&str] = &["", "wifi", "bluetooth", "sound", "wallpaper", "dock", "effects", "keyboard", "about"];
+    const OWN: &[&str] = &["", "wifi", "network", "bluetooth", "sound", "wallpaper", "dock", "effects", "keyboard", "about"];
     if OWN.contains(&panel) {
         let sibling = std::env::current_exe()
             .ok()
@@ -602,11 +771,11 @@ mod audio_tests {
         let text = "PipeWire 'pipewire-0' [1.0.5]\n └─ Clients:\n        31. pipewire\n\nAudio\n ├─ Devices:\n │      46. Built-in Audio                      [alsa]\n │      53. Audio Adapter (Unitek Y-247A)       [alsa]\n │  \n ├─ Sinks:\n │  *   60. Audio Adapter (Unitek Y-247A) Analog Stereo [vol: 0.80]\n │      61. Built-in Audio Analog Stereo  [vol: 0.55 MUTED]\n │      62. Built-in Audio Digital Stereo (HDMI) [vol: 1.00]\n │  \n ├─ Sources:\n │      58. Built-in Audio Analog Stereo  [vol: 1.00]\n │  *   65. Audio Adapter (Unitek Y-247A) Mono  [vol: 0.40]\n │  \n └─ Streams:\n\nVideo\n ├─ Sinks:\n │      90. Câmera [vol: 1.00]\n";
         let (sinks, sources) = parse_audio_devices(text);
         assert_eq!(sinks.len(), 3);
-        assert_eq!(sinks[0], AudioDevice { id: 60, name: "Audio Adapter (Unitek Y-247A)".into(), default: true, volume: 0.8 });
+        assert_eq!((sinks[0].node.as_str(), sinks[0].name.as_str(), sinks[0].default, sinks[0].volume, sinks[0].via_wpctl), ("60", "Audio Adapter (Unitek Y-247A)", true, 0.8, true));
         // Dois nós do mesmo aparelho: fica o nome completo.
         assert_eq!(sinks[1].name, "Built-in Audio Analog Stereo");
         assert!((sinks[1].volume - 0.55).abs() < 1e-6);
-        assert_eq!(sources.iter().map(|d| (d.id, d.default)).collect::<Vec<_>>(), [(58, false), (65, true)]);
+        assert_eq!(sources.iter().map(|d| (d.node.as_str(), d.default)).collect::<Vec<_>>(), [("58", false), ("65", true)]);
         assert_eq!(sources[0].name, "Built-in Audio");
     }
 }
