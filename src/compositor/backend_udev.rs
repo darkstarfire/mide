@@ -272,11 +272,14 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let motion = matches!(event, InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. });
         let before = (state.redraw, cursor_key(state));
         crate::input::handle_event_in(state, event, bounds);
+        // O ícone de um arrasto entre apps é desenhado na cena junto do ponteiro: com
+        // ele, todo movimento pede quadro (não basta mover o cursor da placa).
         let follows_pointer = state.preview.is_some()
+            || state.dnd_icon.is_some()
             || state.seat.get_pointer().is_some_and(|p| p.is_grabbed())
             || over_title_bar(state)
             || state.screencopy.wants_cursor();
-        if motion && !before.0 && !state.redraw && !follows_pointer && before.1 == cursor_key(state) {
+        if only_cursor_moved(motion, before.0 || state.redraw, follows_pointer, before.1 == cursor_key(state)) {
             let mut gpu = input_gpu.borrow_mut();
             if !gpu.blanked && move_hw_cursors(&mut gpu, state) {
                 return;
@@ -577,6 +580,13 @@ fn over_title_bar(state: &State) -> bool {
         let size = w.geometry().size;
         bar_h > 0 && p.x >= (loc.x - 8) as f64 && p.x <= (loc.x + size.w + 8) as f64 && p.y >= (loc.y - bar_h - 8) as f64 && p.y <= (loc.y + 8) as f64
     })
+}
+
+/// O evento só mexeu o cursor (basta mover o cursor da placa, sem quadro novo)? Só
+/// quando foi movimento do mouse, ninguém pediu quadro, nada segue o ponteiro na cena
+/// (ícone de arrasto, janela sendo movida, prévia, gravação) e o cursor não mudou de forma.
+fn only_cursor_moved(motion: bool, redraw: bool, follows_pointer: bool, same_cursor: bool) -> bool {
+    motion && !redraw && !follows_pointer && same_cursor
 }
 
 /// Forma do cursor agora (para saber se ela mudou com o movimento).
@@ -931,5 +941,22 @@ fn apply_input_config(device: &mut smithay::reexports::input::Device, input: &cr
     if device.config_scroll_has_natural_scroll() {
         let natural = if touchpad { input.touchpad_natural_scroll } else { input.mouse_natural_scroll };
         let _ = device.config_scroll_set_natural_scroll_enabled(natural);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::only_cursor_moved;
+
+    #[test]
+    fn arrasto_com_icone_pede_quadro_a_cada_movimento() {
+        // Só o mouse andou: move o cursor da placa, sem quadro.
+        assert!(only_cursor_moved(true, false, false, true));
+        // Algo segue o ponteiro (ícone do arrasto, janela movida): quadro novo.
+        assert!(!only_cursor_moved(true, false, true, true));
+        // Alguém pediu quadro, o cursor mudou de forma ou não foi movimento.
+        assert!(!only_cursor_moved(true, true, false, true));
+        assert!(!only_cursor_moved(true, false, false, false));
+        assert!(!only_cursor_moved(false, false, false, true));
     }
 }

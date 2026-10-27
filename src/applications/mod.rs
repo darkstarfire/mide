@@ -2,6 +2,7 @@
 
 pub mod programs;
 pub mod appimage;
+pub mod xpm;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::applications::{apps, default_apps, icons};

@@ -1024,3 +1024,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 
 - Testes de interface também com escala fracionária: além de 1366x768 em 100%, conferir 2560x1440 (ou 2560x1600) com escala 1,5 (150%) e 1,25 (125%), olhando a nitidez da barra superior (ícones e letras), dos ícones da dock e do texto dos apps mide-ui.
 - Problema conhecido: no 2K do usuário (Chromebook), a barra superior a 150% perdeu definição e proporção em alguns pontos. Conferir com um quadro (`tests/scenario.sh ... QUADRO`) depois da correção.
+
+## Atalho com ícone XPM na área de trabalho (2026-10-27)
+
+- `cargo test`: `xpm::tests` (cores, transparência, 2 caracteres por pixel, linha curta rejeitada, PNG no cache reaproveitado) e `backend_udev::tests::arrasto_com_icone_pede_quadro_a_cada_movimento`.
+- `tests/ui.sh area-de-trabalho` (12 ok): cenário novo com um `.desktop` cujo `Icon=` é um XPM laranja; o quadro do meio do arrasto tem o ícone na mesa e junto do ponteiro (701, 401), e o log mostra "arrasto entre apps começou (ícone: true)".
+- Conferido com o atalho real do Eclipse (`/opt/eclipse/jee-2026-09/eclipse/icon.xpm`): o ícone do Eclipse aparece na mesa e no arrasto.
+- Manual (sessão de verdade, DRM): arrastar o Eclipse na mesa e para uma janela; o ícone segue o mouse.

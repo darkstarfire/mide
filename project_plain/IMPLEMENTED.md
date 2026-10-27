@@ -1917,3 +1917,12 @@ Pedidos do usuário (com a foto do menu Janela do Mac mandada pelo Douglas).
 ## Atualizar só o que mudou (2026-10-27)
 
 Pedido do usuário: o `data/mide-update` atrapalhava quem usa o mide enquanto atualiza (sempre reiniciava o shell, e o `--all` fecha as janelas). Agora ele compara a soma de cada programa de `target/release` antes e depois de compilar e reinicia **só os programas do DE que mudaram** (`mide-ctl restart shell <programas>`, novo no compositor: `restart_shell_only`), sem fechar janelas. Se o compositor mudou, só avisa (vale ao entrar de novo, ou com `--all`); apps que mudaram valem ao abrir de novo; nada mudou, nada é reiniciado. Um compositor antigo, que ainda não conhece os nomes, reinicia o shell inteiro (como antes).
+
+## Arrastar o atalho do Eclipse na área de trabalho (2026-10-27)
+
+Bug do usuário na sessão de verdade: arrastar o ícone do Eclipse na área de trabalho não mostrava nada seguindo o ponteiro, e o ícone dele também não aparecia. Causa: o atalho do Eclipse aponta para um ícone em XPM (`Icon=/opt/eclipse/.../icon.xpm`), formato que a biblioteca de imagens não lê. A mesa caía no ícone genérico e o ícone do arrasto saía vazio (`drag_icon` devolvia `None`): o arrasto do Wayland começava **sem ícone**, então nada acompanhava o mouse.
+
+- **Leitor de XPM próprio** (`mide::xpm`, `src/applications/xpm.rs`): lê o XPM 3 (cores `#RGB`/`#RRGGBB`/16 bits, `None` transparente, alguns nomes do X11, vários caracteres por pixel, comentários) e grava um PNG no cache (`$XDG_CACHE_HOME/mide/icons/xpm-<hash>.png`, refeito quando o XPM muda). `Labels` (o nome e o ícone dos atalhos `.desktop`, usado pela mesa e pelo Arquivos) troca o XPM por esse PNG.
+- **Ícone do arrasto nunca vazio:** na mesa, o mesmo ícone mostrado, com o genérico como reserva; no Arquivos, um atalho `.desktop` arrastado leva o ícone do app (antes, o genérico de arquivo).
+- **Compositor (DRM):** a decisão "só o cursor mexeu, basta mover o cursor da placa" virou a função `only_cursor_moved` (com teste de unidade) e passou a considerar também o ícone de arrasto presente (`state.dnd_icon`): com ele, cada movimento desenha um quadro. Antes isso já valia pela pega do ponteiro (`is_grabbed`), agora fica explícito.
+- Fica para depois: o launcher e a dock (lista de apps do mide-ui) ainda não leem XPM; a conversão teria de ir para o mide-ui.

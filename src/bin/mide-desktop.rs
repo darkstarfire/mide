@@ -726,7 +726,9 @@ impl Desktop {
     /// vários itens, a contagem num selo vermelho.
     fn drag_icon(icon: &str, count: usize) -> Option<Pixmap> {
         const SIZE: u32 = 72;
-        let base = mide::icons::load_icon(icon, 64)?;
+        // O mesmo ícone da mesa (do app, num atalho `.desktop`; do tema, nos outros) e,
+        // se nada carregar, o genérico: sem ícone, nada acompanharia o ponteiro.
+        let base = mide::icons::load_icon(icon, 64).or_else(|| mide::icons::load_themed_icon(&[icon, "application-x-executable", "text-x-generic"], 64))?;
         let mut canvas = Pixmap::new(SIZE, SIZE)?;
         let scale = (60.0 / base.width().max(base.height()) as f32).min(1.0);
         let (w, h) = (base.width() as f32 * scale, base.height() as f32 * scale);
