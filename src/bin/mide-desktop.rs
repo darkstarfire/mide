@@ -97,6 +97,9 @@ struct Desktop {
     /// Arrasto do Wayland começado aqui: os caminhos, o ícone apertado e a distância
     /// do ponteiro ao canto dele.
     drag_out: Option<(Vec<PathBuf>, PathBuf, (f32, f32))>,
+    /// O arrasto terminou (solto em outro app ou cancelado): se nenhum "soltou aqui"
+    /// chegar logo depois, os ícones escondidos voltam ao lugar.
+    drag_ended_at: Option<std::time::Instant>,
     /// Retângulo de seleção: onde começou, onde está, e a seleção de antes (com Ctrl,
     /// o retângulo soma a ela).
     band: mide::kit::SelectionBand,
@@ -312,6 +315,7 @@ impl Desktop {
             cells: HashMap::new(),
             press: None,
             drag_out: None,
+            drag_ended_at: None,
             band: Default::default(),
             band_base: None,
             menu_point: None,
@@ -722,26 +726,45 @@ impl Desktop {
         self.save_cells();
     }
 
-    /// Imagem que segue o ponteiro no arrasto: o ícone (um pouco transparente) e, com
-    /// vários itens, a contagem num selo vermelho.
-    fn drag_icon(icon: &str, count: usize) -> Option<Pixmap> {
-        const SIZE: u32 = 72;
-        // O mesmo ícone da mesa (do app, num atalho `.desktop`; do tema, nos outros) e,
-        // se nada carregar, o genérico: sem ícone, nada acompanharia o ponteiro.
-        let base = mide::icons::load_icon(icon, 64).or_else(|| mide::icons::load_themed_icon(&[icon, "application-x-executable", "text-x-generic"], 64))?;
-        let mut canvas = Pixmap::new(SIZE, SIZE)?;
-        let scale = (60.0 / base.width().max(base.height()) as f32).min(1.0);
+    /// Imagem que segue o ponteiro no arrasto: o próprio ícone (opaco, como na mesa),
+    /// com o nome embaixo na cápsula de escolhido e, com vários itens, a contagem num
+    /// selo vermelho. O kit centra a imagem no ponteiro: o ícone é posto de modo que o
+    /// ponto apertado (`grab`, relativo à célula) caia no centro, sem pulo ao começar.
+    fn drag_icon(icon: &str, name: &str, count: usize, grab: (f32, f32)) -> Option<Pixmap> {
+        let base = mide::icons::load_icon(icon, ICON).or_else(|| mide::icons::load_themed_icon(&[icon, "application-x-executable", "text-x-generic"], ICON))?;
+        let (cw, ch) = (CELL.0 * 2.0, CELL.1 * 2.0);
+        let mut canvas = Pixmap::new(cw as u32, ch as u32)?;
+        // Canto da célula na imagem.
+        let (ox, oy) = (cw / 2.0 - grab.0, ch / 2.0 - grab.1);
+        let scale = (ICON as f32 / base.width().max(base.height()) as f32).min(1.0);
         let (w, h) = (base.width() as f32 * scale, base.height() as f32 * scale);
-        let paint = tiny_skia::PixmapPaint { opacity: 0.85, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-        let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate((SIZE as f32 - w) / 2.0, (SIZE as f32 - h) / 2.0);
-        canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tf, None);
+        let (ix, iy) = (ox + (CELL.0 - w) / 2.0, oy + 8.0 + (ICON as f32 - h) / 2.0);
+        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tiny_skia::Transform::from_scale(scale, scale).post_translate(ix, iy), None);
+        // Nome na cápsula de escolhido (cortado com reticências se não couber).
+        let mut text = mide::ui::text::Text::new();
+        let size = 12.0;
+        let max = CELL.0 - 8.0;
+        let mut label = name.to_string();
+        let fits = |t: &mut mide::ui::text::Text, l: &str| t.measure(l, size, mide::ui::text::FontWeight::Regular) <= max - 12.0;
+        if !fits(&mut text, &label) {
+            let mut chars: Vec<char> = name.chars().collect();
+            while chars.len() > 1 && !fits(&mut text, &format!("{}…", chars.iter().collect::<String>())) {
+                chars.pop();
+            }
+            label = format!("{}…", chars.iter().collect::<String>());
+        }
+        let tw = text.measure(&label, size, mide::ui::text::FontWeight::Regular) + 12.0;
+        let (tx, ty) = (ox + (CELL.0 - tw) / 2.0, oy + 8.0 + ICON as f32 + 6.0);
+        let [r, g, b, _] = mide::kit::system_accent(mide::kit::system_dark());
+        mide::ui::draw::fill_rounded(&mut canvas, tx, ty, tw, 19.0, 6.0, tiny_skia::Color::from_rgba8(r, g, b, 255));
+        text.draw(&mut canvas, &label, tx + 6.0, ty + 2.0, size, mide::ui::text::FontWeight::Regular, [255, 255, 255, 255]);
         if count > 1 {
-            let label = count.to_string();
-            let mut text = mide::ui::text::Text::new();
-            let tw = text.measure(&label, 12.0, mide::ui::text::FontWeight::Semibold).max(8.0) + 12.0;
-            let x = SIZE as f32 - tw - 1.0;
-            mide::ui::draw::fill_rounded(&mut canvas, x, 1.0, tw, 20.0, 10.0, tiny_skia::Color::from_rgba8(255, 59, 48, 255));
-            text.draw(&mut canvas, &label, x + 6.0, 3.5, 12.0, mide::ui::text::FontWeight::Semibold, [255, 255, 255, 255]);
+            let badge = count.to_string();
+            let bw = text.measure(&badge, 12.0, mide::ui::text::FontWeight::Semibold).max(8.0) + 12.0;
+            let bx = ix + w - bw / 2.0;
+            mide::ui::draw::fill_rounded(&mut canvas, bx, iy - 6.0, bw, 20.0, 10.0, tiny_skia::Color::from_rgba8(255, 59, 48, 255));
+            text.draw(&mut canvas, &badge, bx + 6.0, iy - 3.5, 12.0, mide::ui::text::FontWeight::Semibold, [255, 255, 255, 255]);
         }
         Some(canvas)
     }
@@ -918,9 +941,14 @@ impl App for Desktop {
             let mut paths: Vec<PathBuf> = if self.selected.contains(&path) { self.selected.clone() } else { vec![path.clone()] };
             paths.retain(|p| !drives.contains(p));
             if !paths.is_empty() {
-                let icon = placed.iter().find(|(i, _)| i.path == path).map(|(i, _)| i.icon.clone()).unwrap_or_else(|| "text-x-generic".into());
+                let (icon, name) = placed
+                    .iter()
+                    .find(|(i, _)| i.path == path)
+                    .map(|(i, _)| (i.icon.clone(), i.name.clone()))
+                    .unwrap_or_else(|| ("text-x-generic".into(), String::new()));
                 tracing::info!("área de trabalho: arrastando {} item(ns)", paths.len());
-                ui.start_drag(&paths, Self::drag_icon(&icon, paths.len()));
+                ui.start_drag(&paths, Self::drag_icon(&icon, &name, paths.len(), offset));
+                self.drag_ended_at = None;
                 if !self.selected.contains(&path) {
                     self.selected = vec![path.clone()];
                 }
@@ -946,6 +974,11 @@ impl App for Desktop {
             // receber o item; segurando, abre (pasta de mola).
             let dragging_this = self.drag_out.as_ref().is_some_and(|(paths, ..)| paths.contains(&item.path));
             let drop_here = drop_hover && !dragging_this && item.is_dir && pointer.is_some_and(inside);
+            // O ícone arrastado sai do lugar (é ele que segue o ponteiro); volta se o
+            // arrasto for cancelado.
+            if dragging_this {
+                continue;
+            }
             if drop_here {
                 spring_over = Some(item.path.clone());
             }
@@ -1085,6 +1118,18 @@ impl App for Desktop {
         // ponteiro ou para a área de trabalho, no lugar onde caíram.
         let dropped = ui.input().dropped.clone();
         let just_dropped = dropped.is_some();
+        // Arrasto terminado sem cair aqui (outro app ou cancelado): depois de um instante
+        // (o "soltou aqui" pode chegar um pouco depois do fim), os ícones voltam.
+        if ui.input().drag_ended && self.drag_out.is_some() {
+            self.drag_ended_at = Some(std::time::Instant::now());
+            ui.wake_after(std::time::Duration::from_millis(400));
+        }
+        if self.drag_ended_at.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(350)) && !just_dropped {
+            self.drag_ended_at = None;
+            if self.drag_out.take().is_some() {
+                tracing::info!("área de trabalho: arrasto terminou fora daqui, ícones de volta");
+            }
+        }
         if let (Some(paths), Some(p)) = (dropped, pointer) {
             let own = self.drag_out.take().filter(|(out, ..)| out.len() == paths.len() && paths.iter().all(|p| out.contains(p)));
             if let Some((paths, pressed_path, offset)) = own {

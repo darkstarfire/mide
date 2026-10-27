@@ -1935,3 +1935,7 @@ Bug do usuário na sessão de verdade: arrastar o ícone do Eclipse na área de 
 - **Ícone do arrasto nunca vazio:** na mesa, o mesmo ícone mostrado, com o genérico como reserva; no Arquivos, um atalho `.desktop` arrastado leva o ícone do app (antes, o genérico de arquivo).
 - **Compositor (DRM):** a decisão "só o cursor mexeu, basta mover o cursor da placa" virou a função `only_cursor_moved` (com teste de unidade) e passou a considerar também o ícone de arrasto presente (`state.dnd_icon`): com ele, cada movimento desenha um quadro. Antes isso já valia pela pega do ponteiro (`is_grabbed`), agora fica explícito.
 - Fica para depois: o launcher e a dock (lista de apps do mide-ui) ainda não leem XPM; a conversão teria de ir para o mide-ui.
+
+## Área de trabalho: o próprio ícone segue o arrasto (2026-10-27)
+
+Pedido do usuário: o arrasto levava um "fantasma" (cópia transparente) e o ícone ficava no lugar. Agora o ícone arrastado sai do lugar e o que segue o ponteiro é ele, opaco, com o nome na cápsula de escolhido (e a contagem com vários), preso ao ponteiro no ponto onde foi apertado (sem pulo). Se o arrasto termina fora da mesa (outro app) ou é cancelado, o ícone volta ao lugar 350 ms depois do fim (o "soltou aqui" pode chegar um pouco depois do fim do arrasto).

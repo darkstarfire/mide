@@ -61,7 +61,7 @@ MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "arrastar o ícone para 
 rm -rf "$DESK"/* ; mkdir "$DESK/Pasta"; echo x >"$DESK/notas.txt"
 MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "segurar o arrasto em cima de uma pasta abre a pasta (pasta de mola)" "abrir \(teste\): .*/Pasta$" "300 press 1298 182; 306 move 1290 160; 312 move 1295 100; 318 move 1298 80; 330 move 1299 78; 400 move 1298 79; 470 move 1299 79; 540 release 900 400; 580 list"
 # Atalho .desktop com ícone XPM (como o do Eclipse, `Icon=.../icon.xpm`): a mesa mostra
-# o ícone do app e o arrasto leva esse ícone, junto do ponteiro. A pasta da mesa fica
+# o ícone do app e o arrasto leva o próprio ícone (ele sai do lugar), junto do ponteiro. A pasta da mesa fica
 # dentro de `applications/` (atalho confiável sem perguntar).
 EDATA="$(mktemp -d)"; EDESK="$EDATA/applications"; mkdir -p "$EDESK"
 python3 -c "
@@ -81,13 +81,13 @@ import sys
 from PIL import Image
 img = Image.open(sys.argv[1]).convert('RGB')
 near = lambda p: abs(p[0] - 0xF7) < 40 and abs(p[1] - 0x94) < 40 and abs(p[2] - 0x1E) < 50
-# Ícone do arrasto junto do ponteiro (701, 401) e o ícone na mesa (1298, 76).
+# Ícone do arrasto junto do ponteiro (701, 401); no lugar dele na mesa (1298, 76), nada.
 drag = sum(near(img.getpixel((x, y))) for x in range(661, 742, 4) for y in range(361, 442, 4))
 desk = sum(near(img.getpixel((x, y))) for x in range(1270, 1327, 4) for y in range(50, 103, 4))
-sys.exit(0 if drag >= 40 and desk >= 40 else 'arrasto %d, mesa %d' % (drag, desk))" "$EDATA/out/frame.png"; then
-    echo "ok    atalho com ícone XPM: a mesa mostra o ícone do app e o arrasto o leva junto do ponteiro"; PASS=$((PASS + 1))
+sys.exit(0 if drag >= 40 and desk <= 4 else 'arrasto %d, mesa %d' % (drag, desk))" "$EDATA/out/frame.png"; then
+    echo "ok    atalho com ícone XPM: o próprio ícone do app sai do lugar e segue o ponteiro"; PASS=$((PASS + 1))
 else
-    echo "FALHA atalho com ícone XPM: a mesa mostra o ícone do app e o arrasto o leva junto do ponteiro"; FAIL=$((FAIL + 1))
+    echo "FALHA atalho com ícone XPM: o próprio ícone do app sai do lugar e segue o ponteiro"; FAIL=$((FAIL + 1))
     echo "$ELOG" | grep -a "arrasto\|atalho" | sed 's/^/      /' | tail -4
 fi
 rm -rf "$DESK" "$DSTATE" "$EDATA"
