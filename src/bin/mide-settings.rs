@@ -1949,29 +1949,52 @@ fn to_pixmap(img: &image::RgbaImage) -> Pixmap {
 }
 
 /// "ctrl+shift+space" vira "Ctrl ⇧ Espaço" (ou "⌘ ⇧ Espaço" com as teclas no estilo Mac).
+/// No estilo Mac, os atalhos do mide veem o ⌘ como Super (`super` vira ⌘), o Ctrl
+/// junto do ⌘ é o ⌃ Control e um Ctrl sozinho também vale com o ⌘ (aparece como ⌘); os
+/// modificadores vêm na ordem do Mac: ⌃ ⌥ ⇧ ⌘ e a tecla (⇧⌘4).
 fn pretty_combo(combo: &str, mac: bool) -> String {
-    combo
-        .split('+')
-        .map(|k| match k {
-            "ctrl" if mac => "⌘".to_string(),
+    let parts: Vec<&str> = combo.split('+').collect();
+    let key_name = |k: &str| match k {
+        "space" => "Espaço".to_string(),
+        "escape" => "Esc".to_string(),
+        "return" => "Enter".to_string(),
+        "tab" => "Tab".to_string(),
+        "up" => "↑".to_string(),
+        "down" => "↓".to_string(),
+        "left" => "←".to_string(),
+        "right" => "→".to_string(),
+        "print" => "Print Screen".to_string(),
+        "delete" => "Delete".to_string(),
+        "backspace" => "⌫".to_string(),
+        other => other.to_uppercase(),
+    };
+    if mac {
+        let has = |m: &str| parts.contains(&m);
+        let command = has("super") || (has("ctrl") && !has("super"));
+        let mut out = Vec::new();
+        if has("ctrl") && has("super") {
+            out.push("⌃".to_string());
+        }
+        if has("alt") {
+            out.push("⌥".to_string());
+        }
+        if has("shift") {
+            out.push("⇧".to_string());
+        }
+        if command {
+            out.push("⌘".to_string());
+        }
+        out.extend(parts.iter().filter(|k| !matches!(**k, "ctrl" | "super" | "alt" | "shift")).map(|k| key_name(k)));
+        return out.join(" ");
+    }
+    parts
+        .iter()
+        .map(|k| match *k {
             "ctrl" => "Ctrl".to_string(),
             "shift" => "⇧".to_string(),
-            "alt" if mac => "⌥".to_string(),
             "alt" => "Alt".to_string(),
-            "super" if mac => "Ctrl".to_string(),
             "super" => "Super".to_string(),
-            "space" => "Espaço".to_string(),
-            "escape" => "Esc".to_string(),
-            "return" => "Enter".to_string(),
-            "tab" => "Tab".to_string(),
-            "up" => "↑".to_string(),
-            "down" => "↓".to_string(),
-            "left" => "←".to_string(),
-            "right" => "→".to_string(),
-            "print" => "Print Screen".to_string(),
-            "delete" => "Delete".to_string(),
-            "backspace" => "⌫".to_string(),
-            other => other.to_uppercase(),
+            other => key_name(other),
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -2123,6 +2146,11 @@ mod tests {
         assert_eq!(pretty_combo("ctrl+shift+space", false), "Ctrl ⇧ Espaço");
         assert_eq!(pretty_combo("ctrl+shift+t", false), "Ctrl ⇧ T");
         assert_eq!(pretty_combo("ctrl+space", true), "⌘ Espaço");
+        // Estilo Mac: as capturas são ⇧⌘3/4/5 (o ⌘ é o Super dos atalhos do mide).
+        assert_eq!(pretty_combo("super+shift+4", true), "⇧ ⌘ 4");
+        assert_eq!(pretty_combo("super+shift+4", false), "Super ⇧ 4");
+        assert_eq!(pretty_combo("ctrl+super+q", true), "⌃ ⌘ Q");
+        assert_eq!(pretty_combo("ctrl+shift+space", true), "⇧ ⌘ Espaço");
         assert_eq!(describe_action("toggle_launcher", &[]), "Abrir ou fechar o launcher");
         assert_eq!(describe_action("toggle_search", &[]), "Abrir ou fechar o buscador");
         assert_eq!(describe_action("launch:foot", &[]), "Abrir: foot");

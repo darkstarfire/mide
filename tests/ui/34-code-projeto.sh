@@ -62,6 +62,12 @@ new_project
 code_run "300 list" XDG_STATE_HOME="'$CDIR/state'" -- "'$CDIR/proj'" "'$CDIR/proj/src/main.rs'"
 check "code: aberto sem nada, volta ao projeto e às abas da última vez" 'janela "main.rs — Code"' "300 list" "XDG_STATE_HOME='$CDIR/state' $CODE_BIN"
 
+# Fechar pasta (botão direito no fundo da gaveta, a última linha do menu, +173): a aba
+# do arquivo dela fecha e, na próxima abertura, o Code não volta ao projeto.
+code_run "300 click 600 300; 330 rclick 150 400; 380 click 200 573; 420 list" XDG_STATE_HOME="'$CDIR/state'" -- "'$CDIR/proj'" "'$CDIR/proj/src/main.rs'"
+ok_if "code: Fechar pasta pela gaveta" grep -q "projeto fechado: $CDIR/proj" "$CLOG"
+check "code: depois de Fechar pasta, não volta ao projeto" 'janela "sem título — Code"' "300 list" "XDG_STATE_HOME='$CDIR/state' $CODE_BIN"
+
 # Divisória da gaveta: arrastar de x=275 a x=420 deixa a gaveta com 375 (guardado).
 new_project
 code_run "300 click 600 300; 330 press 275 400; 340 move 300 400; 350 move 380 400; 360 move 420 400; 370 release 420 400; 400 list" -- "'$CDIR/proj'"

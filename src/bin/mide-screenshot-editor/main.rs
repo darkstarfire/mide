@@ -849,6 +849,29 @@ impl Editor {
         }
     }
 
+    /// Barra de baixo com o zoom (como a do Arquivos): o tamanho em % no meio e o
+    /// deslizante à direita, de "caber na janela" (1x) a 16x, em escala logarítmica
+    /// (cada pedaço do trilho multiplica o zoom pelo mesmo tanto).
+    fn zoom_bar(&mut self, ui: &mut Ui, w: f32, h: f32) {
+        const MAX: f32 = 16.0;
+        let percent = self.last_mapping.map_or(100.0, |m| m.s * mide::ui::draw::scale() * 100.0);
+        let mut value = self.zoom.max(1.0).ln() / MAX.ln();
+        let mut changed = false;
+        ui.at(0.0, h - 26.0, w, |ui| {
+            let status = ui.status_bar(&format!("Zoom: {percent:.0}%"));
+            ui.at(status.0 + status.2 - 156.0, status.1 + (status.3 - 18.0) / 2.0, 140.0, |ui| {
+                changed = ui.mini_slider(140.0, &mut value, 0.0, 1.0).changed();
+            });
+        });
+        if changed {
+            let want = MAX.powf(value.clamp(0.0, 1.0));
+            if (want - self.zoom).abs() > 1e-3 {
+                self.zoom_request = Some(want / self.zoom.max(1e-3));
+            }
+            ui.request_repaint();
+        }
+    }
+
     fn canvas(&mut self, ui: &mut Ui, area: RectF) {
         let Some(doc) = self.doc.as_ref() else {
             return;
@@ -1357,6 +1380,7 @@ impl App for Editor {
         let area = (20.0, top + 10.0, (w - 40.0).max(1.0), (h - top - 30.0).max(1.0));
         if self.doc.is_some() {
             self.canvas(ui, area);
+            self.zoom_bar(ui, w, h);
         } else if self.dialog.is_none() {
             ui.label("Nenhuma imagem aberta.");
             ui.sized(140.0, |ui| {

@@ -874,6 +874,7 @@ impl Code {
                 let dir = self.root.clone().unwrap_or_else(mide::places::home_dir);
                 self.dialog = Some(Dialog::OpenFolder(FileChooser::folder("Abrir pasta", Some(&dir))));
             }
+            "close-folder" => self.close_folder(),
             "save" => {
                 self.save(false);
             }
@@ -1394,6 +1395,40 @@ impl Code {
         self.failed.clear();
         for doc in &mut self.docs {
             doc.lsp_seen = None;
+        }
+    }
+
+    /// Fecha a pasta do projeto: a gaveta some, os servidores de linguagem param e as
+    /// abas dos arquivos dela fecham (as com alterações ficam abertas, para não perder
+    /// nada). Na próxima abertura, o Code não reabre a pasta.
+    fn close_folder(&mut self) {
+        let Some(root) = self.root.take() else {
+            return;
+        };
+        tracing::info!("projeto fechado: {}", root.display());
+        let mut kept = 0;
+        let mut i = self.docs.len();
+        while i > 0 {
+            i -= 1;
+            if self.docs[i].path.as_ref().is_some_and(|p| p.starts_with(&root)) {
+                if self.docs[i].text.modified {
+                    kept += 1;
+                } else {
+                    self.close_tab(i, true);
+                }
+            }
+        }
+        self.expanded.clear();
+        self.servers.clear();
+        self.failed.clear();
+        for doc in &mut self.docs {
+            doc.lsp_seen = None;
+        }
+        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if kept > 0 {
+            self.say(format!("Pasta \"{name}\" fechada; {kept} aba(s) com alterações continuam abertas"));
+        } else {
+            self.say(format!("Pasta \"{name}\" fechada"));
         }
     }
 
@@ -2013,6 +2048,7 @@ impl App for Code {
                     MenuItem::action("new", "Novo").shortcut("Ctrl+N"),
                     MenuItem::action("open", "Abrir…").shortcut("Ctrl+O"),
                     MenuItem::action("open-folder", "Abrir pasta…").shortcut("Ctrl+Shift+O"),
+                    MenuItem::action("close-folder", "Fechar pasta").enabled(self.root.is_some()),
                     MenuItem::Separator,
                     MenuItem::action("save", "Salvar").shortcut("Ctrl+S"),
                     MenuItem::action("save-as", "Salvar como…").shortcut("Ctrl+Shift+S"),

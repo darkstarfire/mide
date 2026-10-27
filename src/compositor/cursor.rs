@@ -51,6 +51,10 @@ pub struct Cursors {
     theme: xcursor::CursorTheme,
     size: u32,
     images: HashMap<String, Option<Image>>,
+    /// Cursor crescido (ponteiro agitado), por nome: a imagem de alta resolução do tema
+    /// (o maior tamanho que ele tem) e a metade dela, feita dos mesmos pixels. O desenho
+    /// nunca troca durante a animação: a placa só escala uma das duas.
+    hidpi: HashMap<String, Option<(Image, Image)>>,
     fallback: Image,
 }
 
@@ -58,7 +62,10 @@ impl Cursors {
     pub fn new() -> Self {
         let name = std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".into());
         let size = std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(24);
-        Self { theme: xcursor::CursorTheme::load(&name), size, images: HashMap::new(), fallback: arrow() }
+        let mut cursors = Self { theme: xcursor::CursorTheme::load(&name), size, images: HashMap::new(), hidpi: HashMap::new(), fallback: arrow() };
+        // A seta grande já pronta: a primeira agitada não espera a leitura do tema.
+        let _ = cursors.hidpi("default");
+        cursors
     }
 
     /// Elementos do cursor na posição do ponteiro (o primeiro da lista fica na frente).
@@ -83,13 +90,22 @@ impl Cursors {
         };
         // Ponteiro agitado: o cursor grande (imagem do tema no tamanho mais próximo,
         // ajustada até o tamanho pedido).
+        // Para a animação ser contínua: uma imagem de alta resolução (e a metade dela,
+        // dos mesmos pixels) escalada pela placa a cada quadro; o ponto quente acompanha
+        // sem arredondar.
         let grow = state.shake.scale(std::time::Instant::now());
         let base = self.size;
-        let image = if grow > 1.001 { self.image_at(&name, (base as f32 * grow).round() as u32) } else { self.image(&name) };
+        let image = if grow > 1.001 {
+            let target = base as f32 * grow;
+            let (half, full) = self.hidpi(&name);
+            if target <= half.nominal as f32 { half } else { full }
+        } else {
+            self.image(&name)
+        };
         let k = if grow > 1.001 { base as f32 * grow / image.nominal.max(1) as f32 } else { 1.0 };
-        let hotspot = Point::<i32, Logical>::from(((image.hotspot.x as f32 * k).round() as i32, (image.hotspot.y as f32 * k).round() as i32));
+        let hotspot = Point::<f64, Logical>::from((image.hotspot.x as f64 * k as f64, image.hotspot.y as f64 * k as f64));
         let size = (grow > 1.001).then(|| smithay::utils::Size::<i32, Logical>::from(((image.size.0 as f32 * k).round() as i32, (image.size.1 as f32 * k).round() as i32)));
-        let location = crate::clip::phys(pointer - hotspot).to_f64();
+        let location = (pointer.to_f64() - hotspot).to_physical(crate::clip::scale());
         match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, size, Kind::Cursor) {
             Ok(element) => vec![MideRenderElement::Title(element)],
             Err(err) => {
@@ -115,16 +131,17 @@ impl Cursors {
         Plan::Image { name, pixels: &image.pixels, size: image.size, hotspot: (image.hotspot.x, image.hotspot.y) }
     }
 
-    /// Como `image`, num tamanho pedido (o cursor crescido ao agitar o ponteiro).
-    fn image_at(&mut self, name: &str, size: u32) -> &Image {
-        // Tamanhos em degraus de 8: poucas imagens no cache durante a animação.
-        let size = size.div_ceil(8) * 8;
-        let key = format!("{name}@{size}");
-        if !self.images.contains_key(&key) {
-            let loaded = names_for(name).iter().find_map(|n| load(&self.theme, n, size));
-            self.images.insert(key.clone(), loaded);
+    /// O cursor grande: o maior tamanho do tema e a metade dele (para escalas até 2x,
+    /// com menos serrilhado ao reduzir). Sem tema, a seta do mide.
+    fn hidpi(&mut self, name: &str) -> (&Image, &Image) {
+        if !self.hidpi.contains_key(name) {
+            let loaded = names_for(name).iter().find_map(|n| load(&self.theme, n, u32::MAX)).map(|full| (half(&full), full));
+            self.hidpi.insert(name.to_string(), loaded);
         }
-        self.images.get(&key).and_then(Option::as_ref).unwrap_or(&self.fallback)
+        match self.hidpi.get(name).and_then(Option::as_ref) {
+            Some((half, full)) => (half, full),
+            None => (&self.fallback, &self.fallback),
+        }
     }
 
     /// Imagem do tema pelo nome, com nomes antigos de reserva; a seta própria se faltar.
@@ -185,6 +202,25 @@ fn load(theme: &xcursor::CursorTheme, name: &str, size: u32) -> Option<Image> {
         None,
     );
     Some(Image { buffer, hotspot: (image.xhot as i32, image.yhot as i32).into(), pixels: image.pixels_rgba.clone(), size: (image.width, image.height), nominal: image.size })
+}
+
+/// Metade de uma imagem (média de cada 2x2 pixels, já pré-multiplicados): a mesma
+/// imagem, menor, para a animação não trocar de desenho.
+fn half(full: &Image) -> Image {
+    let (w, h) = full.size;
+    let (hw, hh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut pixels = vec![0u8; (hw * hh * 4) as usize];
+    for y in 0..hh {
+        for x in 0..hw {
+            for c in 0..4 {
+                let at = |xx: u32, yy: u32| full.pixels[((yy.min(h - 1) * w + xx.min(w - 1)) * 4 + c) as usize] as u32;
+                let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
+                pixels[((y * hw + x) * 4 + c) as usize] = ((sum + 2) / 4) as u8;
+            }
+        }
+    }
+    let buffer = MemoryRenderBuffer::from_slice(&pixels, Fourcc::Abgr8888, (hw as i32, hh as i32), 1, Transform::Normal, None);
+    Image { buffer, hotspot: (full.hotspot.x / 2, full.hotspot.y / 2).into(), pixels, size: (hw, hh), nominal: (full.nominal / 2).max(1) }
 }
 
 /// Seta do próprio mide (preta com contorno branco), para quando não há tema.

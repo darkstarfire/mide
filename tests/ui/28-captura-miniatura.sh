@@ -102,12 +102,12 @@ for x in range(200):
 img.save(sys.argv[1])" "$1"
 }
 EDITOR="$PWD/target/debug/mide-screenshot-editor"
-# Recortar (R) arrastando a bolinha de cima à esquerda de (318, 247) para (418, 297):
+# Recortar (R) arrastando a bolinha de cima à esquerda de (348, 267) para (448, 317):
 # fica a área de (100, 50) a (400, 300); Enter recorta e Ctrl+S substitui o arquivo.
 make_png "$ED/recorte.png"
-SCENARIO_OUT="$MIN/recorte" timeout 150 "$SCEN" "400 key r; 450 press 318 247; 460 move 360 270; 470 move 418 297; 480 release 418 297; 520 key enter; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/recorte.png' >'$ED/recorte.log' 2>&1" >/dev/null 2>&1
+SCENARIO_OUT="$MIN/recorte" timeout 150 "$SCEN" "400 key r; 450 press 348 267; 460 move 390 290; 470 move 448 317; 480 release 448 317; 520 key enter; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/recorte.png' >'$ED/recorte.log' 2>&1" >/dev/null 2>&1
 LOG="$(sed 's/\x1b\[[0-9;]*m//g' "$ED/recorte.log")"
-if echo "$LOG" | grep -q "editor: imagem em (270, 171) 400x300" && echo "$LOG" | grep -q "editor: recortado em 300x250 a partir de (100, 50)" && python3 -c "
+if echo "$LOG" | grep -q "editor: imagem em (300, 191) 400x300" && echo "$LOG" | grep -q "editor: recortado em 300x250 a partir de (100, 50)" && python3 -c "
 import sys
 from PIL import Image
 img = Image.open(sys.argv[1]).convert('RGB')
@@ -117,12 +117,12 @@ sys.exit(0 if ok else 'tamanho %s' % (img.size,))" "$ED/recorte.png"; then
 else
     echo "FALHA editor: recortar e salvar ($(echo "$LOG" | grep -m1 'editor: imagem em'))"; FAIL=$((FAIL + 1))
 fi
-# Lápis (L) atravessando a imagem na altura y=400 (linha 153 da imagem): os pixels
+# Lápis (L, hoje o Esboço: a reta vira linha) atravessando a imagem na altura y=420 (linha 153 da imagem): os pixels
 # ficam vermelhos ali e só ali; Ctrl+Z desfaz e Ctrl+Shift+Z refaz antes de salvar.
 make_png "$ED/lapis.png"
-SCENARIO_OUT="$MIN/lapis" timeout 150 "$SCEN" "400 key l; 450 press 350 400; 460 move 450 400; 470 move 550 400; 480 move 650 400; 490 release 650 400; 520 combo ctrl+z; 540 combo ctrl+shift+z; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/lapis.png' >'$ED/lapis.log' 2>&1" >/dev/null 2>&1
+SCENARIO_OUT="$MIN/lapis" timeout 150 "$SCEN" "400 key l; 450 press 380 420; 460 move 480 420; 470 move 580 420; 480 move 680 420; 490 release 680 420; 520 combo ctrl+z; 540 combo ctrl+shift+z; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/lapis.png' >'$ED/lapis.log' 2>&1" >/dev/null 2>&1
 LOG="$(sed 's/\x1b\[[0-9;]*m//g' "$ED/lapis.log")"
-if echo "$LOG" | grep -q "editor: lápis desenhado" && echo "$LOG" | grep -q "editor: desfeito" && echo "$LOG" | grep -q "editor: refeito" && python3 -c "
+if echo "$LOG" | grep -Eq "editor: (lápis desenhado|esboço reconhecido como Line)" && echo "$LOG" | grep -q "editor: desfeito" && echo "$LOG" | grep -q "editor: refeito" && python3 -c "
 import sys
 from PIL import Image
 img = Image.open(sys.argv[1]).convert('RGB')
@@ -158,5 +158,14 @@ if sed 's/\x1b\[[0-9;]*m//g' "$ED/zoom.log" | grep -q "editor: zoom 156%"; then
     echo "ok    editor: Ctrl+= amplia a imagem"; PASS=$((PASS + 1))
 else
     echo "FALHA editor: Ctrl+= amplia a imagem"; FAIL=$((FAIL + 1))
+fi
+# Deslizante de zoom na barra de baixo (trilho de x=899 a x=1025, em y=702): arrastar
+# até a metade amplia (zoom logarítmico de 1x a 16x, perto de 4x).
+make_png "$ED/zoom2.png"
+SCENARIO_OUT="$MIN/zoom2" timeout 150 "$SCEN" "400 press 900 702; 410 move 930 702; 420 move 962 702; 430 release 962 702; 470 list" -- "$EDITOR '$ED/zoom2.png' >'$ED/zoom2.log' 2>&1" >/dev/null 2>&1
+if sed 's/\x1b\[[0-9;]*m//g' "$ED/zoom2.log" | grep -Eq "editor: zoom (3[0-9][0-9]|4[0-9][0-9])%"; then
+    echo "ok    editor: deslizante de zoom amplia a imagem"; PASS=$((PASS + 1))
+else
+    echo "FALHA editor: deslizante de zoom amplia a imagem"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$MIN"

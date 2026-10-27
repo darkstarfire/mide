@@ -1007,3 +1007,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh 25-arquivos-visualizacao`, cenários novos: a barra começa com 220; arrastar a borda de x=266 até x=340 grava `barra lateral: largura guardada 294` e `sidebar_width = 294` no `files-view.toml`; abrir de novo outra pasta volta com 294, conferido no log e no quadro salvo (em (300, 480) a barra lateral, diferente do fundo do conteúdo em (600, 480)).
 - Conferido por quadro salvo (800x600): visual igual ao de antes com 220 (comparado com o quadro do código anterior), barra com 294 e com 150 (nomes cortados com "…", pílula do item sob o ponteiro), e arrastar o vazio da barra ainda move a janela.
 - Manual (sessão de verdade): o ponteiro de redimensionar na borda da barra lateral.
+
+## Menu Janela, retângulo de seleção, Fechar pasta, zoom do editor e cursor agitado (2026-10-26)
+
+- `tests/ui.sh menu-janela` (seção 37): pelo menu Janela do Arquivos, Preencher, Centralizar, Metade esquerda, Canto inferior direito e, com duas telas, Mover para a outra tela.
+- `tests/ui.sh code-projeto`: Fechar pasta pela gaveta e, na abertura seguinte, o Code sem a pasta.
+- `tests/ui.sh captura-miniatura`: deslizante de zoom do Editor de Capturas (zoom entre 300% e 499%); recortar e lápis com a imagem em (300, 191) (a tecla L hoje é o Esboço: a reta vira linha).
+- `tests/ui.sh editor`: Abrir… pelo seletor, com o painel no meio ("nota.txt" em (480, 407)).
+- Bateria inteira em 2026-10-26: 536 ok; as falhas que sobram são antigas (04 trava, 11, 12, 16 (a Calculadora, de tamanho fixo, abre no meio desde o A26), 24, 27 (o portal se desconecta sem responder), 30).
+- `cargo test --bin mide shake`: o cursor agitado cresce e volta sem saltos entre quadros.
+- Retângulo de seleção conferido por quadro (`tests/scenario.sh ... QUADRO`): no Arquivos em ícones, véu cinza com borda e os itens tocados escolhidos; na lista, arrastar a divisória entre Nome e Modificado muda a coluna sem retângulo. `cargo test` do mide-ui: `band_touches`.
+- Seletor no Player por quadro (escuro e claro): no meio, compacto, ícones da barra lateral na cor de destaque.
+- Na sessão: seletor de arquivos do Player e de outros apps; menu Janela de vários apps (Arquivos, Terminal, um app GTK/X11), Mover para com os dois monitores; retângulo na mesa e no Arquivos (claro e escuro); "sombra" do menu da gaveta do Code sumida; agitar o mouse.

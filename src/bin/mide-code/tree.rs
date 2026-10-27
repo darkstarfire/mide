@@ -22,6 +22,7 @@ pub enum TreeAction {
     CopyPath(PathBuf),
     Reveal(PathBuf),
     Terminal(PathBuf),
+    CloseFolder,
 }
 
 /// Linhas da árvore: (profundidade, caminho, é pasta), sem ocultos e pastas geradas.
@@ -142,6 +143,10 @@ impl Code {
                 }
                 m.separator();
                 folder_items(m, &root, &root, &mut chosen);
+                m.separator();
+                if m.item_icon("window-close-symbolic", "Fechar pasta", None) {
+                    chosen = Some(TreeAction::CloseFolder);
+                }
             });
         });
         if let Some(path) = pressed {
@@ -202,6 +207,7 @@ impl Code {
                 self.say("Caminho copiado");
             }
             TreeAction::Reveal(path) => show_in_files(&path),
+            TreeAction::CloseFolder => self.close_folder(),
             TreeAction::Terminal(dir) => {
                 // Com o terminal integrado, abre nele; senão, o Terminal do mide.
                 if !self.open_integrated_terminal(Some(dir.clone()), ui) {

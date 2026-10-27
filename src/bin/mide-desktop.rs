@@ -99,8 +99,8 @@ struct Desktop {
     drag_out: Option<(Vec<PathBuf>, PathBuf, (f32, f32))>,
     /// Retângulo de seleção: onde começou, onde está, e a seleção de antes (com Ctrl,
     /// o retângulo soma a ela).
-    band: Option<Band>,
-    band_moved: bool,
+    band: mide::kit::SelectionBand,
+    band_base: Option<Vec<PathBuf>>,
     /// Ponto do clique direito no vazio: o que o menu criar aparece ali.
     menu_point: Option<(f32, f32)>,
     /// Colar pedido (o texto da área de transferência chega num dos próximos quadros),
@@ -118,7 +118,6 @@ struct Desktop {
 }
 
 /// Retângulo de seleção: começo, ponto atual e a seleção de antes.
-type Band = ((f32, f32), (f32, f32), Vec<PathBuf>);
 
 /// Ícone apertado: caminho, onde o botão desceu e distância do ponteiro ao canto.
 type Press = (PathBuf, (f32, f32), (f32, f32));
@@ -313,8 +312,8 @@ impl Desktop {
             cells: HashMap::new(),
             press: None,
             drag_out: None,
-            band: None,
-            band_moved: false,
+            band: Default::default(),
+            band_base: None,
             menu_point: None,
             pending_paste: None,
             spring: None,
@@ -1129,55 +1128,27 @@ impl App for Desktop {
         // seleção e mostra a mesa; botão direito abre o menu da área de trabalho.
         let whole = ui.region();
         let bg = ui.background(whole);
-        if bg.hovered() && pressed && !over_item && self.inline.is_none() && let Some(p) = pointer {
-            let base = if ctrl { self.selected.clone() } else { Vec::new() };
-            self.band = Some((p, p, base));
-            self.band_moved = false;
+        // O retângulo é o componente do mide-ui (o mesmo do Arquivos).
+        let can_start = bg.hovered() && !over_item && self.inline.is_none();
+        let band = self.band.update(ui, whole, can_start);
+        if self.band.pressed() && self.band_base.is_none() {
+            self.band_base = Some(if ctrl { self.selected.clone() } else { Vec::new() });
         }
-        if let Some((start, cur, base)) = self.band.as_mut() {
-            if let Some(p) = pointer {
-                *cur = p;
-            }
-            if ((cur.0 - start.0).abs() > 4.0 || (cur.1 - start.1).abs() > 4.0) && !self.band_moved {
-                self.band_moved = true;
-            }
-            if self.band_moved {
-                let (x0, y0) = (start.0.min(cur.0), start.1.min(cur.1));
-                let (x1, y1) = (start.0.max(cur.0), start.1.max(cur.1));
-                let mut chosen = base.clone();
-                for (item, cell) in &placed {
-                    // O ícone e o nome (a parte do ladrilho que aparece).
-                    let (x, y) = Self::cell_pos(*cell, area);
-                    let (ix0, iy0, ix1, iy1) = (x + 18.0, y + 2.0, x + CELL.0 - 18.0, y + CELL.1 - 10.0);
-                    if ix0 < x1 && ix1 > x0 && iy0 < y1 && iy1 > y0 && !chosen.contains(&item.path) {
-                        chosen.push(item.path.clone());
-                    }
+        if let Some(r) = band {
+            let mut chosen = self.band_base.clone().unwrap_or_default();
+            for (item, cell) in &placed {
+                // O ícone e o nome (a parte do ladrilho que aparece).
+                let (x, y) = Self::cell_pos(*cell, area);
+                if mide::kit::band_touches(r, (x + 18.0, y + 2.0, CELL.0 - 36.0, CELL.1 - 12.0)) && !chosen.contains(&item.path) {
+                    chosen.push(item.path.clone());
                 }
-                self.selected = chosen;
-                ui.request_repaint();
             }
-            if !down || released {
-                self.band = None;
-            }
+            self.selected = chosen;
         }
-        let band_click = self.band_moved;
-        if !down {
-            self.band_moved = false;
+        if !self.band.pressed() {
+            self.band_base = None;
         }
-        if let Some((start, cur, _)) = &self.band
-            && self.band_moved
-        {
-            // Retângulo de seleção do Mac: véu claro e borda branca fina.
-            let (x0, y0) = (start.0.min(cur.0), start.1.min(cur.1));
-            let (w, h) = ((start.0 - cur.0).abs(), (start.1 - cur.1).abs());
-            ui.paint(|canvas, (ox, oy)| {
-                let (x0, y0) = (x0 - ox, y0 - oy);
-                mide::ui::draw::fill_rounded(canvas, x0, y0, w, h, 0.0, tiny_skia::Color::from_rgba8(255, 255, 255, 40));
-                for (rx, ry, rw, rh) in [(x0, y0, w, 1.0), (x0, y0 + h - 1.0, w, 1.0), (x0, y0, 1.0, h), (x0 + w - 1.0, y0, 1.0, h)] {
-                    mide::ui::draw::fill_rounded(canvas, rx, ry, rw, rh, 0.0, tiny_skia::Color::from_rgba8(255, 255, 255, 190));
-                }
-            });
-        }
+        let band_click = self.band.active() || self.band.finished();
         if bg.clicked() && !self.selected.is_empty() && !just_dropped && !band_click && !ctrl {
             self.selected.clear();
             ui.request_repaint();

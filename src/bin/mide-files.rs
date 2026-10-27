@@ -80,8 +80,9 @@ struct Files {
     dragging_divider: bool,
     /// Seleção por retângulo: onde o botão foi apertado no vazio, e depois de andar, o
     /// retângulo (início, ponta) com a seleção de antes (Ctrl/Shift somam a ela).
-    lasso_press: Option<(f32, f32)>,
-    lasso: Option<((f32, f32), (f32, f32), Vec<PathBuf>)>,
+    lasso: mide::kit::SelectionBand,
+    /// Seleção de antes do retângulo (Ctrl/Shift somam a ela).
+    lasso_base: Option<Vec<PathBuf>>,
     /// Colunas: o que há em cada pasta aberta nelas (relido ao recarregar).
     col_cache: HashMap<PathBuf, Vec<Entry>>,
     /// Painel de prévia: as informações do item mostrado (lidas uma vez por item).
@@ -262,8 +263,8 @@ impl Files {
             preview_video: None,
             preview_width: 270.0,
             dragging_divider: false,
-            lasso_press: None,
-            lasso: None,
+            lasso: Default::default(),
+            lasso_base: None,
             col_cache: HashMap::new(),
             preview_info: None,
             free_space: None,
@@ -1819,6 +1820,8 @@ impl Files {
         let mut toggles: Vec<(PathBuf, bool)> = Vec::new();
         let mut expand_done = false;
         let mut sort_by = None;
+        // Cabeçalho da lista (na janela): apertar nele não começa o retângulo de seleção.
+        let mut header_rect: Option<(f32, f32, f32, f32)> = None;
         let clipboard = !self.clipboard.is_empty();
         let (ctrl, shift) = (ui.input().ctrl, ui.input().shift);
         let (pressed, pointer) = (ui.input().pressed, ui.input().pointer);
@@ -2059,6 +2062,7 @@ impl Files {
                 let mut widths = [("Modificado", self.list_widths[0]), ("Tamanho", self.list_widths[1]), ("Tipo", self.list_widths[2])];
                 if !shown.is_empty() {
                     sort_by = ui.list_header_resizable("Nome", &mut widths, self.sort, 60.0);
+                    header_rect = Some(ui.last_rect());
                     self.list_widths = [widths[0].1, widths[1].1, widths[2].1];
                 }
                 // Pasta abrindo ou fechando na lista (sanfona): quantas linhas de dentro
@@ -2199,52 +2203,31 @@ impl Files {
             }
             // Seleção por retângulo (como no Finder): apertar no vazio e arrastar
             // escolhe o que o retângulo toca; com Ctrl ou Shift, soma à seleção.
-            let ptr = ui.pointer();
-            let (pressed_now, down_now) = (ui.input().pressed, ui.input().down);
-            let mut lasso_used = self.lasso.is_some();
-            if pressed_now && press.is_none() && dragging.is_none() && ui.menu_open().is_none() && mode != 2 {
-                if let Some(p) = ptr.filter(|p| ui.over(area) && p.0 < area.0 + area.2 - 16.0) {
-                    self.lasso_press = Some(p);
-                }
+            // O componente do mide-ui (o mesmo da área de trabalho): só no vazio, nunca
+            // no cabeçalho da lista nem na barra de rolagem.
+            let on_header = header_rect.zip(ui.input().pointer).is_some_and(|(h, p)| p.0 >= h.0 && p.0 <= h.0 + h.2 && p.1 >= h.1 && p.1 <= h.1 + h.3);
+            let content = (area.0, area.1, (area.2 - 16.0).max(0.0), area.3);
+            let can_start = press.is_none() && dragging.is_none() && mode != 2 && !on_header;
+            let band = self.lasso.update(ui, content, can_start);
+            if self.lasso.pressed() && self.lasso_base.is_none() {
+                self.lasso_base = Some(if ctrl_shift { self.selection.clone() } else { Vec::new() });
             }
-            if let (Some(start), Some(p), true) = (self.lasso_press, ptr, down_now) {
-                if self.lasso.is_none() && ((p.0 - start.0).powi(2) + (p.1 - start.1).powi(2)).sqrt() > 4.0 {
-                    let base = if ctrl_shift { self.selection.clone() } else { Vec::new() };
-                    self.lasso = Some((start, p, base));
-                }
-                if let Some(lasso) = self.lasso.as_mut() {
-                    lasso.1 = p;
-                }
-            }
-            if let Some((a, b, base)) = self.lasso.clone() {
-                let (x0, y0, x1, y1) = (a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1));
-                let mut chosen = base;
-                for (path, r) in &rects {
-                    if r.0 < x1 && r.0 + r.2 > x0 && r.1 < y1 && r.1 + r.3 > y0 && !chosen.contains(path) {
+            if let Some(r) = band {
+                let mut chosen = self.lasso_base.clone().unwrap_or_default();
+                for (path, rect) in &rects {
+                    if mide::kit::band_touches(r, *rect) && !chosen.contains(path) {
                         chosen.push(path.clone());
                     }
                 }
                 self.selection = chosen;
-                lasso_used = true;
-                let accent = ui.theme().accent;
-                ui.paint(|canvas, _| {
-                    let (w, h) = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
-                    mide::ui::draw::fill_rounded(canvas, x0, y0, w, h, 2.0, tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 40));
-                    if let Some(path) = mide::ui::draw::rounded_rect(x0 + 0.5, y0 + 0.5, w - 1.0, h - 1.0, 2.0) {
-                        let mut paint = tiny_skia::Paint::default();
-                        paint.anti_alias = true;
-                        paint.set_color(tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 200));
-                        canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, mide::ui::draw::tf(), None);
-                    }
-                });
-                ui.request_repaint();
             }
-            if !down_now {
-                if self.lasso.take().is_some() {
-                    tracing::info!("seleção por retângulo: {} item(ns)", self.selection.len());
-                }
-                self.lasso_press = None;
+            if self.lasso.finished() {
+                tracing::info!("seleção por retângulo: {} item(ns)", self.selection.len());
             }
+            if !self.lasso.pressed() {
+                self.lasso_base = None;
+            }
+            let lasso_used = self.lasso.active() || self.lasso.finished();
             let bg = ui.background(area);
             if bg.clicked() && !lasso_used {
                 self.selection.clear();

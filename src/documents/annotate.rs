@@ -535,7 +535,7 @@ mod tests {
         let mut pts = Vec::new();
         let (s, r) = (160.0f32, 22.0f32);
         // Lados retos com tremor e cantos em quarto de círculo de raio 22.
-        let wobble = |i: usize| ((i as f32 * 1.7).sin() * 2.5);
+        let wobble = |i: usize| (i as f32 * 1.7).sin() * 2.5;
         for i in 0..=30 {
             let t = i as f32 / 30.0;
             pts.push((r + t * (s - 2.0 * r), wobble(i)));
