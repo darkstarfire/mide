@@ -94,6 +94,9 @@ struct Desktop {
     /// Ícone apertado: caminho, ponto onde o botão desceu e distância do ponteiro ao
     /// canto do ícone. Vira arrasto quando o ponteiro anda mais que alguns pontos.
     press: Option<Press>,
+    /// Imagem do arrasto do ícone apertado, montada no clique: quando o ponteiro anda,
+    /// o arrasto começa sem esperar o desenho (antes, uns 100 ms de atraso).
+    press_icon: Option<Pixmap>,
     /// Arrasto do Wayland começado aqui: os caminhos, o ícone apertado e a distância
     /// do ponteiro ao canto dele.
     drag_out: Option<(Vec<PathBuf>, PathBuf, (f32, f32))>,
@@ -118,6 +121,19 @@ struct Desktop {
     from_loader: mpsc::Receiver<(PathBuf, SystemTime, Option<Pixmap>)>,
     /// Apps que abrem arquivos (para o "Abrir com"), lidos na primeira vez.
     apps: Option<Vec<mide::apps::App>>,
+}
+
+thread_local! {
+    /// Medidor de texto da imagem do arrasto, criado uma vez só (criar e medir a primeira
+    /// vez leva ~100 ms; `warm_drag_text` faz isso quando a mesa abre).
+    static DRAG_TEXT: std::cell::RefCell<mide::ui::text::Text> = std::cell::RefCell::new(mide::ui::text::Text::new());
+}
+
+/// Prepara o medidor de texto do arrasto (e as fontes) antes do primeiro clique.
+fn warm_drag_text() {
+    DRAG_TEXT.with(|t| {
+        t.borrow_mut().measure("Ag", 12.0, mide::ui::text::FontWeight::Regular);
+    });
 }
 
 /// Retângulo de seleção: começo, ponto atual e a seleção de antes.
@@ -314,6 +330,7 @@ impl Desktop {
             labels: Labels::default(),
             cells: HashMap::new(),
             press: None,
+            press_icon: None,
             drag_out: None,
             drag_ended_at: None,
             band: Default::default(),
@@ -741,15 +758,21 @@ impl Desktop {
         let (ix, iy) = (ox + (CELL.0 - w) / 2.0, oy + 8.0 + (ICON as f32 - h) / 2.0);
         let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
         canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tiny_skia::Transform::from_scale(scale, scale).post_translate(ix, iy), None);
-        // Nome na cápsula de escolhido (cortado com reticências se não couber).
-        let mut text = mide::ui::text::Text::new();
+        // Nome na cápsula de escolhido (cortado com reticências se não couber). O medidor
+        // de texto é criado uma vez só: criar e medir a primeira vez leva ~100 ms.
+        DRAG_TEXT.with(|text| Self::paint_drag_label(&mut text.borrow_mut(), &mut canvas, name, count, (ox, oy), (ix, iy, w)));
+        Some(canvas)
+    }
+
+    /// O nome e o selo de contagem na imagem do arrasto.
+    fn paint_drag_label(text: &mut mide::ui::text::Text, canvas: &mut Pixmap, name: &str, count: usize, (ox, oy): (f32, f32), (ix, iy, w): (f32, f32, f32)) {
         let size = 12.0;
         let max = CELL.0 - 8.0;
         let mut label = name.to_string();
         let fits = |t: &mut mide::ui::text::Text, l: &str| t.measure(l, size, mide::ui::text::FontWeight::Regular) <= max - 12.0;
-        if !fits(&mut text, &label) {
+        if !fits(text, &label) {
             let mut chars: Vec<char> = name.chars().collect();
-            while chars.len() > 1 && !fits(&mut text, &format!("{}…", chars.iter().collect::<String>())) {
+            while chars.len() > 1 && !fits(text, &format!("{}…", chars.iter().collect::<String>())) {
                 chars.pop();
             }
             label = format!("{}…", chars.iter().collect::<String>());
@@ -757,16 +780,15 @@ impl Desktop {
         let tw = text.measure(&label, size, mide::ui::text::FontWeight::Regular) + 12.0;
         let (tx, ty) = (ox + (CELL.0 - tw) / 2.0, oy + 8.0 + ICON as f32 + 6.0);
         let [r, g, b, _] = mide::kit::system_accent(mide::kit::system_dark());
-        mide::ui::draw::fill_rounded(&mut canvas, tx, ty, tw, 19.0, 6.0, tiny_skia::Color::from_rgba8(r, g, b, 255));
-        text.draw(&mut canvas, &label, tx + 6.0, ty + 2.0, size, mide::ui::text::FontWeight::Regular, [255, 255, 255, 255]);
+        mide::ui::draw::fill_rounded(canvas, tx, ty, tw, 19.0, 6.0, tiny_skia::Color::from_rgba8(r, g, b, 255));
+        text.draw(canvas, &label, tx + 6.0, ty + 2.0, size, mide::ui::text::FontWeight::Regular, [255, 255, 255, 255]);
         if count > 1 {
             let badge = count.to_string();
             let bw = text.measure(&badge, 12.0, mide::ui::text::FontWeight::Semibold).max(8.0) + 12.0;
             let bx = ix + w - bw / 2.0;
-            mide::ui::draw::fill_rounded(&mut canvas, bx, iy - 6.0, bw, 20.0, 10.0, tiny_skia::Color::from_rgba8(255, 59, 48, 255));
-            text.draw(&mut canvas, &badge, bx + 6.0, iy - 3.5, 12.0, mide::ui::text::FontWeight::Semibold, [255, 255, 255, 255]);
+            mide::ui::draw::fill_rounded(canvas, bx, iy - 6.0, bw, 20.0, 10.0, tiny_skia::Color::from_rgba8(255, 59, 48, 255));
+            text.draw(canvas, &badge, bx + 6.0, iy - 3.5, 12.0, mide::ui::text::FontWeight::Semibold, [255, 255, 255, 255]);
         }
-        Some(canvas)
     }
 
     fn keys(&mut self, ui: &mut Ui, area: (f32, f32, f32, f32)) {
@@ -947,7 +969,8 @@ impl App for Desktop {
                     .map(|(i, _)| (i.icon.clone(), i.name.clone()))
                     .unwrap_or_else(|| ("text-x-generic".into(), String::new()));
                 tracing::info!("área de trabalho: arrastando {} item(ns)", paths.len());
-                ui.start_drag(&paths, Self::drag_icon(&icon, &name, paths.len(), offset));
+                let image = self.press_icon.take().or_else(|| Self::drag_icon(&icon, &name, paths.len(), offset));
+                ui.start_drag(&paths, image);
                 self.drag_ended_at = None;
                 if !self.selected.contains(&path) {
                     self.selected = vec![path.clone()];
@@ -1024,6 +1047,8 @@ impl App for Desktop {
                 && let Some(p) = pointer
             {
                 self.press = Some((item.path.clone(), p, (p.0 - x, p.1 - y)));
+                let count = if self.selected.contains(&item.path) { self.selected.iter().filter(|s| !self.drives.iter().any(|d| &d.mount == *s)).count().max(1) } else { 1 };
+                self.press_icon = Self::drag_icon(&item.icon, &item.name, count, (p.0 - x, p.1 - y));
             }
             if r.clicked() {
                 select = Some((item.path.clone(), ctrl));
@@ -1273,6 +1298,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     // Nomes brancos (com sombra) sobre o papel de parede.
     let theme = Theme { tile_text: [255, 255, 255, 255], ..Theme::default() };
+    warm_drag_text();
     run(Window::new("Área de trabalho").app_id("mide-desktop").desktop("mide-desktop").accepts_files().theme(theme), Desktop::new())
 }
 
