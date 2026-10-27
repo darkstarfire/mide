@@ -444,7 +444,7 @@ impl State {
         };
         let offset = Point::<f64, Logical>::from((fix.fraction * size.w as f64, fix.offset_y.min(size.h as f64 / 2.0)));
         let mut loc: Point<i32, Logical> = (fix.pointer - offset).to_i32_round();
-        if let Some(area) = self.usable_area() {
+        if let Some(area) = self.output_at(fix.pointer).and_then(|o| self.usable_area_of(&o)) {
             loc.y = loc.y.max(area.loc.y + bar_height_for(window));
         }
         let dragging = self.move_grab.as_ref().is_some_and(|g| &g.window == window);
@@ -553,13 +553,18 @@ impl State {
     /// Ajusta as janelas à área útil: maximizadas ocupam a área inteira, e as outras
     /// não ficam com a barra de título sob a barra superior (como no macOS).
     /// Todas são remapeadas de baixo para cima, para manter a ordem de empilhamento.
+    /// Cada janela usa a área útil da tela onde está (o centro dela): com vários
+    /// monitores, uma janela maximizada no externo ficava presa à área da principal e
+    /// pulava para lá sempre que uma camada mudava (abrir um app pela dock).
     pub fn fit_windows_to_area(&mut self) {
-        let Some(area) = self.usable_area() else {
-            return;
-        };
         let windows: Vec<Window> = self.space.elements().cloned().collect();
         for window in windows {
             let Some(loc) = self.space.element_location(&window) else {
+                continue;
+            };
+            let size = window.geometry().size;
+            let center = Point::<f64, Logical>::from((loc.x as f64 + size.w as f64 / 2.0, loc.y as f64 + size.h.max(1) as f64 / 2.0));
+            let Some(area) = self.output_at(center).and_then(|o| self.usable_area_of(&o)) else {
                 continue;
             };
             let bar_h = bar_height_for(&window);

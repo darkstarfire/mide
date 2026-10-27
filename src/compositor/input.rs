@@ -713,8 +713,9 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
             return;
         }
         let mut loc: Point<i32, Logical> = (pos - offset).to_i32_round();
-        // Como no macOS, a barra de título não passa para baixo da barra superior.
-        if let Some(area) = state.usable_area() {
+        // Como no macOS, a barra de título não passa para baixo da barra superior (a da
+        // tela sob o ponteiro: com vários monitores, cada um tem a sua área).
+        if let Some(area) = state.output_at(pos).and_then(|o| state.usable_area_of(&o)) {
             loc.y = loc.y.max(area.loc.y + crate::state::bar_height_for(&window));
         }
         state.space.map_element(window, loc, false);
