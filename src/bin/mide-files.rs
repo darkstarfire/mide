@@ -2324,6 +2324,10 @@ impl Files {
                     self.dragging_divider = false;
                 }
             }
+            // Sobre a linha (ou arrastando), o ponteiro de redimensionar.
+            if near || self.dragging_divider {
+                ui.set_cursor(Cursor::ResizeHorizontal);
+            }
             let line = if near || self.dragging_divider { ui.theme().accent } else { ui.theme().line };
             let width = if near || self.dragging_divider { 2.0 } else { 1.0 };
             ui.paint(|canvas, _| mide::ui::draw::fill_rounded(canvas, x - (width - 1.0) / 2.0, top, width, body_h, 0.0, tiny_skia::Color::from_rgba8(line[0], line[1], line[2], line[3])));

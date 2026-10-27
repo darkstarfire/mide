@@ -1179,14 +1179,27 @@ impl TerminalApp {
         // Divisores: arrastar muda a proporção.
         if let Some(tab) = self.tabs.get(self.active).filter(|t| !t.zoom) {
             let dividers = tab.layout.dividers(area);
-            if input.pressed && self.dragging.is_none() {
-                if let Some(pos) = input.pointer {
-                    self.dragging = dividers.into_iter().find(|d| {
-                        let r = d.rect;
-                        pos.0 >= r.0 - 3.0 && pos.0 <= r.0 + r.2 + 3.0 && pos.1 >= r.1 - 3.0 && pos.1 <= r.1 + r.3 + 3.0
-                    });
-                }
+            let over = input.pointer.and_then(|pos| {
+                dividers.iter().find(|d| {
+                    let r = d.rect;
+                    pos.0 >= r.0 - 3.0 && pos.0 <= r.0 + r.2 + 3.0 && pos.1 >= r.1 - 3.0 && pos.1 <= r.1 + r.3 + 3.0
+                })
+            });
+            // Sobre um divisor, o ponteiro de redimensionar na direção dele.
+            if let Some(d) = over.or(self.dragging.as_ref()) {
+                ui.set_cursor(match d.dir {
+                    Split::Side => mide::kit::Cursor::ResizeHorizontal,
+                    Split::Stack => mide::kit::Cursor::ResizeVertical,
+                });
             }
+            if input.pressed && self.dragging.is_none() {
+                self.dragging = over.cloned();
+            }
+        } else if let Some(d) = self.dragging.as_ref() {
+            ui.set_cursor(match d.dir {
+                Split::Side => mide::kit::Cursor::ResizeHorizontal,
+                Split::Stack => mide::kit::Cursor::ResizeVertical,
+            });
         }
         if let Some(divider) = self.dragging.clone() {
             if let (Some(pos), true) = (input.pointer, input.down) {
