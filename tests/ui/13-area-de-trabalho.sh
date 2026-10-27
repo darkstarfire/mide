@@ -90,4 +90,9 @@ else
     echo "FALHA atalho com ícone XPM: o próprio ícone do app sai do lugar e segue o ponteiro"; FAIL=$((FAIL + 1))
     echo "$ELOG" | grep -a "arrasto\|atalho" | sed 's/^/      /' | tail -4
 fi
+# Mesa à mostra (clique no vazio afasta as janelas): escolher um ícone e arrastar um
+# retângulo de seleção não traz as janelas de volta; um clique simples no vazio traz.
+rm -rf "$DESK"/* ; for n in a b c; do echo x >"$DESK/$n.txt"; done
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "mesa à mostra: seleção por retângulo não traz as janelas de volta" 'janela "Terminal" popups=0 posição=\(-644, 76\)' "400 click 900 600; 440 click 1298 76; 480 press 1000 600; 485 move 1100 500; 490 move 1250 300; 495 move 1330 100; 500 release 1330 100; 540 list" "$TERMINAL"
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "mesa à mostra: clique simples no vazio traz as janelas de volta" 'janela "Terminal" popups=0 posição=\(48, 76\)' "400 click 900 600; 460 click 1000 600; 520 list" "$TERMINAL"
 rm -rf "$DESK" "$DSTATE" "$EDATA"

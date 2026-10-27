@@ -107,6 +107,10 @@ struct Desktop {
     /// o retângulo soma a ela).
     band: mide::kit::SelectionBand,
     band_base: Option<Vec<PathBuf>>,
+    /// Onde o botão desceu no vazio da mesa: mostrar a mesa (ou trazer as janelas de
+    /// volta) só se ele subir quase no mesmo lugar, um clique simples. Apertar e
+    /// arrastar é o retângulo de seleção e não mexe nas janelas.
+    reveal_press: Option<(f32, f32)>,
     /// Ponto do clique direito no vazio: o que o menu criar aparece ali.
     menu_point: Option<(f32, f32)>,
     /// Colar pedido (o texto da área de transferência chega num dos próximos quadros),
@@ -335,6 +339,7 @@ impl Desktop {
             drag_ended_at: None,
             band: Default::default(),
             band_base: None,
+            reveal_press: None,
             menu_point: None,
             pending_paste: None,
             spring: None,
@@ -1228,10 +1233,17 @@ impl App for Desktop {
         // Clique no papel de parede (espaço vazio): o compositor afasta as janelas para
         // mostrar a mesa, ou as traz de volta (como no macOS). Numa thread: o desenho
         // não espera a resposta.
+        // O fundo reage ao apertar; a decisão fica para o soltar, sem arrasto.
         if bg.clicked() && !just_dropped && !renamed_now && !band_click {
-            std::thread::spawn(|| {
-                let _ = mide::control_client::ask_compositor("reveal");
-            });
+            self.reveal_press = pointer;
+        }
+        if released && let Some(start) = self.reveal_press.take() {
+            let moved = pointer.is_some_and(|p| ((p.0 - start.0).powi(2) + (p.1 - start.1).powi(2)).sqrt() > 4.0);
+            if !moved && !self.band.active() {
+                std::thread::spawn(|| {
+                    let _ = mide::control_client::ask_compositor("reveal");
+                });
+            }
         }
         // Clique direito no vazio: o que o menu criar aparece ali.
         if bg.secondary_clicked() {
