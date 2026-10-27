@@ -1185,8 +1185,12 @@ impl Files {
             .find(|((p, _), img)| p == first && img.is_some())
             .and_then(|(_, img)| img.clone())
             .or_else(|| {
-                let name = entry.as_ref().map(|e| e.icon_name()).unwrap_or(if first.is_dir() { "folder" } else { "text-x-generic" });
-                mide::icons::load_icon(name, 64)
+                // Atalho `.desktop`: o ícone do app que ele abre (o mesmo mostrado na pasta).
+                let name = match &entry {
+                    Some(e) => self.label(e).1,
+                    None => (if first.is_dir() { "folder" } else { "text-x-generic" }).to_string(),
+                };
+                mide::icons::load_icon(&name, 64).or_else(|| mide::icons::load_themed_icon(&[&name, "text-x-generic"], 64))
             })?;
         let mut canvas = Pixmap::new(SIZE, SIZE)?;
         let scale = (60.0 / base.width().max(base.height()) as f32).min(1.0);

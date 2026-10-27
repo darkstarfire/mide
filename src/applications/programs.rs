@@ -325,7 +325,8 @@ impl Labels {
         }
         let dirs = self.dirs.clone().unwrap_or_else(Dirs::current);
         let label = read_launcher(path).filter(|_| in_app_dirs(&dirs, path) || is_trusted(&dirs, path)).map(|l| {
-            let icon = l.icon.unwrap_or_else(|| "application-x-executable".to_string());
+            // Ícone em XPM (o do Eclipse): vira PNG no cache, que o mide-ui mostra.
+            let icon = l.icon.map(crate::applications::xpm::displayable_icon).unwrap_or_else(|| "application-x-executable".to_string());
             tracing::info!("atalho {}: \"{}\" (ícone {icon})", path.display(), l.name);
             (l.name, icon)
         });

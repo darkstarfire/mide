@@ -60,4 +60,34 @@ MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "arrastar o ícone para 
 # Pasta de mola: segurar o arrasto em cima de uma pasta abre a pasta no Arquivos.
 rm -rf "$DESK"/* ; mkdir "$DESK/Pasta"; echo x >"$DESK/notas.txt"
 MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "segurar o arrasto em cima de uma pasta abre a pasta (pasta de mola)" "abrir \(teste\): .*/Pasta$" "300 press 1298 182; 306 move 1290 160; 312 move 1295 100; 318 move 1298 80; 330 move 1299 78; 400 move 1298 79; 470 move 1299 79; 540 release 900 400; 580 list"
-rm -rf "$DESK" "$DSTATE"
+# Atalho .desktop com ícone XPM (como o do Eclipse, `Icon=.../icon.xpm`): a mesa mostra
+# o ícone do app e o arrasto leva esse ícone, junto do ponteiro. A pasta da mesa fica
+# dentro de `applications/` (atalho confiável sem perguntar).
+EDATA="$(mktemp -d)"; EDESK="$EDATA/applications"; mkdir -p "$EDESK"
+python3 -c "
+rows = [''.join('.' if 4 <= x < 60 and 4 <= y < 60 else ' ' for x in range(64)) for y in range(64)]
+print('/* XPM */')
+print('static char * icon_xpm[] = {')
+print('\"64 64 2 1\",')
+print('\"  c None\",')
+print('\". c #F7941E\",')
+print(',\n'.join('\"%s\"' % r for r in rows) + '};')" >"$EDATA/icon.xpm"
+printf '[Desktop Entry]\nType=Application\nName=Eclipse de teste\nExec=true\nIcon=%s\n' "$EDATA/icon.xpm" >"$EDESK/eclipse.desktop"
+ELOG="$(MIDE_DESKTOP_DIR="$EDESK" XDG_STATE_HOME="$DSTATE" XDG_DATA_HOME="$EDATA" XDG_CACHE_HOME="$EDATA/cache" SCENARIO_OUT="$EDATA/out" timeout 150 "$SCEN" \
+    "300 press 1298 76; 306 move 1280 100; 312 move 1100 200; 318 move 900 300; 324 move 700 400; 330 move 701 401; 420 release 701 401; 460 list" 380 2>&1)"
+if echo "$ELOG" | grep -q "arrasto entre apps começou (ícone: true)" && ls "$EDATA"/cache/mide/icons/xpm-*.png >/dev/null 2>&1 \
+    && python3 -c "
+import sys
+from PIL import Image
+img = Image.open(sys.argv[1]).convert('RGB')
+near = lambda p: abs(p[0] - 0xF7) < 40 and abs(p[1] - 0x94) < 40 and abs(p[2] - 0x1E) < 50
+# Ícone do arrasto junto do ponteiro (701, 401) e o ícone na mesa (1298, 76).
+drag = sum(near(img.getpixel((x, y))) for x in range(661, 742, 4) for y in range(361, 442, 4))
+desk = sum(near(img.getpixel((x, y))) for x in range(1270, 1327, 4) for y in range(50, 103, 4))
+sys.exit(0 if drag >= 40 and desk >= 40 else 'arrasto %d, mesa %d' % (drag, desk))" "$EDATA/out/frame.png"; then
+    echo "ok    atalho com ícone XPM: a mesa mostra o ícone do app e o arrasto o leva junto do ponteiro"; PASS=$((PASS + 1))
+else
+    echo "FALHA atalho com ícone XPM: a mesa mostra o ícone do app e o arrasto o leva junto do ponteiro"; FAIL=$((FAIL + 1))
+    echo "$ELOG" | grep -a "arrasto\|atalho" | sed 's/^/      /' | tail -4
+fi
+rm -rf "$DESK" "$DSTATE" "$EDATA"
