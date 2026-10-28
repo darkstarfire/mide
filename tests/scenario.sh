@@ -27,6 +27,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$ROOT/target/debug:$PATH"
 # Apps GTK do teste com as configurações padrão (sem o portal nem o dconf de quem roda
 # os testes): tema, botões do cabeçalho e tamanhos iguais em qualquer máquina.
+# Interface em pt-BR nos testes: as coordenadas dependem do tamanho dos textos.
+export MIDE_LANG="${MIDE_LANG:-pt_BR}"
 export GDK_DEBUG=no-portals ADW_DISABLE_PORTAL=1 GSETTINGS_BACKEND=memory
 OUT="${SCENARIO_OUT:-/tmp/mide-scenario}"
 RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

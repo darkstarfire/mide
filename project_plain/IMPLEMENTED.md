@@ -2022,3 +2022,10 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - Teste: `tests/apps/mpris-teste.py` é um player falso que anota os comandos recebidos; a seção `42-barra-midia` da bateria confere os três controles rápidos e a abertura do painel. Conferido em quadro a 1366x768 e em escala 1,5.
 - (v0.10.6) A nota e os três controles rápidos ficam numa cápsula leve (fundo e contorno finos na cor do texto da barra), para parecerem um grupo só; com o painel aberto, a nota ganha uma pílula dentro da cápsula (pedido do usuário com foto).
 - (v0.10.7) O vidro que o compositor põe atrás do item aberto da barra segue a pílula da nota, sem passar da cápsula. Itens recortados ficam meio transparentes no Arquivos em todas as visualizações (ícones, lista e colunas), lendo do compositor o que está recortado em qualquer app (a Mesa e outras janelas), com o recorte local como reserva; o véu (`veil`) somava a rolagem duas vezes e caía fora da linha. Na Mesa já funcionava, mas depende do compositor novo (`files-copy`): quem atualiza só o shell precisa reiniciar o compositor.
+
+## Tradução da interface: a base (I1, 2026-10-28, v0.10.8)
+
+- O mide-ui ganhou o motor de tradução (`kit::i18n`): catálogos no formato do gettext (`.po`, lidos por um leitor próprio, sem crate), idioma da sessão (`MIDE_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE`) com o inglês como base, plural por idioma (`trn`), contexto (`trc`) e a macro `tr!` com `{nome}`. As dicas dos botões (`ui.tooltip`) passam pela tradução.
+- No mide: `src/i18n.rs` com a macro `mide::tr!`, e os catálogos em `locales/pt_BR/<área>.po` (um por área, juntados pelo `build.rs`; arquivo novo entra sozinho). O teste `todo_texto_tem_traducao_pt_br` falha se algum texto passado a `tr!`/`trn`/`trc` não tiver tradução para o pt-BR.
+- A bateria roda com `MIDE_LANG=pt_BR` (as coordenadas dependem do tamanho dos textos).
+- Próximo: migrar os textos de cada programa para o inglês com `tr!` e o pt-BR no catálogo da área, e as dicas (I2) em todo botão só de ícone.

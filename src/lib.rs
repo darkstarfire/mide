@@ -18,6 +18,7 @@ pub mod applications;
 pub mod calculator;
 pub mod code;
 pub mod documents;
+pub mod i18n;
 pub mod media;
 pub mod platform;
 pub mod shell;

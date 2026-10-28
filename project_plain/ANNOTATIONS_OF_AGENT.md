@@ -468,3 +468,10 @@
 
 - **Mídia na barra superior (2026-10-28):** `system::active_media_player` procura nomes `org.mpris.MediaPlayer2.*`, priorizando `PlaybackStatus=Playing`; a barra mostra o botão enquanto houver player e o painel envia `Previous`, `PlayPause`, `Next` via o caminho comum MPRIS. Navegadores só aparecem se publicarem uma sessão de mídia compatível.
 - **Recorte visual (2026-10-28):** `storage::transfer::current()` fornece a seleção do recorte entre processos; `mide-desktop` lê uma vez por quadro e desenha ícone ou miniatura com opacidade 0,48. Os itens do menu de contexto ficam genéricos para seleção única ou múltipla.
+
+## Tradução da interface (I1/I2, 2026-10-28)
+
+- Todo texto que aparece na interface é escrito **em inglês** no código e passa por `mide::tr!("…")` (com valores: `tr!("Delete “{name}”?", name = x)`; plural: `mide::i18n::trn("{n} item", "{n} items", n)`; mesmo texto com sentidos diferentes: `mide::i18n::trc("contexto", "Open")`). A tradução pt-BR vai no `.po` da área em `locales/pt_BR/` (no mide-ui, `locales/pt_BR.po`). Logs (`tracing`) e comentários continuam em português.
+- `cargo test --lib i18n` confere que todo texto de `tr!`/`trn`/`trc` tem tradução no pt-BR. Textos montados em tempo de execução (variáveis) não são vistos pelo teste: traduza a parte fixa com `tr!` e preencha com `{nome}`.
+- Dicas (I2): todo botão só de ícone tem dica (`ui.tooltip(&r, &tr!("New Folder"))`, ou `tool_button`/`tool_group`, que já mostram a dica). O `tooltip` do kit traduz de novo, sem efeito num texto já traduzido.
+- A bateria fixa `MIDE_LANG=pt_BR`; para ver em inglês, `MIDE_LANG=en` ao abrir o app.

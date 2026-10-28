@@ -1,0 +1,8 @@
+# Tradução do mide para o português do Brasil: textos comuns a vários programas.
+# Cada área do mide tem o seu arquivo nesta pasta (barra, Arquivos, Configurações...);
+# os textos em inglês (msgid) são os do código.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
