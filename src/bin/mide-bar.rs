@@ -202,6 +202,7 @@ enum MenuId {
     Sound,
     Wifi,
     Bluetooth,
+    Media,
     /// Menu da bateria (lista).
     Battery,
     /// Seletor do layout de teclado (lista), com mais de um layout nas Configurações.
@@ -223,7 +224,7 @@ impl MenuId {
     fn custom(self) -> bool {
         matches!(
             self,
-            MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Control | MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout
+            MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Media | MenuId::Control | MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout
         )
     }
 
@@ -269,6 +270,7 @@ enum PanelAction {
     /// Painel de som: tocar por esta saída / gravar por esta entrada (índice na lista).
     AudioOutput(usize),
     AudioInput(usize),
+    Media(&'static str),
     /// Central de notificações: aviso clicado (índice no histórico).
     Notification(usize),
 }
@@ -346,7 +348,7 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
         // Itens vêm do app (`Bar::native_items`).
         MenuId::Native(_) | MenuId::Tray(_) => Vec::new(),
         // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
-        MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Control | MenuId::Gear => Vec::new(),
+        MenuId::Calendar | MenuId::Sound | MenuId::Wifi | MenuId::Bluetooth | MenuId::Media | MenuId::Control | MenuId::Gear => Vec::new(),
         MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout => Vec::new(),
     }
 }
@@ -410,6 +412,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         native_gtk: None,
         layout_active: None,
         recording: None,
+        media_player: None,
         native_failed: None,
         native_failed_at: std::time::Instant::now(),
         titles_read_at: std::time::Instant::now(),
@@ -900,6 +903,7 @@ struct Bar {
     layout_active: Option<u32>,
     /// Gravação de tela em andamento: segundos desde o começo.
     recording: Option<u64>,
+    media_player: Option<String>,
     /// O menu em foco é de um app GTK (`org.gtk.Menus`, avisado ao compositor pelo
     /// `gtk_shell1`): onde ele está e as ações dos itens (o `id` de cada item é o
     /// número da ação). Sem isso, o `native` é um `dbusmenu`.
@@ -1222,6 +1226,11 @@ impl Bar {
         }
         let clock = clock_text();
         let battery = battery();
+        let media_player = system::active_media_player();
+        if media_player != self.media_player {
+            self.media_player = media_player;
+            self.draw_bar();
+        }
         let (focused_id, focused, focused_pid) = ask_compositor("list")
             .and_then(|lines| {
                 lines.into_iter().find_map(|line| {
@@ -1512,6 +1521,7 @@ impl Bar {
             }
         }
         let icons: Vec<MenuId> = [
+            (self.media_player.is_some(), MenuId::Media),
             (self.status.bluetooth.is_some() && shown("bluetooth"), MenuId::Bluetooth),
             ((self.status.wifi.is_some() || self.status.wired_connected().is_some()) && shown("wifi"), MenuId::Wifi),
             (self.status.volume.is_some() && shown("sound"), MenuId::Sound),
@@ -1525,6 +1535,7 @@ impl Bar {
             let cx = (x0 + x1) / 2.0;
             match id {
                 MenuId::Bluetooth => draw_bluetooth_icon(&mut pixmap, cx, cy, self.status.bluetooth.as_ref().is_some_and(|(on, _)| *on), fg),
+                MenuId::Media => { self.text.draw(&mut pixmap, "♫", cx - 7.0, text_y, 17.0, FontWeight::Semibold, fg); }
                 MenuId::Wifi if self.status.wired_primary() => draw_ethernet_icon(&mut pixmap, cx, cy, fg),
                 MenuId::Wifi => {
                     let level = match (&self.status.wifi, self.status.active_network()) {
@@ -1912,6 +1923,7 @@ impl Bar {
         let ph = match id {
             MenuId::Calendar => self.panel_calendar(&mut content, pw, &mut regions, hover),
             MenuId::Sound => self.panel_sound(&mut content, pw, &mut regions, hover),
+            MenuId::Media => self.panel_media(&mut content, pw, &mut regions, hover),
             MenuId::Wifi => self.panel_wifi(&mut content, pw, &mut regions, hover),
             MenuId::Control => self.panel_control(&mut content, pw, &mut regions, hover),
             _ if id.confirm() => self.panel_confirm(&mut content, pw, id, &mut regions, hover),
@@ -2154,6 +2166,16 @@ impl Bar {
         }
         self.panel_row(p, pw, y, 26.0, "Configurações de som…", regions, hover, PanelAction::Settings("sound"));
         y + 26.0 + 8.0
+    }
+
+    fn panel_media(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
+        self.text.draw(p, "Reprodução", 16.0, 14.0, 14.0, FontWeight::Bold, pal().text);
+        let player = self.media_player.as_deref().unwrap_or("Player de mídia");
+        self.text.draw(p, player, 16.0, 42.0, FONT, FontWeight::Regular, pal().secondary);
+        self.panel_row(p, pw, 66.0, 32.0, "Anterior", regions, hover, PanelAction::Media("Previous"));
+        self.panel_row(p, pw, 102.0, 32.0, "Reproduzir / pausar", regions, hover, PanelAction::Media("PlayPause"));
+        self.panel_row(p, pw, 138.0, 32.0, "Próxima", regions, hover, PanelAction::Media("Next"));
+        180.0
     }
 
     /// Uma saída ou entrada no painel de som: ícone do tipo num círculo (azul na
@@ -2511,6 +2533,7 @@ impl Bar {
                     system::select_audio(&device, false);
                 }
             }
+            PanelAction::Media(method) => system::media_player(method),
             PanelAction::ToggleMute => {
                 if let Some((v, m)) = self.status.volume {
                     self.status.volume = Some((v, !m));

@@ -3136,10 +3136,10 @@ fn finder_menu(
         chosen = Some(Action::QuickLook);
     }
     m.separator();
-    if m.item(&if multi { format!("Copiar {count} itens") } else { format!("Copiar \"{}\"", entry.name) }) {
+    if m.item("Copiar") {
         chosen = Some(Action::Copy);
     }
-    if m.item(&if multi { format!("Recortar {count} itens") } else { format!("Recortar \"{}\"", entry.name) }) {
+    if m.item("Recortar") {
         chosen = Some(Action::Cut);
     }
     if m.item("Copiar como caminho") {

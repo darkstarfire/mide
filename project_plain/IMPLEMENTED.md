@@ -2007,3 +2007,9 @@ A Mesa agora detecta partições removíveis desmontadas pelo `lsblk` (incluindo
 ## Diagnóstico e instalação das unidades removíveis (versão 0.10.2)
 
 As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-check` verifica `lsblk`, `udisksctl` e a conexão com o daemon UDisks, indicando quando volumes desmontados não poderão ser montados.
+
+## Controles de mídia e estado do recorte (2026-10-28)
+
+- A barra superior consulta os players MPRIS ativos na sessão, prioriza o que está tocando e mostra um ícone de música; o painel envia comandos Previous, PlayPause e Next. Assim Spotify, VLC e navegadores que publicam mídia pelo MPRIS funcionam sem integração específica com cada serviço.
+- Os menus de contexto da Mesa e do Arquivos mostram apenas “Copiar” e “Recortar”. Na Mesa, os itens recortados aparecem com 48% de opacidade enquanto aguardam a colagem.
+- Unidade externa conectada durante a revisão: `/dev/sdb1`, exFAT, USB, sem ponto de montagem. A detecção está coberta por teste; o ambiente de execução isolado não disponibiliza a sessão Wayland nem o serviço D-Bus do UDisks para confirmar a exibição/montagem real.

@@ -357,6 +357,12 @@ fn desktop_thumb(path: &Path) -> Option<Pixmap> {
     Some(canvas)
 }
 
+fn faded(pixmap: &Pixmap) -> Option<Pixmap> {
+    let mut out = Pixmap::new(pixmap.width(), pixmap.height())?;
+    out.draw_pixmap(0, 0, pixmap.as_ref(), &tiny_skia::PixmapPaint { opacity: 0.48, ..Default::default() }, tiny_skia::Transform::identity(), None);
+    Some(out)
+}
+
 #[derive(Clone)]
 enum Action {
     Open,
@@ -968,10 +974,10 @@ impl Desktop {
             chosen = Some(Action::Alias);
         }
         m.separator();
-        if m.item(&if multi { format!("Copiar {count} itens") } else { format!("Copiar \"{}\"", item.name) }) {
+        if m.item("Copiar") {
             chosen = Some(Action::Copy);
         }
-        if m.item(&if multi { format!("Recortar {count} itens") } else { format!("Recortar \"{}\"", item.name) }) {
+        if m.item("Recortar") {
             chosen = Some(Action::Cut);
         }
         if m.item("Copiar como caminho") {
@@ -1112,6 +1118,7 @@ impl App for Desktop {
         if ui.menu_open().is_some() && self.apps.is_none() {
             self.apps = Some(mide::apps::load_handlers());
         }
+        let cut_paths = mide::storage::transfer::current().filter(|c| c.cut).map(|c| c.paths).unwrap_or_default();
         for (item, cell) in &placed {
             let (x, y) = Self::cell_pos(*cell, area);
             let selected = self.selected.contains(&item.path);
@@ -1131,12 +1138,15 @@ impl App for Desktop {
             if pointer.is_some_and(inside) {
                 over_item = true;
             }
+            let cut = cut_paths.contains(&item.path);
             let thumb = self.thumb(item).cloned();
+            let thumb_image = thumb.as_ref().and_then(|p| if cut { faded(p) } else { Some(p.clone()) });
+            let icon_image = if cut && thumb.is_none() { mide::icons::load_icon(&item.icon, ICON).and_then(|p| faded(&p)) } else { None };
             let mut response = None;
             ui.at(x, y, CELL.0, |ui| {
-                let image = match &thumb {
-                    Some(pix) => Tile::Image(pix),
-                    None => Tile::Icon(&item.icon),
+                let image = match (&thumb_image, &icon_image) {
+                    (_, Some(pix)) | (Some(pix), None) => Tile::Image(pix),
+                    (None, None) => Tile::Icon(&item.icon),
                 };
                 response = Some(ui.tile(image, &item.name, selected || drop_here, ICON));
             });

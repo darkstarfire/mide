@@ -612,6 +612,31 @@ pub fn media_player(method: &'static str) {
     });
 }
 
+/// Player MPRIS ativo, priorizando o que está tocando. Mantém nomes comuns legíveis.
+pub fn active_media_player() -> Option<String> {
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let dbus = zbus::blocking::fdo::DBusProxy::new(&conn).ok()?;
+    let players: Vec<String> = dbus.list_names().ok()?.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")).collect();
+    let proxy = |name: &str| zbus::blocking::Proxy::new(&conn, name.to_string(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player");
+    let name = players.iter().find(|n| proxy(n).and_then(|p| p.get_property::<String>("PlaybackStatus")).is_ok_and(|s| s == "Playing")).or(players.first())?;
+    let id = name.trim_start_matches("org.mpris.MediaPlayer2.");
+    Some(if id == "firefox" || id.starts_with("firefox.") {
+        "Firefox".into()
+    } else if id == "chromium" || id.starts_with("chromium.") {
+        "Chromium".into()
+    } else if id == "google chrome" || id.starts_with("chrome.") {
+        "Google Chrome".into()
+    } else if id == "spotify" || id.starts_with("spotify.") {
+        "Spotify".into()
+    } else if id == "vlc" || id.starts_with("vlc.") {
+        "VLC".into()
+    } else if id == "mpv" || id.starts_with("mpv.") {
+        "mpv".into()
+    } else {
+        id.replace(['_', '-'], " ")
+    })
+}
+
 pub fn set_brightness(value: f32) {
     let value = format!("{}%", (value.clamp(0.01, 1.0) * 100.0).round() as i32);
     run("brightnessctl", &["-c", "backlight", "set", &value]);
