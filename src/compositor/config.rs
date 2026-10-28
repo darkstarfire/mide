@@ -281,9 +281,27 @@ pub struct Keyboard {
     /// Vários layouts, em ordem (`"br,us:intl"`): o mapa tem um grupo por layout e o
     /// atalho `next_layout` troca entre eles. Vale no lugar de `layout`/`variant`.
     pub layouts: String,
+    /// Repetição de tecla segurada (Configurações → Teclado): espera antes de começar a
+    /// repetir, em milissegundos, e repetições por segundo. 0 = o padrão.
+    pub repeat_delay: u32,
+    pub repeat_rate: u32,
 }
 
+/// Espera padrão antes de repetir uma tecla segurada: um toque um pouco mais longo não
+/// repete a letra (pedido do usuário: 600 ms).
+pub const REPEAT_DELAY: u32 = 600;
+/// Repetições por segundo, padrão.
+pub const REPEAT_RATE: u32 = 25;
+
 impl Keyboard {
+    /// Repetição em uso: (espera em ms, repetições por segundo), com os padrões no
+    /// lugar do que não foi escolhido e limites que não deixam o teclado inutilizável.
+    pub fn repeat(&self) -> (i32, i32) {
+        let delay = if self.repeat_delay == 0 { REPEAT_DELAY } else { self.repeat_delay.clamp(150, 2000) };
+        let rate = if self.repeat_rate == 0 { REPEAT_RATE } else { self.repeat_rate.clamp(2, 60) };
+        (delay as i32, rate as i32)
+    }
+
     /// Teclado em uso: o do sistema, com o(s) layout(s) das Configurações por cima.
     pub fn effective(&self) -> SystemKeyboard {
         let mut kb = system_keyboard();

@@ -1214,6 +1214,36 @@ impl Settings {
                 }
             }
         });
+        // Repetição de tecla segurada: espera antes de repetir e velocidade. Vale na hora
+        // (o compositor manda o novo valor a todos os apps).
+        let int = |key: &str, default: i64| match settings_file::get("keyboard", key) {
+            Some(Value::Int(n)) if n > 0 => n,
+            _ => default,
+        };
+        let mut delay = int("repeat_delay", 600) as f32;
+        let mut rate = int("repeat_rate", 25) as f32;
+        ui.card(|ui| {
+            if ui.slider(&tr!("Repeat delay (ms)"), &mut delay, 150.0, 2000.0).submitted() {
+                let value = (delay / 50.0).round() as i64 * 50;
+                tracing::info!("teclado: repetição depois de {value} ms");
+                match settings_file::set("keyboard", "repeat_delay", (value != 600).then_some(Value::Int(value))) {
+                    Ok(()) => {
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("repetição não gravada: {err}"),
+                }
+            }
+            if ui.slider(&tr!("Repeat rate (per second)"), &mut rate, 2.0, 60.0).submitted() {
+                let value = rate.round() as i64;
+                tracing::info!("teclado: {value} repetições por segundo");
+                match settings_file::set("keyboard", "repeat_rate", (value != 25).then_some(Value::Int(value))) {
+                    Ok(()) => {
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("repetição não gravada: {err}"),
+                }
+            }
+        });
         if changed {
             // Um layout só volta a ser o do sistema quando é o do sistema.
             let value = (list.len() > 1 || list.first().is_some_and(|c| *c != mide::keyboard_layouts::system())).then(|| Value::Text(mide::keyboard_layouts::join(&list)));

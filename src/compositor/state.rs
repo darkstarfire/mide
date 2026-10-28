@@ -421,7 +421,9 @@ impl State {
             tracing::info!("teclado: layout {} {}", kb.layout, kb.variant);
         }
         let xkb = XkbConfig { rules: "", model: &kb.model, layout: &kb.layout, variant: &kb.variant, options: kb.options.clone() };
-        seat.add_keyboard(xkb, 200, 25)?;
+        let (repeat_delay, repeat_rate) = config.keyboard.repeat();
+        tracing::info!("teclado: repetição depois de {repeat_delay} ms, {repeat_rate} por segundo");
+        seat.add_keyboard(xkb, repeat_delay, repeat_rate)?;
         seat.add_pointer();
 
         Ok(Self {
