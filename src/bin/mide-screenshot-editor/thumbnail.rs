@@ -21,7 +21,7 @@ use mide::{
     control_client::ask_compositor,
     kit::{run, App, Ui, Window},
     markup::{sibling_program, thumbnail_pid_file, RectF},
-    motion,
+    motion, tr,
 };
 use tiny_skia::{FillRule, FilterQuality, Paint, Pattern, Pixmap, SpreadMode, Transform};
 
@@ -85,7 +85,7 @@ pub fn run_thumbnail(path: PathBuf) -> Result<(), Box<dyn Error>> {
     tracing::info!("miniatura da captura: {} ({}x{} pixels)", path.display(), image.width(), image.height());
     let animate = mide::settings_file::effect("transitions");
     let app = Thumb { path, image, size, card: None, shown_at: None, deadline: Instant::now() + SHOW_FOR, leaving: None, press: None, offset: 0.0, away_since: None, animate, dragging_out: false };
-    let result = run(Window::new("Miniatura da captura").app_id("mide-screenshot-editor").corner("mide-captura-miniatura").size(LAYER.0, LAYER.1), app);
+    let result = run(Window::new(&tr!("Screenshot Thumbnail")).app_id("mide-screenshot-editor").corner("mide-captura-miniatura").size(LAYER.0, LAYER.1), app);
     // O arquivo do PID só sai se ainda for desta miniatura (uma nova pode ter gravado o dela).
     if std::fs::read_to_string(&pid_file).is_ok_and(|p| p.trim() == std::process::id().to_string()) {
         let _ = std::fs::remove_file(&pid_file);
@@ -309,11 +309,11 @@ impl App for Thumb {
             let r = ui.background(rect);
             let (mut edit, mut files, mut copy, mut trash) = (false, false, false, false);
             ui.context_menu(&r, |m| {
-                edit = m.item("Abrir no editor");
-                files = m.item("Mostrar no Arquivos");
-                copy = m.item("Copiar");
+                edit = m.item(&tr!("Open in Editor"));
+                files = m.item(&tr!("Show in Files"));
+                copy = m.item(&tr!("Copy"));
                 m.separator();
-                trash = m.danger("Mover para a Lixeira");
+                trash = m.danger(&tr!("Move to Trash"));
             });
             if edit {
                 self.open_editor();

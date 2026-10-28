@@ -13,7 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use mide::kit::{run, window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, Theme, Ui, Window};
+use mide::kit::{run, window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, Response, Theme, Ui, Window};
+use mide::tr;
 use mide::media::video::{self, Player};
 use mide::ui::{
     draw::{copy_rgba, fill_rounded, scale},
@@ -75,7 +76,7 @@ impl VideoApp {
             }
             None => {
                 tracing::warn!("player: não abriu {}", path.display());
-                self.error = Some(format!("Não foi possível abrir \"{}\".", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+                self.error = Some(tr!("Could not open “{name}”.", name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
             }
         }
     }
@@ -116,7 +117,7 @@ impl VideoApp {
 
 fn open_dialog() -> FileChooser {
     let dir = mide::places::videos_dir();
-    FileChooser::open("Abrir vídeo", Some(&dir)).extensions(&["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "ogv", "mpg", "mpeg", "3gp", "ts"])
+    FileChooser::open(&tr!("Open Video"), Some(&dir)).extensions(&["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "ogv", "mpg", "mpeg", "3gp", "ts"])
 }
 
 /// Retângulos dos controles (em pontos), a partir do tamanho da janela.
@@ -340,7 +341,7 @@ impl App for VideoApp {
         }
         if shown {
             // Luzes e título no topo, sobre uma faixa escura suave.
-            let title = self.player.as_ref().and_then(|p| p.path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Player de Vídeo".into());
+            let title = self.player.as_ref().and_then(|p| p.path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| tr!("Video Player").into_owned());
             ui.paint(|canvas, _| fill_rounded(canvas, 0.0, 0.0, w, 44.0, 0.0, rgba(0, 0, 0, 90)));
             ui.paint_text(|canvas, text, _| {
                 let size = 13.0;
@@ -378,19 +379,19 @@ impl App for VideoApp {
         };
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
-                items: vec![MenuItem::action("open", "Abrir…").shortcut("Ctrl+O"), MenuItem::Separator, MenuItem::action("close", "Fechar").shortcut("Ctrl+W")],
+                title: tr!("File").into(),
+                items: vec![MenuItem::action("open", &tr!("Open…")).shortcut("Ctrl+O"), MenuItem::Separator, MenuItem::action("close", &tr!("Close")).shortcut("Ctrl+W")],
             },
             MenuGroup {
-                title: "Reprodução".into(),
+                title: tr!("Playback").into(),
                 items: vec![
-                    MenuItem::action("toggle", if playing { "Pausar" } else { "Reproduzir" }).enabled(has),
+                    MenuItem::action("toggle", &if playing { tr!("Pause") } else { tr!("Play") }).enabled(has),
                     MenuItem::Separator,
-                    MenuItem::action("back", "Voltar 15 segundos").enabled(has),
-                    MenuItem::action("forward", "Avançar 15 segundos").enabled(has),
+                    MenuItem::action("back", &tr!("Skip Back 15 Seconds")).enabled(has),
+                    MenuItem::action("forward", &tr!("Skip Forward 15 Seconds")).enabled(has),
                     MenuItem::Separator,
-                    MenuItem::action("loop", "Repetir").checked(looped).enabled(has),
-                    MenuItem::action("mute", "Sem som").checked(muted).enabled(has),
+                    MenuItem::action("loop", &tr!("Loop")).checked(looped).enabled(has),
+                    MenuItem::action("mute", &tr!("Mute")).checked(muted).enabled(has),
                 ],
             },
             window_menu(Vec::new()),
@@ -498,6 +499,14 @@ impl VideoApp {
             let rw = text.measure(&remaining, 11.5, FontWeight::Regular);
             text.draw(canvas, &remaining, x + pw - 14.0 - rw, y + 46.0, 11.5, FontWeight::Regular, c);
         });
+        // Dicas dos botões desenhados à mão (I2): o ponteiro parado sobre um deles.
+        let play_tip = if playing { tr!("Pause") } else { tr!("Play") };
+        let mute_tip = if muted { tr!("Unmute") } else { tr!("Mute") };
+        let (back_tip, forward_tip) = (tr!("Skip Back 15 Seconds"), tr!("Skip Forward 15 Seconds"));
+        for (i, (r, tip)) in [(hud.back, &back_tip), (hud.play, &play_tip), (hud.forward, &forward_tip), (hud.speaker, &mute_tip)].into_iter().enumerate() {
+            let response = Response { hovered: hover(r), rect: r, id: 0x91A7_0000_0000 + i as u64, ..Default::default() };
+            ui.tooltip(&response, tip);
+        }
         if self.scrubbing.is_some() || self.dragging_volume {
             ui.request_tick();
         }
@@ -516,7 +525,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|info| video::fit(&info, (960, 540)))
         .map(|(w, h)| (w.max(480), h.max(270)))
         .unwrap_or((800, 450));
-    let mut window = Window::new("Player de Vídeo").app_id("mide-player").size(size.0, size.1).min_size(400, 225).full_size_content().accepts_files();
+    mide::i18n::init();
+    let mut window = Window::new(&tr!("Video Player")).app_id("mide-player").size(size.0, size.1).min_size(400, 225).full_size_content().accepts_files();
     let mut theme = Theme::dark();
     theme.accent = mide::kit::system_accent(true);
     window.theme = theme;

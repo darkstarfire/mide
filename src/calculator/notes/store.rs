@@ -56,10 +56,10 @@ pub fn new_id(dir: &Path, now: chrono::DateTime<chrono::Local>) -> String {
 }
 
 /// Título da nota na lista: a primeira linha com texto, sem espaços nas pontas e com
-/// até 40 caracteres ("…" se passa); sem texto, "Nota nova".
+/// até 40 caracteres ("…" se passa); sem texto, "New Note" traduzido.
 pub fn title(text: &str) -> String {
     let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) else {
-        return "Nota nova".into();
+        return crate::i18n::trc("note title", "New Note").into_owned();
     };
     if line.chars().count() <= 40 {
         return line.to_string();
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn titulo() {
-        assert_eq!(title(""), "Nota nova");
+        assert_eq!(title(""), crate::i18n::trc("note title", "New Note"));
         assert_eq!(title("\n   \n  Viagem a Salvador  \nhotel = 3 × 180"), "Viagem a Salvador");
         let long = "a".repeat(50);
         assert_eq!(title(&long), format!("{}…", "a".repeat(39)));

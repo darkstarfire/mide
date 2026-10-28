@@ -10,6 +10,7 @@
 //! 0 (escolheu), 1 (cancelou ou fechou a janela) ou 2 (erro: argumentos, sem compositor).
 
 use std::{cell::RefCell, rc::Rc};
+use mide::tr;
 
 use mide::{
     kit::{run, App, Choice, FileChooser, Ui, Window},
@@ -75,7 +76,7 @@ fn main() {
     chooser = chooser.choices(req.choices.clone()).embedded(true);
     tracing::info!("seletor: {} em {}", req.title, chooser.dir().display());
     let done = Rc::new(RefCell::new(None));
-    let title = if req.title.is_empty() { "Escolher arquivo".to_string() } else { req.title.clone() };
+    let title = if req.title.is_empty() { tr!("Choose File").into_owned() } else { req.title.clone() };
     let window = Window::new(&title).app_id("mide-chooser").size(720, 500).min_size(420, 360);
     if let Err(err) = run(window, Chooser { chooser, done: done.clone() }) {
         eprintln!("mide-chooser: {err}");

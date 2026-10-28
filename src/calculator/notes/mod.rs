@@ -34,7 +34,8 @@ use parser::{Expr, Fault, Func, Node, Role};
 /// Linha mais comprida que é lida, em caracteres; uma maior fica só como texto.
 const MAX_LINE: usize = 2000;
 
-const CONJ: &str = "“e” não é uma operação: use +, −, × ou ÷";
+/// "e" é a palavra da nota (em português); a mensagem passa por `tr!` onde aparece.
+const CONJ: &str = "“e” isn't an operation: use +, −, × or ÷";
 
 /// Opções da Calculadora que valem nas notas, e as cotações.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -805,7 +806,7 @@ impl<'a> Line<'a> {
             return self.chain_problem(seg, seg.chain_start(open)..n);
         }
         if *role == Role::Conj {
-            return Some(Problem { range: prev.range.clone(), message: CONJ.into() });
+            return Some(Problem { range: prev.range.clone(), message: crate::i18n::tr(CONJ).into_owned() });
         }
         let sign = seg.toks.get(s).is_some_and(|t| matches!(t.kind, Kind::Plus | Kind::Minus));
         // A quantidade antes de um número que não continua a mistura ("Corri 5 km 2 × 3",
@@ -826,7 +827,7 @@ impl<'a> Line<'a> {
     fn unknown_currency(&self, seg: &Seg) -> Option<Problem> {
         let (t, _) = (0..seg.toks.len()).filter_map(|i| seg.pair(i)).find(|(t, r)| matches!(&t.kind, Kind::Name(w) if w.contains(' ')) && matches!(r, Role::Unknown(_)))?;
         let word = self.slice(t.range.clone());
-        Some(Problem { range: t.range.clone(), message: format!("“{word}” não é uma moeda conhecida") })
+        Some(Problem { range: t.range.clone(), message: crate::tr!("“{word}” isn't a known currency", word = word) })
     }
 
     /// A linha (contando de 0) em que o nome é definido mais abaixo do token `at`
@@ -839,7 +840,7 @@ impl<'a> Line<'a> {
     /// "“1,234.5” não é um número", sublinhando o número todo.
     fn malformed(&self, seg: &Seg, run: Range<usize>) -> Problem {
         let range = seg.toks.get(run.start).map_or(0, |t| t.range.start)..seg.toks.get(run.end.saturating_sub(1)).map_or(0, |t| t.range.end);
-        let message = format!("“{}” não é um número", self.slice(range.clone()));
+        let message = crate::tr!("“{text}” isn't a number", text = self.slice(range.clone()));
         Problem { range, message }
     }
 
@@ -869,25 +870,25 @@ impl<'a> Line<'a> {
         let whole = range(chain.start).start..range(chain.end.saturating_sub(1)).end;
         let (range, message) = match fault {
             Fault::Unknown(i) => (range(i), self.unknown(word(i), seg.start + i)),
-            Fault::NoNumber(i) => (whole, format!("Falta um número depois de “{}”", word(i))),
-            Fault::NoNumberBefore(i) => (whole, format!("Falta um número antes de “{}”", word(i))),
+            Fault::NoNumber(i) => (whole, crate::tr!("Missing a number after “{word}”", word = word(i))),
+            Fault::NoNumberBefore(i) => (whole, crate::tr!("Missing a number before “{word}”", word = word(i))),
             Fault::NoOperation(i) => match self.missing_operation(seg, i) {
                 Some(problem) => return problem,
-                None => (whole, format!("Falta uma operação antes de “{}”", word(i))),
+                None => (whole, crate::tr!("Missing an operation before “{word}”", word = word(i))),
             },
-            Fault::Unclosed(_) => (whole, "Parêntese aberto sem fechar".into()),
-            Fault::Unopened(_) => (whole, "Parêntese fechado sem abrir".into()),
-            Fault::Conj(i) => (range(i), CONJ.into()),
-            Fault::NotUnit(_, Some(i)) => (range(i), format!("“{}” não é uma unidade", word(i))),
-            Fault::NotUnit(i, None) => (whole, format!("Esperava uma unidade depois de “{}”", word(i))),
+            Fault::Unclosed(_) => (whole, crate::tr!("Unclosed parenthesis").into_owned()),
+            Fault::Unopened(_) => (whole, crate::tr!("Closing parenthesis without an opening one").into_owned()),
+            Fault::Conj(i) => (range(i), crate::i18n::tr(CONJ).into_owned()),
+            Fault::NotUnit(_, Some(i)) => (range(i), crate::tr!("“{word}” isn't a unit", word = word(i))),
+            Fault::NotUnit(i, None) => (whole, crate::tr!("Expected a unit after “{word}”", word = word(i))),
             Fault::Arity(i, end, func) => (range(i).start..range(end).end, eval::arity_message(word(i), func)),
-            Fault::Separator(_) => (whole, "Use “;” para separar os números".into()),
-            Fault::AfterConvert(_, convert) => (whole, format!("A conversão com “{}” fica no fim da conta", word(convert))),
-            Fault::TooDeep(_) => (whole, "Conta comprida demais".into()),
-            Fault::Stray(i) if word(i) == ";" => (whole, "“;” só separa os números de uma função".into()),
+            Fault::Separator(_) => (whole, crate::tr!("Use “;” to separate the numbers").into_owned()),
+            Fault::AfterConvert(_, convert) => (whole, crate::tr!("The conversion with “{word}” goes at the end of the calculation", word = word(convert))),
+            Fault::TooDeep(_) => (whole, crate::tr!("Calculation too long").into_owned()),
+            Fault::Stray(i) if word(i) == ";" => (whole, crate::tr!("“;” only separates the numbers of a function").into_owned()),
             // Reserva: a prosa fica fora das contas relidas aqui (`linked` corta nela, e
             // a pontuação antes do "=" sai antes da busca).
-            Fault::Stray(i) => (whole, format!("“{}” não faz parte da conta", word(i))),
+            Fault::Stray(i) => (whole, crate::tr!("“{word}” isn't part of the calculation", word = word(i))),
         };
         Problem { range, message }
     }
@@ -897,11 +898,11 @@ impl<'a> Line<'a> {
     /// “km”"; senão, "“x” não é uma variável nem uma unidade".
     fn unknown(&self, word: &str, at: usize) -> String {
         match self.later(&fold(word), at) {
-            Some(line) => format!("“{word}” é definida mais abaixo (linha {}): defina antes de usar", line + 1),
+            Some(line) => crate::tr!("“{word}” is defined further down (line {line}): define it before using it", word = word, line = line + 1),
             // Símbolo ("XX$") ou nome composto ("dólares canadense") que não é de moeda.
-            None if word.ends_with(['$', '¥']) || word.contains(' ') => format!("“{word}” não é uma moeda conhecida"),
-            None if words::unit(word, false).is_some() || words::currency_word(word).is_some() => format!("Falta um número antes de “{word}”"),
-            None => format!("“{word}” não é uma variável nem uma unidade"),
+            None if word.ends_with(['$', '¥']) || word.contains(' ') => crate::tr!("“{word}” isn't a known currency", word = word),
+            None if words::unit(word, false).is_some() || words::currency_word(word).is_some() => crate::tr!("Missing a number before “{word}”", word = word),
+            None => crate::tr!("“{name}” isn't a variable or a unit", name = word),
         }
     }
 
@@ -919,7 +920,7 @@ impl<'a> Line<'a> {
         let left = seg.toks.get(a..end)?;
         let right = seg.toks.get(at..b)?;
         let range = left.first()?.range.start..right.last()?.range.end;
-        let message = format!("Falta uma operação entre “{}” e “{}”", self.snippet(left), self.snippet(right));
+        let message = crate::tr!("Missing an operation between “{left}” and “{right}”", left = self.snippet(left), right = self.snippet(right));
         Some(Problem { range, message })
     }
 
@@ -1020,11 +1021,11 @@ fn starts_strict(t: &Token, role: &Role) -> bool {
 /// O erro de um nome que não pode ser variável: palavra da conta, função ou π.
 fn bad_name(name: &str) -> Option<String> {
     if parser::KEYWORDS.iter().any(|k| name.eq_ignore_ascii_case(k)) {
-        Some(format!("“{name}” é uma palavra da conta: escolha outro nome"))
+        Some(crate::tr!("“{name}” is a calculation word: choose another name", name = name))
     } else if Func::find(&fold(name)).is_some() {
-        Some(format!("“{name}” é o nome de uma função: escolha outro nome"))
+        Some(crate::tr!("“{name}” is the name of a function: choose another name", name = name))
     } else if name == "π" || name.eq_ignore_ascii_case("pi") {
-        Some("π é uma constante".into())
+        Some(crate::tr!("π is a constant").into_owned())
     } else {
         None
     }
@@ -1036,6 +1037,7 @@ mod tests {
 
     /// Por linha: o resultado, "erro: …" (o primeiro problema) ou "".
     fn lines_with(text: &str, ctx: Context) -> Vec<String> {
+        crate::i18n::set_language("pt_BR");
         evaluate(text, &ctx)
             .iter()
             .map(|l| match (&l.result, l.problems.first()) {
@@ -1062,6 +1064,7 @@ mod tests {
 
     /// O primeiro problema da última linha, com o texto sublinhado.
     fn underlined(text: &str) -> (String, String) {
+        crate::i18n::set_language("pt_BR");
         let lines = evaluate(text, &Context::default());
         let p = lines.last().and_then(|l| l.problems.first()).cloned().expect("sem problema");
         (text[p.range.clone()].to_string(), p.message)

@@ -37,6 +37,7 @@ use mide::{
     kit::{run, App, Key, Ui, Window},
 };
 use mide::markup::*;
+use mide::tr;
 use tiny_skia::{Color, FillRule, FilterQuality, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -479,7 +480,7 @@ impl Capture {
         let path = runtime_dir().join(format!("mide-captura-{}.png", std::process::id()));
         if let Err(err) = image.save_png(&path) {
             tracing::warn!("captura: não foi possível preparar a cópia: {err}");
-            mide::notify::send_and_wait("Captura de tela", "A captura não foi copiada", &err.to_string());
+            mide::notify::send_and_wait(&tr!("Screenshot"), &tr!("The screenshot was not copied"), &err.to_string());
             return false;
         }
         let ok = ask_compositor(&format!("copy-file image/png {}", path.display())).is_some_and(|r| r.first().map(String::as_str) == Some("ok"));
@@ -487,9 +488,9 @@ impl Capture {
         if ok {
             tracing::info!("captura copiada ({}x{})", image.width(), image.height());
             shutter();
-            mide::notify::send_and_wait("Captura de tela", "Captura copiada", "Cole com Ctrl+V (⌘V no estilo Mac).");
+            mide::notify::send_and_wait(&tr!("Screenshot"), &tr!("Screenshot copied"), &tr!("Paste it with Ctrl+V (⌘V in the Mac style)."));
         } else {
-            mide::notify::send_and_wait("Captura de tela", "A captura não foi copiada", "O mide não respondeu.");
+            mide::notify::send_and_wait(&tr!("Screenshot"), &tr!("The screenshot was not copied"), &tr!("mide did not respond."));
         }
         ok
     }
@@ -735,9 +736,9 @@ impl Capture {
         let mut action = None;
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
             ui.row(|ui| {
-                for (mode, label) in [(Mode::Selection, "Seleção"), (Mode::Window, "Janela"), (Mode::Full, "Tela inteira")] {
+                for (mode, label) in [(Mode::Selection, tr!("Selection")), (Mode::Window, tr!("Window")), (Mode::Full, tr!("Entire Screen"))] {
                     let current = self.mode == mode || (mode == Mode::Full && self.mode == Mode::PickScreen);
-                    let r = if current { ui.primary_button(label) } else { ui.button(label) };
+                    let r = if current { ui.primary_button(&label) } else { ui.button(&label) };
                     if r.clicked() {
                         if mode == Mode::Full {
                             self.choose_full();
@@ -749,19 +750,19 @@ impl Capture {
                     }
                 }
                 ui.push_right(268.0);
-                if ui.button("Cancelar").clicked() {
+                if ui.button(&tr!("Cancel")).clicked() {
                     action = Some("cancelar");
                 }
-                if ui.button("Salvar").clicked() {
+                if ui.button(&tr!("Save")).clicked() {
                     action = Some("salvar");
                 }
-                if ui.primary_button("Copiar").clicked() {
+                if ui.primary_button(&tr!("Copy")).clicked() {
                     action = Some("copiar");
                 }
             });
             ui.row(|ui| {
-                for (tool, label) in [(Tool::Adjust, "Ajustar"), (Tool::Arrow, "Seta"), (Tool::Circle, "Círculo"), (Tool::Square, "Quadrado")] {
-                    let r = if self.tool == tool { ui.primary_button(label) } else { ui.button(label) };
+                for (tool, label) in [(Tool::Adjust, tr!("Adjust")), (Tool::Arrow, tr!("Arrow")), (Tool::Circle, tr!("Circle")), (Tool::Square, tr!("Square"))] {
+                    let r = if self.tool == tool { ui.primary_button(&label) } else { ui.button(&label) };
                     if r.clicked() {
                         self.tool = tool;
                         tracing::info!("captura: ferramenta {label}");
@@ -877,10 +878,10 @@ impl Capture {
         if picking && let Some(shot) = shot {
             let (w, h) = (360.0, shot.rect.3);
             let (x, y) = (((shot.rect.2 - w) / 2.0).max(0.0), (h / 2.0 - 40.0).max(0.0));
-            let what = if self.record { "Clique para gravar esta tela" } else { "Clique para capturar esta tela" };
+            let what = if self.record { tr!("Click to record this screen") } else { tr!("Click to capture this screen") };
             let detail = format!("{} · {} × {}", shot.name, shot.shot.width(), shot.shot.height());
             ui.glass_panel(x, y, w, 14.0, |ui| {
-                ui.label(what);
+                ui.label(&what);
                 ui.note(&detail);
             });
         }
@@ -945,9 +946,9 @@ impl Capture {
         let mut cancel = false;
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
             ui.row(|ui| {
-                for (mode, label) in [(Mode::Full, "Tela inteira"), (Mode::Selection, "Área")] {
+                for (mode, label) in [(Mode::Full, tr!("Entire Screen")), (Mode::Selection, tr!("Area"))] {
                     let current = self.mode == mode || (mode == Mode::Full && self.mode == Mode::PickScreen);
-                    let r = if current { ui.primary_button(label) } else { ui.button(label) };
+                    let r = if current { ui.primary_button(&label) } else { ui.button(&label) };
                     if r.clicked() {
                         if mode == Mode::Full {
                             self.choose_full();
@@ -958,10 +959,10 @@ impl Capture {
                         }
                     }
                 }
-                for (on, label) in [(self.system_audio, "Som do sistema"), (self.microphone, "Microfone")] {
+                for (mic, on, label) in [(false, self.system_audio, tr!("System Audio")), (true, self.microphone, tr!("Microphone"))] {
                     let text = format!("{} {label}", if on { "☑" } else { "☐" });
                     if ui.button(&text).clicked() {
-                        if label == "Microfone" {
+                        if mic {
                             self.microphone = !self.microphone;
                             let _ = mide::settings_file::set("record", "microphone", self.microphone.then_some(mide::settings_file::Value::Bool(true)));
                         } else {
@@ -971,8 +972,8 @@ impl Capture {
                     }
                 }
                 ui.push_right(200.0);
-                cancel = ui.button("Cancelar").clicked();
-                start |= ui.primary_button("Gravar").clicked();
+                cancel = ui.button(&tr!("Cancel")).clicked();
+                start |= ui.primary_button(&tr!("Record")).clicked();
             });
         });
         self.panel_h = rect.3;
@@ -1016,7 +1017,7 @@ impl Capture {
             let command = record_command(area, screen, self.system_audio, self.microphone);
             let reply = ask_compositor(&command).and_then(|r| r.into_iter().next()).unwrap_or_default();
             if let Some(err) = reply.strip_prefix("erro: ") {
-                mide::notify::send_and_wait("Gravação de tela", "A gravação não começou", err);
+                mide::notify::send_and_wait(&tr!("Screen Recording"), &tr!("The recording did not start"), err);
             } else {
                 tracing::info!("gravação começou: {reply}");
             }
@@ -1049,9 +1050,9 @@ fn save_images(images: &[(&Pixmap, Option<&str>)]) -> Vec<PathBuf> {
         shutter();
     }
     match (saved.as_slice(), error) {
-        (_, Some(err)) => mide::notify::send_and_wait("Captura de tela", "A captura não foi salva", &format!("{}: {err}", dir.display())),
-        ([one], None) => mide::notify::send_open_and_wait("Captura de tela", "Captura salva", &one.display().to_string(), one),
-        (many, None) if !many.is_empty() => mide::notify::send_open_and_wait("Captura de tela", "Capturas salvas", &format!("{} telas em {}", many.len(), dir.display()), &dir),
+        (_, Some(err)) => mide::notify::send_and_wait(&tr!("Screenshot"), &tr!("The screenshot was not saved"), &format!("{}: {err}", dir.display())),
+        ([one], None) => mide::notify::send_open_and_wait(&tr!("Screenshot"), &tr!("Screenshot saved"), &one.display().to_string(), one),
+        (many, None) if !many.is_empty() => mide::notify::send_open_and_wait(&tr!("Screenshot"), &tr!("Screenshots saved"), &tr!("{n} screens in {dir}", n = many.len(), dir = dir.display()), &dir),
         _ => {}
     }
     saved
@@ -1316,7 +1317,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     // A imagem capturada é pintada pixel a pixel (`ui.paint`): escala 1, em pontos. Uma
     // camada em cada tela; só a principal recebe o teclado.
-    run(Window::new("Captura de tela").app_id("mide-screenshot").overlay("mide-screenshot").on_every_output().fixed_scale(), app)
+    mide::i18n::init();
+    run(Window::new(&tr!("Screenshot")).app_id("mide-screenshot").overlay("mide-screenshot").on_every_output().fixed_scale(), app)
 }
 
 #[cfg(test)]

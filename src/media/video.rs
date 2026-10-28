@@ -342,7 +342,7 @@ impl Player {
         Command::new("ffmpeg")
             .args(["-nostdin", "-loglevel", "error", "-ss", &format!("{t:.3}"), "-i"])
             .arg(&self.path)
-            .args(["-vn", "-sn", "-af", &format!("volume={:.2}", self.volume), "-f", "pulse", "Vídeo"])
+            .args(["-vn", "-sn", "-af", &format!("volume={:.2}", self.volume), "-f", "pulse", &crate::tr!("Video")])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

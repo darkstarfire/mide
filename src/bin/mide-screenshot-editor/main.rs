@@ -31,8 +31,9 @@ use doc::Doc;
 use mide::{
     annotate::{self, Shape, ShapeKind},
     control_client::ask_compositor,
-    kit::{run, window_menu, App, ButtonStyle, Choice, FileChooser, Key, MenuGroup, MenuItem, Ui, Window},
+    kit::{run, window_menu, App, ButtonStyle, Choice, FileChooser, Key, MenuGroup, MenuItem, Response, Ui, Window},
     markup::*,
+    tr,
     ui::text::Text,
 };
 use tiny_skia::{Color, FilterQuality, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
@@ -48,28 +49,45 @@ enum Tool {
 }
 
 impl Tool {
-    fn name(self) -> &'static str {
+    /// Nome da ferramenta no idioma da sessão.
+    fn name(self) -> String {
         match self {
-            Tool::Select => "Selecionar",
-            Tool::Sketch => "Esboço",
-            Tool::Draw => "Desenho",
-            Tool::Text => "Texto",
-            Tool::Shape(k) => SHAPES.iter().find(|s| s.0 == k).map_or("Forma", |s| s.1),
+            Tool::Select => tr!("Select").into_owned(),
+            Tool::Sketch => tr!("Sketch").into_owned(),
+            Tool::Draw => tr!("Draw").into_owned(),
+            Tool::Text => tr!("Text").into_owned(),
+            Tool::Shape(k) => shape_name(k),
         }
     }
 }
 
 /// Formas do menu Formas.
-const SHAPES: [(ShapeKind, &str); 8] = [
-    (ShapeKind::Rect, "Retângulo"),
-    (ShapeKind::RoundRect, "Retângulo arredondado"),
-    (ShapeKind::Oval, "Oval"),
-    (ShapeKind::Line, "Linha"),
-    (ShapeKind::Arrow, "Seta"),
-    (ShapeKind::Triangle, "Triângulo"),
-    (ShapeKind::Star, "Estrela"),
-    (ShapeKind::Bubble, "Balão de fala"),
+const SHAPES: [ShapeKind; 8] = [
+    ShapeKind::Rect,
+    ShapeKind::RoundRect,
+    ShapeKind::Oval,
+    ShapeKind::Line,
+    ShapeKind::Arrow,
+    ShapeKind::Triangle,
+    ShapeKind::Star,
+    ShapeKind::Bubble,
 ];
+
+/// Nome da forma no idioma da sessão.
+fn shape_name(kind: ShapeKind) -> String {
+    match kind {
+        ShapeKind::Rect => tr!("Rectangle"),
+        ShapeKind::RoundRect => tr!("Rounded Rectangle"),
+        ShapeKind::Oval => tr!("Oval"),
+        ShapeKind::Line => tr!("Line"),
+        ShapeKind::Arrow => tr!("Arrow"),
+        ShapeKind::Triangle => tr!("Triangle"),
+        ShapeKind::Star => tr!("Star"),
+        ShapeKind::Bubble => tr!("Speech Bubble"),
+        _ => tr!("Shape"),
+    }
+    .into_owned()
+}
 
 /// Cores das marcações (borda, preenchimento e texto).
 const PALETTE: [(&str, [u8; 3]); 9] = [
@@ -257,13 +275,13 @@ impl Editor {
             }
             Err(err) => {
                 tracing::warn!("editor: não abriu {}: {err}", path.display());
-                self.message = Some(format!("Não foi possível abrir \"{}\": {err}", path.display()));
+                self.message = Some(tr!("Could not open “{name}”: {err}", name = path.display(), err = err));
             }
         }
     }
 
     fn name(&self) -> String {
-        self.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| "Sem imagem".to_string(), |n| n.to_string_lossy().into_owned())
+        self.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| tr!("No Image").into_owned(), |n| n.to_string_lossy().into_owned())
     }
 
     fn modified(&self) -> bool {
@@ -272,13 +290,13 @@ impl Editor {
 
     fn ask_open(&mut self) {
         let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
-        self.dialog = Some(Dialog::Open(FileChooser::open("Abrir imagem", Some(&dir)).extensions(&["png", "jpg", "jpeg"])));
+        self.dialog = Some(Dialog::Open(FileChooser::open(&tr!("Open Image"), Some(&dir)).extensions(&["png", "jpg", "jpeg"])));
     }
 
     fn ask_save_as(&mut self, then_close: bool) {
         let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
-        let name = self.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| "Captura.png".to_string(), |n| n.to_string_lossy().into_owned());
-        self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save("Salvar como", Some(&dir), &name), then_close });
+        let name = self.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| tr!("Screenshot.png").into_owned(), |n| n.to_string_lossy().into_owned());
+        self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save(&tr!("Save As"), Some(&dir), &name), then_close });
     }
 
     /// Abre o arquivo escolhido aqui (sem imagem aberta) ou numa janela nova.
@@ -289,7 +307,7 @@ impl Editor {
         }
         match std::process::Command::new(sibling_program("mide-screenshot-editor")).arg(&path).spawn() {
             Ok(_) => tracing::info!("editor: abrindo em outra janela: {}", path.display()),
-            Err(err) => self.message = Some(format!("Não foi possível abrir: {err}")),
+            Err(err) => self.message = Some(tr!("Could not open: {err}", err = err)),
         }
     }
 
@@ -319,7 +337,7 @@ impl Editor {
             }
             Err(err) => {
                 tracing::warn!("editor: não salvou {}: {err}", path.display());
-                self.message = Some(format!("Não foi possível salvar: {err}"));
+                self.message = Some(tr!("Could not save: {err}", err = err));
                 false
             }
         }
@@ -338,9 +356,9 @@ impl Editor {
         let _ = std::fs::remove_file(&tmp);
         if ok {
             tracing::info!("editor: imagem copiada ({}x{})", image.width(), image.height());
-            self.message = Some("Imagem copiada. Cole com Ctrl+V.".into());
+            self.message = Some(tr!("Image copied. Paste it with Ctrl+V.").into_owned());
         } else {
-            self.message = Some("A imagem não foi copiada: o mide não respondeu.".into());
+            self.message = Some(tr!("The image was not copied: mide did not respond.").into_owned());
         }
     }
 
@@ -354,7 +372,7 @@ impl Editor {
                 tracing::info!("editor: movido para a Lixeira: {} ({name})", path.display());
                 ui.close();
             }
-            Err(err) => self.message = Some(format!("Não foi possível mover para a Lixeira: {err}")),
+            Err(err) => self.message = Some(tr!("Could not move to the Trash: {err}", err = err)),
         }
     }
 
@@ -487,7 +505,7 @@ impl Editor {
             "desenho" => self.set_tool(Tool::Draw),
             "texto" => self.set_tool(Tool::Text),
             other => {
-                if let Some((kind, _)) = SHAPES.iter().find(|(k, _)| shape_action(*k) == other) {
+                if let Some(kind) = SHAPES.iter().find(|k| shape_action(**k) == other) {
                     self.set_tool(Tool::Shape(*kind));
                 }
             }
@@ -602,15 +620,15 @@ impl Editor {
         let open = self.pop;
         ui.toolbar(|ui| {
             if cropping {
-                ui.toolbar_title("Arraste as bolinhas para escolher a área", 360.0);
+                ui.toolbar_title(&tr!("Drag the handles to choose the area"), 360.0);
                 ui.push_right(2.0 * 110.0 + 10.0);
                 ui.sized(110.0, |ui| {
-                    if ui.button("Cancelar").clicked() {
+                    if ui.button(&tr!("Cancel")).clicked() {
                         clicked = Some("cancelar-recorte".into());
                     }
                 });
                 ui.sized(110.0, |ui| {
-                    if ui.primary_button("Recortar").clicked() {
+                    if ui.primary_button(&tr!("Crop")).clicked() {
                         clicked = Some("recortar".into());
                     }
                 });
@@ -626,6 +644,7 @@ impl Editor {
             ];
             let picked = ui.toolbar_buttons(&tools);
             let group = ui.last_rect();
+            segment_tips(ui, group, &[tr!("Select"), tr!("Sketch"), tr!("Draw"), tr!("Shapes"), tr!("Text")]);
             match picked {
                 Some(0) => clicked = Some("selecionar".into()),
                 Some(1) => clicked = Some("esboco".into()),
@@ -642,6 +661,7 @@ impl Editor {
             ];
             let picked = ui.toolbar_buttons(&styles);
             let group = ui.last_rect();
+            segment_tips(ui, group, &[tr!("Shape Style"), tr!("Border Color"), tr!("Fill Color"), tr!("Text Style")]);
             match picked {
                 Some(0) => pop = Some((Pop::Style, segment(group, 0))),
                 Some(1) => pop = Some((Pop::Border, segment(group, 1))),
@@ -660,6 +680,7 @@ impl Editor {
                 ("object-rotate-right-symbolic", "⟳", false, has_doc),
                 ("image-crop-symbolic", "⌗", false, has_doc),
             ]);
+            segment_tips(ui, ui.last_rect(), &[tr!("Rotate Left"), tr!("Rotate Right"), tr!("Crop")]);
             match picked {
                 Some(0) => clicked = Some("girar-esquerda".into()),
                 Some(1) => clicked = Some("girar-direita".into()),
@@ -667,18 +688,20 @@ impl Editor {
                 _ => {}
             }
             ui.push_right(84.0 + 10.0 + 90.0 + 10.0 + 90.0);
-            match ui.toolbar_buttons(&[("edit-undo-symbolic", "↶", false, can_undo), ("edit-redo-symbolic", "↷", false, can_redo)]) {
+            let picked = ui.toolbar_buttons(&[("edit-undo-symbolic", "↶", false, can_undo), ("edit-redo-symbolic", "↷", false, can_redo)]);
+            segment_tips(ui, ui.last_rect(), &[tr!("Undo"), tr!("Redo")]);
+            match picked {
                 Some(0) => clicked = Some("desfazer".into()),
                 Some(1) => clicked = Some("refazer".into()),
                 _ => {}
             }
             ui.sized(90.0, |ui| {
-                if ui.button_styled("Copiar", ButtonStyle::Glass).clicked() {
+                if ui.button_styled(&tr!("Copy"), ButtonStyle::Glass).clicked() {
                     clicked = Some("copiar".into());
                 }
             });
             ui.sized(90.0, |ui| {
-                if ui.button_styled("Salvar", ButtonStyle::Prominent).clicked() {
+                if ui.button_styled(&tr!("Save"), ButtonStyle::Prominent).clicked() {
                     clicked = Some("salvar".into());
                 }
             });
@@ -713,14 +736,14 @@ impl Editor {
         };
         ui.popover(&mut open, self.pop_anchor, width, |ui| match pop {
             Pop::Shapes => {
-                for (kind, label) in SHAPES {
-                    if ui.button_styled(label, ButtonStyle::Plain).clicked() {
+                for kind in SHAPES {
+                    if ui.button_styled(&shape_name(kind), ButtonStyle::Plain).clicked() {
                         action = Some(shape_action(kind).to_string());
                     }
                 }
             }
             Pop::Style => {
-                ui.heading("Espessura do traço");
+                ui.heading(&tr!("Line Width"));
                 let mut level = width_level;
                 if ui.segmented(&["1", "2", "3", "4", "5"], &mut level, None).changed() {
                     style = Some(Box::new(move |e: &mut Editor| {
@@ -730,7 +753,7 @@ impl Editor {
                     }));
                 }
                 let mut d = dashed;
-                if ui.checkbox("Tracejado", &mut d).changed() {
+                if ui.checkbox(&tr!("Dashed"), &mut d).changed() {
                     style = Some(Box::new(move |e: &mut Editor| {
                         e.dashed = d;
                         e.restyle(|s| s.dashed = d);
@@ -738,7 +761,7 @@ impl Editor {
                 }
             }
             Pop::Border | Pop::Fill => {
-                ui.heading(if pop == Pop::Border { "Cor da borda" } else { "Preenchimento" });
+                ui.heading(&if pop == Pop::Border { tr!("Border Color") } else { mide::i18n::trc("shape", "Fill") });
                 let current = if pop == Pop::Border { Some(stroke) } else { fill };
                 ui.row(|ui| {
                     for (_, c) in PALETTE {
@@ -757,7 +780,7 @@ impl Editor {
                         }
                     }
                 });
-                if pop == Pop::Fill && ui.button_styled("Sem preenchimento", ButtonStyle::Plain).clicked() {
+                if pop == Pop::Fill && ui.button_styled(&tr!("No Fill"), ButtonStyle::Plain).clicked() {
                     style = Some(Box::new(|e: &mut Editor| {
                         e.fill = None;
                         e.restyle(|s| s.fill = None);
@@ -765,7 +788,7 @@ impl Editor {
                 }
             }
             Pop::TextStyle => {
-                ui.heading("Tamanho do texto");
+                ui.heading(&tr!("Text Size"));
                 let mut size = font_size as i64;
                 if ui.stepper(&mut size, 8, 200).changed() {
                     style = Some(Box::new(move |e: &mut Editor| {
@@ -774,7 +797,7 @@ impl Editor {
                         e.restyle(|s| s.font_size = size as f32 * k);
                     }));
                 }
-                ui.note("A cor do texto é a cor da borda.");
+                ui.note(&tr!("The text color is the border color."));
             }
         });
         if !open {
@@ -858,7 +881,7 @@ impl Editor {
         let mut value = self.zoom.max(1.0).ln() / MAX.ln();
         let mut changed = false;
         ui.at(0.0, h - 26.0, w, |ui| {
-            let status = ui.status_bar(&format!("Zoom: {percent:.0}%"));
+            let status = ui.status_bar(&tr!("Zoom: {percent}%", percent = format!("{percent:.0}")));
             ui.at(status.0 + status.2 - 156.0, status.1 + (status.3 - 18.0) / 2.0, 140.0, |ui| {
                 changed = ui.mini_slider(140.0, &mut value, 0.0, 1.0).changed();
             });
@@ -1249,7 +1272,7 @@ impl Editor {
             Dialog::ConfirmReplace { path, then_close } => {
                 let (path, then_close) = (path.clone(), *then_close);
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                match ui.alert(&format!("\"{name}\" já existe. Substituir?"), "O arquivo que está lá será substituído.", &["Cancelar", "Substituir"]) {
+                match ui.alert(&tr!("“{name}” already exists. Replace it?", name = name), &tr!("The file that is there will be replaced."), &[&tr!("Cancel"), &tr!("Replace")]) {
                     Some(0) => self.dialog = None,
                     Some(_) => {
                         self.dialog = None;
@@ -1265,7 +1288,7 @@ impl Editor {
             }
             Dialog::ConfirmClose => {
                 let name = self.name();
-                match ui.alert(&format!("Salvar as alterações em \"{name}\"?"), "Se não salvar, as alterações serão perdidas.", &["Cancelar", "Não salvar", "Salvar"]) {
+                match ui.alert(&tr!("Save the changes to “{name}”?", name = name), &tr!("Your changes will be lost if you don’t save them."), &[&tr!("Cancel"), &tr!("Don’t Save"), &tr!("Save")]) {
                     Some(0) => self.dialog = None,
                     Some(1) => {
                         tracing::info!("editor: fechado sem salvar");
@@ -1354,7 +1377,7 @@ fn handle_dot(canvas: &mut Pixmap, p: (f32, f32), accent: [u8; 4], tf: Transform
 
 impl App for Editor {
     fn view(&mut self, ui: &mut Ui) {
-        ui.set_title(&format!("{}{} — Editor de Capturas", if self.modified() { "• " } else { "" }, self.name()));
+        ui.set_title(&tr!("{name} — Screenshot Editor", name = format!("{}{}", if self.modified() { "• " } else { "" }, self.name())));
         for action in ui.input().menu.clone() {
             self.command(&action, ui);
         }
@@ -1382,9 +1405,9 @@ impl App for Editor {
             self.canvas(ui, area);
             self.zoom_bar(ui, w, h);
         } else if self.dialog.is_none() {
-            ui.label("Nenhuma imagem aberta.");
+            ui.label(&tr!("No image open."));
             ui.sized(140.0, |ui| {
-                if ui.primary_button("Abrir imagem…").clicked() {
+                if ui.primary_button(&tr!("Open Image…")).clicked() {
                     self.ask_open();
                 }
             });
@@ -1398,50 +1421,50 @@ impl App for Editor {
         let has_file = has && self.path.is_some();
         let (undo, redo) = self.doc.as_ref().map_or((false, false), |d| (d.can_undo(), d.can_redo()));
         let mut tools = vec![
-            MenuItem::action("recortar", "Recortar").shortcut("Ctrl+K").enabled(has),
-            MenuItem::action("girar-esquerda", "Girar para a esquerda").enabled(has),
-            MenuItem::action("girar-direita", "Girar para a direita").enabled(has),
+            MenuItem::action("recortar", &tr!("Crop")).shortcut("Ctrl+K").enabled(has),
+            MenuItem::action("girar-esquerda", &tr!("Rotate Left")).enabled(has),
+            MenuItem::action("girar-direita", &tr!("Rotate Right")).enabled(has),
             MenuItem::Separator,
         ];
         for (tool, action) in [(Tool::Select, "selecionar"), (Tool::Sketch, "esboco"), (Tool::Draw, "desenho"), (Tool::Text, "texto")] {
-            tools.push(MenuItem::action(action, tool.name()).checked(self.tool == tool && self.cropping.is_none()));
+            tools.push(MenuItem::action(action, &tool.name()).checked(self.tool == tool && self.cropping.is_none()));
         }
         tools.push(MenuItem::Separator);
-        for (kind, label) in SHAPES {
-            tools.push(MenuItem::action(shape_action(kind), label).checked(self.tool == Tool::Shape(kind) && self.cropping.is_none()));
+        for kind in SHAPES {
+            tools.push(MenuItem::action(shape_action(kind), &shape_name(kind)).checked(self.tool == Tool::Shape(kind) && self.cropping.is_none()));
         }
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
+                title: tr!("File").into(),
                 items: vec![
-                    MenuItem::action("abrir", "Abrir…").shortcut("Ctrl+O"),
+                    MenuItem::action("abrir", &tr!("Open…")).shortcut("Ctrl+O"),
                     MenuItem::Separator,
-                    MenuItem::action("salvar", "Salvar").shortcut("Ctrl+S").enabled(has),
-                    MenuItem::action("salvar-como", "Salvar como…").shortcut("Ctrl+Shift+S").enabled(has),
+                    MenuItem::action("salvar", &tr!("Save")).shortcut("Ctrl+S").enabled(has),
+                    MenuItem::action("salvar-como", &tr!("Save As…")).shortcut("Ctrl+Shift+S").enabled(has),
                     MenuItem::Separator,
-                    MenuItem::action("mostrar", "Mostrar no Arquivos").enabled(has_file),
-                    MenuItem::action("lixeira", "Mover para a Lixeira").shortcut("Ctrl+Delete").enabled(has_file),
+                    MenuItem::action("mostrar", &tr!("Show in Files")).enabled(has_file),
+                    MenuItem::action("lixeira", &tr!("Move to Trash")).shortcut("Ctrl+Delete").enabled(has_file),
                 ],
             },
             MenuGroup {
-                title: "Editar".into(),
+                title: tr!("Edit").into(),
                 items: vec![
-                    MenuItem::action("desfazer", "Desfazer").shortcut("Ctrl+Z").enabled(undo),
-                    MenuItem::action("refazer", "Refazer").shortcut("Ctrl+Shift+Z").enabled(redo),
+                    MenuItem::action("desfazer", &tr!("Undo")).shortcut("Ctrl+Z").enabled(undo),
+                    MenuItem::action("refazer", &tr!("Redo")).shortcut("Ctrl+Shift+Z").enabled(redo),
                     MenuItem::Separator,
-                    MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C").enabled(has),
+                    MenuItem::action("copiar", &tr!("Copy")).shortcut("Ctrl+C").enabled(has),
                 ],
             },
             MenuGroup {
-                title: "Visualizar".into(),
+                title: tr!("View").into(),
                 items: vec![
-                    MenuItem::action("ampliar", "Ampliar").shortcut("Ctrl+=").enabled(has),
-                    MenuItem::action("reduzir", "Reduzir").shortcut("Ctrl+-").enabled(has && self.zoom > 1.0),
-                    MenuItem::action("tamanho-real", "Tamanho real").shortcut("Ctrl+1").enabled(has),
-                    MenuItem::action("caber", "Ajustar à janela").shortcut("Ctrl+0").enabled(has && self.zoom > 1.0),
+                    MenuItem::action("ampliar", &tr!("Zoom In")).shortcut("Ctrl+=").enabled(has),
+                    MenuItem::action("reduzir", &tr!("Zoom Out")).shortcut("Ctrl+-").enabled(has && self.zoom > 1.0),
+                    MenuItem::action("tamanho-real", &tr!("Actual Size")).shortcut("Ctrl+1").enabled(has),
+                    MenuItem::action("caber", &tr!("Zoom to Fit")).shortcut("Ctrl+0").enabled(has && self.zoom > 1.0),
                 ],
             },
-            MenuGroup { title: "Ferramentas".into(), items: tools },
+            MenuGroup { title: tr!("Tools").into(), items: tools },
             window_menu(Vec::new()),
         ]
     }
@@ -1535,6 +1558,20 @@ pub fn show_in_files(path: &Path) {
     }
 }
 
+/// Dica de cada botão de um grupo da barra (`toolbar_buttons`): o grupo não tem dicas
+/// próprias, então cada segmento ganha uma resposta com o ponteiro em cima (I2).
+fn segment_tips(ui: &mut Ui, group: RectF, tips: &[std::borrow::Cow<'_, str>]) {
+    let pointer = ui.input().pointer;
+    for (i, tip) in tips.iter().enumerate() {
+        let r = segment(group, i);
+        let (x, y, w, h) = ui.to_window(r);
+        let hovered = pointer.is_some_and(|(px, py)| px >= x && px < x + w && py >= y && py < y + h);
+        // Número próprio da dica, longe dos números dos componentes do quadro.
+        let id = tip.bytes().fold(0xD1CA_0000_0000_u64, |h, b| h.wrapping_mul(31).wrapping_add(u64::from(b)));
+        ui.tooltip(&Response { hovered, rect: r, id, ..Default::default() }, tip);
+    }
+}
+
 /// Pasta das capturas (Imagens/Capturas de tela), ou Imagens.
 fn default_dir() -> PathBuf {
     let pictures = mide::places::pictures_dir();
@@ -1556,7 +1593,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let text = a.to_string_lossy();
         mide::places::path_from_uri(&text).unwrap_or_else(|| PathBuf::from(a))
     });
-    let window = Window::new("Editor de Capturas").app_id("mide-screenshot-editor").size(1000, 640).min_size(760, 440).full_size_content().accepts_files();
+    mide::i18n::init();
+    let window = Window::new(&tr!("Screenshot Editor")).app_id("mide-screenshot-editor").size(1000, 640).min_size(760, 440).full_size_content().accepts_files();
     run(window, Editor::new(path))
 }
 

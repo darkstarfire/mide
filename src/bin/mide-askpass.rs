@@ -24,6 +24,7 @@ use std::{
 
 use mide::{
     elevate::{self, FromWindow, ToWindow},
+    tr,
     kit::{run, App, Key, Ui, Waker, Window},
     ui::draw::{fill_rounded, rgba, tf},
 };
@@ -152,7 +153,7 @@ impl Ask {
 /// A pergunta do PAM como dica do campo ("Senha:" → "Senha").
 fn placeholder_for(prompt: &str) -> String {
     let p = prompt.trim().trim_end_matches(':').trim();
-    if p.is_empty() || p.eq_ignore_ascii_case("password") { "Senha".into() } else { p.to_string() }
+    if p.is_empty() || p.eq_ignore_ascii_case("password") { tr!("Password").into_owned() } else { p.to_string() }
 }
 
 fn state_path() -> Option<PathBuf> {
@@ -218,18 +219,18 @@ impl App for Ask {
         let mut cancel = false;
         let busy = self.agent.as_ref().is_some_and(|l| l.busy);
         let placeholder = match &self.agent {
-            Some(l) if l.busy => "Conferindo…".to_string(),
+            Some(l) if l.busy => tr!("Checking…").into_owned(),
             Some(l) => l.placeholder.clone(),
-            None => "Senha".to_string(),
+            None => tr!("Password").into_owned(),
         };
         let error = self.error.is_some();
         ui.at(x + dx, pad - 4.0, width, |ui| {
-            ui.title("Digite sua senha");
+            ui.title(&tr!("Enter Your Password"));
             ui.label(&self.message);
-            let who = if self.user.is_empty() { "Digite a senha de administrador para permitir.".to_string() } else { format!("Digite a senha de {} para permitir.", self.user) };
+            let who = if self.user.is_empty() { tr!("Enter the administrator password to allow this.").into_owned() } else { tr!("Enter the password for {user} to allow this.", user = self.user) };
             ui.note(&who);
             if !self.command.is_empty() {
-                ui.note(&format!("Comando: {}", self.command));
+                ui.note(&tr!("Command: {command}", command = self.command));
             }
             if let Some(info) = &self.info {
                 ui.note(info);
@@ -244,7 +245,7 @@ impl App for Ask {
                 ok = true;
             }
             ui.space(4.0);
-            match ui.dialog_buttons(&["Cancelar", "OK"]) {
+            match ui.dialog_buttons(&[&tr!("Cancel"), &tr!("OK")]) {
                 Some(0) => cancel = true,
                 Some(_) => ok = true,
                 None => {}
@@ -299,8 +300,8 @@ fn main() {
     let env_text = |name: &str| std::env::var(name).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let title = env_text(elevate::TITLE_VAR);
     let message = match &title {
-        Some(app) => format!("{app} quer fazer alterações no sistema."),
-        None => "Um programa quer fazer alterações no sistema.".into(),
+        Some(app) => tr!("{app} wants to make changes to the system.", app = app),
+        None => tr!("A program wants to make changes to the system.").into_owned(),
     };
     let answer: Arc<Mutex<Option<String>>> = Arc::default();
     let mut ask = Ask {
@@ -339,12 +340,12 @@ fn main() {
                 w.wake();
             }
         });
-        ask.agent = Some(AgentLink { rx, waker, ready: false, pending: false, busy: false, placeholder: "Senha".into() });
+        ask.agent = Some(AgentLink { rx, waker, ready: false, pending: false, busy: false, placeholder: tr!("Password").into_owned() });
     } else if let Some(state) = state_path() {
         // Da segunda chamada do sudo em diante, a anterior foi recusada.
         match elevate::bump_attempt(&state) {
             Ok(n) if n > 1 => {
-                ask.error = Some("Senha incorreta. Tente de novo.".into());
+                ask.error = Some(tr!("Incorrect password. Try again.").into_owned());
                 ask.shake = Some(Instant::now());
                 tracing::info!("tentativa {n}: a anterior foi recusada");
             }
@@ -352,7 +353,7 @@ fn main() {
             Err(err) => tracing::warn!("estado das tentativas indisponível: {err}"),
         }
     }
-    let window = Window::new("Senha de administrador").app_id("mide-auth").size(480, 262).min_size(400, 240);
+    let window = Window::new(&tr!("Administrator Password")).app_id("mide-auth").size(480, 262).min_size(400, 240);
     if let Err(err) = run(window, ask) {
         eprintln!("mide-askpass: {err}");
         std::process::exit(1);

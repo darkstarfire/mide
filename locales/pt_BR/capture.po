@@ -1,0 +1,300 @@
+# Tradução do mide para o português do Brasil: captura de tela (mide-screenshot),
+# editor de capturas e miniatura (mide-screenshot-editor) e escolha da tela para
+# compartilhar (mide-screencast-picker).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# mide-screenshot
+msgid "Screenshot"
+msgstr "Captura de tela"
+
+msgid "The screenshot was not copied"
+msgstr "A captura não foi copiada"
+
+msgid "Screenshot copied"
+msgstr "Captura copiada"
+
+msgid "Paste it with Ctrl+V (⌘V in the Mac style)."
+msgstr "Cole com Ctrl+V (⌘V no estilo Mac)."
+
+msgid "mide did not respond."
+msgstr "O mide não respondeu."
+
+msgid "Selection"
+msgstr "Seleção"
+
+msgid "Window"
+msgstr "Janela"
+
+msgid "Entire Screen"
+msgstr "Tela inteira"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Adjust"
+msgstr "Ajustar"
+
+msgid "Arrow"
+msgstr "Seta"
+
+msgid "Circle"
+msgstr "Círculo"
+
+msgid "Square"
+msgstr "Quadrado"
+
+msgid "Click to record this screen"
+msgstr "Clique para gravar esta tela"
+
+msgid "Click to capture this screen"
+msgstr "Clique para capturar esta tela"
+
+msgid "Area"
+msgstr "Área"
+
+msgid "System Audio"
+msgstr "Som do sistema"
+
+msgid "Microphone"
+msgstr "Microfone"
+
+msgid "Record"
+msgstr "Gravar"
+
+msgid "Screen Recording"
+msgstr "Gravação de tela"
+
+msgid "The recording did not start"
+msgstr "A gravação não começou"
+
+msgid "The screenshot was not saved"
+msgstr "A captura não foi salva"
+
+msgid "Screenshot saved"
+msgstr "Captura salva"
+
+msgid "Screenshots saved"
+msgstr "Capturas salvas"
+
+msgid "{n} screens in {dir}"
+msgstr "{n} telas em {dir}"
+
+# mide-screenshot-editor
+msgid "Screenshot Editor"
+msgstr "Editor de Capturas"
+
+msgid "{name} — Screenshot Editor"
+msgstr "{name} — Editor de Capturas"
+
+msgid "Screenshot Thumbnail"
+msgstr "Miniatura da captura"
+
+msgid "Select"
+msgstr "Selecionar"
+
+msgid "Sketch"
+msgstr "Esboço"
+
+msgid "Draw"
+msgstr "Desenho"
+
+msgid "Text"
+msgstr "Texto"
+
+msgid "Shape"
+msgstr "Forma"
+
+msgid "Shapes"
+msgstr "Formas"
+
+msgid "Rectangle"
+msgstr "Retângulo"
+
+msgid "Rounded Rectangle"
+msgstr "Retângulo arredondado"
+
+msgid "Oval"
+msgstr "Oval"
+
+msgid "Line"
+msgstr "Linha"
+
+msgid "Triangle"
+msgstr "Triângulo"
+
+msgid "Star"
+msgstr "Estrela"
+
+msgid "Speech Bubble"
+msgstr "Balão de fala"
+
+msgid "Could not open “{name}”: {err}"
+msgstr "Não foi possível abrir \"{name}\": {err}"
+
+msgid "No Image"
+msgstr "Sem imagem"
+
+msgid "Open Image"
+msgstr "Abrir imagem"
+
+msgid "Screenshot.png"
+msgstr "Captura.png"
+
+msgid "Save As"
+msgstr "Salvar como"
+
+msgid "Could not open: {err}"
+msgstr "Não foi possível abrir: {err}"
+
+msgid "Could not save: {err}"
+msgstr "Não foi possível salvar: {err}"
+
+msgid "Image copied. Paste it with Ctrl+V."
+msgstr "Imagem copiada. Cole com Ctrl+V."
+
+msgid "The image was not copied: mide did not respond."
+msgstr "A imagem não foi copiada: o mide não respondeu."
+
+msgid "Could not move to the Trash: {err}"
+msgstr "Não foi possível mover para a Lixeira: {err}"
+
+msgid "Drag the handles to choose the area"
+msgstr "Arraste as bolinhas para escolher a área"
+
+msgid "Crop"
+msgstr "Recortar"
+
+msgid "Shape Style"
+msgstr "Estilo da forma"
+
+msgid "Border Color"
+msgstr "Cor da borda"
+
+msgid "Fill Color"
+msgstr "Cor do preenchimento"
+
+msgid "Text Style"
+msgstr "Estilo do texto"
+
+msgid "Rotate Left"
+msgstr "Girar para a esquerda"
+
+msgid "Rotate Right"
+msgstr "Girar para a direita"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Redo"
+msgstr "Refazer"
+
+msgid "Line Width"
+msgstr "Espessura do traço"
+
+msgid "Dashed"
+msgstr "Tracejado"
+
+msgctxt "shape"
+msgid "Fill"
+msgstr "Preenchimento"
+
+msgid "No Fill"
+msgstr "Sem preenchimento"
+
+msgid "Text Size"
+msgstr "Tamanho do texto"
+
+msgid "The text color is the border color."
+msgstr "A cor do texto é a cor da borda."
+
+msgid "Zoom: {percent}%"
+msgstr "Zoom: {percent}%"
+
+msgid "“{name}” already exists. Replace it?"
+msgstr "\"{name}\" já existe. Substituir?"
+
+msgid "The file that is there will be replaced."
+msgstr "O arquivo que está lá será substituído."
+
+msgid "Replace"
+msgstr "Substituir"
+
+msgid "Save the changes to “{name}”?"
+msgstr "Salvar as alterações em \"{name}\"?"
+
+msgid "Your changes will be lost if you don’t save them."
+msgstr "Se não salvar, as alterações serão perdidas."
+
+msgid "Don’t Save"
+msgstr "Não salvar"
+
+msgid "No image open."
+msgstr "Nenhuma imagem aberta."
+
+msgid "Open Image…"
+msgstr "Abrir imagem…"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "Open…"
+msgstr "Abrir…"
+
+msgid "Save As…"
+msgstr "Salvar como…"
+
+msgid "Show in Files"
+msgstr "Mostrar no Arquivos"
+
+msgid "Move to Trash"
+msgstr "Mover para a Lixeira"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "View"
+msgstr "Visualizar"
+
+msgid "Zoom In"
+msgstr "Ampliar"
+
+msgid "Zoom Out"
+msgstr "Reduzir"
+
+msgid "Actual Size"
+msgstr "Tamanho real"
+
+msgid "Zoom to Fit"
+msgstr "Ajustar à janela"
+
+msgid "Tools"
+msgstr "Ferramentas"
+
+msgid "Open in Editor"
+msgstr "Abrir no editor"
+
+# mide-screencast-picker
+msgid "Share Screen"
+msgstr "Compartilhar a tela"
+
+msgid "An app asked to record or stream the screen. Choose the display:"
+msgstr "Um app pediu para gravar ou transmitir a tela. Escolha o monitor:"
+
+msgid "No display found."
+msgstr "Nenhum monitor encontrado."
+
+msgid "main"
+msgstr "principal"
+
+msgid "Share"
+msgstr "Compartilhar"

@@ -156,8 +156,8 @@ impl Money {
         // Falha de rede: a pessoa fica sabendo (e qual cotação vale).
         if matches!(report.outcome, Outcome::Offline | Outcome::NeedsLogin | Outcome::Unexpected | Outcome::NoCurl | Outcome::Disk) {
             let using = match &self.rates {
-                Some(r) => format!(" Vale a cotação guardada de {}.", date_br(r.date)),
-                None => " Ainda não há cotação guardada.".to_string(),
+                Some(r) => format!(" {}", mide::tr!("The rate saved on {date} still applies.", date = date_br(r.date))),
+                None => format!(" {}", mide::tr!("There's no saved rate yet.")),
             };
             self.failure = Some(format!("{}.{using}", report.outcome.message()));
         }
@@ -167,21 +167,21 @@ impl Money {
     /// O texto curto da faixa do conversor (cabe nos 250 pt da Básica).
     pub fn band(&self, online: Option<bool>) -> String {
         if self.fetching.is_some() {
-            return "Buscando cotações…".into();
+            return mide::tr!("Fetching exchange rates…").into_owned();
         }
         let Some(r) = &self.rates else {
             return match (online, self.status.outcome) {
-                (Some(false), _) => "Busca desligada · sem cotações".into(),
-                (_, Some(Outcome::NoCurl)) => "Instale o curl para buscar cotações".into(),
-                _ => "Sem cotações · Tentar de novo".into(),
+                (Some(false), _) => mide::tr!("Fetching off · no rates").into_owned(),
+                (_, Some(Outcome::NoCurl)) => mide::tr!("Install curl to fetch exchange rates").into_owned(),
+                _ => mide::tr!("No rates · Try Again").into_owned(),
             };
         };
         match self.status.outcome {
-            Some(Outcome::Offline | Outcome::NeedsLogin) => format!("Sem conexão · cotação de {}", day_month(r.date)),
-            Some(Outcome::Unexpected) => format!("Resposta inesperada · usando {}", day_month(r.date)),
-            Some(Outcome::NoCurl) => "Instale o curl para buscar cotações".into(),
-            _ if (rates::expected_date(now()) - r.date).num_days() > OLD_DAYS => format!("Cotação antiga: {}", date_br(r.date)),
-            _ if online == Some(false) => format!("Busca desligada · BCB {}", day_month(r.date)),
+            Some(Outcome::Offline | Outcome::NeedsLogin) => mide::tr!("Offline · rate from {date}", date = day_month(r.date)),
+            Some(Outcome::Unexpected) => mide::tr!("Unexpected response · using {date}", date = day_month(r.date)),
+            Some(Outcome::NoCurl) => mide::tr!("Install curl to fetch exchange rates").into_owned(),
+            _ if (rates::expected_date(now()) - r.date).num_days() > OLD_DAYS => mide::tr!("Old rate: {date}", date = date_br(r.date)),
+            _ if online == Some(false) => mide::tr!("Fetching off · BCB {date}", date = day_month(r.date)),
             _ => format!("BCB · {}", date_br(r.date)),
         }
     }
@@ -223,8 +223,8 @@ pub fn dialogs(ui: &mut Ui, money: &mut Money, online: Option<bool>, pair: (&str
         ui.blur();
     }
     if money.asking {
-        let message = "A Calculadora busca na internet a tabela pública do Banco Central do Brasil, no máximo uma vez por dia útil, sem dizer quais moedas você usa. Dá para mudar em Converter → Cotações de moedas….";
-        return match ui.alert("Buscar cotações?", message, &["Não buscar", "Buscar"]) {
+        let message = mide::tr!("The Calculator fetches the public table from the Central Bank of Brazil over the internet, at most once per business day, without telling which currencies you use. You can change this in Convert → Currency Exchange Rates….");
+        return match ui.alert(&mide::tr!("Fetch Exchange Rates?"), &message, &[&mide::tr!("Don't Fetch"), &mide::tr!("Fetch")]) {
             Some(i) => {
                 money.asking = false;
                 Some(Answer::Online(i == 1))
@@ -233,7 +233,7 @@ pub fn dialogs(ui: &mut Ui, money: &mut Money, online: Option<bool>, pair: (&str
         };
     }
     if let Some(text) = money.failure.clone() {
-        if ui.alert("Cotações não atualizadas", &text, &["OK"]).is_some() {
+        if ui.alert(&mide::tr!("Exchange Rates Not Updated"), &text, &[&mide::tr!("OK")]).is_some() {
             money.failure = None;
         }
         return None;
@@ -253,21 +253,21 @@ pub fn dialogs(ui: &mut Ui, money: &mut Money, online: Option<bool>, pair: (&str
     let mut on = online == Some(true);
     // Curta: cabe na Calculadora Básica (250 pt).
     ui.modal(360.0, |ui| {
-        ui.strong("Cotações de moedas");
-        ui.label(&rate_line.unwrap_or_else(|| "Sem cotação para este par.".into()));
+        ui.strong(&mide::tr!("Currency Exchange Rates"));
+        ui.label(&rate_line.unwrap_or_else(|| mide::tr!("No rate for this pair.").into_owned()));
         ui.note(&match next {
-            Some(next) if on => format!("{band} · próxima busca {next}"),
+            Some(next) if on => mide::tr!("{band} · next check {time}", band = band, time = next),
             _ => band,
         });
-        if ui.switch("Buscar na internet", &mut on).changed() {
+        if ui.switch(&mide::tr!("Fetch from the Internet"), &mut on).changed() {
             answer = Some(Answer::Toggle(on));
         }
-        ui.note("Taxa de referência do Banco Central (PTAX de venda, bcb.gov.br): bancos e casas de câmbio cobram outra taxa e o IOF.");
+        ui.note(&mide::tr!("Reference rate from the Central Bank of Brazil (PTAX selling rate, bcb.gov.br): banks and exchange offices charge a different rate plus the IOF tax."));
         ui.row(|ui| {
-            if ui.button(if busy { "Buscando…" } else { "Atualizar" }).clicked() && !busy {
+            if ui.button(&if busy { mide::tr!("Fetching…") } else { mide::tr!("Update") }).clicked() && !busy {
                 answer = Some(Answer::Refresh);
             }
-            if ui.primary_button("Fechar").clicked() {
+            if ui.primary_button(&mide::tr!("Close")).clicked() {
                 close = true;
             }
         });
@@ -290,6 +290,7 @@ mod tests {
     fn textos_da_faixa() {
         // SAFETY: os testes do app não leem `MIDE_RATES_NOW` em outra thread.
         unsafe { std::env::set_var("MIDE_RATES_NOW", "2026-10-21T15:00:00-03:00") };
+        mide::i18n::set_language("pt_BR");
         let mut m = Money::default();
         assert_eq!(m.band(None), "Sem cotações · Tentar de novo");
         assert_eq!(m.band(Some(false)), "Busca desligada · sem cotações");

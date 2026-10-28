@@ -25,6 +25,7 @@ use mide::{
     files,
     kit::{run, App, Key, Ui, Window},
     programs::{self, Kind},
+    tr,
     ui::{
         draw::{blit, fill_rounded, rgba, scale, tf},
         text::FontWeight,
@@ -111,10 +112,10 @@ struct Install {
 
 impl Install {
     fn new(path: PathBuf) -> Self {
-        let folder = appimage::apps_dir().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Aplicativos".into());
+        let folder = appimage::apps_dir().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| tr!("Applications").into_owned());
         let mut me = Self { path, work: WorkDir::default(), stage: Stage::Reading, shared: Arc::default(), meta: None, previous: None, folder, icons: None, drag: None };
         if appimage::appimage_type(&me.path).is_none() {
-            me.stage = Stage::Failed(format!("\"{}\" não é um AppImage.", me.file_name()));
+            me.stage = Stage::Failed(tr!("“{name}” is not an AppImage.", name = me.file_name()));
             return me;
         }
         match programs::reason_to_ask(&programs::Dirs::current(), &me.path, &Kind::AppImage) {
@@ -192,7 +193,7 @@ impl Install {
                             meta.version.as_deref().unwrap_or("?"),
                             self.previous.as_ref().map_or("não".into(), |p| format!("versão {}", p.version.as_deref().unwrap_or("?")))
                         );
-                        ui.set_title(&format!("Instalar {}", meta.name));
+                        ui.set_title(&tr!("Install {name}", name = meta.name));
                         self.meta = Some(meta);
                         self.icons = None;
                         self.stage = Stage::Ready;
@@ -210,7 +211,7 @@ impl Install {
                     }
                     Some(Err(err)) => {
                         tracing::warn!("instalador: falhou: {err}");
-                        self.stage = Stage::Failed(format!("Não foi possível instalar: {err}"));
+                        self.stage = Stage::Failed(tr!("Could not install: {err}", err = err));
                     }
                     None => ui.wake_after(Duration::from_millis(40)),
                 }
@@ -295,11 +296,11 @@ impl App for Install {
         if let Stage::Confirm(reason) = &self.stage {
             let reason = reason.clone();
             let enter = input.key(Key::Enter);
-            match ui.alert(&format!("Instalar \"{}\"?", self.file_name()), &format!("{reason} Para instalar, o mide lê o nome e o ícone de dentro dele."), &["Cancelar", "Continuar"]) {
+            match ui.alert(&tr!("Install “{name}”?", name = self.file_name()), &tr!("{reason} To install it, mide reads the name and the icon from inside it.", reason = reason), &[&tr!("Cancel"), &tr!("Continue")]) {
                 Some(1) if enter => tracing::info!("instalador: Enter ignorado (escolha pelo botão)"),
                 Some(1) => match programs::trust(&programs::Dirs::current(), &self.path) {
                     Ok(()) => self.start_reading(),
-                    Err(err) => self.stage = Stage::Failed(format!("Não foi possível marcar \"{}\" como executável: {err}", self.file_name())),
+                    Err(err) => self.stage = Stage::Failed(tr!("Could not mark “{name}” as executable: {err}", name = self.file_name(), err = err)),
                 },
                 Some(_) => {
                     tracing::info!("instalador: cancelado");
@@ -314,7 +315,7 @@ impl App for Install {
         let detail = {
             let mut parts = Vec::new();
             if let Some(v) = self.meta.as_ref().and_then(|m| m.version.clone()) {
-                parts.push(format!("Versão {v}"));
+                parts.push(tr!("Version {version}", version = v));
             }
             parts.push("AppImage".to_string());
             if let Some(size) = self.meta.as_ref().map(|m| m.size).filter(|s| *s > 0) {
@@ -325,11 +326,11 @@ impl App for Install {
         // Como nas imagens de instalação do Mac: título grande no meio e, embaixo, o
         // que fazer (sem botões: arrastar é o jeito de instalar).
         let instruction = match &self.stage {
-            Stage::Ready if self.previous.is_some() => format!("Arraste o app para a pasta {} para substituir a versão instalada", self.folder),
-            Stage::Ready | Stage::Reading => format!("Arraste o app para a pasta {}", self.folder),
+            Stage::Ready if self.previous.is_some() => tr!("Drag the app to the {folder} folder to replace the installed version", folder = self.folder),
+            Stage::Ready | Stage::Reading => tr!("Drag the app to the {folder} folder", folder = self.folder),
             _ => detail.clone(),
         };
-        let title = format!("Instalar {name}");
+        let title = tr!("Install {name}", name = name);
         ui.paint_text(|pixmap, text, _| {
             let tw = text.measure(&title, 24.0, FontWeight::Bold);
             text.draw(pixmap, &title, (w - tw) / 2.0, 26.0, 24.0, FontWeight::Bold, t.text);
@@ -420,22 +421,22 @@ impl App for Install {
         let folder = self.folder.clone();
         ui.at(SIDE, STAGE_Y + STAGE_H + 14.0, w - 2.0 * SIDE, |ui| match &self.stage {
             Stage::Reading => {
-                ui.centered_note("Lendo o AppImage…");
+                ui.centered_note(&tr!("Reading the AppImage…"));
             }
             Stage::Ready => {
                 // Sem botões (arrastar instala); só a versão já instalada, se houver.
                 if let Some(old) = &previous {
                     let note = match (&old.version, &new_version) {
-                        (Some(o), Some(n)) if o == n => format!("Esta versão já está em {folder}."),
-                        (Some(o), Some(n)) => format!("Instalada: {o}. Esta: {n}."),
-                        _ => format!("{name} já está em {folder}."),
+                        (Some(o), Some(n)) if o == n => tr!("This version is already in {folder}.", folder = folder),
+                        (Some(o), Some(n)) => tr!("Installed: {old}. This one: {new}.", old = o, new = n),
+                        _ => tr!("{name} is already in {folder}.", name = name, folder = folder),
                     };
                     ui.centered_note(&note);
                 }
             }
             Stage::Copying => {
                 let pct = (progress * 100.0).round() as u32;
-                ui.label(&format!("Instalando… {pct}%"));
+                ui.label(&tr!("Installing… {pct}%", pct = pct));
                 let a = t.accent;
                 let c = t.control;
                 ui.custom(10.0, |pixmap, rect| {
@@ -446,7 +447,7 @@ impl App for Install {
             // Sem botões (como as imagens de instalação do Mac): a janela fecha pela luz
             // vermelha ou Esc; Enter abre o app instalado.
             Stage::Done(_) => {
-                ui.centered_note(&format!("{name} foi instalado em {folder} e já aparece no launcher e na busca."));
+                ui.centered_note(&tr!("{name} was installed in {folder} and already shows up in the launcher and in search.", name = name, folder = folder));
             }
             Stage::Failed(err) => {
                 ui.error_note(err);
@@ -506,10 +507,10 @@ impl App for Remove {
         let input = ui.input().clone();
         let Some(info) = self.info.clone() else {
             ui.at(SIDE, 20.0, w - 2.0 * SIDE, |ui| {
-                ui.title("Não é um app instalado pelo mide");
+                ui.title(&tr!("Not an app installed by mide"));
                 ui.note(&self.desktop.display().to_string());
                 ui.space(6.0);
-                if ui.dialog_buttons(&["Fechar"]).is_some() || input.key(Key::Escape) || input.key(Key::Enter) {
+                if ui.dialog_buttons(&[&tr!("Close")]).is_some() || input.key(Key::Escape) || input.key(Key::Enter) {
                     ui.close();
                 }
             });
@@ -530,13 +531,13 @@ impl App for Remove {
         let mut chosen = None;
         let folder = info.appimage.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         ui.at(x, 16.0, (w - x - SIDE).max(160.0), |ui| {
-            ui.title(&format!("Mover \"{}\" para a Lixeira?", info.name));
-            ui.note(&format!("O AppImage sai de {folder} e vai para a Lixeira; o app sai do launcher e da busca."));
+            ui.title(&tr!("Move “{name}” to the Trash?", name = info.name));
+            ui.note(&tr!("The AppImage leaves {folder} and goes to the Trash; the app leaves the launcher and search.", folder = folder));
             if let Some(err) = &self.error {
                 ui.error_note(err);
             }
             ui.space(6.0);
-            chosen = if self.error.is_some() { ui.dialog_buttons(&["Fechar"]).map(|_| 0) } else { ui.dialog_buttons(&["Cancelar", "Mover para a Lixeira"]) };
+            chosen = if self.error.is_some() { ui.dialog_buttons(&[&tr!("Close")]).map(|_| 0) } else { ui.dialog_buttons(&[&tr!("Cancel"), &tr!("Move to Trash")]) };
         });
         let _ = t;
         if chosen.is_none() && input.key(Key::Escape) {
@@ -552,7 +553,7 @@ impl App for Remove {
                 }
                 Err(err) => {
                     tracing::warn!("remover {}: {err}", self.desktop.display());
-                    self.error = Some(format!("Não foi possível remover: {err}"));
+                    self.error = Some(tr!("Could not remove: {err}", err = err));
                     ui.request_repaint();
                 }
             },
@@ -569,13 +570,14 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_install=info,mide=info".into()))
         .init();
+    mide::i18n::init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.as_slice() {
         [flag, desktop] if flag == "--remove" => {
             let desktop = PathBuf::from(desktop);
             let info = appimage::read_installed(&desktop).filter(|_| desktop.file_name().is_some_and(|n| n.to_string_lossy().starts_with(appimage::DESKTOP_PREFIX)));
             tracing::info!("remover {}: {}", desktop.display(), info.as_ref().map_or("não é do mide".to_string(), |i| format!("\"{}\" ({})", i.name, i.appimage.display())));
-            let window = Window::new("Mover para a Lixeira").app_id("mide-install").size(500, 168).min_size(420, 150);
+            let window = Window::new(&tr!("Move to Trash")).app_id("mide-install").size(500, 168).min_size(420, 150);
             run(window, Remove { desktop, info, icon: None, error: None })
         }
         [file] if !file.starts_with('-') => {
@@ -583,7 +585,7 @@ fn main() {
             let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
             let install = Install::new(path);
             let work = install.work.clone();
-            let window = Window::new(&format!("Instalar {}", install.name())).app_id("mide-install").size(620, 340).min_size(520, 330);
+            let window = Window::new(&tr!("Install {name}", name = install.name())).app_id("mide-install").size(620, 340).min_size(520, 330);
             let result = run(window, install);
             if let Some(dir) = work.lock().ok().and_then(|mut w| w.take()) {
                 let _ = std::fs::remove_dir_all(&dir);

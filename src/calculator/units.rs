@@ -51,13 +51,16 @@ impl Scale {
 pub struct Unit {
     /// Identificador estável (vai para a configuração): "pol", "kmh", "f".
     pub id: &'static str,
-    /// Nome na lista, no plural: "Polegadas".
+    /// Nome na tela, em inglês (passa por `tr!` ao aparecer): "Inches".
+    pub display: &'static str,
+    /// Nome em português, no plural, para a busca e as notas: "Polegadas".
     pub name: &'static str,
     /// Símbolo na tela: "pol", "km/h", "°F".
     pub symbol: &'static str,
     /// Outros nomes para a busca e as notas: "polegada", "polegadas".
     pub aliases: &'static [&'static str],
-    /// Explicação no seletor: "2,42 ha", "1.024 bytes" (vazio se o nome basta).
+    /// Explicação no seletor, em inglês (passa por `tr!`): "2.42 ha", "1,024 bytes"
+    /// (vazio se o nome basta).
     pub detail: &'static str,
     /// Símbolo ou nome que também é palavra comum ("sem", "volta", o "nós" dos nós):
     /// nas notas, só vale logo depois de um número. Símbolos de uma letra (h, s, m...)
@@ -79,6 +82,9 @@ impl Unit {
 pub struct Category {
     /// Identificador estável: "comprimento", "temperatura".
     pub id: &'static str,
+    /// Nome na tela, em inglês (passa por `tr!`): "Length".
+    pub display: &'static str,
+    /// Nome em português, para a busca: "Comprimento".
     pub name: &'static str,
     /// Outros nomes para a busca ("peso" acha Massa).
     pub aliases: &'static [&'static str],
@@ -105,12 +111,12 @@ const C: f64 = 299_792_458.0;
 /// Unidade astronômica em metros (UAI 2012).
 const AU: f64 = 149_597_870_700.0;
 
-fn unit(id: &'static str, name: &'static str, symbol: &'static str, aliases: &'static [&'static str], scale: Scale) -> Unit {
-    Unit { id, name, symbol, aliases, detail: "", ambiguous: false, scale }
+fn unit(id: &'static str, display: &'static str, name: &'static str, symbol: &'static str, aliases: &'static [&'static str], scale: Scale) -> Unit {
+    Unit { id, display, name, symbol, aliases, detail: "", ambiguous: false, scale }
 }
 
-fn lin(id: &'static str, name: &'static str, symbol: &'static str, factor: f64, aliases: &'static [&'static str]) -> Unit {
-    unit(id, name, symbol, aliases, Scale::Linear(factor))
+fn lin(id: &'static str, display: &'static str, name: &'static str, symbol: &'static str, factor: f64, aliases: &'static [&'static str]) -> Unit {
+    unit(id, display, name, symbol, aliases, Scale::Linear(factor))
 }
 
 /// A mesma unidade com uma explicação para o seletor.
@@ -135,179 +141,179 @@ fn table() -> Vec<Category> {
     let gal = 231.0 * POL * POL * POL;
     let btu = CAL_IT * 1000.0 * LB * 5.0 / 9.0;
     let ano = 365.0 * 86_400.0;
-    fn category(id: &'static str, name: &'static str, aliases: &'static [&'static str], default: (&'static str, &'static str), units: Vec<Unit>) -> Category {
-        Category { id, name, aliases, units, default }
+    fn category(id: &'static str, display: &'static str, name: &'static str, aliases: &'static [&'static str], default: (&'static str, &'static str), units: Vec<Unit>) -> Category {
+        Category { id, display, name, aliases, units, default }
     }
     vec![
-        category("angulo", "Ângulo", &[], ("grau", "rad"), vec![
-            lin("grau", "Graus", "°", pi / 180.0, &["grau", "deg"]),
-            lin("rad", "Radianos", "rad", 1.0, &["radiano"]),
-            lin("gon", "Grados", "gon", pi / 200.0, &["grado", "grad"]),
-            lin("arcmin", "Minutos de arco", "′", pi / 10_800.0, &["minuto de arco", "arcmin"]),
-            lin("arcsec", "Segundos de arco", "″", pi / 648_000.0, &["segundo de arco", "arcsec"]),
-            ambiguous(lin("volta", "Voltas", "volta", 2.0 * pi, &["rotação", "rotações", "rev"])),
+        category("angulo", "Angle", "Ângulo", &[], ("grau", "rad"), vec![
+            lin("grau", "Degrees", "Graus", "°", pi / 180.0, &["grau", "deg"]),
+            lin("rad", "Radians", "Radianos", "rad", 1.0, &["radiano"]),
+            lin("gon", "Gradians", "Grados", "gon", pi / 200.0, &["grado", "grad"]),
+            lin("arcmin", "Arcminutes", "Minutos de arco", "′", pi / 10_800.0, &["minuto de arco", "arcmin"]),
+            lin("arcsec", "Arcseconds", "Segundos de arco", "″", pi / 648_000.0, &["segundo de arco", "arcsec"]),
+            ambiguous(lin("volta", "Turns", "Voltas", "volta", 2.0 * pi, &["rotação", "rotações", "rev"])),
         ]),
-        category("area", "Área", &[], ("alq_sp", "ha"), vec![
-            lin("mm2", "Milímetros quadrados", "mm²", 1e-6, &["mm2", "milímetro quadrado"]),
-            lin("cm2", "Centímetros quadrados", "cm²", 1e-4, &["cm2", "centímetro quadrado"]),
-            lin("m2", "Metros quadrados", "m²", 1.0, &["m2", "metro quadrado"]),
-            lin("km2", "Quilômetros quadrados", "km²", 1e6, &["km2", "quilômetro quadrado"]),
-            lin("are", "Ares", "a", 100.0, &["are"]),
-            lin("ha", "Hectares", "ha", 1e4, &["hectare"]),
-            lin("pol2", "Polegadas quadradas", "pol²", POL * POL, &["pol2", "polegada quadrada"]),
-            lin("ft2", "Pés quadrados", "ft²", pe * pe, &["ft2", "pé quadrado"]),
-            lin("yd2", "Jardas quadradas", "yd²", jarda * jarda, &["yd2", "jarda quadrada"]),
-            lin("ac", "Acres", "ac", 43_560.0 * pe * pe, &["acre"]),
-            lin("mi2", "Milhas quadradas", "mi²", milha * milha, &["mi2", "milha quadrada"]),
-            detail(lin("alq_sp", "Alqueires paulistas", "alq SP", 24_200.0, &["alqueire paulista", "alqueire", "alqueires"]), "2,42 ha"),
-            detail(lin("alq_mg", "Alqueires mineiros", "alq MG", 48_400.0, &["alqueire mineiro"]), "4,84 ha"),
+        category("area", "Area", "Área", &[], ("alq_sp", "ha"), vec![
+            lin("mm2", "Square Millimeters", "Milímetros quadrados", "mm²", 1e-6, &["mm2", "milímetro quadrado"]),
+            lin("cm2", "Square Centimeters", "Centímetros quadrados", "cm²", 1e-4, &["cm2", "centímetro quadrado"]),
+            lin("m2", "Square Meters", "Metros quadrados", "m²", 1.0, &["m2", "metro quadrado"]),
+            lin("km2", "Square Kilometers", "Quilômetros quadrados", "km²", 1e6, &["km2", "quilômetro quadrado"]),
+            lin("are", "Ares", "Ares", "a", 100.0, &["are"]),
+            lin("ha", "Hectares", "Hectares", "ha", 1e4, &["hectare"]),
+            lin("pol2", "Square Inches", "Polegadas quadradas", "pol²", POL * POL, &["pol2", "polegada quadrada"]),
+            lin("ft2", "Square Feet", "Pés quadrados", "ft²", pe * pe, &["ft2", "pé quadrado"]),
+            lin("yd2", "Square Yards", "Jardas quadradas", "yd²", jarda * jarda, &["yd2", "jarda quadrada"]),
+            lin("ac", "Acres", "Acres", "ac", 43_560.0 * pe * pe, &["acre"]),
+            lin("mi2", "Square Miles", "Milhas quadradas", "mi²", milha * milha, &["mi2", "milha quadrada"]),
+            detail(lin("alq_sp", "Alqueires (São Paulo)", "Alqueires paulistas", "alq SP", 24_200.0, &["alqueire paulista", "alqueire", "alqueires"]), "2.42 ha"),
+            detail(lin("alq_mg", "Alqueires (Minas Gerais)", "Alqueires mineiros", "alq MG", 48_400.0, &["alqueire mineiro"]), "4.84 ha"),
         ]),
-        category("comprimento", "Comprimento", &[], ("pol", "cm"), vec![
-            lin("nm", "Nanômetros", "nm", 1e-9, &["nanômetro"]),
-            lin("um", "Micrômetros", "µm", 1e-6, &["micrômetro", "mícron"]),
-            lin("mm", "Milímetros", "mm", 1e-3, &["milímetro"]),
-            lin("cm", "Centímetros", "cm", 1e-2, &["centímetro"]),
-            lin("m", "Metros", "m", 1.0, &["metro"]),
-            lin("km", "Quilômetros", "km", 1e3, &["quilômetro"]),
-            lin("pol", "Polegadas", "pol", POL, &["polegada"]),
-            lin("ft", "Pés", "ft", pe, &["pé", "pes"]),
-            lin("yd", "Jardas", "yd", jarda, &["jarda"]),
-            lin("mi", "Milhas", "mi", milha, &["milha"]),
-            lin("nmi", "Milhas náuticas", "M", 1852.0, &["milha náutica", "nmi"]),
-            lin("angstrom", "Ångströms", "Å", 1e-10, &["ångström", "angstrom"]),
-            lin("au", "Unidades astronômicas", "au", AU, &["unidade astronômica", "ua"]),
-            lin("ly", "Anos-luz", "ano-luz", C * 365.25 * 86_400.0, &["anos-luz", "ly"]),
-            lin("pc", "Parsecs", "pc", 648_000.0 / pi * AU, &["parsec"]),
+        category("comprimento", "Length", "Comprimento", &[], ("pol", "cm"), vec![
+            lin("nm", "Nanometers", "Nanômetros", "nm", 1e-9, &["nanômetro"]),
+            lin("um", "Micrometers", "Micrômetros", "µm", 1e-6, &["micrômetro", "mícron"]),
+            lin("mm", "Millimeters", "Milímetros", "mm", 1e-3, &["milímetro"]),
+            lin("cm", "Centimeters", "Centímetros", "cm", 1e-2, &["centímetro"]),
+            lin("m", "Meters", "Metros", "m", 1.0, &["metro"]),
+            lin("km", "Kilometers", "Quilômetros", "km", 1e3, &["quilômetro"]),
+            lin("pol", "Inches", "Polegadas", "pol", POL, &["polegada"]),
+            lin("ft", "Feet", "Pés", "ft", pe, &["pé", "pes"]),
+            lin("yd", "Yards", "Jardas", "yd", jarda, &["jarda"]),
+            lin("mi", "Miles", "Milhas", "mi", milha, &["milha"]),
+            lin("nmi", "Nautical Miles", "Milhas náuticas", "M", 1852.0, &["milha náutica", "nmi"]),
+            lin("angstrom", "Ångströms", "Ångströms", "Å", 1e-10, &["ångström", "angstrom"]),
+            lin("au", "Astronomical Units", "Unidades astronômicas", "au", AU, &["unidade astronômica", "ua"]),
+            lin("ly", "Light-Years", "Anos-luz", "ano-luz", C * 365.25 * 86_400.0, &["anos-luz", "ly"]),
+            lin("pc", "Parsecs", "Parsecs", "pc", 648_000.0 / pi * AU, &["parsec"]),
         ]),
-        category("consumo", "Consumo de combustível", &["combustível"], ("l100", "kml"), vec![
-            lin("kml", "Quilômetros por litro", "km/L", 1.0, &["quilômetro por litro", "km/l"]),
-            unit("l100", "Litros por 100 km", "L/100 km", &["litros por 100 km", "l/100km", "l/100 km"], Scale::Inverse(100.0)),
-            lin("mpg", "Milhas por galão (EUA)", "mpg", milha / 1000.0 / (gal * 1000.0), &["milhas por galão", "milha por galão"]),
-            lin("mpg_ru", "Milhas por galão (RU)", "mpg RU", milha / 1000.0 / (GAL_RU * 1000.0), &["milhas por galão imperial"]),
+        category("consumo", "Fuel Consumption", "Consumo de combustível", &["combustível"], ("l100", "kml"), vec![
+            lin("kml", "Kilometers per Liter", "Quilômetros por litro", "km/L", 1.0, &["quilômetro por litro", "km/l"]),
+            unit("l100", "Liters per 100 km", "Litros por 100 km", "L/100 km", &["litros por 100 km", "l/100km", "l/100 km"], Scale::Inverse(100.0)),
+            lin("mpg", "Miles per Gallon (US)", "Milhas por galão (EUA)", "mpg", milha / 1000.0 / (gal * 1000.0), &["milhas por galão", "milha por galão"]),
+            lin("mpg_ru", "Miles per Gallon (UK)", "Milhas por galão (RU)", "mpg RU", milha / 1000.0 / (GAL_RU * 1000.0), &["milhas por galão imperial"]),
         ]),
-        category("dados", "Dados", &["armazenamento"], ("gb", "mb"), vec![
-            lin("bit", "Bits", "bit", 1.0, &["bits"]),
-            lin("byte", "Bytes", "B", 8.0, &["byte"]),
-            detail(lin("kb", "Quilobytes", "kB", 8e3, &["quilobyte"]), "1.000 bytes"),
-            detail(lin("mb", "Megabytes", "MB", 8e6, &["megabyte"]), "1.000 kB"),
-            detail(lin("gb", "Gigabytes", "GB", 8e9, &["gigabyte"]), "1.000 MB"),
-            detail(lin("tb", "Terabytes", "TB", 8e12, &["terabyte"]), "1.000 GB"),
-            detail(lin("pb", "Petabytes", "PB", 8e15, &["petabyte"]), "1.000 TB"),
-            detail(lin("kib", "Kibibytes", "KiB", 8.0 * 1024.0, &["kibibyte"]), "1.024 bytes"),
-            detail(lin("mib", "Mebibytes", "MiB", 8.0 * 1024f64.powi(2), &["mebibyte"]), "1.024 KiB"),
-            detail(lin("gib", "Gibibytes", "GiB", 8.0 * 1024f64.powi(3), &["gibibyte"]), "1.024 MiB (o \"GB\" do Windows)"),
-            detail(lin("tib", "Tebibytes", "TiB", 8.0 * 1024f64.powi(4), &["tebibyte"]), "1.024 GiB"),
-            detail(lin("pib", "Pebibytes", "PiB", 8.0 * 1024f64.powi(5), &["pebibyte"]), "1.024 TiB"),
+        category("dados", "Data", "Dados", &["armazenamento"], ("gb", "mb"), vec![
+            lin("bit", "Bits", "Bits", "bit", 1.0, &["bits"]),
+            lin("byte", "Bytes", "Bytes", "B", 8.0, &["byte"]),
+            detail(lin("kb", "Kilobytes", "Quilobytes", "kB", 8e3, &["quilobyte"]), "1,000 bytes"),
+            detail(lin("mb", "Megabytes", "Megabytes", "MB", 8e6, &["megabyte"]), "1,000 kB"),
+            detail(lin("gb", "Gigabytes", "Gigabytes", "GB", 8e9, &["gigabyte"]), "1,000 MB"),
+            detail(lin("tb", "Terabytes", "Terabytes", "TB", 8e12, &["terabyte"]), "1,000 GB"),
+            detail(lin("pb", "Petabytes", "Petabytes", "PB", 8e15, &["petabyte"]), "1,000 TB"),
+            detail(lin("kib", "Kibibytes", "Kibibytes", "KiB", 8.0 * 1024.0, &["kibibyte"]), "1,024 bytes"),
+            detail(lin("mib", "Mebibytes", "Mebibytes", "MiB", 8.0 * 1024f64.powi(2), &["mebibyte"]), "1,024 KiB"),
+            detail(lin("gib", "Gibibytes", "Gibibytes", "GiB", 8.0 * 1024f64.powi(3), &["gibibyte"]), "1,024 MiB (the Windows “GB”)"),
+            detail(lin("tib", "Tebibytes", "Tebibytes", "TiB", 8.0 * 1024f64.powi(4), &["tebibyte"]), "1,024 GiB"),
+            detail(lin("pib", "Pebibytes", "Pebibytes", "PiB", 8.0 * 1024f64.powi(5), &["pebibyte"]), "1,024 TiB"),
         ]),
-        category("energia", "Energia", &[], ("kcal", "kj"), vec![
-            lin("j", "Joules", "J", 1.0, &["joule"]),
-            lin("kj", "Quilojoules", "kJ", 1e3, &["quilojoule"]),
-            lin("mj", "Megajoules", "MJ", 1e6, &["megajoule"]),
-            detail(lin("cal", "Calorias", "cal", CAL_TH, &["caloria"]), "4,184 J"),
-            lin("kcal", "Quilocalorias", "kcal", 1000.0 * CAL_TH, &["quilocaloria"]),
-            lin("wh", "Watts-hora", "Wh", 3600.0, &["watt-hora"]),
-            lin("kwh", "Quilowatts-hora", "kWh", 3.6e6, &["quilowatt-hora"]),
-            lin("ev", "Elétrons-volt", "eV", 1.602_176_634e-19, &["elétron-volt"]),
-            lin("btu", "BTUs", "BTU", btu, &["btus"]),
+        category("energia", "Energy", "Energia", &[], ("kcal", "kj"), vec![
+            lin("j", "Joules", "Joules", "J", 1.0, &["joule"]),
+            lin("kj", "Kilojoules", "Quilojoules", "kJ", 1e3, &["quilojoule"]),
+            lin("mj", "Megajoules", "Megajoules", "MJ", 1e6, &["megajoule"]),
+            detail(lin("cal", "Calories", "Calorias", "cal", CAL_TH, &["caloria"]), "4.184 J"),
+            lin("kcal", "Kilocalories", "Quilocalorias", "kcal", 1000.0 * CAL_TH, &["quilocaloria"]),
+            lin("wh", "Watt-Hours", "Watts-hora", "Wh", 3600.0, &["watt-hora"]),
+            lin("kwh", "Kilowatt-Hours", "Quilowatts-hora", "kWh", 3.6e6, &["quilowatt-hora"]),
+            lin("ev", "Electronvolts", "Elétrons-volt", "eV", 1.602_176_634e-19, &["elétron-volt"]),
+            lin("btu", "BTUs", "BTUs", "BTU", btu, &["btus"]),
         ]),
-        category("forca", "Força", &[], ("kgf", "n"), vec![
-            lin("n", "Newtons", "N", 1.0, &["newton"]),
-            lin("kn", "Quilonewtons", "kN", 1e3, &["quilonewton"]),
-            lin("dyn", "Dinas", "dyn", 1e-5, &["dina"]),
-            lin("kgf", "Quilogramas-força", "kgf", GN, &["quilograma-força"]),
-            lin("tf", "Toneladas-força", "tf", 1000.0 * GN, &["tonelada-força"]),
-            lin("lbf", "Libras-força", "lbf", LB * GN, &["libra-força"]),
+        category("forca", "Force", "Força", &[], ("kgf", "n"), vec![
+            lin("n", "Newtons", "Newtons", "N", 1.0, &["newton"]),
+            lin("kn", "Kilonewtons", "Quilonewtons", "kN", 1e3, &["quilonewton"]),
+            lin("dyn", "Dynes", "Dinas", "dyn", 1e-5, &["dina"]),
+            lin("kgf", "Kilograms-Force", "Quilogramas-força", "kgf", GN, &["quilograma-força"]),
+            lin("tf", "Metric Tons-Force", "Toneladas-força", "tf", 1000.0 * GN, &["tonelada-força"]),
+            lin("lbf", "Pounds-Force", "Libras-força", "lbf", LB * GN, &["libra-força"]),
         ]),
-        category("massa", "Massa", &["peso"], ("lb", "kg"), vec![
-            lin("ug", "Microgramas", "µg", 1e-9, &["micrograma", "mcg"]),
-            lin("mg", "Miligramas", "mg", 1e-6, &["miligrama"]),
-            lin("g", "Gramas", "g", 1e-3, &["grama"]),
-            lin("kg", "Quilogramas", "kg", 1.0, &["quilograma", "quilo", "quilos"]),
-            lin("t", "Toneladas", "t", 1e3, &["tonelada"]),
-            lin("ct", "Quilates", "ct", 2e-4, &["quilate"]),
-            lin("oz", "Onças", "oz", LB / 16.0, &["onça"]),
-            detail(lin("ozt", "Onças troy", "oz t", 480.0 * LB / 7000.0, &["onça troy", "ozt"]), "metais preciosos"),
-            lin("lb", "Libras", "lb", LB, &["libra", "lbs"]),
-            lin("st", "Stones", "st", 14.0 * LB, &["stone"]),
-            detail(lin("arroba", "Arrobas", "@", 15.0, &["arroba"]), "15 kg"),
-            detail(lin("tc", "Toneladas curtas (EUA)", "t curta", 2000.0 * LB, &["tonelada curta"]), "2.000 lb"),
-            detail(lin("tl", "Toneladas longas (RU)", "t longa", 2240.0 * LB, &["tonelada longa"]), "2.240 lb"),
+        category("massa", "Mass", "Massa", &["peso"], ("lb", "kg"), vec![
+            lin("ug", "Micrograms", "Microgramas", "µg", 1e-9, &["micrograma", "mcg"]),
+            lin("mg", "Milligrams", "Miligramas", "mg", 1e-6, &["miligrama"]),
+            lin("g", "Grams", "Gramas", "g", 1e-3, &["grama"]),
+            lin("kg", "Kilograms", "Quilogramas", "kg", 1.0, &["quilograma", "quilo", "quilos"]),
+            lin("t", "Metric Tons", "Toneladas", "t", 1e3, &["tonelada"]),
+            lin("ct", "Carats", "Quilates", "ct", 2e-4, &["quilate"]),
+            lin("oz", "Ounces", "Onças", "oz", LB / 16.0, &["onça"]),
+            detail(lin("ozt", "Troy Ounces", "Onças troy", "oz t", 480.0 * LB / 7000.0, &["onça troy", "ozt"]), "precious metals"),
+            lin("lb", "Pounds", "Libras", "lb", LB, &["libra", "lbs"]),
+            lin("st", "Stones", "Stones", "st", 14.0 * LB, &["stone"]),
+            detail(lin("arroba", "Arrobas", "Arrobas", "@", 15.0, &["arroba"]), "15 kg"),
+            detail(lin("tc", "Short Tons (US)", "Toneladas curtas (EUA)", "t curta", 2000.0 * LB, &["tonelada curta"]), "2,000 lb"),
+            detail(lin("tl", "Long Tons (UK)", "Toneladas longas (RU)", "t longa", 2240.0 * LB, &["tonelada longa"]), "2,240 lb"),
         ]),
-        category("potencia", "Potência", &[], ("cv", "kw"), vec![
-            lin("w", "Watts", "W", 1.0, &["watt"]),
-            lin("kw", "Quilowatts", "kW", 1e3, &["quilowatt"]),
-            lin("mw", "Megawatts", "MW", 1e6, &["megawatt"]),
-            detail(lin("cv", "Cavalos-vapor", "cv", 75.0 * GN, &["cavalo-vapor", "cavalo", "cavalos"]), "75 kgf·m/s"),
-            detail(lin("hp", "Horsepower", "hp", 550.0 * pe * LB * GN, &["horsepower"]), "550 ft·lbf/s"),
-            lin("btuh", "BTUs por hora", "BTU/h", btu / 3600.0, &["btus por hora", "btuh"]),
-            detail(lin("tr", "Toneladas de refrigeração", "TR", 12_000.0 * btu / 3600.0, &["tonelada de refrigeração"]), "12.000 BTU/h"),
+        category("potencia", "Power", "Potência", &[], ("cv", "kw"), vec![
+            lin("w", "Watts", "Watts", "W", 1.0, &["watt"]),
+            lin("kw", "Kilowatts", "Quilowatts", "kW", 1e3, &["quilowatt"]),
+            lin("mw", "Megawatts", "Megawatts", "MW", 1e6, &["megawatt"]),
+            detail(lin("cv", "Metric Horsepower", "Cavalos-vapor", "cv", 75.0 * GN, &["cavalo-vapor", "cavalo", "cavalos"]), "75 kgf·m/s"),
+            detail(lin("hp", "Horsepower", "Horsepower", "hp", 550.0 * pe * LB * GN, &["horsepower"]), "550 ft·lbf/s"),
+            lin("btuh", "BTUs per Hour", "BTUs por hora", "BTU/h", btu / 3600.0, &["btus por hora", "btuh"]),
+            detail(lin("tr", "Tons of Refrigeration", "Toneladas de refrigeração", "TR", 12_000.0 * btu / 3600.0, &["tonelada de refrigeração"]), "12,000 BTU/h"),
         ]),
-        category("pressao", "Pressão", &[], ("psi", "bar"), vec![
-            lin("pa", "Pascals", "Pa", 1.0, &["pascal"]),
-            lin("hpa", "Hectopascals", "hPa", 100.0, &["hectopascal", "mbar"]),
-            lin("kpa", "Quilopascals", "kPa", 1e3, &["quilopascal"]),
-            lin("mpa", "Megapascals", "MPa", 1e6, &["megapascal"]),
-            lin("bar", "Bars", "bar", 1e5, &["bares"]),
-            lin("atm", "Atmosferas", "atm", 101_325.0, &["atmosfera"]),
-            lin("mmhg", "Milímetros de mercúrio", "mmHg", 13_595.1 * GN * 1e-3, &["milímetro de mercúrio"]),
-            detail(lin("psi", "Libras por polegada quadrada", "psi", LB * GN / (POL * POL), &["libra por polegada quadrada"]), "\"libras\" do pneu"),
-            lin("kgfcm2", "Quilogramas-força por cm²", "kgf/cm²", GN * 1e4, &["kgf/cm2"]),
-            lin("mca", "Metros de coluna d'água", "mca", 1000.0 * GN, &["metro de coluna d'água"]),
+        category("pressao", "Pressure", "Pressão", &[], ("psi", "bar"), vec![
+            lin("pa", "Pascals", "Pascals", "Pa", 1.0, &["pascal"]),
+            lin("hpa", "Hectopascals", "Hectopascals", "hPa", 100.0, &["hectopascal", "mbar"]),
+            lin("kpa", "Kilopascals", "Quilopascals", "kPa", 1e3, &["quilopascal"]),
+            lin("mpa", "Megapascals", "Megapascals", "MPa", 1e6, &["megapascal"]),
+            lin("bar", "Bars", "Bars", "bar", 1e5, &["bares"]),
+            lin("atm", "Atmospheres", "Atmosferas", "atm", 101_325.0, &["atmosfera"]),
+            lin("mmhg", "Millimeters of Mercury", "Milímetros de mercúrio", "mmHg", 13_595.1 * GN * 1e-3, &["milímetro de mercúrio"]),
+            detail(lin("psi", "Pounds per Square Inch", "Libras por polegada quadrada", "psi", LB * GN / (POL * POL), &["libra por polegada quadrada"]), "tire “pounds”"),
+            lin("kgfcm2", "Kilograms-Force per cm²", "Quilogramas-força por cm²", "kgf/cm²", GN * 1e4, &["kgf/cm2"]),
+            lin("mca", "Meters of Water Column", "Metros de coluna d'água", "mca", 1000.0 * GN, &["metro de coluna d'água"]),
         ]),
-        category("temperatura", "Temperatura", &[], ("f", "c"), vec![
-            lin("c", "Celsius", "°C", 1.0, &["celsius", "graus celsius", "ºC"]),
-            unit("f", "Fahrenheit", "°F", &["fahrenheit", "graus fahrenheit", "ºF"], Scale::Affine { mul: 5.0, div: 9.0, offset: -32.0 }),
-            unit("k", "Kelvin", "K", &["kelvin"], Scale::Affine { mul: 1.0, div: 1.0, offset: -273.15 }),
-            unit("r", "Rankine", "°R", &["rankine", "ºR"], Scale::Affine { mul: 5.0, div: 9.0, offset: -491.67 }),
+        category("temperatura", "Temperature", "Temperatura", &[], ("f", "c"), vec![
+            lin("c", "Celsius", "Celsius", "°C", 1.0, &["celsius", "graus celsius", "ºC"]),
+            unit("f", "Fahrenheit", "Fahrenheit", "°F", &["fahrenheit", "graus fahrenheit", "ºF"], Scale::Affine { mul: 5.0, div: 9.0, offset: -32.0 }),
+            unit("k", "Kelvin", "Kelvin", "K", &["kelvin"], Scale::Affine { mul: 1.0, div: 1.0, offset: -273.15 }),
+            unit("r", "Rankine", "Rankine", "°R", &["rankine", "ºR"], Scale::Affine { mul: 5.0, div: 9.0, offset: -491.67 }),
         ]),
-        category("tempo", "Tempo", &[], ("h", "min"), vec![
-            lin("ns", "Nanossegundos", "ns", 1e-9, &["nanossegundo"]),
-            lin("us", "Microssegundos", "µs", 1e-6, &["microssegundo"]),
-            lin("ms", "Milissegundos", "ms", 1e-3, &["milissegundo"]),
-            lin("s", "Segundos", "s", 1.0, &["segundo", "seg"]),
-            ambiguous(lin("min", "Minutos", "min", 60.0, &["minuto"])),
-            lin("h", "Horas", "h", 3600.0, &["hora"]),
-            lin("d", "Dias", "d", 86_400.0, &["dia"]),
-            ambiguous(lin("sem", "Semanas", "sem", 7.0 * 86_400.0, &["semana"])),
-            ambiguous(detail(lin("mes", "Meses", "mês", ano / 12.0, &["meses"]), "1/12 de ano")),
-            ambiguous(detail(lin("ano", "Anos", "ano", ano, &["anos"]), "365 dias")),
-            lin("dec", "Décadas", "década", 10.0 * ano, &["décadas"]),
-            lin("sec", "Séculos", "século", 100.0 * ano, &["séculos"]),
+        category("tempo", "Time", "Tempo", &[], ("h", "min"), vec![
+            lin("ns", "Nanoseconds", "Nanossegundos", "ns", 1e-9, &["nanossegundo"]),
+            lin("us", "Microseconds", "Microssegundos", "µs", 1e-6, &["microssegundo"]),
+            lin("ms", "Milliseconds", "Milissegundos", "ms", 1e-3, &["milissegundo"]),
+            lin("s", "Seconds", "Segundos", "s", 1.0, &["segundo", "seg"]),
+            ambiguous(lin("min", "Minutes", "Minutos", "min", 60.0, &["minuto"])),
+            lin("h", "Hours", "Horas", "h", 3600.0, &["hora"]),
+            lin("d", "Days", "Dias", "d", 86_400.0, &["dia"]),
+            ambiguous(lin("sem", "Weeks", "Semanas", "sem", 7.0 * 86_400.0, &["semana"])),
+            ambiguous(detail(lin("mes", "Months", "Meses", "mês", ano / 12.0, &["meses"]), "1/12 of a year")),
+            ambiguous(detail(lin("ano", "Years", "Anos", "ano", ano, &["anos"]), "365 days")),
+            lin("dec", "Decades", "Décadas", "década", 10.0 * ano, &["décadas"]),
+            lin("sec", "Centuries", "Séculos", "século", 100.0 * ano, &["séculos"]),
         ]),
-        category("transferencia", "Transferência de dados", &["velocidade da internet", "banda"], ("mbps", "mbs"), vec![
-            lin("bps", "Bits por segundo", "bit/s", 1.0, &["bps"]),
-            lin("kbps", "Quilobits por segundo", "kbit/s", 1e3, &["kbps"]),
-            lin("mbps", "Megabits por segundo", "Mbit/s", 1e6, &["mbps", "mega", "megas"]),
-            lin("gbps", "Gigabits por segundo", "Gbit/s", 1e9, &["gbps", "giga", "gigas"]),
-            lin("bs", "Bytes por segundo", "B/s", 8.0, &["byte por segundo"]),
-            lin("kbs", "Quilobytes por segundo", "kB/s", 8e3, &["quilobyte por segundo"]),
-            lin("mbs", "Megabytes por segundo", "MB/s", 8e6, &["megabyte por segundo"]),
-            lin("gbs", "Gigabytes por segundo", "GB/s", 8e9, &["gigabyte por segundo"]),
-            lin("kibs", "Kibibytes por segundo", "KiB/s", 8.0 * 1024.0, &["kibibyte por segundo"]),
-            lin("mibs", "Mebibytes por segundo", "MiB/s", 8.0 * 1024f64.powi(2), &["mebibyte por segundo"]),
+        category("transferencia", "Data Transfer Rate", "Transferência de dados", &["velocidade da internet", "banda"], ("mbps", "mbs"), vec![
+            lin("bps", "Bits per Second", "Bits por segundo", "bit/s", 1.0, &["bps"]),
+            lin("kbps", "Kilobits per Second", "Quilobits por segundo", "kbit/s", 1e3, &["kbps"]),
+            lin("mbps", "Megabits per Second", "Megabits por segundo", "Mbit/s", 1e6, &["mbps", "mega", "megas"]),
+            lin("gbps", "Gigabits per Second", "Gigabits por segundo", "Gbit/s", 1e9, &["gbps", "giga", "gigas"]),
+            lin("bs", "Bytes per Second", "Bytes por segundo", "B/s", 8.0, &["byte por segundo"]),
+            lin("kbs", "Kilobytes per Second", "Quilobytes por segundo", "kB/s", 8e3, &["quilobyte por segundo"]),
+            lin("mbs", "Megabytes per Second", "Megabytes por segundo", "MB/s", 8e6, &["megabyte por segundo"]),
+            lin("gbs", "Gigabytes per Second", "Gigabytes por segundo", "GB/s", 8e9, &["gigabyte por segundo"]),
+            lin("kibs", "Kibibytes per Second", "Kibibytes por segundo", "KiB/s", 8.0 * 1024.0, &["kibibyte por segundo"]),
+            lin("mibs", "Mebibytes per Second", "Mebibytes por segundo", "MiB/s", 8.0 * 1024f64.powi(2), &["mebibyte por segundo"]),
         ]),
-        category("velocidade", "Velocidade", &[], ("mph", "kmh"), vec![
-            lin("mps", "Metros por segundo", "m/s", 1.0, &["metro por segundo"]),
-            lin("kmh", "Quilômetros por hora", "km/h", 1000.0 / 3600.0, &["quilômetro por hora", "kph"]),
-            lin("mph", "Milhas por hora", "mph", milha / 3600.0, &["milha por hora"]),
-            ambiguous(lin("kn", "Nós", "kn", 1852.0 / 3600.0, &["nó"])),
-            lin("fts", "Pés por segundo", "ft/s", pe, &["pé por segundo", "fps"]),
+        category("velocidade", "Speed", "Velocidade", &[], ("mph", "kmh"), vec![
+            lin("mps", "Meters per Second", "Metros por segundo", "m/s", 1.0, &["metro por segundo"]),
+            lin("kmh", "Kilometers per Hour", "Quilômetros por hora", "km/h", 1000.0 / 3600.0, &["quilômetro por hora", "kph"]),
+            lin("mph", "Miles per Hour", "Milhas por hora", "mph", milha / 3600.0, &["milha por hora"]),
+            ambiguous(lin("kn", "Knots", "Nós", "kn", 1852.0 / 3600.0, &["nó"])),
+            lin("fts", "Feet per Second", "Pés por segundo", "ft/s", pe, &["pé por segundo", "fps"]),
         ]),
-        category("volume", "Volume", &[], ("gal", "l"), vec![
-            lin("ml", "Mililitros", "mL", 1e-6, &["mililitro", "ml"]),
-            lin("cm3", "Centímetros cúbicos", "cm³", 1e-6, &["cm3", "cc", "centímetro cúbico"]),
-            lin("l", "Litros", "L", 1e-3, &["litro", "l"]),
-            lin("m3", "Metros cúbicos", "m³", 1.0, &["m3", "metro cúbico"]),
-            lin("pol3", "Polegadas cúbicas", "pol³", POL * POL * POL, &["pol3", "polegada cúbica"]),
-            lin("ft3", "Pés cúbicos", "ft³", pe * pe * pe, &["ft3", "pé cúbico"]),
-            detail(lin("gal", "Galões americanos", "gal", gal, &["galão", "galões", "galão americano"]), "231 pol³"),
-            lin("pt", "Pintas americanas", "pt", gal / 8.0, &["pinta", "pintas"]),
-            lin("floz", "Onças líquidas americanas", "fl oz", gal / 128.0, &["onça líquida", "onças líquidas", "floz"]),
-            lin("gal_ru", "Galões imperiais", "gal RU", GAL_RU, &["galão imperial"]),
-            detail(lin("bbl", "Barris de petróleo", "bbl", 42.0 * gal, &["barril", "barris"]), "42 galões"),
-            lin("xic", "Xícaras (240 mL)", "xíc.", 240e-6, &["xícara", "xícaras"]),
-            lin("csopa", "Colheres de sopa (15 mL)", "c. sopa", 15e-6, &["colher de sopa", "colheres de sopa", "colheres"]),
-            lin("ccha", "Colheres de chá (5 mL)", "c. chá", 5e-6, &["colher de chá", "colheres de chá"]),
+        category("volume", "Volume", "Volume", &[], ("gal", "l"), vec![
+            lin("ml", "Milliliters", "Mililitros", "mL", 1e-6, &["mililitro", "ml"]),
+            lin("cm3", "Cubic Centimeters", "Centímetros cúbicos", "cm³", 1e-6, &["cm3", "cc", "centímetro cúbico"]),
+            lin("l", "Liters", "Litros", "L", 1e-3, &["litro", "l"]),
+            lin("m3", "Cubic Meters", "Metros cúbicos", "m³", 1.0, &["m3", "metro cúbico"]),
+            lin("pol3", "Cubic Inches", "Polegadas cúbicas", "pol³", POL * POL * POL, &["pol3", "polegada cúbica"]),
+            lin("ft3", "Cubic Feet", "Pés cúbicos", "ft³", pe * pe * pe, &["ft3", "pé cúbico"]),
+            detail(lin("gal", "US Gallons", "Galões americanos", "gal", gal, &["galão", "galões", "galão americano"]), "231 in³"),
+            lin("pt", "US Pints", "Pintas americanas", "pt", gal / 8.0, &["pinta", "pintas"]),
+            lin("floz", "US Fluid Ounces", "Onças líquidas americanas", "fl oz", gal / 128.0, &["onça líquida", "onças líquidas", "floz"]),
+            lin("gal_ru", "Imperial Gallons", "Galões imperiais", "gal RU", GAL_RU, &["galão imperial"]),
+            detail(lin("bbl", "Barrels of Oil", "Barris de petróleo", "bbl", 42.0 * gal, &["barril", "barris"]), "42 gallons"),
+            lin("xic", "Cups (240 mL)", "Xícaras (240 mL)", "xíc.", 240e-6, &["xícara", "xícaras"]),
+            lin("csopa", "Tablespoons (15 mL)", "Colheres de sopa (15 mL)", "c. sopa", 15e-6, &["colher de sopa", "colheres de sopa", "colheres"]),
+            lin("ccha", "Teaspoons (5 mL)", "Colheres de chá (5 mL)", "c. chá", 5e-6, &["colher de chá", "colheres de chá"]),
         ]),
     ]
 }
@@ -358,9 +364,10 @@ pub fn convert(x: f64, from: &Unit, to: &Unit) -> Option<f64> {
     v.is_finite().then_some(if v == 0.0 { 0.0 } else { v })
 }
 
-/// O texto todo da unidade para a busca: nome, símbolo, apelidos e detalhe, sem acento.
+/// O texto todo da unidade para a busca: nome (em português e em inglês), símbolo,
+/// apelidos e detalhe, sem acento.
 fn haystack(cat: &Category, u: &Unit) -> String {
-    let mut parts = vec![u.name, u.symbol, u.detail, cat.name];
+    let mut parts = vec![u.name, u.display, u.symbol, u.detail, cat.name, cat.display];
     parts.extend(u.aliases);
     parts.extend(cat.aliases);
     fold(&parts.join(" "))
@@ -803,6 +810,27 @@ mod tests {
             for after in [false, true] {
                 assert_eq!(longest_at(text, after), full(text, after), "{text:?} {after}");
             }
+        }
+    }
+
+    /// Os nomes na tela (em inglês) têm tradução no pt-BR, igual ao nome em português
+    /// que a busca e as notas usam; os detalhes também têm tradução.
+    #[test]
+    fn nomes_traduzidos() {
+        crate::i18n::set_language("pt_BR");
+        let missing = |text: &str| !text.is_empty() && !mide_ui::kit::i18n::is_translated(None, text);
+        for cat in categories() {
+            assert_eq!(crate::i18n::tr(cat.display), cat.name, "categoria {}", cat.id);
+            for u in &cat.units {
+                assert_eq!(crate::i18n::tr(u.display), u.name, "{}/{}", cat.id, u.id);
+                assert!(!missing(u.detail), "detalhe sem tradução: {:?}", u.detail);
+            }
+        }
+        for c in super::super::currency::currencies() {
+            assert_eq!(crate::i18n::tr(c.display), c.name, "{}", c.code);
+        }
+        for m in [super::super::notes::value::DIV_ZERO, super::super::notes::value::TOO_BIG, super::super::notes::value::MIXED] {
+            assert!(!missing(m), "{m:?}");
         }
     }
 

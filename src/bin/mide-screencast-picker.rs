@@ -4,6 +4,7 @@
 //! como `HDMI-A-1`), que o portal lê. Cancelar não escreve nada: o app recebe a recusa.
 
 use std::error::Error;
+use mide::tr;
 
 use mide::{
     control_client::ask_compositor,
@@ -19,18 +20,18 @@ struct Picker {
 impl App for Picker {
     fn view(&mut self, ui: &mut Ui) {
         ui.page(|ui| {
-            ui.title("Compartilhar a tela");
-            ui.note("Um app pediu para gravar ou transmitir a tela. Escolha o monitor:");
+            ui.title(&tr!("Share Screen"));
+            ui.note(&tr!("An app asked to record or stream the screen. Choose the display:"));
             if self.displays.is_empty() {
-                ui.note("Nenhum monitor encontrado.");
+                ui.note(&tr!("No display found."));
             }
             let mut chosen = self.chosen;
             ui.card(|ui| {
                 for (i, display) in self.displays.iter().enumerate() {
                     let name = if display.description.is_empty() { display.name.clone() } else { format!("{} ({})", display.description, display.name) };
                     let size = format!("{}×{}", display.current.0, display.current.1);
-                    let main = if display.primary { "principal" } else { "" };
-                    if ui.list_row("video-display", &name, &[(size.as_str(), 110.0), (main, 90.0)], i == chosen).clicked() {
+                    let main = if display.primary { tr!("main") } else { "".into() };
+                    if ui.list_row("video-display", &name, &[(size.as_str(), 110.0), (&main, 90.0)], i == chosen).clicked() {
                         chosen = i;
                     }
                 }
@@ -38,11 +39,11 @@ impl App for Picker {
             self.chosen = chosen;
             let mut share = false;
             ui.row(|ui| {
-                if ui.button("Cancelar").clicked() {
+                if ui.button(&tr!("Cancel")).clicked() {
                     tracing::info!("compartilhar a tela: cancelado");
                     ui.close();
                 }
-                if ui.primary_button("Compartilhar").clicked() {
+                if ui.primary_button(&tr!("Share")).clicked() {
                     share = true;
                 }
             });
@@ -70,6 +71,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect();
     // Começa pelo monitor principal.
     let chosen = displays.iter().position(|d| d.primary).unwrap_or(0);
-    let window = Window::new("Compartilhar a tela").app_id("mide-screencast-picker").size(520, 280).min_size(420, 240);
+    let window = Window::new(&tr!("Share Screen")).app_id("mide-screencast-picker").size(520, 280).min_size(420, 240);
     run(window, Picker { displays, chosen })
 }

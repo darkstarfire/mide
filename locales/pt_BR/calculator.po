@@ -1,0 +1,1454 @@
+# Tradução do mide para o português do Brasil: Calculadora (teclado, conversor de
+# unidades e moedas, notas matemáticas). Os textos em inglês (msgid) são os do código;
+# os nomes das unidades e das moedas na tela vêm de `src/calculator/units.rs` e
+# `currency.rs` (campo `display`), e a tradução deles é o nome em português da tabela.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# Teclado, menus e janelas
+
+msgid "Calculator"
+msgstr "Calculadora"
+
+msgid "Copy Number"
+msgstr "Copiar o número"
+
+msgid "Copy Conversion"
+msgstr "Copiar a conversão"
+
+msgid "Choose Unit…"
+msgstr "Escolher a unidade…"
+
+msgid "Swap Units"
+msgstr "Trocar as unidades"
+
+msgid "Copy Calculation"
+msgstr "Copiar a conta"
+
+msgid "Copy Result"
+msgstr "Copiar o resultado"
+
+msgid "Rad"
+msgstr "Rad"
+
+msgid "Deg"
+msgstr "Grau"
+
+msgid "History"
+msgstr "Histórico"
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Redo"
+msgstr "Refazer"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Paste"
+msgstr "Colar"
+
+msgid "Cut"
+msgstr "Cortar"
+
+msgid "Select All"
+msgstr "Selecionar tudo"
+
+msgid "Copy History"
+msgstr "Copiar o histórico"
+
+msgid "Clear History"
+msgstr "Limpar o histórico"
+
+msgid "Show Notes List"
+msgstr "Mostrar a lista de notas"
+
+msgid "Show History"
+msgstr "Mostrar o histórico"
+
+msgid "View"
+msgstr "Visualizar"
+
+msgid "Basic"
+msgstr "Básica"
+
+msgid "Scientific"
+msgstr "Científica"
+
+msgid "Programmer"
+msgstr "Programador"
+
+msgid "Math Notes"
+msgstr "Notas matemáticas"
+
+msgid "Reverse Polish Notation (RPN)"
+msgstr "Notação polonesa reversa (RPN)"
+
+msgid "Unit Converter"
+msgstr "Conversor de unidades"
+
+msgid "Angles in Radians"
+msgstr "Ângulos em radianos"
+
+msgid "Thousands Separator"
+msgstr "Separador de milhar"
+
+msgid "Decimal Places"
+msgstr "Casas decimais"
+
+msgid "Convert"
+msgstr "Converter"
+
+msgid "Use Other Row"
+msgstr "Usar a outra linha"
+
+msgid "Recent"
+msgstr "Recentes"
+
+msgid "Category"
+msgstr "Categoria"
+
+msgid "Currency Exchange Rates…"
+msgstr "Cotações de moedas…"
+
+msgid "sin⁻¹"
+msgstr "sen⁻¹"
+
+msgid "tan⁻¹"
+msgstr "tg⁻¹"
+
+msgid "sinh⁻¹"
+msgstr "senh⁻¹"
+
+msgid "tanh⁻¹"
+msgstr "tgh⁻¹"
+
+msgid "Currency"
+msgstr "Moeda"
+
+msgid "Convert From"
+msgstr "Converter de"
+
+msgid "Convert To"
+msgstr "Converter para"
+
+msgid "All Categories"
+msgstr "Todas as categorias"
+
+msgid "Search Units"
+msgstr "Buscar unidade"
+
+msgid "The rate saved on {date} still applies."
+msgstr "Vale a cotação guardada de {date}."
+
+msgid "There's no saved rate yet."
+msgstr "Ainda não há cotação guardada."
+
+msgid "Fetching exchange rates…"
+msgstr "Buscando cotações…"
+
+msgid "Fetching off · no rates"
+msgstr "Busca desligada · sem cotações"
+
+msgid "Install curl to fetch exchange rates"
+msgstr "Instale o curl para buscar cotações"
+
+msgid "No rates · Try Again"
+msgstr "Sem cotações · Tentar de novo"
+
+msgid "Offline · rate from {date}"
+msgstr "Sem conexão · cotação de {date}"
+
+msgid "Unexpected response · using {date}"
+msgstr "Resposta inesperada · usando {date}"
+
+msgid "Old rate: {date}"
+msgstr "Cotação antiga: {date}"
+
+msgid "Fetching off · BCB {date}"
+msgstr "Busca desligada · BCB {date}"
+
+msgid "The Calculator fetches the public table from the Central Bank of Brazil over the internet, at most once per business day, without telling which currencies you use. You can change this in Convert → Currency Exchange Rates…."
+msgstr "A Calculadora busca na internet a tabela pública do Banco Central do Brasil, no máximo uma vez por dia útil, sem dizer quais moedas você usa. Dá para mudar em Converter → Cotações de moedas…."
+
+msgid "Fetch Exchange Rates?"
+msgstr "Buscar cotações?"
+
+msgid "Don't Fetch"
+msgstr "Não buscar"
+
+msgid "Fetch"
+msgstr "Buscar"
+
+msgid "Exchange Rates Not Updated"
+msgstr "Cotações não atualizadas"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Currency Exchange Rates"
+msgstr "Cotações de moedas"
+
+msgid "No rate for this pair."
+msgstr "Sem cotação para este par."
+
+msgid "{band} · next check {time}"
+msgstr "{band} · próxima busca {time}"
+
+msgid "Fetch from the Internet"
+msgstr "Buscar na internet"
+
+msgid "Reference rate from the Central Bank of Brazil (PTAX selling rate, bcb.gov.br): banks and exchange offices charge a different rate plus the IOF tax."
+msgstr "Taxa de referência do Banco Central (PTAX de venda, bcb.gov.br): bancos e casas de câmbio cobram outra taxa e o IOF."
+
+msgid "Fetching…"
+msgstr "Buscando…"
+
+msgid "Update"
+msgstr "Atualizar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "No permission to save in this folder."
+msgstr "Sem permissão para gravar nesta pasta."
+
+msgid "There's no space left on the disk."
+msgstr "Não há espaço no disco."
+
+msgid "{message} The note has changes that aren't on disk yet."
+msgstr "{message} A nota tem alterações que ainda não estão no disco."
+
+msgid "The Note Wasn't Saved"
+msgstr "A nota não foi gravada"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Close Without Saving"
+msgstr "Fechar sem gravar"
+
+msgid "Try Again"
+msgstr "Tentar de novo"
+
+msgid "The Note Wasn't Exported"
+msgstr "A nota não foi exportada"
+
+msgid "Export Note with Results"
+msgstr "Exportar a nota com os resultados"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "New Note"
+msgstr "Nova nota"
+
+msgid "Export with Results…"
+msgstr "Exportar com os resultados…"
+
+msgid "Move Note to Trash"
+msgstr "Mover a nota para a Lixeira"
+
+msgid "Copy Line Result"
+msgstr "Copiar o resultado da linha"
+
+msgid "Copy Note with Results"
+msgstr "Copiar a nota com os resultados"
+
+msgid "Notes"
+msgstr "Notas"
+
+msgid "Write a calculation and end it with “=” (for example, 120 × 3 =)"
+msgstr "Escreva uma conta e termine com “=” (por exemplo, 120 × 3 =)"
+
+msgid "Copy “{text}”"
+msgstr "Copiar “{text}”"
+
+msgid "Copy Number Only"
+msgstr "Copiar só o número"
+
+msgid "Send to Calculator"
+msgstr "Levar para a calculadora"
+
+msgid "This note isn't in UTF-8: you can read it, but changes aren't saved."
+msgstr "Esta nota não está em UTF-8: dá para ler, mas as mudanças não são gravadas."
+
+msgid "Exchange rates: {band}"
+msgstr "Cotações: {band}"
+
+msgid "saving stopped"
+msgstr "a gravação parou"
+
+msgid "Delete"
+msgstr "Apagar"
+
+# Motor (contas, cotações e notas)
+
+msgid "Error"
+msgstr "Erro"
+
+msgid "sin"
+msgstr "sen"
+
+msgid "tan"
+msgstr "tg"
+
+msgid "arcsin"
+msgstr "arcsen"
+
+msgid "arctan"
+msgstr "arctg"
+
+msgid "sinh"
+msgstr "senh"
+
+msgid "tanh"
+msgstr "tgh"
+
+msgid "arcsinh"
+msgstr "arcsenh"
+
+msgid "arctanh"
+msgstr "arctgh"
+
+msgid "Exchange rates updated"
+msgstr "Cotações atualizadas"
+
+msgid "The Central Bank of Brazil hasn't published newer rates yet"
+msgstr "O Banco Central ainda não publicou cotações mais novas"
+
+msgid "There was a network problem and the exchange rates couldn't be fetched now"
+msgstr "Houve um problema de rede e não foi possível buscar as cotações agora"
+
+msgid "The network seems to require a login (hotel or airport Wi-Fi) and the exchange rates couldn't be fetched now"
+msgstr "A rede parece pedir login (Wi-Fi de hotel ou aeroporto) e não foi possível buscar as cotações agora"
+
+msgid "The Central Bank sent an unexpected response; the last saved rate still applies"
+msgstr "O Banco Central respondeu algo inesperado; vale a última cotação guardada"
+
+msgid "To fetch exchange rates, install the curl program"
+msgstr "Para buscar as cotações, instale o programa curl"
+
+msgid "The exchange rates couldn't be saved in the cache folder"
+msgstr "Não foi possível gravar as cotações na pasta do cache"
+
+msgid "Division by zero"
+msgstr "Divisão por zero"
+
+msgid "Number too large"
+msgstr "Número grande demais"
+
+msgid "Calculations between different units aren't supported yet"
+msgstr "Conta entre unidades diferentes: ainda não"
+
+msgid "Root of a negative number"
+msgstr "Raiz de número negativo"
+
+msgid "money"
+msgstr "dinheiro"
+
+msgid "number"
+msgstr "número"
+
+msgid "Can't add {a} and {b}"
+msgstr "Não dá para somar {a} com {b}"
+
+msgid "Can't convert {from} to {to}"
+msgstr "Não dá para converter {from} em {to}"
+
+msgid "“{name}” has an error (line {line})"
+msgstr "“{name}” tem um erro (linha {line})"
+
+msgid "“{name}” isn't a variable or a unit"
+msgstr "“{name}” não é uma variável nem uma unidade"
+
+msgid "No exchange rate for {code} (no saved rates)"
+msgstr "Sem cotação para {code} (nenhuma cotação guardada)"
+
+msgid "No exchange rate for {code} (latest: {date})"
+msgstr "Sem cotação para {code} (última: {date})"
+
+msgid "{name} isn't defined for {value}"
+msgstr "{name} não existe para {value}"
+
+msgid "1 or 2 numbers"
+msgstr "1 ou 2 números"
+
+msgid "“e” isn't an operation: use +, −, × or ÷"
+msgstr "“e” não é uma operação: use +, −, × ou ÷"
+
+msgid "“{word}” isn't a known currency"
+msgstr "“{word}” não é uma moeda conhecida"
+
+msgid "“{text}” isn't a number"
+msgstr "“{text}” não é um número"
+
+msgid "Missing a number after “{word}”"
+msgstr "Falta um número depois de “{word}”"
+
+msgid "Missing a number before “{word}”"
+msgstr "Falta um número antes de “{word}”"
+
+msgid "Missing an operation before “{word}”"
+msgstr "Falta uma operação antes de “{word}”"
+
+msgid "Unclosed parenthesis"
+msgstr "Parêntese aberto sem fechar"
+
+msgid "Closing parenthesis without an opening one"
+msgstr "Parêntese fechado sem abrir"
+
+msgid "“{word}” isn't a unit"
+msgstr "“{word}” não é uma unidade"
+
+msgid "Expected a unit after “{word}”"
+msgstr "Esperava uma unidade depois de “{word}”"
+
+msgid "Use “;” to separate the numbers"
+msgstr "Use “;” para separar os números"
+
+msgid "The conversion with “{word}” goes at the end of the calculation"
+msgstr "A conversão com “{word}” fica no fim da conta"
+
+msgid "Calculation too long"
+msgstr "Conta comprida demais"
+
+msgid "“;” only separates the numbers of a function"
+msgstr "“;” só separa os números de uma função"
+
+msgid "“{word}” isn't part of the calculation"
+msgstr "“{word}” não faz parte da conta"
+
+msgid "“{word}” is defined further down (line {line}): define it before using it"
+msgstr "“{word}” é definida mais abaixo (linha {line}): defina antes de usar"
+
+msgid "Missing an operation between “{left}” and “{right}”"
+msgstr "Falta uma operação entre “{left}” e “{right}”"
+
+msgid "“{name}” is a calculation word: choose another name"
+msgstr "“{name}” é uma palavra da conta: escolha outro nome"
+
+msgid "“{name}” is the name of a function: choose another name"
+msgstr "“{name}” é o nome de uma função: escolha outro nome"
+
+msgid "π is a constant"
+msgstr "π é uma constante"
+
+msgid "{name} needs {count}"
+msgstr "{name} precisa de {count}"
+
+msgid "{n} number"
+msgid_plural "{n} numbers"
+msgstr[0] "{n} número"
+msgstr[1] "{n} números"
+
+msgid "{n} or more numbers"
+msgid_plural "{n} or more numbers"
+msgstr[0] "{n} número ou mais"
+msgstr[1] "{n} números ou mais"
+
+msgctxt "note title"
+msgid "New Note"
+msgstr "Nota nova"
+
+# Categorias, unidades, detalhes do seletor e moedas
+
+msgid "Angle"
+msgstr "Ângulo"
+
+msgid "Degrees"
+msgstr "Graus"
+
+msgid "Radians"
+msgstr "Radianos"
+
+msgid "Gradians"
+msgstr "Grados"
+
+msgid "Arcminutes"
+msgstr "Minutos de arco"
+
+msgid "Arcseconds"
+msgstr "Segundos de arco"
+
+msgid "Turns"
+msgstr "Voltas"
+
+msgid "Area"
+msgstr "Área"
+
+msgid "Square Millimeters"
+msgstr "Milímetros quadrados"
+
+msgid "Square Centimeters"
+msgstr "Centímetros quadrados"
+
+msgid "Square Meters"
+msgstr "Metros quadrados"
+
+msgid "Square Kilometers"
+msgstr "Quilômetros quadrados"
+
+msgid "Ares"
+msgstr "Ares"
+
+msgid "Hectares"
+msgstr "Hectares"
+
+msgid "Square Inches"
+msgstr "Polegadas quadradas"
+
+msgid "Square Feet"
+msgstr "Pés quadrados"
+
+msgid "Square Yards"
+msgstr "Jardas quadradas"
+
+msgid "Acres"
+msgstr "Acres"
+
+msgid "Square Miles"
+msgstr "Milhas quadradas"
+
+msgid "Alqueires (São Paulo)"
+msgstr "Alqueires paulistas"
+
+msgid "2.42 ha"
+msgstr "2,42 ha"
+
+msgid "Alqueires (Minas Gerais)"
+msgstr "Alqueires mineiros"
+
+msgid "4.84 ha"
+msgstr "4,84 ha"
+
+msgid "Length"
+msgstr "Comprimento"
+
+msgid "Nanometers"
+msgstr "Nanômetros"
+
+msgid "Micrometers"
+msgstr "Micrômetros"
+
+msgid "Millimeters"
+msgstr "Milímetros"
+
+msgid "Centimeters"
+msgstr "Centímetros"
+
+msgid "Meters"
+msgstr "Metros"
+
+msgid "Kilometers"
+msgstr "Quilômetros"
+
+msgid "Inches"
+msgstr "Polegadas"
+
+msgid "Feet"
+msgstr "Pés"
+
+msgid "Yards"
+msgstr "Jardas"
+
+msgid "Miles"
+msgstr "Milhas"
+
+msgid "Nautical Miles"
+msgstr "Milhas náuticas"
+
+msgid "Ångströms"
+msgstr "Ångströms"
+
+msgid "Astronomical Units"
+msgstr "Unidades astronômicas"
+
+msgid "Light-Years"
+msgstr "Anos-luz"
+
+msgid "Parsecs"
+msgstr "Parsecs"
+
+msgid "Fuel Consumption"
+msgstr "Consumo de combustível"
+
+msgid "Kilometers per Liter"
+msgstr "Quilômetros por litro"
+
+msgid "Liters per 100 km"
+msgstr "Litros por 100 km"
+
+msgid "Miles per Gallon (US)"
+msgstr "Milhas por galão (EUA)"
+
+msgid "Miles per Gallon (UK)"
+msgstr "Milhas por galão (RU)"
+
+msgid "Data"
+msgstr "Dados"
+
+msgid "Bits"
+msgstr "Bits"
+
+msgid "Bytes"
+msgstr "Bytes"
+
+msgid "Kilobytes"
+msgstr "Quilobytes"
+
+msgid "1,000 bytes"
+msgstr "1.000 bytes"
+
+msgid "Megabytes"
+msgstr "Megabytes"
+
+msgid "1,000 kB"
+msgstr "1.000 kB"
+
+msgid "Gigabytes"
+msgstr "Gigabytes"
+
+msgid "1,000 MB"
+msgstr "1.000 MB"
+
+msgid "Terabytes"
+msgstr "Terabytes"
+
+msgid "1,000 GB"
+msgstr "1.000 GB"
+
+msgid "Petabytes"
+msgstr "Petabytes"
+
+msgid "1,000 TB"
+msgstr "1.000 TB"
+
+msgid "Kibibytes"
+msgstr "Kibibytes"
+
+msgid "1,024 bytes"
+msgstr "1.024 bytes"
+
+msgid "Mebibytes"
+msgstr "Mebibytes"
+
+msgid "1,024 KiB"
+msgstr "1.024 KiB"
+
+msgid "Gibibytes"
+msgstr "Gibibytes"
+
+msgid "1,024 MiB (the Windows “GB”)"
+msgstr "1.024 MiB (o \"GB\" do Windows)"
+
+msgid "Tebibytes"
+msgstr "Tebibytes"
+
+msgid "1,024 GiB"
+msgstr "1.024 GiB"
+
+msgid "Pebibytes"
+msgstr "Pebibytes"
+
+msgid "1,024 TiB"
+msgstr "1.024 TiB"
+
+msgid "Energy"
+msgstr "Energia"
+
+msgid "Joules"
+msgstr "Joules"
+
+msgid "Kilojoules"
+msgstr "Quilojoules"
+
+msgid "Megajoules"
+msgstr "Megajoules"
+
+msgid "Calories"
+msgstr "Calorias"
+
+msgid "4.184 J"
+msgstr "4,184 J"
+
+msgid "Kilocalories"
+msgstr "Quilocalorias"
+
+msgid "Watt-Hours"
+msgstr "Watts-hora"
+
+msgid "Kilowatt-Hours"
+msgstr "Quilowatts-hora"
+
+msgid "Electronvolts"
+msgstr "Elétrons-volt"
+
+msgid "BTUs"
+msgstr "BTUs"
+
+msgid "Force"
+msgstr "Força"
+
+msgid "Newtons"
+msgstr "Newtons"
+
+msgid "Kilonewtons"
+msgstr "Quilonewtons"
+
+msgid "Dynes"
+msgstr "Dinas"
+
+msgid "Kilograms-Force"
+msgstr "Quilogramas-força"
+
+msgid "Metric Tons-Force"
+msgstr "Toneladas-força"
+
+msgid "Pounds-Force"
+msgstr "Libras-força"
+
+msgid "Mass"
+msgstr "Massa"
+
+msgid "Micrograms"
+msgstr "Microgramas"
+
+msgid "Milligrams"
+msgstr "Miligramas"
+
+msgid "Grams"
+msgstr "Gramas"
+
+msgid "Kilograms"
+msgstr "Quilogramas"
+
+msgid "Metric Tons"
+msgstr "Toneladas"
+
+msgid "Carats"
+msgstr "Quilates"
+
+msgid "Ounces"
+msgstr "Onças"
+
+msgid "Troy Ounces"
+msgstr "Onças troy"
+
+msgid "precious metals"
+msgstr "metais preciosos"
+
+msgid "Pounds"
+msgstr "Libras"
+
+msgid "Stones"
+msgstr "Stones"
+
+msgid "Arrobas"
+msgstr "Arrobas"
+
+msgid "15 kg"
+msgstr "15 kg"
+
+msgid "Short Tons (US)"
+msgstr "Toneladas curtas (EUA)"
+
+msgid "2,000 lb"
+msgstr "2.000 lb"
+
+msgid "Long Tons (UK)"
+msgstr "Toneladas longas (RU)"
+
+msgid "2,240 lb"
+msgstr "2.240 lb"
+
+msgid "Power"
+msgstr "Potência"
+
+msgid "Watts"
+msgstr "Watts"
+
+msgid "Kilowatts"
+msgstr "Quilowatts"
+
+msgid "Megawatts"
+msgstr "Megawatts"
+
+msgid "Metric Horsepower"
+msgstr "Cavalos-vapor"
+
+msgid "75 kgf·m/s"
+msgstr "75 kgf·m/s"
+
+msgid "Horsepower"
+msgstr "Horsepower"
+
+msgid "550 ft·lbf/s"
+msgstr "550 ft·lbf/s"
+
+msgid "BTUs per Hour"
+msgstr "BTUs por hora"
+
+msgid "Tons of Refrigeration"
+msgstr "Toneladas de refrigeração"
+
+msgid "12,000 BTU/h"
+msgstr "12.000 BTU/h"
+
+msgid "Pressure"
+msgstr "Pressão"
+
+msgid "Pascals"
+msgstr "Pascals"
+
+msgid "Hectopascals"
+msgstr "Hectopascals"
+
+msgid "Kilopascals"
+msgstr "Quilopascals"
+
+msgid "Megapascals"
+msgstr "Megapascals"
+
+msgid "Bars"
+msgstr "Bars"
+
+msgid "Atmospheres"
+msgstr "Atmosferas"
+
+msgid "Millimeters of Mercury"
+msgstr "Milímetros de mercúrio"
+
+msgid "Pounds per Square Inch"
+msgstr "Libras por polegada quadrada"
+
+msgid "tire “pounds”"
+msgstr "\"libras\" do pneu"
+
+msgid "Kilograms-Force per cm²"
+msgstr "Quilogramas-força por cm²"
+
+msgid "Meters of Water Column"
+msgstr "Metros de coluna d'água"
+
+msgid "Temperature"
+msgstr "Temperatura"
+
+msgid "Celsius"
+msgstr "Celsius"
+
+msgid "Fahrenheit"
+msgstr "Fahrenheit"
+
+msgid "Kelvin"
+msgstr "Kelvin"
+
+msgid "Rankine"
+msgstr "Rankine"
+
+msgid "Time"
+msgstr "Tempo"
+
+msgid "Nanoseconds"
+msgstr "Nanossegundos"
+
+msgid "Microseconds"
+msgstr "Microssegundos"
+
+msgid "Milliseconds"
+msgstr "Milissegundos"
+
+msgid "Seconds"
+msgstr "Segundos"
+
+msgid "Minutes"
+msgstr "Minutos"
+
+msgid "Hours"
+msgstr "Horas"
+
+msgid "Days"
+msgstr "Dias"
+
+msgid "Weeks"
+msgstr "Semanas"
+
+msgid "Months"
+msgstr "Meses"
+
+msgid "1/12 of a year"
+msgstr "1/12 de ano"
+
+msgid "Years"
+msgstr "Anos"
+
+msgid "365 days"
+msgstr "365 dias"
+
+msgid "Decades"
+msgstr "Décadas"
+
+msgid "Centuries"
+msgstr "Séculos"
+
+msgid "Data Transfer Rate"
+msgstr "Transferência de dados"
+
+msgid "Bits per Second"
+msgstr "Bits por segundo"
+
+msgid "Kilobits per Second"
+msgstr "Quilobits por segundo"
+
+msgid "Megabits per Second"
+msgstr "Megabits por segundo"
+
+msgid "Gigabits per Second"
+msgstr "Gigabits por segundo"
+
+msgid "Bytes per Second"
+msgstr "Bytes por segundo"
+
+msgid "Kilobytes per Second"
+msgstr "Quilobytes por segundo"
+
+msgid "Megabytes per Second"
+msgstr "Megabytes por segundo"
+
+msgid "Gigabytes per Second"
+msgstr "Gigabytes por segundo"
+
+msgid "Kibibytes per Second"
+msgstr "Kibibytes por segundo"
+
+msgid "Mebibytes per Second"
+msgstr "Mebibytes por segundo"
+
+msgid "Speed"
+msgstr "Velocidade"
+
+msgid "Meters per Second"
+msgstr "Metros por segundo"
+
+msgid "Kilometers per Hour"
+msgstr "Quilômetros por hora"
+
+msgid "Miles per Hour"
+msgstr "Milhas por hora"
+
+msgid "Knots"
+msgstr "Nós"
+
+msgid "Feet per Second"
+msgstr "Pés por segundo"
+
+msgid "Volume"
+msgstr "Volume"
+
+msgid "Milliliters"
+msgstr "Mililitros"
+
+msgid "Cubic Centimeters"
+msgstr "Centímetros cúbicos"
+
+msgid "Liters"
+msgstr "Litros"
+
+msgid "Cubic Meters"
+msgstr "Metros cúbicos"
+
+msgid "Cubic Inches"
+msgstr "Polegadas cúbicas"
+
+msgid "Cubic Feet"
+msgstr "Pés cúbicos"
+
+msgid "US Gallons"
+msgstr "Galões americanos"
+
+msgid "231 in³"
+msgstr "231 pol³"
+
+msgid "US Pints"
+msgstr "Pintas americanas"
+
+msgid "US Fluid Ounces"
+msgstr "Onças líquidas americanas"
+
+msgid "Imperial Gallons"
+msgstr "Galões imperiais"
+
+msgid "Barrels of Oil"
+msgstr "Barris de petróleo"
+
+msgid "42 gallons"
+msgstr "42 galões"
+
+msgid "Cups (240 mL)"
+msgstr "Xícaras (240 mL)"
+
+msgid "Tablespoons (15 mL)"
+msgstr "Colheres de sopa (15 mL)"
+
+msgid "Teaspoons (5 mL)"
+msgstr "Colheres de chá (5 mL)"
+
+msgid "UAE Dirham"
+msgstr "Dirham dos Emirados Árabes Unidos"
+
+msgid "Afghan Afghani"
+msgstr "Afegane afegão"
+
+msgid "Albanian Lek"
+msgstr "Lek albanês"
+
+msgid "Armenian Dram"
+msgstr "Dram armênio"
+
+msgid "Angolan Kwanza"
+msgstr "Kwanza angolano"
+
+msgid "Argentine Peso"
+msgstr "Peso argentino"
+
+msgid "Australian Dollar"
+msgstr "Dólar australiano"
+
+msgid "Aruban Florin"
+msgstr "Florim arubano"
+
+msgid "Azerbaijani Manat"
+msgstr "Manat azerbaijano"
+
+msgid "Barbadian Dollar"
+msgstr "Dólar de Barbados"
+
+msgid "Bangladeshi Taka"
+msgstr "Taka bengalesa"
+
+msgid "Bahraini Dinar"
+msgstr "Dinar bareinita"
+
+msgid "Burundian Franc"
+msgstr "Franco burundiano"
+
+msgid "Bermudian Dollar"
+msgstr "Dólar bermudense"
+
+msgid "Brunei Dollar"
+msgstr "Dólar de Brunei"
+
+msgid "Bolivian Boliviano"
+msgstr "Boliviano"
+
+msgid "Brazilian Real"
+msgstr "Real brasileiro"
+
+msgid "Bahamian Dollar"
+msgstr "Dólar bahamense"
+
+msgid "Bhutanese Ngultrum"
+msgstr "Ngultrum butanês"
+
+msgid "Botswana Pula"
+msgstr "Pula de Botsuana"
+
+msgid "Belarusian Ruble"
+msgstr "Rublo bielorrusso"
+
+msgid "Belize Dollar"
+msgstr "Dólar de Belize"
+
+msgid "Canadian Dollar"
+msgstr "Dólar canadense"
+
+msgid "Congolese Franc"
+msgstr "Franco congolês"
+
+msgid "Swiss Franc"
+msgstr "Franco suíço"
+
+msgid "Chilean Peso"
+msgstr "Peso chileno"
+
+msgid "Chinese Yuan"
+msgstr "Yuan chinês"
+
+msgid "Colombian Peso"
+msgstr "Peso colombiano"
+
+msgid "Costa Rican Colón"
+msgstr "Colón costarriquenho"
+
+msgid "Cuban Peso"
+msgstr "Peso cubano"
+
+msgid "Cape Verdean Escudo"
+msgstr "Escudo cabo-verdiano"
+
+msgid "Czech Koruna"
+msgstr "Coroa tcheca"
+
+msgid "Djiboutian Franc"
+msgstr "Franco djibutiano"
+
+msgid "Danish Krone"
+msgstr "Coroa dinamarquesa"
+
+msgid "Dominican Peso"
+msgstr "Peso dominicano"
+
+msgid "Algerian Dinar"
+msgstr "Dinar argelino"
+
+msgid "Egyptian Pound"
+msgstr "Libra egípcia"
+
+msgid "Eritrean Nakfa"
+msgstr "Nakfa eritreia"
+
+msgid "Ethiopian Birr"
+msgstr "Birr etíope"
+
+msgid "Euro"
+msgstr "Euro"
+
+msgid "Fijian Dollar"
+msgstr "Dólar fijiano"
+
+msgid "Falkland Islands Pound"
+msgstr "Libra das Ilhas Malvinas"
+
+msgid "British Pound"
+msgstr "Libra esterlina"
+
+msgid "Georgian Lari"
+msgstr "Lari georgiano"
+
+msgid "Ghanaian Cedi"
+msgstr "Cedi ganês"
+
+msgid "Gibraltar Pound"
+msgstr "Libra de Gibraltar"
+
+msgid "Gambian Dalasi"
+msgstr "Dalasi gambiano"
+
+msgid "Guinean Franc"
+msgstr "Franco guineano"
+
+msgid "Guatemalan Quetzal"
+msgstr "Quetzal guatemalteco"
+
+msgid "Guyanese Dollar"
+msgstr "Dólar guianense"
+
+msgid "Hong Kong Dollar"
+msgstr "Dólar de Hong Kong"
+
+msgid "Honduran Lempira"
+msgstr "Lempira hondurenha"
+
+msgid "Haitian Gourde"
+msgstr "Gourde haitiano"
+
+msgid "Hungarian Forint"
+msgstr "Florim húngaro"
+
+msgid "Indonesian Rupiah"
+msgstr "Rupia indonésia"
+
+msgid "Israeli New Shekel"
+msgstr "Novo shekel israelense"
+
+msgid "Indian Rupee"
+msgstr "Rupia indiana"
+
+msgid "Iraqi Dinar"
+msgstr "Dinar iraquiano"
+
+msgid "Iranian Rial"
+msgstr "Rial iraniano"
+
+msgid "Icelandic Króna"
+msgstr "Coroa islandesa"
+
+msgid "Jamaican Dollar"
+msgstr "Dólar jamaicano"
+
+msgid "Jordanian Dinar"
+msgstr "Dinar jordaniano"
+
+msgid "Japanese Yen"
+msgstr "Iene japonês"
+
+msgid "Kenyan Shilling"
+msgstr "Xelim queniano"
+
+msgid "Kyrgyzstani Som"
+msgstr "Som quirguiz"
+
+msgid "Cambodian Riel"
+msgstr "Riel cambojano"
+
+msgid "Comorian Franc"
+msgstr "Franco comorense"
+
+msgid "South Korean Won"
+msgstr "Won sul-coreano"
+
+msgid "Kuwaiti Dinar"
+msgstr "Dinar kuwaitiano"
+
+msgid "Cayman Islands Dollar"
+msgstr "Dólar das Ilhas Cayman"
+
+msgid "Kazakhstani Tenge"
+msgstr "Tenge cazaque"
+
+msgid "Lao Kip"
+msgstr "Kip laosiano"
+
+msgid "Lebanese Pound"
+msgstr "Libra libanesa"
+
+msgid "Sri Lankan Rupee"
+msgstr "Rupia cingalesa"
+
+msgid "Liberian Dollar"
+msgstr "Dólar liberiano"
+
+msgid "Lesotho Loti"
+msgstr "Loti do Lesoto"
+
+msgid "Libyan Dinar"
+msgstr "Dinar líbio"
+
+msgid "Moroccan Dirham"
+msgstr "Dirham marroquino"
+
+msgid "Moldovan Leu"
+msgstr "Leu moldávio"
+
+msgid "Malagasy Ariary"
+msgstr "Ariary malgaxe"
+
+msgid "Macedonian Denar"
+msgstr "Dinar macedônio"
+
+msgid "Myanmar Kyat"
+msgstr "Quiate mianmarense"
+
+msgid "Mongolian Tögrög"
+msgstr "Tugrik mongol"
+
+msgid "Macanese Pataca"
+msgstr "Pataca macaense"
+
+msgid "Mauritanian Ouguiya"
+msgstr "Uguia mauritana"
+
+msgid "Mauritian Rupee"
+msgstr "Rupia mauriciana"
+
+msgid "Maldivian Rufiyaa"
+msgstr "Rupia maldiva"
+
+msgid "Malawian Kwacha"
+msgstr "Kwacha malauiana"
+
+msgid "Mexican Peso"
+msgstr "Peso mexicano"
+
+msgid "Malaysian Ringgit"
+msgstr "Ringgit malaio"
+
+msgid "Mozambican Metical"
+msgstr "Metical moçambicano"
+
+msgid "Namibian Dollar"
+msgstr "Dólar namibiano"
+
+msgid "Nigerian Naira"
+msgstr "Naira nigeriana"
+
+msgid "Nicaraguan Córdoba"
+msgstr "Córdoba nicaraguense"
+
+msgid "Norwegian Krone"
+msgstr "Coroa norueguesa"
+
+msgid "Nepalese Rupee"
+msgstr "Rupia nepalesa"
+
+msgid "New Zealand Dollar"
+msgstr "Dólar neozelandês"
+
+msgid "Omani Rial"
+msgstr "Rial omanense"
+
+msgid "Panamanian Balboa"
+msgstr "Balboa panamenho"
+
+msgid "Peruvian Sol"
+msgstr "Sol peruano"
+
+msgid "Papua New Guinean Kina"
+msgstr "Kina papuásia"
+
+msgid "Philippine Peso"
+msgstr "Peso filipino"
+
+msgid "Pakistani Rupee"
+msgstr "Rupia paquistanesa"
+
+msgid "Polish Złoty"
+msgstr "Zloty polonês"
+
+msgid "Paraguayan Guaraní"
+msgstr "Guarani paraguaio"
+
+msgid "Qatari Riyal"
+msgstr "Rial catariano"
+
+msgid "Romanian Leu"
+msgstr "Leu romeno"
+
+msgid "Serbian Dinar"
+msgstr "Dinar sérvio"
+
+msgid "Russian Ruble"
+msgstr "Rublo russo"
+
+msgid "Rwandan Franc"
+msgstr "Franco ruandês"
+
+msgid "Saudi Riyal"
+msgstr "Rial saudita"
+
+msgid "Solomon Islands Dollar"
+msgstr "Dólar das Ilhas Salomão"
+
+msgid "Seychellois Rupee"
+msgstr "Rupia seichelense"
+
+msgid "Sudanese Pound"
+msgstr "Libra sudanesa"
+
+msgid "Swedish Krona"
+msgstr "Coroa sueca"
+
+msgid "Singapore Dollar"
+msgstr "Dólar de Singapura"
+
+msgid "Saint Helena Pound"
+msgstr "Libra de Santa Helena"
+
+msgid "Somali Shilling"
+msgstr "Xelim somali"
+
+msgid "Surinamese Dollar"
+msgstr "Dólar surinamês"
+
+msgid "South Sudanese Pound"
+msgstr "Libra sul-sudanesa"
+
+msgid "São Tomé and Príncipe Dobra"
+msgstr "Dobra de São Tomé e Príncipe"
+
+msgid "Salvadoran Colón"
+msgstr "Colón salvadorenho"
+
+msgid "Syrian Pound"
+msgstr "Libra síria"
+
+msgid "Swazi Lilangeni"
+msgstr "Lilangeni suazi"
+
+msgid "Thai Baht"
+msgstr "Baht tailandês"
+
+msgid "Tajikistani Somoni"
+msgstr "Somoni tadjique"
+
+msgid "Turkmenistani Manat"
+msgstr "Manat turcomeno"
+
+msgid "Tunisian Dinar"
+msgstr "Dinar tunisiano"
+
+msgid "Tongan Pa'anga"
+msgstr "Pa'anga tonganesa"
+
+msgid "Turkish Lira"
+msgstr "Lira turca"
+
+msgid "Trinidad and Tobago Dollar"
+msgstr "Dólar de Trinidad e Tobago"
+
+msgid "New Taiwan Dollar"
+msgstr "Novo dólar taiwanês"
+
+msgid "Tanzanian Shilling"
+msgstr "Xelim tanzaniano"
+
+msgid "Ukrainian Hryvnia"
+msgstr "Hryvnia ucraniana"
+
+msgid "Ugandan Shilling"
+msgstr "Xelim ugandense"
+
+msgid "US Dollar"
+msgstr "Dólar americano"
+
+msgid "Uruguayan Peso"
+msgstr "Peso uruguaio"
+
+msgid "Uzbekistani Som"
+msgstr "Som uzbeque"
+
+msgid "Venezuelan Bolívar"
+msgstr "Bolívar venezuelano"
+
+msgid "Vietnamese Dong"
+msgstr "Dong vietnamita"
+
+msgid "Vanuatu Vatu"
+msgstr "Vatu de Vanuatu"
+
+msgid "Samoan Tala"
+msgstr "Tala samoano"
+
+msgid "Central African CFA Franc"
+msgstr "Franco CFA da África Central"
+
+msgid "East Caribbean Dollar"
+msgstr "Dólar do Caribe Oriental"
+
+msgid "Caribbean Guilder"
+msgstr "Florim do Caribe"
+
+msgid "West African CFA Franc"
+msgstr "Franco CFA da África Ocidental"
+
+msgid "CFP Franc"
+msgstr "Franco CFP"
+
+msgid "Yemeni Rial"
+msgstr "Rial iemenita"
+
+msgid "South African Rand"
+msgstr "Rand sul-africano"
+
+msgid "Zambian Kwacha"
+msgstr "Kwacha zambiana"

@@ -477,6 +477,11 @@ fn button_rects(bar: Rectangle<i32, Logical>) -> [(Button, Rectangle<i32, Logica
     ]
 }
 
+/// Retângulo de um botão na barra (onde a dica dele se ancora).
+pub fn button_rect(bar: Rectangle<i32, Logical>, button: Button) -> Rectangle<i32, Logical> {
+    button_rects(bar).into_iter().find(|(b, _)| *b == button).map_or(bar, |(_, r)| r)
+}
+
 /// Botão da barra que está sob `pos`, se houver.
 pub fn button_at(bar: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Option<Button> {
     button_rects(bar)

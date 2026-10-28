@@ -638,17 +638,17 @@ impl Calculator {
                     ],
                     vec![
                         k(un(Unary::Fact), "x!", sc),
-                        if s { k(un(Unary::Asin), "sen⁻¹", sc) } else { k(un(Unary::Sin), "sen", sc) },
+                        if s { k(un(Unary::Asin), &mide::tr!("sin⁻¹"), sc) } else { k(un(Unary::Sin), &mide::tr!("sin"), sc) },
                         if s { k(un(Unary::Acos), "cos⁻¹", sc) } else { k(un(Unary::Cos), "cos", sc) },
-                        if s { k(un(Unary::Atan), "tg⁻¹", sc) } else { k(un(Unary::Tan), "tg", sc) },
+                        if s { k(un(Unary::Atan), &mide::tr!("tan⁻¹"), sc) } else { k(un(Unary::Tan), &mide::tr!("tan"), sc) },
                         k(Btn::K(EKey::E), "e", sc),
                         k(op(Binary::Ee), "EE", sc),
                     ],
                     vec![
-                        k(Btn::Angle, if self.engine.radians { "Grau" } else { "Rad" }, sc),
-                        if s { k(un(Unary::Asinh), "senh⁻¹", sc) } else { k(un(Unary::Sinh), "senh", sc) },
+                        k(Btn::Angle, &if self.engine.radians { mide::tr!("Deg") } else { mide::tr!("Rad") }, sc),
+                        if s { k(un(Unary::Asinh), &mide::tr!("sinh⁻¹"), sc) } else { k(un(Unary::Sinh), &mide::tr!("sinh"), sc) },
                         if s { k(un(Unary::Acosh), "cosh⁻¹", sc) } else { k(un(Unary::Cosh), "cosh", sc) },
-                        if s { k(un(Unary::Atanh), "tgh⁻¹", sc) } else { k(un(Unary::Tanh), "tgh", sc) },
+                        if s { k(un(Unary::Atanh), &mide::tr!("tanh⁻¹"), sc) } else { k(un(Unary::Tanh), &mide::tr!("tanh"), sc) },
                         k(Btn::K(EKey::Pi), "π", sc),
                         k(Btn::K(EKey::Rand), "Rand", sc),
                     ],
@@ -993,7 +993,11 @@ impl App for Calculator {
         // Na Básica e na Científica, o ⌫ é uma tecla (como no Tahoe); a do visor fica
         // para o Programador e o conversor.
         let erase_on_screen = typing && (self.mode == Mode::Programmer || converting);
-        if erase_on_screen && ui.background(erase).clicked {
+        let erase_r = erase_on_screen.then(|| ui.background(erase));
+        if let Some(r) = &erase_r {
+            ui.tooltip(r, &mide::tr!("Delete"));
+        }
+        if erase_r.is_some_and(|r| r.clicked) {
             self.press(if self.mode == Mode::Programmer { Btn::P(programmer::Key::Backspace) } else { Btn::K(EKey::Backspace) });
         }
         // Conversor: o nome da unidade abre o seletor; a outra linha usa a conversão; o
@@ -1013,21 +1017,23 @@ impl App for Calculator {
                 }
                 let active = row == self.conv.active;
                 ui.context_menu(&r, |m| {
-                    if (active || has_conversion) && m.item("Copiar o número") {
+                    if (active || has_conversion) && m.item(&mide::tr!("Copy Number")) {
                         act = Some((row, 2));
                     }
-                    if has_conversion && m.item("Copiar a conversão") {
+                    if has_conversion && m.item(&mide::tr!("Copy Conversion")) {
                         act = Some((row, 3));
                     }
-                    if m.item("Escolher a unidade…") {
+                    if m.item(&mide::tr!("Choose Unit…")) {
                         act = Some((row, 0));
                     }
-                    if m.item("Trocar as unidades") {
+                    if m.item(&mide::tr!("Swap Units")) {
                         act = Some((row, 4));
                     }
                 });
             }
-            if ui.background(converter::swap_rect()).clicked {
+            let swap = ui.background(converter::swap_rect());
+            ui.tooltip(&swap, &mide::tr!("Swap Units"));
+            if swap.clicked {
                 act = Some((0, 4));
             }
             // Na Moeda, a faixa (fonte e data) abre "Cotações de moedas".
@@ -1103,10 +1109,10 @@ impl App for Calculator {
                 let style = Style { grouping: false, ..self.engine.style };
                 let mut copy = None;
                 ui.context_menu(&r, |m| {
-                    if m.item("Copiar a conta") {
+                    if m.item(&mide::tr!("Copy Calculation")) {
                         copy = Some(format!("{} = {}", entry.expression, entry.result));
                     }
-                    if m.item("Copiar o resultado") {
+                    if m.item(&mide::tr!("Copy Result")) {
                         copy = Some(if entry.bits.is_some() { entry.result.clone() } else { style.value(entry.value) });
                     }
                 });
@@ -1202,7 +1208,8 @@ impl App for Calculator {
                 text.draw(pixmap, "⌫", ox + x + (ew - lw) / 2.0, oy + y + (eh - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, [235, 235, 240, 255]);
             }
             if mode == Mode::Scientific {
-                let mut tags = vec![if radians { "Rad" } else { "Grau" }];
+                let angle = if radians { mide::tr!("Rad") } else { mide::tr!("Deg") };
+                let mut tags = vec![angle.as_ref()];
                 if memory {
                     tags.push("M");
                 }
@@ -1275,7 +1282,7 @@ impl App for Calculator {
             }
             if history {
                 fill_rounded(pixmap, ox + w, oy, 1.0, h, 0.0, bg([60, 60, 66, 255]));
-                text.draw(pixmap, "Histórico", ox + w + 14.0, oy + 12.0, 13.0, FontWeight::Semibold, small);
+                text.draw(pixmap, &mide::tr!("History"), ox + w + 14.0, oy + 12.0, 13.0, FontWeight::Semibold, small);
                 for (entry, (x, y, ew, _)) in &history_rows {
                     let expr = fit_terms(text, &entry.expression, 12.0, *ew);
                     let ew2 = text.measure(&expr, 12.0, FontWeight::Regular);
@@ -1333,7 +1340,7 @@ impl App for Calculator {
             .map(|d| {
                 let (action, label) = match d {
                     Some(n) => (format!("casas:{n}"), n.to_string()),
-                    None => ("casas:auto".to_string(), "Automático".to_string()),
+                    None => ("casas:auto".to_string(), mide::tr!("Automatic").into_owned()),
                 };
                 MenuItem::action(&action, &label).checked(style.decimals == *d).enabled(mode != Mode::Programmer)
             })
@@ -1343,42 +1350,42 @@ impl App for Calculator {
             self.notes_menus()
         } else {
             vec![MenuGroup {
-                title: "Editar".into(),
+                title: mide::tr!("Edit").into(),
                 items: vec![
-                    MenuItem::action("desfazer", "Desfazer").shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
-                    MenuItem::action("refazer", "Refazer").shortcut("Ctrl+Shift+Z").enabled(!self.redo.is_empty()),
+                    MenuItem::action("desfazer", &mide::tr!("Undo")).shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
+                    MenuItem::action("refazer", &mide::tr!("Redo")).shortcut("Ctrl+Shift+Z").enabled(!self.redo.is_empty()),
                     MenuItem::Separator,
-                    MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C"),
-                    MenuItem::action("colar", "Colar").shortcut("Ctrl+V"),
-                    MenuItem::action("copiar-conversao", "Copiar a conversão").enabled(self.converting() && self.conversion().is_some()),
+                    MenuItem::action("copiar", &mide::tr!("Copy")).shortcut("Ctrl+C"),
+                    MenuItem::action("colar", &mide::tr!("Paste")).shortcut("Ctrl+V"),
+                    MenuItem::action("copiar-conversao", &mide::tr!("Copy Conversion")).enabled(self.converting() && self.conversion().is_some()),
                     MenuItem::Separator,
-                    MenuItem::action("copiar-historico", "Copiar o histórico").enabled(has_history),
-                    MenuItem::action("limpar-historico", "Limpar o histórico").enabled(has_history),
+                    MenuItem::action("copiar-historico", &mide::tr!("Copy History")).enabled(has_history),
+                    MenuItem::action("limpar-historico", &mide::tr!("Clear History")).enabled(has_history),
                 ],
             }]
         };
         let keypad = matches!(mode, Mode::Basic | Mode::Scientific);
         let list_item = if notes {
-            MenuItem::action("notas-lista", "Mostrar a lista de notas").shortcut("Ctrl+T").checked(self.notes.list_shown)
+            MenuItem::action("notas-lista", &mide::tr!("Show Notes List")).shortcut("Ctrl+T").checked(self.notes.list_shown)
         } else {
-            MenuItem::action("historico", "Mostrar o histórico").shortcut("Ctrl+T").checked(self.history_shown)
+            MenuItem::action("historico", &mide::tr!("Show History")).shortcut("Ctrl+T").checked(self.history_shown)
         };
         let mut groups = keypad_groups;
         groups.push(MenuGroup {
-            title: "Visualizar".into(),
+            title: mide::tr!("View").into(),
             items: vec![
-                MenuItem::action("basica", "Básica").shortcut("Ctrl+1").checked(mode == Mode::Basic),
-                MenuItem::action("cientifica", "Científica").shortcut("Ctrl+2").checked(mode == Mode::Scientific),
-                MenuItem::action("programador", "Programador").shortcut("Ctrl+3").checked(mode == Mode::Programmer),
-                MenuItem::action("notas", "Notas matemáticas").shortcut("Ctrl+4").checked(notes),
+                MenuItem::action("basica", &mide::tr!("Basic")).shortcut("Ctrl+1").checked(mode == Mode::Basic),
+                MenuItem::action("cientifica", &mide::tr!("Scientific")).shortcut("Ctrl+2").checked(mode == Mode::Scientific),
+                MenuItem::action("programador", &mide::tr!("Programmer")).shortcut("Ctrl+3").checked(mode == Mode::Programmer),
+                MenuItem::action("notas", &mide::tr!("Math Notes")).shortcut("Ctrl+4").checked(notes),
                 MenuItem::Separator,
-                MenuItem::action("rpn", "Notação polonesa reversa (RPN)").shortcut("Ctrl+R").checked(self.rpn_on).enabled(keypad),
+                MenuItem::action("rpn", &mide::tr!("Reverse Polish Notation (RPN)")).shortcut("Ctrl+R").checked(self.rpn_on).enabled(keypad),
                 list_item,
-                MenuItem::action("conversor", "Conversor de unidades").shortcut("Ctrl+U").checked(self.convert_on).enabled(keypad),
+                MenuItem::action("conversor", &mide::tr!("Unit Converter")).shortcut("Ctrl+U").checked(self.convert_on).enabled(keypad),
                 MenuItem::Separator,
-                MenuItem::action("radianos", "Ângulos em radianos").checked(self.engine.radians).enabled(mode != Mode::Programmer),
-                MenuItem::action("milhar", "Separador de milhar").checked(style.grouping).enabled(mode != Mode::Programmer),
-                MenuItem::Submenu { label: "Casas decimais".into(), items: decimals },
+                MenuItem::action("radianos", &mide::tr!("Angles in Radians")).checked(self.engine.radians).enabled(mode != Mode::Programmer),
+                MenuItem::action("milhar", &mide::tr!("Thousands Separator")).checked(style.grouping).enabled(mode != Mode::Programmer),
+                MenuItem::Submenu { label: mide::tr!("Decimal Places").into(), items: decimals },
             ],
         });
         // O menu Converter só aparece com o conversor à vista.
@@ -1390,19 +1397,19 @@ impl App for Calculator {
                 .collect();
             let categories = converter::category_order()
                 .into_iter()
-                .map(|c| MenuItem::action(&format!("conv-cat:{}", converter::category_id(c)), converter::category_name(c)).checked(c == self.conv.category))
+                .map(|c| MenuItem::action(&format!("conv-cat:{}", converter::category_id(c)), &converter::category_name(c)).checked(c == self.conv.category))
                 .collect();
             groups.push(MenuGroup {
-                title: "Converter".into(),
+                title: mide::tr!("Convert").into(),
                 items: vec![
-                    MenuItem::action("conv-unidade", "Escolher a unidade…").shortcut("Ctrl+L"),
-                    MenuItem::action("conv-trocar", "Trocar as unidades").shortcut("Ctrl+Shift+U"),
-                    MenuItem::action("conv-outra", "Usar a outra linha"),
+                    MenuItem::action("conv-unidade", &mide::tr!("Choose Unit…")).shortcut("Ctrl+L"),
+                    MenuItem::action("conv-trocar", &mide::tr!("Swap Units")).shortcut("Ctrl+Shift+U"),
+                    MenuItem::action("conv-outra", &mide::tr!("Use Other Row")),
                     MenuItem::Separator,
-                    MenuItem::Submenu { label: "Recentes".into(), items: recent },
-                    MenuItem::Submenu { label: "Categoria".into(), items: categories },
+                    MenuItem::Submenu { label: mide::tr!("Recent").into(), items: recent },
+                    MenuItem::Submenu { label: mide::tr!("Category").into(), items: categories },
                     MenuItem::Separator,
-                    MenuItem::action("cotacoes", "Cotações de moedas…"),
+                    MenuItem::action("cotacoes", &mide::tr!("Currency Exchange Rates…")),
                 ],
             });
         }
@@ -1482,9 +1489,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_calculator=info".into()))
         .init();
     // A janela já nasce no tamanho do modo lembrado.
+    mide::i18n::init();
     let calculator = Calculator::new();
     let ((w, h), (mw, mh)) = calculator.window_size();
-    let window = Window::new("Calculadora").app_id("mide-calculator").size(w, h).min_size(mw, mh).full_size_content();
+    let window = Window::new(&mide::tr!("Calculator")).app_id("mide-calculator").size(w, h).min_size(mw, mh).full_size_content();
     run(window, calculator)
 }
 

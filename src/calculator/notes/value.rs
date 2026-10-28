@@ -15,10 +15,11 @@ use super::super::engine::Binary;
 use super::super::format::Style;
 use super::super::units;
 
-pub const DIV_ZERO: &str = "Divisão por zero";
-pub const TOO_BIG: &str = "Número grande demais";
+// As mensagens ficam em inglês aqui; a nota mostra a tradução (`eval::problem`).
+pub const DIV_ZERO: &str = "Division by zero";
+pub const TOO_BIG: &str = "Number too large";
 /// Conta entre unidades que criaria outra grandeza (km ÷ h, 30° × 30°).
-pub const MIXED: &str = "Conta entre unidades diferentes: ainda não";
+pub const MIXED: &str = "Calculations between different units aren't supported yet";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AngleUnit {
@@ -74,9 +75,9 @@ impl UnitId {
         self.get().symbol
     }
 
-    /// Nome da grandeza nas mensagens: "comprimento", "massa".
+    /// Nome da grandeza nas mensagens, traduzido: "comprimento", "massa".
     fn grandeza(self) -> String {
-        units::categories()[self.category].name.to_lowercase()
+        crate::i18n::tr(units::categories()[self.category].display).to_lowercase()
     }
 
     /// Temperatura: escalas com deslocamento, que só somam na mesma escala.
@@ -134,7 +135,7 @@ impl Measure {
     fn grandeza(self) -> String {
         match self {
             Measure::Unit(u) => u.grandeza(),
-            Measure::Money(_) => "dinheiro".into(),
+            Measure::Money(_) => crate::tr!("money").into_owned(),
         }
     }
 }
@@ -250,12 +251,12 @@ impl Value {
             (Measure::Money(x), Measure::Money(y)) if x.code == y.code => Ok(b),
             (Measure::Unit(x), Measure::Unit(y)) if x == y => Ok(b),
             (Measure::Unit(x), Measure::Unit(y)) if x.category == y.category && x.temperature() => {
-                Err(format!("Não dá para somar {} com {}", x.symbol(), y.symbol()))
+                Err(crate::tr!("Can't add {a} and {b}", a = x.symbol(), b = y.symbol()))
             }
             (Measure::Unit(x), Measure::Unit(y)) if x.category == y.category => {
                 units::convert(b.number(), y.get(), x.get()).map(|v| Value::quantity(v, x)).ok_or_else(|| TOO_BIG.to_string())
             }
-            _ => Err(format!("Não dá para somar {} com {}", ma.grandeza(), mb.grandeza())),
+            _ => Err(crate::tr!("Can't add {a} and {b}", a = ma.grandeza(), b = mb.grandeza())),
         }
     }
 
@@ -326,10 +327,10 @@ impl Value {
         let from = match self {
             Value::Angle(_, a) => a.id(),
             Value::Qty(_, u) | Value::Interval(_, u) => u,
-            _ => return Err(format!("Não dá para converter {} em {}", self.label(), to.symbol())),
+            _ => return Err(crate::tr!("Can't convert {from} to {to}", from = self.label(), to = to.symbol())),
         };
         if from.category != to.category {
-            return Err(format!("Não dá para converter {} em {}", from.symbol(), to.symbol()));
+            return Err(crate::tr!("Can't convert {from} to {to}", from = from.symbol(), to = to.symbol()));
         }
         // Sem resultado: consumo zero (L/100 km ↔ km/L) ou fora do f64.
         let fail = if self.number() == 0.0 { DIV_ZERO } else { TOO_BIG };
@@ -341,14 +342,14 @@ impl Value {
         units::convert(self.number(), from.get(), to.get()).map(|v| Value::quantity(v, to)).ok_or_else(|| fail.to_string())
     }
 
-    /// O nome da unidade nas mensagens: "número", "°", "km", "R$".
-    pub fn label(self) -> &'static str {
+    /// O nome da unidade nas mensagens: "número" (traduzido), "°", "km", "R$".
+    pub fn label(self) -> std::borrow::Cow<'static, str> {
         match self {
-            Value::Num(_) | Value::Percent { .. } => "número",
-            Value::Angle(_, AngleUnit::Degrees) => "°",
-            Value::Angle(_, AngleUnit::Radians) => "rad",
-            Value::Qty(_, u) | Value::Interval(_, u) => u.symbol(),
-            Value::Money(_, c) => c.symbol(),
+            Value::Num(_) | Value::Percent { .. } => crate::tr!("number"),
+            Value::Angle(_, AngleUnit::Degrees) => "°".into(),
+            Value::Angle(_, AngleUnit::Radians) => "rad".into(),
+            Value::Qty(_, u) | Value::Interval(_, u) => u.symbol().into(),
+            Value::Money(_, c) => c.symbol().into(),
         }
     }
 

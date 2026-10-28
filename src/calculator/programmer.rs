@@ -182,7 +182,7 @@ impl Programmer {
     /// O número na base escolhida (decimal com sinal; binário em grupos de 4).
     pub fn display(&self) -> String {
         if self.error {
-            return "Erro".into();
+            return crate::tr!("Error").into_owned();
         }
         format_in(self.value, self.base)
     }
@@ -512,7 +512,7 @@ mod tests {
         p.toggle_bit(5);
         assert_eq!(p.display(), "97");
         press_all(&mut p, &[Key::Clear, Key::Digit(1), Key::Op(Op::Div), Key::Digit(0), Key::Equals]);
-        assert_eq!(p.display(), "Erro");
+        assert_eq!(p.display(), crate::tr!("Error"));
         press_all(&mut p, &[Key::Clear, Key::Digit(0x1)]);
         p.set_base(Base::Hex);
         p.press(Key::Digit(2));
@@ -542,7 +542,7 @@ mod tests {
         press_all(&mut p, &[Key::Op(Op::Mod), Key::Digit(1), Key::Un(Unary::Negate), Key::Equals]);
         assert_eq!(p.display(), "0");
         press_all(&mut p, &[Key::Op(Op::Div), Key::Digit(0), Key::Equals]);
-        assert_eq!(p.display(), "Erro");
+        assert_eq!(p.display(), crate::tr!("Error"));
         press_all(&mut p, &[Key::Digit(7)]);
         assert_eq!(p.display(), "7");
         // Deslocamento à direita aritmético, igual à divisão por 2.
@@ -555,7 +555,7 @@ mod tests {
         p.set_base(Base::Hex);
         assert_eq!(p.display(), "FFFFFFFFFFFFF800");
         p.load(1e30);
-        assert_eq!(p.display(), "Erro");
+        assert_eq!(p.display(), crate::tr!("Error"));
         // Carregar começa uma conta nova (a operação de antes sai).
         p.set_base(Base::Dec);
         press_all(&mut p, &[Key::Clear, Key::Digit(5), Key::Op(Op::Add)]);

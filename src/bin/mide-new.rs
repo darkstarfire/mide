@@ -18,6 +18,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use mide::tr;
+
 /// Onde o mide-ui está publicado (o repositório do mide).
 const REPO: &str = "https://github.com/fabioaacarneiro/mide-ui";
 
@@ -55,7 +57,7 @@ pub fn project_files(display: &str, slug: &str, dependency: &str) -> Vec<(String
     );
     let main = MAIN_TEMPLATE.replace("{TYPE}", &ty).replace("{NAME}", display).replace("{SLUG}", slug);
     let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName={display}\nComment=App feito com o mide-ui\nExec={slug}\nIcon=application-x-executable\nCategories=Utility;\nStartupWMClass={slug}\n"
+        "[Desktop Entry]\nType=Application\nName={display}\nComment=App made with mide-ui\nExec={slug}\nIcon=application-x-executable\nCategories=Utility;\nStartupWMClass={slug}\n"
     );
     let readme = README_TEMPLATE.replace("{NAME}", display).replace("{SLUG}", slug);
     vec![
@@ -77,9 +79,9 @@ use mide_ui::kit::{run, window_menu, App, MenuGroup, MenuItem, Ui, Window};
 
 /// Seções da barra lateral: nome e ícone do tema.
 const SECTIONS: &[(&str, &str)] = &[
-    ("Início", "go-home-symbolic"),
-    ("Notas", "accessories-text-editor-symbolic"),
-    ("Ajustes", "preferences-system-symbolic"),
+    ("Home", "go-home-symbolic"),
+    ("Notes", "accessories-text-editor-symbolic"),
+    ("Settings", "preferences-system-symbolic"),
 ];
 
 #[derive(Default)]
@@ -120,20 +122,20 @@ impl App for {TYPE} {
                 0 => {
                     ui.title("{NAME}");
                     ui.card(|ui| {
-                        ui.label(&format!("Você clicou {} vez(es).", self.clicks));
-                        if ui.primary_button("Clicar").clicked() {
+                        ui.label(&format!("You clicked {} time(s).", self.clicks));
+                        if ui.primary_button("Click Me").clicked() {
                             self.clicks += 1;
                         }
                     });
-                    ui.note("Edite src/main.rs e rode de novo com cargo run.");
+                    ui.note("Edit src/main.rs and run it again with cargo run.");
                 }
                 1 => {
-                    ui.title("Notas");
+                    ui.title("Notes");
                     ui.card(|ui| {
-                        if ui.text_input(&mut self.draft, "Escreva uma nota e aperte Enter").submitted() {
+                        if ui.text_input(&mut self.draft, "Write a note and press Enter").submitted() {
                             self.add_note();
                         }
-                        if ui.button("Adicionar").clicked() {
+                        if ui.button("Add").clicked() {
                             self.add_note();
                         }
                     });
@@ -146,9 +148,9 @@ impl App for {TYPE} {
                     }
                 }
                 _ => {
-                    ui.title("Ajustes");
+                    ui.title("Settings");
                     ui.card(|ui| {
-                        ui.switch_detail("Modo compacto", "Um exemplo de interruptor", &mut self.compact);
+                        ui.switch_detail("Compact Mode", "An example switch", &mut self.compact);
                     });
                 }
             });
@@ -159,11 +161,11 @@ impl App for {TYPE} {
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
+                title: "File".into(),
                 items: vec![
-                    MenuItem::action("new-note", "Nova nota").shortcut("Ctrl+N"),
+                    MenuItem::action("new-note", "New Note").shortcut("Ctrl+N"),
                     MenuItem::Separator,
-                    MenuItem::action("quit", "Sair").shortcut("Ctrl+Q"),
+                    MenuItem::action("quit", "Quit").shortcut("Ctrl+Q"),
                 ],
             },
             window_menu(Vec::new()),
@@ -179,18 +181,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 const README_TEMPLATE: &str = r#"# {NAME}
 
-App nativo do [mide](https://github.com/fabioaacarneiro/mide), feito com o framework
-mide-ui.
+Native [mide](https://github.com/fabioaacarneiro/mide) app, made with the mide-ui
+framework.
 
-## Rodar
+## Run
 
-Dentro de uma sessão do mide (ou do mide em janela, para desenvolver):
+Inside a mide session (or mide in a window, for development):
 
 ```sh
 cargo run
 ```
 
-## Instalar para o seu usuário
+## Install for your user
 
 ```sh
 cargo build --release
@@ -198,13 +200,13 @@ install -Dm755 target/release/{SLUG} ~/.local/bin/{SLUG}
 install -Dm644 data/{SLUG}.desktop ~/.local/share/applications/{SLUG}.desktop
 ```
 
-O app aparece no launcher e pode ser fixado na dock.
+The app shows up in the launcher and can be pinned to the dock.
 
-## Próximos passos
+## Next steps
 
-- Componentes disponíveis: `docs/mide-ui.md` no repositório do mide e a galeria
-  (`cargo run -p mide-ui --example mide-ui-demo` no repositório do mide).
-- Visual: siga o mapa do Tahoe em `docs/tahoe.md`.
+- Available components: `docs/mide-ui.md` in the mide repository and the gallery
+  (`cargo run -p mide-ui --example mide-ui-demo` in the mide repository).
+- Look: follow the Tahoe map in `docs/tahoe.md`.
 "#;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -212,23 +214,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (mut name, mut dir, mut local) = (None::<String>, PathBuf::from("."), false);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--dir" => dir = args.next().map(PathBuf::from).ok_or("--dir precisa de uma pasta")?,
+            "--dir" => dir = args.next().map(PathBuf::from).ok_or_else(|| tr!("--dir needs a folder").into_owned())?,
             "--local" => local = true,
             "-h" | "--help" => {
-                println!("uso: mide-new \"Nome do App\" [--dir PASTA] [--local]");
+                println!("{}", tr!("usage: mide-new \"App Name\" [--dir FOLDER] [--local]"));
                 return Ok(());
             }
             other => name = Some(other.to_string()),
         }
     }
     let Some(display) = name else {
-        eprintln!("uso: mide-new \"Nome do App\" [--dir PASTA] [--local]");
+        eprintln!("{}", tr!("usage: mide-new \"App Name\" [--dir FOLDER] [--local]"));
         std::process::exit(2);
     };
     let slug = slug(&display);
     let target = dir.join(&slug);
     if target.exists() {
-        return Err(format!("{} já existe", target.display()).into());
+        return Err(tr!("{path} already exists", path = target.display()).into());
     }
     // `--local`: o mide-ui clonado ao lado do mide (para quem desenvolve os dois).
     let dependency = if local {
@@ -244,8 +246,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         fs::write(&path, text)?;
     }
-    println!("App \"{display}\" criado em {}", target.display());
-    println!("Para rodar:  cd {} && cargo run", target.display());
+    println!("{}", tr!("App “{name}” created in {path}", name = display, path = target.display()));
+    println!("{}", tr!("To run it:  cd {path} && cargo run", path = target.display()));
     Ok(())
 }
 
