@@ -1671,6 +1671,8 @@ impl Bar {
                 Some(id) if matches!(id, MenuId::App | MenuId::Native(_) | MenuId::File | MenuId::Edit | MenuId::Window) => {
                     self.titles.iter().filter(|t| t.0 == id).map(|t| (t.1 + TITLE_GAP / 2.0 - 7.0, 3.0, t.2 - t.1 - TITLE_GAP + 14.0, fh - 6.0, 5.0)).collect()
                 }
+                // A nota fica dentro da cápsula de mídia: vidro na mesma pílula do destaque.
+                Some(MenuId::Media) => self.titles.iter().filter(|t| t.0 == MenuId::Media).map(|t| (t.1 - 1.0, 6.0, t.2 - t.1 + 3.0, fh - 12.0, (fh - 12.0) / 2.0)).collect(),
                 Some(id) => self.titles.iter().filter(|t| t.0 == id).map(|t| (t.1, 3.0, t.2 - t.1, fh - 6.0, 5.0)).collect(),
                 None => Vec::new(),
             };

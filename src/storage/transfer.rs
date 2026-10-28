@@ -34,6 +34,17 @@ pub fn current() -> Option<Clipboard> {
     serde_json::from_str(&ask_compositor("files-paste")?.join("\n")).ok()
 }
 
+/// O que está recortado agora (para desenhar esmaecido). `None` quando o compositor não
+/// guarda arquivos (versão antiga): o app usa o que ele mesmo recortou.
+pub fn cut_paths() -> Option<Vec<PathBuf>> {
+    let reply = ask_compositor("files-paste")?.join("\n");
+    if reply.trim() == "null" {
+        return Some(Vec::new());
+    }
+    let clipboard: Clipboard = serde_json::from_str(&reply).ok()?;
+    Some(if clipboard.cut { clipboard.paths } else { Vec::new() })
+}
+
 #[derive(Default)]
 pub struct Pasted {
     pub done: Vec<(PathBuf, PathBuf)>,

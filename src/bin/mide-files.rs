@@ -148,6 +148,9 @@ struct Files {
     clipboard_shared: bool,
     /// Itens recortados (Recortar / Ctrl+X): como Copiar, mas o Colar move para a pasta de destino, em vez de copiar.
     cut: Vec<PathBuf>,
+    /// O que está recortado em qualquer app (do compositor), lido no máximo a cada
+    /// 300 ms para desenhar esmaecido; `None` dentro = compositor sem esse recurso.
+    cut_seen: Option<(std::time::Instant, Option<Vec<PathBuf>>)>,
     /// Apps instalados (para "Abrir com"), carregados numa thread ao abrir.
     apps: Vec<mide::apps::App>,
     apps_rx: Option<Receiver<Vec<mide::apps::App>>>,
@@ -232,6 +235,7 @@ impl Files {
             clipboard: Vec::new(),
             clipboard_shared: false,
             cut: Vec::new(),
+            cut_seen: None,
             apps: Vec::new(),
             apps_rx: Some({
                 let (tx, rx) = channel();
@@ -644,6 +648,7 @@ impl Files {
     /// Recortar: puxa os itens para a área de transferência como para mover (no Colar, a
     /// ação é mover; sem isso, colar copiaria). Como o Ctrl+X.
     fn cut(&mut self, paths: &[PathBuf]) {
+        self.cut_seen = None;
         self.cut = paths.to_vec();
         self.clipboard = self.cut.clone();
         self.clipboard_shared = mide::storage::transfer::publish(&self.cut, true);
@@ -653,7 +658,17 @@ impl Files {
         tracing::info!("recortou(s): {} item(ns)", self.cut.len());
     }
 
+    /// Itens recortados agora (deste app ou de outro, como a Mesa), para desenhar
+    /// meio transparentes.
+    fn cut_now(&mut self) -> Vec<PathBuf> {
+        if self.cut_seen.as_ref().is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_millis(300)) {
+            self.cut_seen = Some((std::time::Instant::now(), mide::storage::transfer::cut_paths()));
+        }
+        self.cut_seen.as_ref().and_then(|(_, shared)| shared.clone()).unwrap_or_else(|| self.cut.clone())
+    }
+
     fn paste(&mut self) {
+        self.cut_seen = None;
         let Some(dir) = self.target_dir() else {
             return;
         };
@@ -677,6 +692,7 @@ impl Files {
         if self.clipboard_shared {
             self.clipboard.clear();
             self.cut.clear();
+            self.cut_seen = None;
             self.clipboard_shared = false;
             return;
         }
@@ -1022,6 +1038,7 @@ impl Files {
             "undo" => self.undo_last(),
             "copy" => {
                 self.cut.clear();
+                self.cut_seen = None;
                 self.clipboard = self.selection.clone();
                 self.clipboard_shared = mide::storage::transfer::publish(&self.clipboard, false);
                 if !self.clipboard_shared {
@@ -1399,6 +1416,7 @@ impl Files {
         if self.place != Place::Trash {
             if copy && !self.selection.is_empty() {
                 self.cut.clear();
+                self.cut_seen = None;
                 self.clipboard = self.selection.clone();
                 tracing::info!("copiado(s): {} item(ns)", self.clipboard.len());
                 self.clipboard_shared = mide::storage::transfer::publish(&self.clipboard, false);
@@ -1947,6 +1965,7 @@ impl Files {
                 });
             }
             let selection = self.selection.clone();
+            let cut_now = self.cut_now();
             let mut select = None;
             let reveal = self.reveal.clone();
             let mut revealed = false;
@@ -2119,6 +2138,9 @@ impl Files {
                                     let (name, icon) = label_of(entry);
                                     let arrow = if entry.is_dir { "›" } else { "" };
                                     let (r, _) = ui.tree_row(0, false, false, &icon, &name, &[(arrow, 18.0)], selected, false);
+                                    if cut_now.contains(&entry.path) {
+                                        veil(ui, r.rect, CUT_VEIL);
+                                    }
                                     item(ui, entry, r);
                                 }
                             });
@@ -2191,6 +2213,9 @@ impl Files {
                         ui.join_selection(above, below);
                     }
                     let (r, toggled) = ui.tree_row(*depth, expandable, open, &icon, &name, &cols, selected, i % 2 == 1);
+                    if cut_now.contains(&entry.path) {
+                        veil(ui, r.rect, CUT_VEIL);
+                    }
                     // Itens da pasta que acabou de abrir: aparecem esmaecendo, de cima
                     // para baixo (cada linha começa um pouco depois da anterior).
                     if let Some((folder, at, true)) = &self.expanding {
@@ -2228,6 +2253,9 @@ impl Files {
                             _ => Tile::Icon(&icon),
                         };
                         let r = ui.tile(image, &name, selected, size);
+                        if cut_now.contains(&entry.path) {
+                            veil(ui, r.rect, CUT_VEIL);
+                        }
                         if wants && cached.is_none() && r.rect.1 + r.rect.3 >= view.1 - 200.0 && r.rect.1 <= view.1 + view.3 + 200.0 {
                             wanted.push(entry.path.clone());
                         }
@@ -2595,6 +2623,7 @@ impl Files {
                 Action::Extract => self.run_job(entry.path.clone(), true),
                 Action::Copy => {
                     self.cut.clear();
+                    self.cut_seen = None;
                     self.clipboard = self.targets(&entry);
                     tracing::info!("copiado(s): {} item(ns)", self.clipboard.len());
                     self.clipboard_shared = mide::storage::transfer::publish(&self.clipboard, false);
@@ -3441,13 +3470,17 @@ fn parse_args(args: Vec<OsString>) -> Start {
 
 /// Véu da cor do fundo sobre `rect` (área atual), com opacidade `k` (0 a 1): o que
 /// está embaixo aparece conforme o véu some.
+/// Quanto o véu do fundo cobre um item recortado (fica meio transparente).
+const CUT_VEIL: f32 = 0.52;
+
 fn veil(ui: &mut Ui, rect: (f32, f32, f32, f32), k: f32) {
     if k <= 0.01 {
         return;
     }
     let bg = ui.theme().background;
-    ui.paint(|canvas, offset| {
-        if let Some(r) = tiny_skia::Rect::from_xywh(offset.0 + rect.0, offset.1 + rect.1, rect.2, rect.3) {
+    // `rect` vem das respostas dos componentes, já em coordenadas da janela.
+    ui.paint(|canvas, _| {
+        if let Some(r) = tiny_skia::Rect::from_xywh(rect.0, rect.1, rect.2, rect.3) {
             let mut paint = tiny_skia::Paint::default();
             paint.set_color(tiny_skia::Color::from_rgba8(bg[0], bg[1], bg[2], (k.clamp(0.0, 1.0) * 255.0) as u8));
             canvas.fill_rect(r, &paint, mide::ui::draw::tf(), None);
