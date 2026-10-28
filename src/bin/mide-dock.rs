@@ -289,8 +289,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     ICON_SIZE_NOW.store(configured_icon_size(), std::sync::atomic::Ordering::Relaxed);
     // Sem ocultar, a dock reserva o espaço dela: janelas maximizadas param acima.
+    // Com ocultar (inteligente), ela também nasce à mostra (`shown` = 1): só esconde
+    // quando o compositor avisa que há janela por cima. Antes nascia com a margem de
+    // escondida e `shown` = 1; como `covered` começa falso, nada a trazia de volta e a
+    // dock ficava fora da tela sem janela nenhuma por cima.
     let autohide = configured_autohide();
-    layer.set_margin(0, 0, if autohide { hidden_margin() } else { BOTTOM_MARGIN }, 0);
+    layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
     layer.set_exclusive_zone(if autohide { 0 } else { reserved_zone() });
     let mut catalog = Catalog::load();
     let items: Vec<DockApp> = pinned_ids()
