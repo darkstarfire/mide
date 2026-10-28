@@ -475,3 +475,6 @@
 - `cargo test --lib i18n` confere que todo texto de `tr!`/`trn`/`trc` tem tradução no pt-BR. Textos montados em tempo de execução (variáveis) não são vistos pelo teste: traduza a parte fixa com `tr!` e preencha com `{nome}`.
 - Dicas (I2): todo botão só de ícone tem dica (`ui.tooltip(&r, &tr!("New Folder"))`, ou `tool_button`/`tool_group`, que já mostram a dica). O `tooltip` do kit traduz de novo, sem efeito num texto já traduzido.
 - A bateria fixa `MIDE_LANG=pt_BR`; para ver em inglês, `MIDE_LANG=en` ao abrir o app.
+- Chave gravada nunca vira o texto traduzido: separe a chave (gravada, comparada) do nome exibido (`tr!` na hora de mostrar). Tabelas `const` com nomes de tela precisam de um teste de cobertura próprio (o teste do `tr!` só vê literais dentro da chamada).
+- Catálogos de áreas diferentes se juntam num só: o mesmo `msgid` com tradução diferente quebra o `mesma_chave_mesma_traducao`; use `trc("contexto", …)` quando o sentido muda.
+- A bateria copia `~/.config/user-dirs.dirs` para a configuração de teste: a altura do seletor de arquivos (e as coordenadas dos testes que clicam nele) depende de quantos favoritos existem na máquina.
