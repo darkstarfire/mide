@@ -141,6 +141,15 @@ for _ in $(seq 1 50); do
     sleep 0.2
 done
 sleep 1
+# Os apps só abrem depois da barra: sem a zona dela, a primeira janela nasce 28 pt
+# mais acima (a cascata usa a área útil) e os cliques por coordenada erram, o que
+# acontece com a máquina carregada (bateria em paralelo). No máximo 15 s.
+if [ "$#" -gt 0 ]; then
+    for _ in $(seq 150); do
+        grep -aqs "camada 'mide-bar' criada" "$OUT/mide.log" && break
+        sleep 0.1
+    done
+fi
 
 for app in "$@"; do
     WAYLAND_DISPLAY=$SOCK GDK_BACKEND=wayland timeout "${SCENARIO_TIMEOUT:-45}" sh -c "$app" >/dev/null 2>&1 &
