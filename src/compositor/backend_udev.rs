@@ -70,6 +70,8 @@ struct Head {
     damage_tracker: OutputDamageTracker,
     /// Um quadro foi entregue e espera o vblank: o próximo só depois dele.
     pending: bool,
+    /// Quando o quadro que espera o vblank foi entregue (para achar o vblank perdido).
+    queued_at: Instant,
     /// Tela do próprio notebook (eDP/LVDS), onde o PSR2 pede a tela inteira como dano.
     internal: bool,
     /// Cursor no plano de cursor da placa: imagem enviada, nome dela e posição.
@@ -215,6 +217,47 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             }
         })?;
         state.waker = Some(ping);
+    }
+
+    // Rede de segurança, a cada meio segundo: (1) a volta da suspensão percebida pelo
+    // relógio (o tempo suspenso conta no CLOCK_BOOTTIME e não no MONOTONIC), sem
+    // depender do aviso do logind, que pode não chegar; (2) a tela que espera há mais
+    // de 1 s o vblank de um quadro: o aviso se perdeu (suspensão, driver) e, sem isto,
+    // ela nunca mais desenharia, congelada no último quadro.
+    {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        const TICK: Duration = Duration::from_millis(500);
+        let gpu = gpu.clone();
+        let mut slept = suspended_time();
+        loop_handle.insert_source(Timer::from_duration(TICK), move |_, _, state: &mut State| {
+            let now_slept = suspended_time();
+            if now_slept.saturating_sub(slept) > Duration::from_secs(2) {
+                tracing::info!("volta da suspensão percebida pelo relógio ({:.0} s suspenso)", (now_slept - slept).as_secs_f32());
+                state.resumed = true;
+                state.activity();
+                state.redraw = true;
+            }
+            slept = now_slept;
+            let Ok(mut gpu) = gpu.try_borrow_mut() else {
+                return TimeoutAction::ToDuration(TICK);
+            };
+            if gpu.drm.is_active() && !gpu.blanked {
+                for head in gpu.heads.iter_mut().filter(|h| h.pending && h.queued_at.elapsed() > Duration::from_secs(1)) {
+                    tracing::warn!("tela {}: o vblank do último quadro não chegou em 1 s; recomeçando a tela", head.output.name());
+                    if let Err(err) = head.surface.surface().reset_state() {
+                        tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
+                    }
+                    head.surface.reset_buffers();
+                    head.pending = false;
+                    head.cursor = HwCursor::default();
+                    state.redraw = true;
+                }
+            }
+            if state.redraw {
+                render(&mut gpu, state);
+            }
+            TimeoutAction::ToDuration(TICK)
+        })?;
     }
 
     // As Configurações mudaram as telas (`outputs apply`): refaz pela configuração.
@@ -604,7 +647,7 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
     let damage_tracker = OutputDamageTracker::from_output(&output);
     // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
     let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
-    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, internal, cursor: HwCursor::default(), missing: None })
+    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).
@@ -832,6 +875,18 @@ fn set_dpms(gpu: &Gpu, on: bool) {
     }
 }
 
+/// Tempo que o computador passou suspenso desde que ligou: a diferença entre o relógio
+/// que conta a suspensão (`CLOCK_BOOTTIME`) e o que não conta (`CLOCK_MONOTONIC`).
+fn suspended_time() -> Duration {
+    let read = |clock| {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `ts` é um timespec válido e o relógio existe no Linux.
+        unsafe { libc::clock_gettime(clock, &mut ts) };
+        Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+    };
+    read(libc::CLOCK_BOOTTIME).saturating_sub(read(libc::CLOCK_MONOTONIC))
+}
+
 /// Recomeça as telas depois de o estado delas mudar por fora (DPMS, suspensão): sem
 /// quadro pendente, estado do CRTC reavaliado (o próximo quadro refaz o modo), buffers
 /// e cursor de novo.
@@ -944,7 +999,10 @@ fn render(gpu: &mut Gpu, state: &mut State) {
             Ok(())
         })();
         match result {
-            Ok(()) => head.pending = true,
+            Ok(()) => {
+                head.pending = true;
+                head.queued_at = Instant::now();
+            }
             Err(err) => {
                 tracing::warn!("falha ao desenhar a tela {}: {err}", head.output.name());
                 again = true;
