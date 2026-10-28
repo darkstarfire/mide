@@ -143,4 +143,44 @@ mod tests {
         }
         assert!(missing.is_empty(), "sem tradução em locales/pt_BR/*.po:\n{}", missing.join("\n"));
     }
+
+    /// O mesmo texto em inglês (com o mesmo contexto) não pode ter traduções diferentes
+    /// em áreas diferentes: os catálogos se juntam num só e valeria o último. Use `trc`
+    /// (contexto) quando o sentido muda de uma área para outra.
+    #[test]
+    fn mesma_chave_mesma_traducao() {
+        use std::collections::HashMap;
+        let mut seen: HashMap<(String, String), (String, String)> = HashMap::new();
+        let mut conflicts = Vec::new();
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("locales/pt_BR");
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+        files.sort();
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+            let (mut ctx, mut id) = (String::new(), None::<String>);
+            for line in text.lines().map(str::trim) {
+                let value = || string_literal(line.split_once(' ').map(|(_, v)| v).unwrap_or("")).map(|(v, _)| v);
+                if line.starts_with("msgctxt ") {
+                    ctx = value().unwrap_or_default();
+                } else if line.starts_with("msgid ") {
+                    id = value();
+                } else if line.starts_with("msgstr ") || line.starts_with("msgstr[0]") {
+                    if let (Some(key), Some(tr)) = (id.take(), value()) {
+                        if !key.is_empty() && !tr.is_empty() {
+                            let k = (std::mem::take(&mut ctx), key);
+                            match seen.get(&k) {
+                                Some((other, file)) if *other != tr => conflicts.push(format!("{:?}: {name} {tr:?} × {file} {other:?}", k.1)),
+                                _ => {
+                                    seen.insert(k, (tr, name.clone()));
+                                }
+                            }
+                        }
+                    }
+                    ctx.clear();
+                }
+            }
+        }
+        assert!(conflicts.is_empty(), "traduções diferentes para o mesmo texto:\n{}", conflicts.join("\n"));
+    }
 }
