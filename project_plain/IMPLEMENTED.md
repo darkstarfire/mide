@@ -2003,3 +2003,7 @@ Arquivos e Mesa publicam a seleção de arquivos no compositor, que oferece `tex
 # Unidades removíveis na Mesa e proteção contra exclusão (2026-10-28, versão 0.10.1)
 
 A Mesa agora detecta partições removíveis desmontadas pelo `lsblk` (incluindo volumes USB), mostra o rótulo do volume e tenta montá-lo com UDisks quando aberto. Unidades mantêm o menu próprio de abrir/ejetar; não aparecem as ações Copiar, Recortar ou Mover para a Lixeira, e o teclado também bloqueia essas operações. Confirmei no ambiente de desenvolvimento um disco USB `/dev/sdb` com partição exFAT `/dev/sdb1` sem montagem: essa era a razão para não aparecer com a leitura anterior, restrita a pontos de montagem. A consulta ao daemon UDisks não está disponível neste ambiente isolado, então o ato de montar depende de validação numa sessão do mide.
+
+## Diagnóstico e instalação das unidades removíveis (versão 0.10.2)
+
+As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-check` verifica `lsblk`, `udisksctl` e a conexão com o daemon UDisks, indicando quando volumes desmontados não poderão ser montados.

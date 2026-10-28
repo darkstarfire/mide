@@ -47,7 +47,7 @@ source "$HOME/.cargo/env"
 sudo apt install build-essential git pkg-config libinput-dev libseat-dev libudev-dev \
   libgbm-dev libdrm-dev libxkbcommon-dev libpam0g-dev libwayland-dev libegl-dev \
   libglib2.0-dev libgudev-1.0-dev xwayland xdg-desktop-portal xdg-desktop-portal-gtk \
-  xdg-desktop-portal-wlr pipewire wireplumber ffmpeg curl adwaita-icon-theme \
+  xdg-desktop-portal-wlr pipewire wireplumber ffmpeg curl adwaita-icon-theme udisks2 util-linux \
   dbus-user-session x11-xserver-utils
 
 # Fedora
@@ -55,16 +55,20 @@ sudo dnf install gcc git pkgconf-pkg-config libinput-devel libseat-devel systemd
   mesa-libgbm-devel libdrm-devel libxkbcommon-devel pam-devel wayland-devel \
   mesa-libEGL-devel glib2-devel libgudev-devel xorg-x11-server-Xwayland \
   xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr pipewire wireplumber \
-  ffmpeg curl adwaita-icon-theme xhost
+  ffmpeg curl adwaita-icon-theme xhost udisks2 util-linux
 
 # Arch
 sudo pacman -S base-devel git libinput seatd mesa libdrm libxkbcommon pam wayland glib2 \
   libgudev xorg-xwayland xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr \
-  pipewire wireplumber ffmpeg curl adwaita-icon-theme xorg-xhost
+  pipewire wireplumber ffmpeg curl adwaita-icon-theme xorg-xhost udisks2 util-linux
 ```
 
 Os nomes foram conferidos no Debian e no Ubuntu; no Fedora e no Arch podem variar um
 pouco (o `cargo build` diz qual biblioteca falta).
+
+Para mostrar volumes USB na Mesa mesmo antes da montagem, `util-linux` (`lsblk`) e
+`udisks2` (`udisksctl`) são necessários. Ao abrir o ícone, o mide solicita a montagem
+ao serviço UDisks e respeita a autorização do sistema.
 
 **3. Apps X11 dentro do mide** (opcional; sem isso, só os apps Wayland abrem):
 

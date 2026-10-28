@@ -157,6 +157,23 @@ else
     aviso "curl: sudo apt install curl (sem ele, a Calculadora não busca as cotações das moedas)"
 fi
 
+echo "== unidades removíveis da Mesa"
+if command -v lsblk >/dev/null; then
+    ok "lsblk instalado (detecção de partições e rótulos)"
+else
+    falta "lsblk: instale util-linux (a Mesa não consegue detectar volumes desmontados)"
+fi
+if command -v udisksctl >/dev/null; then
+    ok "udisksctl instalado (montagem/ejeção de volumes)"
+    if udisksctl status >/dev/null 2>&1; then
+        ok "daemon UDisks acessível"
+    else
+        aviso "daemon UDisks indisponível: volumes desmontados aparecem, mas não podem ser montados nesta sessão"
+    fi
+else
+    falta "udisksctl: instale udisks2 (a Mesa não consegue montar ou ejetar volumes)"
+fi
+
 echo "== sessão"
 sessao="$(command -v mide-session)"
 # A tela de login acha a sessão pelo Exec da entrada em wayland-sessions (pode apontar
