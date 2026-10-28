@@ -5,19 +5,20 @@
 //! monta um mapa com um grupo por layout e troca entre eles (Ctrl+Super+Espaço ou pela
 //! barra), sem recarregar.
 
-/// Layouts oferecidos: nome, layout e variante do xkb.
+/// Layouts oferecidos: nome (em inglês; traduzido por [`Choice::name`]), layout e
+/// variante do xkb.
 pub const LAYOUTS: &[(&str, &str, &str)] = &[
-    ("Português (Brasil, ABNT2)", "br", ""),
-    ("Inglês (EUA)", "us", ""),
-    ("Inglês (EUA, internacional, com acentos)", "us", "intl"),
-    ("Inglês (EUA, internacional AltGr)", "us", "altgr-intl"),
-    ("Inglês (Reino Unido)", "gb", ""),
-    ("Português (Portugal)", "pt", ""),
-    ("Espanhol (Espanha)", "es", ""),
-    ("Espanhol (América Latina)", "latam", ""),
-    ("Francês", "fr", ""),
-    ("Alemão", "de", ""),
-    ("Italiano", "it", ""),
+    ("Portuguese (Brazil, ABNT2)", "br", ""),
+    ("English (US)", "us", ""),
+    ("English (US, international with dead keys)", "us", "intl"),
+    ("English (US, international AltGr)", "us", "altgr-intl"),
+    ("English (UK)", "gb", ""),
+    ("Portuguese (Portugal)", "pt", ""),
+    ("Spanish (Spain)", "es", ""),
+    ("Spanish (Latin America)", "latam", ""),
+    ("French", "fr", ""),
+    ("German", "de", ""),
+    ("Italian", "it", ""),
 ];
 
 /// Um layout escolhido: `layout` e `variante` (vazia para a padrão).
@@ -33,12 +34,12 @@ impl Choice {
         if self.variant.is_empty() { self.layout.clone() } else { format!("{}:{}", self.layout, self.variant) }
     }
 
-    /// Nome para a tela (o da lista, ou o código).
+    /// Nome para a tela, no idioma da sessão (o da lista, ou o código).
     pub fn name(&self) -> String {
         LAYOUTS
             .iter()
             .find(|(_, l, v)| *l == self.layout && *v == self.variant)
-            .map(|(n, ..)| n.to_string())
+            .map(|(n, ..)| crate::i18n::tr(n).into_owned())
             .unwrap_or_else(|| self.id())
     }
 
@@ -115,6 +116,8 @@ mod tests {
 
     #[test]
     fn lista_de_layouts() {
+        crate::i18n::init();
+        crate::i18n::set_language("pt_BR");
         let list = parse("br, us:intl,,de");
         assert_eq!(list.len(), 3);
         assert_eq!(list[1], Choice { layout: "us".into(), variant: "intl".into() });

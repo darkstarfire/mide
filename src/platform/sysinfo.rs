@@ -2,8 +2,23 @@
 
 use std::fs;
 
-/// Pares (rótulo, valor) com as especificações da máquina.
+/// Rótulo da tela no idioma da sessão. Os textos dos catálogos vivem até o fim do
+/// programa, então o rótulo continua `&'static str`.
+fn label(text: &'static str) -> &'static str {
+    match crate::i18n::tr(text) {
+        std::borrow::Cow::Borrowed(t) => t,
+        std::borrow::Cow::Owned(t) => t.leak(),
+    }
+}
+
+/// Pares (rótulo, valor) com as especificações da máquina, com os rótulos no idioma
+/// da sessão.
 pub fn system_info() -> Vec<(&'static str, String)> {
+    raw_info().into_iter().map(|(l, v)| (label(l), v)).collect()
+}
+
+/// Pares (rótulo em inglês, valor): os rótulos servem de chave em [`machine`].
+fn raw_info() -> Vec<(&'static str, String)> {
     let os = fs::read_to_string("/etc/os-release")
         .ok()
         .and_then(|text| {
@@ -18,7 +33,7 @@ pub fn system_info() -> Vec<(&'static str, String)> {
             text.lines()
                 .find_map(|l| l.strip_prefix("model name").map(|v| v.trim_start_matches([' ', '\t', ':']).to_string()))
         })
-        .unwrap_or_else(|| "desconhecido".into());
+        .unwrap_or_else(|| crate::tr!("unknown").into_owned());
     let cores = fs::read_to_string("/proc/cpuinfo")
         .map(|t| t.lines().filter(|l| l.starts_with("processor")).count())
         .unwrap_or(0);
@@ -34,7 +49,7 @@ pub fn system_info() -> Vec<(&'static str, String)> {
         // com o vídeo e o firmware): arredonda para cima, como a etiqueta do pente.
         .map(|kb| format!("{} GB", (kb / 1024.0 / 1024.0).ceil() as u64))
         .unwrap_or_default();
-    let gpu = gpu_driver().unwrap_or_else(|| "desconhecido".into());
+    let gpu = gpu_driver().unwrap_or_else(|| crate::tr!("unknown").into_owned());
     let host = read_trim("/proc/sys/kernel/hostname").unwrap_or_default();
     let uptime = read_trim("/proc/uptime")
         .and_then(|t| t.split_whitespace().next()?.parse::<f64>().ok())
@@ -49,13 +64,13 @@ pub fn system_info() -> Vec<(&'static str, String)> {
         .unwrap_or_default();
 
     vec![
-        ("Sistema", os),
+        ("System", os),
         ("Kernel", kernel),
-        ("Processador", if cores > 0 { format!("{cpu} ({cores} núcleos)") } else { cpu }),
-        ("Memória", memory),
-        ("Vídeo", gpu),
-        ("Computador", host),
-        ("Ligado há", uptime),
+        ("Processor", if cores > 0 { crate::i18n::fill(&crate::i18n::trn("{cpu} ({n} core)", "{cpu} ({n} cores)", cores as u64), &[("cpu", &cpu)]) } else { cpu }),
+        ("Memory", memory),
+        ("Graphics driver", gpu),
+        ("Computer", host),
+        ("Uptime", uptime),
     ]
 }
 
@@ -99,28 +114,28 @@ pub fn machine() -> Machine {
     let host = read_trim("/proc/sys/kernel/hostname").unwrap_or_default();
     let name = dmi("product_name").unwrap_or_else(|| host.clone());
     let vendor = dmi("sys_vendor").unwrap_or_default();
-    let kind = if laptop { "Notebook" } else { "Computador de mesa" };
+    let kind = if laptop { crate::tr!("Laptop") } else { crate::tr!("Desktop computer") };
     let year = dmi("bios_date").and_then(|d| d.rsplit('/').next().map(str::to_string)).filter(|y| y.len() == 4);
     let subtitle = match (vendor.is_empty(), year) {
         (false, Some(y)) => format!("{vendor} · {kind}, {y}"),
         (false, None) => format!("{vendor} · {kind}"),
         (true, Some(y)) => format!("{kind}, {y}"),
-        (true, None) => kind.to_string(),
+        (true, None) => kind.into_owned(),
     };
-    let info = system_info();
+    let info = raw_info();
     let get = |k: &str| info.iter().find(|(l, _)| *l == k).map(|(_, v)| v.clone()).unwrap_or_default();
-    let gpu = gpu_name().unwrap_or_else(|| get("Vídeo"));
-    let os = get("Sistema");
+    let gpu = gpu_name().unwrap_or_else(|| get("Graphics driver"));
+    let os = get("System");
     let mut specs = vec![
-        ("Processador", get("Processador")),
-        ("Gráficos", gpu),
-        ("Memória", get("Memória")),
+        (label("Processor"), get("Processor")),
+        (label("Graphics"), gpu),
+        (label("Memory"), get("Memory")),
     ];
     if let Some(disk) = startup_disk() {
-        specs.push(("Disco de inicialização", disk));
+        specs.push((label("Startup disk"), disk));
     }
-    specs.push(("Nome do computador", host));
-    specs.push(("Sistema", format!("mide {} sobre {os}", env!("CARGO_PKG_VERSION"))));
+    specs.push((label("Computer name"), host));
+    specs.push((label("System"), crate::tr!("mide {version} on {os}", version = env!("CARGO_PKG_VERSION"), os = os)));
     Machine { name, subtitle, laptop, specs }
 }
 
@@ -156,5 +171,20 @@ fn startup_disk() -> Option<String> {
         (Some(m), None) => Some(m),
         (None, Some(s)) => Some(format!("{disk} ({})", crate::files::size_text(s))),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Os rótulos passam por `label` (longe de um `tr!("…")` que o teste de
+    /// `mide::i18n` enxergue): todos precisam de tradução.
+    #[test]
+    fn rotulos_tem_traducao() {
+        crate::i18n::init();
+        crate::i18n::set_language("pt_BR");
+        for text in ["System", "Kernel", "Processor", "Memory", "Graphics driver", "Computer", "Uptime", "Graphics", "Startup disk", "Computer name"] {
+            assert!(mide_ui::kit::i18n::is_translated(None, text), "sem tradução: {text}");
+        }
+        assert_eq!(super::label("Memory"), "Memória");
     }
 }
