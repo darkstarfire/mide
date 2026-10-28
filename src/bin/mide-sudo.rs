@@ -27,6 +27,7 @@ use std::{
 };
 
 use mide::elevate::{self, EnvMode, SudoFailure};
+use mide::tr;
 
 const USAGE: &str = "uso: mide-sudo [--name NOME] [--icon ICONE] [--gui] <programa> [argumentos]";
 
@@ -333,7 +334,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 fn main() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_sudo=info,mide::notify=info".into()))
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_sudo=info,mide::shell::notify=info".into()))
         .init();
     let req = match parse_args(std::env::args_os().skip(1).collect()) {
         Ok(req) => req,
@@ -365,7 +366,7 @@ fn main() {
 
     let Some(askpass) = sibling("mide-askpass") else {
         eprintln!("mide-sudo: mide-askpass não encontrado ao lado do mide-sudo");
-        mide::notify::send_and_wait("Senha de administrador", "Não foi possível pedir a senha", "O mide-askpass não está instalado.");
+        mide::notify::send_and_wait(&tr!("Administrator Password"), &tr!("Could not ask for the password"), &tr!("mide-askpass is not installed."));
         std::process::exit(1);
     };
     // Nome de quem pede: --name, o app aberto pelo launcher ou pela dock, ou o programa.
@@ -415,7 +416,7 @@ fn main() {
         Ok(r) => r,
         Err(err) => {
             eprintln!("mide-sudo: o sudo não abriu: {err}");
-            mide::notify::send_and_wait("Senha de administrador", "Não foi possível pedir a senha", &format!("O sudo não abriu: {err}"));
+            mide::notify::send_and_wait(&tr!("Administrator Password"), &tr!("Could not ask for the password"), &tr!("sudo did not start: {err}", err = err));
             std::process::exit(1);
         }
     };
@@ -432,11 +433,11 @@ fn main() {
     match elevate::classify_sudo_error(&tail) {
         Some(SudoFailure::WrongPassword) => {
             tracing::info!("{title}: senha incorreta {} vezes", asked.attempts.max(elevate::MAX_TRIES));
-            mide::notify::send_and_wait("Senha de administrador", "Senha incorreta", &format!("{title} não foi aberto: a senha de {user} foi recusada {} vezes.", asked.attempts.max(elevate::MAX_TRIES)));
+            mide::notify::send_and_wait(&tr!("Administrator Password"), &tr!("Incorrect Password"), &tr!("{title} was not opened: the password for {user} was rejected {n} times.", title = title, user = user, n = asked.attempts.max(elevate::MAX_TRIES)));
         }
         Some(SudoFailure::NotAllowed) | Some(SudoFailure::EnvRefused) => {
             tracing::info!("{title}: {user} não pode usar o sudo para este programa");
-            mide::notify::send_and_wait("Senha de administrador", "Sem permissão de administrador", &format!("{user} não pode usar o sudo para abrir {title}."));
+            mide::notify::send_and_wait(&tr!("Administrator Password"), &tr!("No Administrator Permission"), &tr!("{user} cannot use sudo to open {title}.", user = user, title = title));
         }
         Some(SudoFailure::NoPassword) => {
             tracing::info!("{title}: nenhuma senha foi dada");

@@ -546,6 +546,15 @@ fn window_elements(
         // Barra e título só existem nas janelas com decoração de servidor. Vêm antes do
         // conteúdo na lista, para ficarem na frente dele.
         if bar_h > 0 && p.genie.is_none() {
+            // Dica do botão sob o ponteiro (I2), na frente da barra.
+            let tip = state
+                .title_tip
+                .as_ref()
+                .filter(|t| t.window == p.window && !t.dismissed && t.since.elapsed() >= crate::title::TIP_DELAY)
+                .map(|t| t.button);
+            if let Some(button) = tip {
+                elements.extend(title_tip_elements(renderer, titles, shaders, decorations::button_rect(bar, button), button));
+            }
             let title = toplevel_title_of(&p.window);
             if let Some(text) = crate::title::element(renderer, titles, &title, p.focused, bar, p.opacity) {
                 elements.push(MideRenderElement::Title(text));
@@ -1110,6 +1119,40 @@ fn app_id_of(window: &Window) -> String {
 
 pub fn window_title(window: &Window) -> String {
     toplevel_title_of(window)
+}
+
+/// Dica de um botão da barra de título: cápsula no visual do `ui.tooltip` do kit
+/// (cor do menu, cantos 11, contorno fino, sombra leve) 6 px abaixo do botão.
+fn title_tip_elements(
+    renderer: &mut GlesRenderer,
+    titles: &mut crate::title::TitleRenderer,
+    shaders: &decorations::Shaders,
+    anchor: Rectangle<i32, Logical>,
+    button: decorations::Button,
+) -> Vec<MideRenderElement> {
+    use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+    let text = crate::title::tip_text(button);
+    let Some(image) = titles.tip_image(&text) else {
+        return Vec::new();
+    };
+    let h = crate::title::TIP_HEIGHT;
+    let w = image.width + 16;
+    let x = (anchor.loc.x + anchor.size.w / 2 - w / 2).max(anchor.loc.x - 4);
+    let y = anchor.loc.y + anchor.size.h + 6;
+    let capsule = Rectangle::new((x, y).into(), (w, h).into());
+    let dark = decorations::dark();
+    let mut out = Vec::new();
+    let location = crate::clip::phys((x + 8, y + (h - image.height) / 2).into()).to_f64();
+    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, None, smithay::backend::renderer::element::Kind::Unspecified) {
+        out.push(MideRenderElement::Title(el));
+    }
+    let stroke = if dark { [1.0, 1.0, 1.0, 30.0 / 255.0] } else { [0.0, 0.0, 0.0, 18.0 / 255.0] };
+    out.push(MideRenderElement::from(decorations::stroke_element(shaders, capsule, h / 2, stroke)));
+    let menu = if dark { [44.0 / 255.0, 44.0 / 255.0, 48.0 / 255.0, 245.0 / 255.0] } else { [246.0 / 255.0, 246.0 / 255.0, 248.0 / 255.0, 245.0 / 255.0] };
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, capsule, menu, h / 2)));
+    let shadow = Rectangle::new((x - 1, y + 1).into(), (w + 2, h + 2).into());
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, shadow, [0.0, 0.0, 0.0, 30.0 / 255.0], h / 2 + 1)));
+    out
 }
 
 fn toplevel_title_of(window: &Window) -> String {

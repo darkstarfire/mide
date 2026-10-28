@@ -50,7 +50,7 @@ impl Rpn {
 
     fn shown_with(&self, style: Style) -> String {
         if self.error {
-            return "Erro".into();
+            return crate::tr!("Error").into_owned();
         }
         match self.entry.as_deref() {
             Some("") => "0".into(),
@@ -468,7 +468,7 @@ mod tests {
         r.enter();
         r.digit(0);
         assert!(!r.binary(Binary::Div));
-        assert_eq!(r.display(), "Erro");
+        assert_eq!(r.display(), crate::tr!("Error"));
         r.binary(Binary::Add);
         assert_eq!(r.display(), "0");
         r.swap();
@@ -484,7 +484,7 @@ mod tests {
         r.digit(4);
         r.unary(Unary::Negate);
         r.unary(Unary::Sqrt);
-        assert_eq!(r.display(), "Erro");
+        assert_eq!(r.display(), crate::tr!("Error"));
         r.backspace();
         assert_eq!(r.display(), "-4");
     }
@@ -532,7 +532,7 @@ mod tests {
         assert_eq!(r.display(), "12");
         // Sem resultado: Erro, e a pilha fica.
         assert!(!r.apply(None));
-        assert_eq!(r.display(), "Erro");
+        assert_eq!(r.display(), crate::tr!("Error"));
         r.swap();
         assert_eq!(r.display(), "12");
     }

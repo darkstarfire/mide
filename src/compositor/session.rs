@@ -118,7 +118,7 @@ fn hold_power_button() {
             "/org/freedesktop/login1",
             Some("org.freedesktop.login1.Manager"),
             "Inhibit",
-            &("handle-power-key", "mide", "O mide pergunta antes de desligar", "block"),
+            &("handle-power-key", "mide", &*mide::tr!("mide asks before shutting down"), "block"),
         )?;
         reply.body().deserialize::<zbus::zvariant::OwnedFd>()
     })();

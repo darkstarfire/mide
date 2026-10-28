@@ -111,14 +111,14 @@ pub fn ffmpeg_args(w: i32, h: i32, system_audio: bool, microphone: bool, path: &
 /// Começa a gravar. Devolve o arquivo do vídeo.
 pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
     if state.recording.is_some() {
-        return Err("já está gravando".into());
+        return Err(mide::tr!("Already recording").into_owned());
     }
     let output = match &request.output {
         Some(name) => state.space.outputs().find(|o| o.name() == *name).cloned(),
         None => state.primary_output(),
     }
-    .ok_or("tela não encontrada")?;
-    let mode = output.current_mode().ok_or("tela sem modo")?;
+    .ok_or_else(|| mide::tr!("Display not found").into_owned())?;
+    let mode = output.current_mode().ok_or_else(|| mide::tr!("The display has no mode").into_owned())?;
     let scale = output.current_scale().fractional_scale();
     let screen = Rectangle::<i32, Physical>::from_size(mode.size);
     // Área em pontos → pixels, dentro da tela, com lados pares.
@@ -128,7 +128,7 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
                 ((x as f64 * scale).round() as i32, (y as f64 * scale).round() as i32).into(),
                 ((w as f64 * scale).round() as i32, (h as f64 * scale).round() as i32).into(),
             );
-            r.intersection(screen).ok_or("área fora da tela")?
+            r.intersection(screen).ok_or_else(|| mide::tr!("The area is outside the display").into_owned())?
         }
         None => screen,
     };
@@ -144,7 +144,7 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { "o ffmpeg não está instalado (sudo apt install ffmpeg)".to_string() } else { format!("ffmpeg: {e}") })?;
+        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { mide::tr!("ffmpeg is not installed (sudo apt install ffmpeg)").into_owned() } else { format!("ffmpeg: {e}") })?;
     let mut stdin = child.stdin.take().ok_or("ffmpeg sem entrada")?;
     // Poucos quadros na fila: se o ffmpeg atrasar, os novos esperam (são descartados no
     // desenho, que não pode travar).
@@ -191,12 +191,12 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
                 Ok(out) if out.status.success() => {
                     tracing::info!("gravação salva: {}", video.display());
                     mide::sounds::play("complete");
-                    mide::notify::send_open("Gravação de tela", "Gravação salva", &format!("{}\nClique para assistir.", video.display()), &video);
+                    mide::notify::send_open(&mide::tr!("Screen Recording"), &mide::tr!("Recording Saved"), &mide::tr!("{path}\nClick to watch.", path = video.display()), &video);
                 }
                 Ok(out) => {
                     let err = String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").to_string();
                     tracing::warn!("gravação: o ffmpeg saiu com {} ({err})", out.status);
-                    mide::notify::send("Gravação de tela", "A gravação não foi salva", &err);
+                    mide::notify::send(&mide::tr!("Screen Recording"), &mide::tr!("The recording was not saved"), &err);
                 }
                 Err(err) => tracing::warn!("gravação: {err}"),
             }

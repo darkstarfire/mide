@@ -651,6 +651,8 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         return;
     }
 
+    update_title_tip(state, pos);
+
     // Prévias da dock: acompanham o ponteiro e somem quando ele sai da dock e do painel.
     if let Some(preview) = state.preview.clone() {
         if crate::preview::keeps_open(state, &preview, pos) {
@@ -784,6 +786,12 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
         pointer.button(state, &ButtonEvent { button: code, state: button_state.into(), serial, time });
         pointer.frame(state);
         return;
+    }
+
+    // Clique esconde a dica do botão da barra (até o ponteiro sair dele).
+    if let Some(tip) = state.title_tip.as_mut().filter(|t| button_state == ButtonState::Pressed && !t.dismissed) {
+        tip.dismissed = true;
+        state.wake();
     }
 
     if button_state == ButtonState::Pressed && code == BTN_LEFT {
@@ -1149,6 +1157,40 @@ fn title_bar_under(state: &State, pos: Point<f64, Logical>) -> Option<(Window, d
     }
     let bar = decorations::bar_rect(loc, width);
     bar.to_f64().contains(pos).then_some((window, bar))
+}
+
+/// Acompanha o botão da barra de título sob o ponteiro, para a dica dele (I2):
+/// entrando num botão, marca a hora e acorda o laço quando der o tempo da dica;
+/// saindo, a dica some.
+fn update_title_tip(state: &mut State, pos: Point<f64, Logical>) {
+    let hit = if state.move_grab.is_some() || state.resize_grab.is_some() {
+        None
+    } else {
+        title_bar_under(state, pos).and_then(|(w, bar)| decorations::button_at(bar, pos).map(|b| (w, b)))
+    };
+    match hit {
+        Some((window, button)) => {
+            if state.title_tip.as_ref().is_some_and(|t| t.window == window && t.button == button) {
+                return;
+            }
+            let visible = state.title_tip.is_some();
+            state.title_tip = Some(crate::title::Tip { window, button, since: Instant::now(), dismissed: false });
+            // Parado, o compositor não desenha: o relógio acorda o laço para a dica aparecer.
+            let timer = smithay::reexports::calloop::timer::Timer::from_duration(crate::title::TIP_DELAY + std::time::Duration::from_millis(5));
+            let _ = state.loop_handle.insert_source(timer, |_, _, state| {
+                state.wake();
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            });
+            if visible {
+                state.wake();
+            }
+        }
+        None => {
+            if state.title_tip.take().is_some() {
+                state.wake();
+            }
+        }
+    }
 }
 
 /// Trata um clique na barra de título. Devolve `true` se o clique foi da barra.

@@ -322,6 +322,8 @@ pub struct State {
     pub decoration_state: XdgDecorationState,
     /// Verdadeiro enquanto o botão esquerdo está pressionado sobre uma barra de título.
     pub title_press: bool,
+    /// Dica do botão da barra de título sob o ponteiro (I2).
+    pub title_tip: Option<crate::title::Tip>,
     /// Último clique numa barra de título, para detectar o duplo clique.
     pub last_title_click: Option<(Window, Instant)>,
     /// Configuração carregada na inicialização (atalhos de teclado).
@@ -502,6 +504,7 @@ impl State {
             xdg_activation_state,
             decoration_state,
             title_press: false,
+            title_tip: None,
             last_title_click: None,
             config,
             quit_requested: false,

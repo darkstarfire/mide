@@ -606,7 +606,7 @@ fn outputs_for_menu(state: &State) -> String {
         let name = o.name();
         let model = o.physical_properties().model;
         let desc = if ["eDP", "LVDS", "DSI"].iter().any(|p| name.starts_with(p)) {
-            "Tela integrada".to_string()
+            mide::tr!("Built-in Display").into_owned()
         } else if !model.trim().is_empty() && !model.eq_ignore_ascii_case("unknown") {
             model.trim().to_string()
         } else {

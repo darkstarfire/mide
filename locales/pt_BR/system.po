@@ -1,0 +1,199 @@
+# Tradução do mide para o português do Brasil: instalação e permissões (mide-install,
+# mide-askpass, mide-sudo, mide-polkit-agent, mide-chooser), Player de Vídeo
+# (mide-player, mide::media) e o mide-new.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# mide-install
+msgid "Applications"
+msgstr "Aplicativos"
+
+msgid "“{name}” is not an AppImage."
+msgstr "\"{name}\" não é um AppImage."
+
+msgid "Install {name}"
+msgstr "Instalar {name}"
+
+msgid "Could not install: {err}"
+msgstr "Não foi possível instalar: {err}"
+
+msgid "Install “{name}”?"
+msgstr "Instalar \"{name}\"?"
+
+msgid "{reason} To install it, mide reads the name and the icon from inside it."
+msgstr "{reason} Para instalar, o mide lê o nome e o ícone de dentro dele."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Continue"
+msgstr "Continuar"
+
+msgid "Could not mark “{name}” as executable: {err}"
+msgstr "Não foi possível marcar \"{name}\" como executável: {err}"
+
+msgid "Version {version}"
+msgstr "Versão {version}"
+
+msgid "Drag the app to the {folder} folder to replace the installed version"
+msgstr "Arraste o app para a pasta {folder} para substituir a versão instalada"
+
+msgid "Drag the app to the {folder} folder"
+msgstr "Arraste o app para a pasta {folder}"
+
+msgid "Reading the AppImage…"
+msgstr "Lendo o AppImage…"
+
+msgid "This version is already in {folder}."
+msgstr "Esta versão já está em {folder}."
+
+msgid "Installed: {old}. This one: {new}."
+msgstr "Instalada: {old}. Esta: {new}."
+
+msgid "{name} is already in {folder}."
+msgstr "{name} já está em {folder}."
+
+msgid "Installing… {pct}%"
+msgstr "Instalando… {pct}%"
+
+msgid "{name} was installed in {folder} and already shows up in the launcher and in search."
+msgstr "{name} foi instalado em {folder} e já aparece no launcher e na busca."
+
+msgid "Not an app installed by mide"
+msgstr "Não é um app instalado pelo mide"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Move “{name}” to the Trash?"
+msgstr "Mover \"{name}\" para a Lixeira?"
+
+msgid "The AppImage leaves {folder} and goes to the Trash; the app leaves the launcher and search."
+msgstr "O AppImage sai de {folder} e vai para a Lixeira; o app sai do launcher e da busca."
+
+msgid "Move to Trash"
+msgstr "Mover para a Lixeira"
+
+msgid "Could not remove: {err}"
+msgstr "Não foi possível remover: {err}"
+
+# mide-askpass, mide-sudo e mide-polkit-agent
+msgid "Checking…"
+msgstr "Conferindo…"
+
+msgid "Password"
+msgstr "Senha"
+
+msgid "Enter Your Password"
+msgstr "Digite sua senha"
+
+msgid "Enter the administrator password to allow this."
+msgstr "Digite a senha de administrador para permitir."
+
+msgid "Enter the password for {user} to allow this."
+msgstr "Digite a senha de {user} para permitir."
+
+msgid "Command: {command}"
+msgstr "Comando: {command}"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "{app} wants to make changes to the system."
+msgstr "{app} quer fazer alterações no sistema."
+
+msgid "A program wants to make changes to the system."
+msgstr "Um programa quer fazer alterações no sistema."
+
+msgid "Incorrect password. Try again."
+msgstr "Senha incorreta. Tente de novo."
+
+msgid "Administrator Password"
+msgstr "Senha de administrador"
+
+msgid "Could not ask for the password"
+msgstr "Não foi possível pedir a senha"
+
+msgid "mide-askpass is not installed."
+msgstr "O mide-askpass não está instalado."
+
+msgid "sudo did not start: {err}"
+msgstr "O sudo não abriu: {err}"
+
+msgid "Incorrect Password"
+msgstr "Senha incorreta"
+
+msgid "{title} was not opened: the password for {user} was rejected {n} times."
+msgstr "{title} não foi aberto: a senha de {user} foi recusada {n} vezes."
+
+msgid "No Administrator Permission"
+msgstr "Sem permissão de administrador"
+
+msgid "{user} cannot use sudo to open {title}."
+msgstr "{user} não pode usar o sudo para abrir {title}."
+
+# mide-chooser
+msgid "Choose File"
+msgstr "Escolher arquivo"
+
+# mide-player e mide::media
+msgid "Could not open “{name}”."
+msgstr "Não foi possível abrir \"{name}\"."
+
+msgid "Open Video"
+msgstr "Abrir vídeo"
+
+msgid "Video Player"
+msgstr "Player de Vídeo"
+
+msgid "Video"
+msgstr "Vídeo"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "Open…"
+msgstr "Abrir…"
+
+msgid "Playback"
+msgstr "Reprodução"
+
+msgid "Pause"
+msgstr "Pausar"
+
+msgid "Play"
+msgstr "Reproduzir"
+
+msgid "Skip Back 15 Seconds"
+msgstr "Voltar 15 segundos"
+
+msgid "Skip Forward 15 Seconds"
+msgstr "Avançar 15 segundos"
+
+msgid "Loop"
+msgstr "Repetir"
+
+msgid "Mute"
+msgstr "Sem som"
+
+msgid "Unmute"
+msgstr "Com som"
+
+# mide-new
+msgid "--dir needs a folder"
+msgstr "--dir precisa de uma pasta"
+
+msgid "usage: mide-new \"App Name\" [--dir FOLDER] [--local]"
+msgstr "uso: mide-new \"Nome do App\" [--dir PASTA] [--local]"
+
+msgid "{path} already exists"
+msgstr "{path} já existe"
+
+msgid "App “{name}” created in {path}"
+msgstr "App \"{name}\" criado em {path}"
+
+msgid "To run it:  cd {path} && cargo run"
+msgstr "Para rodar:  cd {path} && cargo run"

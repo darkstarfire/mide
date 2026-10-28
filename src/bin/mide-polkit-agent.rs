@@ -29,6 +29,7 @@ use std::{
 };
 
 use mide::elevate::{self, FromWindow, HelperLine, Identity, ToWindow};
+use mide::tr;
 use zbus::zvariant::{OwnedValue, Value};
 
 const AGENT_PATH: &str = "/org/mide/PolicyKit1/AuthenticationAgent";
@@ -307,7 +308,7 @@ fn authenticate(req: &Request, session: &Session) -> Outcome {
                 reap(&mut child, session);
                 tracing::info!("senha recusada (tentativa {attempt} de {})", elevate::MAX_TRIES);
                 if attempt < elevate::MAX_TRIES {
-                    send_to_window(&mut to_window, ToWindow::Error("Senha incorreta. Tente de novo.".into()));
+                    send_to_window(&mut to_window, ToWindow::Error(tr!("Incorrect password. Try again.").into_owned()));
                 }
             }
         }

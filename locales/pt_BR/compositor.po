@@ -1,0 +1,67 @@
+# Tradução do mide para o português do Brasil: compositor (aviso de volume e brilho,
+# dicas da barra de título, gravação de tela, menu Janela).
+# Os textos em inglês (msgid) são os do código.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# Dicas dos botões da barra de título
+msgctxt "title bar"
+msgid "Close"
+msgstr "Fechar"
+
+msgctxt "title bar"
+msgid "Minimize"
+msgstr "Minimizar"
+
+msgctxt "title bar"
+msgid "Zoom"
+msgstr "Maximizar"
+
+# Aviso de volume, brilho e microfone
+msgid "Microphone Off"
+msgstr "Microfone desligado"
+
+msgid "Microphone On"
+msgstr "Microfone ligado"
+
+msgid "Muted"
+msgstr "Mudo"
+
+# Gravação de tela
+msgid "Already recording"
+msgstr "já está gravando"
+
+msgid "Display not found"
+msgstr "tela não encontrada"
+
+msgid "The display has no mode"
+msgstr "tela sem modo"
+
+msgid "The area is outside the display"
+msgstr "área fora da tela"
+
+msgid "ffmpeg is not installed (sudo apt install ffmpeg)"
+msgstr "o ffmpeg não está instalado (sudo apt install ffmpeg)"
+
+msgid "Screen Recording"
+msgstr "Gravação de tela"
+
+msgid "Recording Saved"
+msgstr "Gravação salva"
+
+msgid "{path}\nClick to watch."
+msgstr "{path}\nClique para assistir."
+
+msgid "The recording was not saved"
+msgstr "A gravação não foi salva"
+
+# Menu Janela (Mover para…)
+msgid "Built-in Display"
+msgstr "Tela integrada"
+
+# Trava do botão de ligar (logind)
+msgid "mide asks before shutting down"
+msgstr "O mide pergunta antes de desligar"

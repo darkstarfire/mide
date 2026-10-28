@@ -16,7 +16,7 @@ use super::parser::{Expr, Func, Node, Op, Post, Target};
 use super::value::{AngleUnit, DIV_ZERO, MIXED, TOO_BIG, Value};
 use super::{Context, Problem};
 
-const NEGATIVE_ROOT: &str = "Raiz de número negativo";
+const NEGATIVE_ROOT: &str = "Root of a negative number";
 
 /// As variáveis definidas até aqui: a chave (sem acento nem maiúscula) e o valor, ou
 /// a linha (contando de 0) da definição que deu erro.
@@ -45,8 +45,10 @@ pub struct Eval<'a> {
     pub used_rates: Cell<bool>,
 }
 
-fn problem(e: &Expr, message: impl Into<String>) -> Problem {
-    Problem { range: e.range.clone(), message: message.into() }
+/// Problema com a mensagem no idioma da sessão: as constantes em inglês (`DIV_ZERO`...)
+/// são traduzidas aqui; um texto já traduzido passa igual.
+fn problem(e: &Expr, message: impl AsRef<str>) -> Problem {
+    Problem { range: e.range.clone(), message: crate::i18n::tr(message.as_ref()).into_owned() }
 }
 
 impl Eval<'_> {
@@ -72,7 +74,7 @@ impl Eval<'_> {
         let v = match (&e.node, left) {
             (Node::Binary(op, _, b), Some(x)) => self.binary(*op, x, b, e)?,
             (Node::Post(post, _), Some(x)) => self.post(*post, x, e)?,
-            (Node::ToPercent(_), Some(x)) => x.to_percent().ok_or_else(|| problem(e, format!("Não dá para converter {} em %", x.label())))?,
+            (Node::ToPercent(_), Some(x)) => x.to_percent().ok_or_else(|| problem(e, crate::tr!("Can't convert {from} to {to}", from = x.label(), to = "%")))?,
             (Node::Convert(_, target), Some(x)) => self.convert(x, *target, e)?,
             // A espinha chega sempre com o filho calculado.
             (Node::Binary(..) | Node::Post(..) | Node::ToPercent(_) | Node::Convert(..), None) => return self.value(e),
@@ -98,8 +100,8 @@ impl Eval<'_> {
         let written = self.text.get(name.clone()).unwrap_or("");
         let message = match self.env.get(key) {
             Some(Ok(v)) => return Ok(*v),
-            Some(Err(line)) => format!("“{written}” tem um erro (linha {})", line + 1),
-            None => format!("“{written}” não é uma variável nem uma unidade"),
+            Some(Err(line)) => crate::tr!("“{name}” has an error (line {line})", name = written, line = line + 1),
+            None => crate::tr!("“{name}” isn't a variable or a unit", name = written),
         };
         Err(Problem { range: name.clone(), message })
     }
@@ -136,13 +138,13 @@ impl Eval<'_> {
         self.used_rates.set(true);
         let Some(rates) = self.ctx.rates else {
             let code = if from.code == "BRL" { to.code } else { from.code };
-            return Err(problem(e, format!("Sem cotação para {code} (nenhuma cotação guardada)")));
+            return Err(problem(e, crate::tr!("No exchange rate for {code} (no saved rates)", code = code)));
         };
         if let Some(r) = rates.convert(v, from.code, to.code) {
             return Ok(r);
         }
         match [from, to].into_iter().find(|c| !rates.has(c.code)) {
-            Some(c) => Err(problem(e, format!("Sem cotação para {} (última: {})", c.code, rates.date.format("%d/%m/%Y")))),
+            Some(c) => Err(problem(e, crate::tr!("No exchange rate for {code} (latest: {date})", code = c.code, date = rates.date.format("%d/%m/%Y")))),
             None => Err(problem(e, TOO_BIG)),
         }
     }
@@ -153,7 +155,7 @@ impl Eval<'_> {
             (Target::Unit(u), _) => x.convert_to(u).map_err(|m| problem(e, m)),
             (Target::Money(to), Value::Money(v, from)) if to.code == from.code => Ok(Value::Money(v, to)),
             (Target::Money(to), Value::Money(v, from)) => Ok(Value::Money(self.exchange(v, from, to, e)?, to)),
-            (Target::Money(to), _) => Err(problem(e, format!("Não dá para converter {} em {}", x.label(), to.symbol()))),
+            (Target::Money(to), _) => Err(problem(e, crate::tr!("Can't convert {from} to {to}", from = x.label(), to = to.symbol()))),
         }
     }
 
@@ -225,7 +227,7 @@ impl Eval<'_> {
 
     /// "{função} não existe para {valor}".
     fn missing(&self, name: &str, v: Value, e: &Expr) -> Problem {
-        problem(e, format!("{name} não existe para {}", v.text(self.ctx.style)))
+        problem(e, crate::tr!("{name} isn't defined for {value}", name = name, value = v.text(self.ctx.style)))
     }
 
     /// Funções de número sem unidade, pela tecla do teclado. O que não existe (NaN, ou
@@ -383,12 +385,11 @@ pub fn round_to(x: f64, digits: f64) -> Option<f64> {
 /// "{função} precisa de …", pelo número de argumentos que ela aceita.
 pub fn arity_message(name: &str, func: Func) -> String {
     let need = match func.arity() {
-        (1, 1) => "1 número".to_string(),
-        (1, 2) => "1 ou 2 números".to_string(),
-        (min, usize::MAX) => format!("{min} números ou mais"),
-        (min, _) => format!("{min} números"),
+        (1, 2) => crate::tr!("1 or 2 numbers").into_owned(),
+        (min, usize::MAX) => crate::i18n::trn("{n} or more numbers", "{n} or more numbers", min as u64),
+        (min, _) => crate::i18n::trn("{n} number", "{n} numbers", min as u64),
     };
-    format!("{name} precisa de {need}")
+    crate::tr!("{name} needs {count}", name = name, count = need)
 }
 
 #[cfg(test)]
@@ -409,6 +410,7 @@ mod tests {
 
     #[test]
     fn mensagem_de_argumentos() {
+        crate::i18n::set_language("pt_BR");
         assert_eq!(arity_message("hipot", Func::Hypot), "hipot precisa de 2 números");
         assert_eq!(arity_message("máx", Func::Max), "máx precisa de 2 números ou mais");
         assert_eq!(arity_message("sen", Func::Sin), "sen precisa de 1 número");

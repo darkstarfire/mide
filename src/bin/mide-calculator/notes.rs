@@ -219,7 +219,7 @@ impl Session {
     /// Lixeira: nada é gravado fora de ordem nem depois de a nota sair).
     fn wait_pending(&mut self) -> Option<(String, io::Result<()>)> {
         let pending = self.pending.take()?;
-        let result = pending.done.recv().unwrap_or_else(|_| Err(io::Error::other("a gravação parou")));
+        let result = pending.done.recv().unwrap_or_else(|_| Err(io::Error::other(mide::tr!("saving stopped").into_owned())));
         Some(self.finish(pending, result))
     }
 
@@ -230,7 +230,7 @@ impl Session {
         let result = match received {
             Ok(result) => result,
             Err(std::sync::mpsc::TryRecvError::Empty) => return None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(io::Error::other("a gravação parou")),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(io::Error::other(mide::tr!("saving stopped").into_owned())),
         };
         let pending = self.pending.take()?;
         Some(self.finish(pending, result))
@@ -436,8 +436,8 @@ pub struct Notes {
 /// Mensagem de um erro de gravação para quem usa.
 fn io_message(err: &io::Error) -> String {
     match err.kind() {
-        io::ErrorKind::PermissionDenied => "Sem permissão para gravar nesta pasta.".into(),
-        io::ErrorKind::StorageFull => "Não há espaço no disco.".into(),
+        io::ErrorKind::PermissionDenied => mide::tr!("No permission to save in this folder.").into_owned(),
+        io::ErrorKind::StorageFull => mide::tr!("There's no space left on the disk.").into_owned(),
         _ => err.to_string(),
     }
 }
@@ -632,8 +632,8 @@ impl Calculator {
     /// Os avisos das notas (por cima de tudo, no fim do `view`).
     pub(super) fn notes_dialogs(&mut self, ui: &mut Ui) {
         if let Some(message) = self.notes.close_error.clone() {
-            let text = format!("{message} A nota tem alterações que ainda não estão no disco.");
-            match ui.alert("A nota não foi gravada", &text, &["Cancelar", "Fechar sem gravar", "Tentar de novo"]) {
+            let text = mide::tr!("{message} The note has changes that aren't on disk yet.", message = message);
+            match ui.alert(&mide::tr!("The Note Wasn't Saved"), &text, &[&mide::tr!("Cancel"), &mide::tr!("Close Without Saving"), &mide::tr!("Try Again")]) {
                 Some(1) => {
                     self.notes.close_error = None;
                     self.notes.session = None;
@@ -649,7 +649,7 @@ impl Calculator {
                 None => {}
             }
         } else if let Some(message) = self.notes.export_error.clone()
-            && ui.alert("A nota não foi exportada", &message, &["OK"]).is_some()
+            && ui.alert(&mide::tr!("The Note Wasn't Exported"), &message, &[&mide::tr!("OK")]).is_some()
         {
             self.notes.export_error = None;
             ui.focus_next_input();
@@ -692,7 +692,7 @@ impl Calculator {
             }
             "nota-exportar" => {
                 let name = format!("{}.txt", self.notes.session().title().replace('/', "-"));
-                self.notes.export = Some(FileChooser::save("Exportar a nota com os resultados", None, &name));
+                self.notes.export = Some(FileChooser::save(&mide::tr!("Export Note with Results"), None, &name));
             }
             "notas-lista" => self.toggle_notes_list(ui),
             "desfazer" => {
@@ -748,27 +748,27 @@ impl Calculator {
         let has_result = self.notes.result(&ctx, line).is_some();
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
+                title: mide::tr!("File").into(),
                 items: vec![
-                    MenuItem::action("nota-nova", "Nova nota").shortcut("Ctrl+N"),
-                    MenuItem::action("nota-exportar", "Exportar com os resultados…"),
+                    MenuItem::action("nota-nova", &mide::tr!("New Note")).shortcut("Ctrl+N"),
+                    MenuItem::action("nota-exportar", &mide::tr!("Export with Results…")),
                     MenuItem::Separator,
-                    MenuItem::action("nota-lixeira", "Mover a nota para a Lixeira"),
+                    MenuItem::action("nota-lixeira", &mide::tr!("Move Note to Trash")),
                 ],
             },
             MenuGroup {
-                title: "Editar".into(),
+                title: mide::tr!("Edit").into(),
                 items: vec![
-                    MenuItem::action("desfazer", "Desfazer").shortcut("Ctrl+Z").enabled(undo),
-                    MenuItem::action("refazer", "Refazer").shortcut("Ctrl+Shift+Z").enabled(redo),
+                    MenuItem::action("desfazer", &mide::tr!("Undo")).shortcut("Ctrl+Z").enabled(undo),
+                    MenuItem::action("refazer", &mide::tr!("Redo")).shortcut("Ctrl+Shift+Z").enabled(redo),
                     MenuItem::Separator,
-                    MenuItem::action("cortar", "Cortar").shortcut("Ctrl+X").enabled(selection),
-                    MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C").enabled(selection),
-                    MenuItem::action("colar", "Colar").shortcut("Ctrl+V"),
-                    MenuItem::action("selecionar-tudo", "Selecionar tudo").shortcut("Ctrl+A"),
+                    MenuItem::action("cortar", &mide::tr!("Cut")).shortcut("Ctrl+X").enabled(selection),
+                    MenuItem::action("copiar", &mide::tr!("Copy")).shortcut("Ctrl+C").enabled(selection),
+                    MenuItem::action("colar", &mide::tr!("Paste")).shortcut("Ctrl+V"),
+                    MenuItem::action("selecionar-tudo", &mide::tr!("Select All")).shortcut("Ctrl+A"),
                     MenuItem::Separator,
-                    MenuItem::action("copiar-resultado", "Copiar o resultado da linha").enabled(has_result),
-                    MenuItem::action("copiar-nota", "Copiar a nota com os resultados"),
+                    MenuItem::action("copiar-resultado", &mide::tr!("Copy Line Result")).enabled(has_result),
+                    MenuItem::action("copiar-nota", &mide::tr!("Copy Note with Results")),
                 ],
             },
         ]
@@ -852,7 +852,8 @@ impl Calculator {
             // Os ids na ordem desenhada (a gravação pode reordenar a lista no meio).
             let ids: Vec<String> = session.list.iter().map(|n| n.id.clone()).collect();
             let selected = session.current_index() + 1;
-            let mut items: Vec<(&str, &str)> = vec![("Notas", "")];
+            let notes_title = mide::tr!("Notes");
+            let mut items: Vec<(&str, &str)> = vec![(notes_title.as_ref(), "")];
             items.extend(titles.iter().map(|title| (title.as_str(), NOTE_ICON)));
             let mut taken = false;
             let chosen = ui.sidebar_area(&items, selected, |ui, _| taken = self.notes_page(ui, &t));
@@ -881,16 +882,22 @@ impl Calculator {
         let title = self.notes.session().title();
         let mut clicked: Option<&str> = None;
         ui.toolbar(|ui| {
-            if ui.icon_button("view-list-symbolic", "☰", true).clicked() {
+            let r = ui.icon_button("view-list-symbolic", "☰", true);
+            ui.tooltip(&r, &mide::tr!("Show Notes List"));
+            if r.clicked() {
                 clicked = Some("lista");
             }
             let (_, _, inner, _) = ui.region();
             ui.sized((inner - 130.0).max(60.0), |ui| ui.strong(&title));
             ui.push_right(76.0);
-            if ui.icon_button("document-new-symbolic", "+", true).clicked() {
+            let r = ui.icon_button("document-new-symbolic", "+", true);
+            ui.tooltip(&r, &mide::tr!("New Note"));
+            if r.clicked() {
                 clicked = Some("nova");
             }
-            if ui.icon_button("user-trash-symbolic", "🗑", true).clicked() {
+            let r = ui.icon_button("user-trash-symbolic", "🗑", true);
+            ui.tooltip(&r, &mide::tr!("Move Note to Trash"));
+            if r.clicked() {
                 clicked = Some("lixeira");
             }
         });
@@ -919,11 +926,12 @@ impl Calculator {
             let key = CacheKey { id: id.clone(), rates: ctx.rates.map(|r| r.date), version: d.version, radians: ctx.radians, style: ctx.style };
             decorations(&evaluate_cached(cache, key, &d.text, &ctx), t)
         };
+        let placeholder = mide::tr!("Write a calculation and end it with “=” (for example, 120 × 3 =)");
         let look = TextAreaLook {
             line_numbers: false,
             sans: true,
             size: Some(FONT),
-            placeholder: "Escreva uma conta e termine com “=” (por exemplo, 120 × 3 =)",
+            placeholder: &placeholder,
             decorate: Some(&mut decorate),
             ..Default::default()
         };
@@ -937,27 +945,27 @@ impl Calculator {
         let mut chosen: Option<&str> = None;
         ui.context_menu(&r.response, |m| {
             if let Some(shown) = &menu_result {
-                if m.item(&format!("Copiar “{}”", shown.text)) {
+                if m.item(&mide::tr!("Copy “{text}”", text = shown.text)) {
                     chosen = Some("copiar-este");
                 }
-                if m.item("Copiar só o número") {
+                if m.item(&mide::tr!("Copy Number Only")) {
                     chosen = Some("copiar-numero");
                 }
-                if m.item("Levar para a calculadora") {
+                if m.item(&mide::tr!("Send to Calculator")) {
                     chosen = Some("levar");
                 }
                 m.separator();
             }
-            if m.item("Cortar") {
+            if m.item(&mide::tr!("Cut")) {
                 chosen = Some("cortar");
             }
-            if m.item("Copiar") {
+            if m.item(&mide::tr!("Copy")) {
                 chosen = Some("copiar");
             }
-            if m.item("Colar") {
+            if m.item(&mide::tr!("Paste")) {
                 chosen = Some("colar");
             }
-            if m.item("Selecionar tudo") {
+            if m.item(&mide::tr!("Select All")) {
                 chosen = Some("selecionar-tudo");
             }
         });
@@ -986,12 +994,12 @@ impl Calculator {
             self.money.ensure(online, false, ui.waker());
         }
         let error = if read_only {
-            Some("Esta nota não está em UTF-8: dá para ler, mas as mudanças não são gravadas.".to_string())
+            Some(mide::tr!("This note isn't in UTF-8: you can read it, but changes aren't saved.").into_owned())
         } else {
             lines.get(line).and_then(|l| l.problems.first()).map(|p| p.message.clone())
         };
         // Sem erro na linha do cursor, a fonte e a data das cotações em uso (em cinza).
-        let info = (error.is_none() && needs_rates).then(|| format!("Cotações: {}", self.money.band(self.currency_online())));
+        let info = (error.is_none() && needs_rates).then(|| mide::tr!("Exchange rates: {band}", band = self.money.band(self.currency_online())));
         let message = error.clone().or(info);
         let is_error = error.is_some();
         let mut toggle = false;
@@ -999,7 +1007,7 @@ impl Calculator {
         ui.row(|ui| {
             ui.push_right(100.0);
             ui.sized(100.0, |ui| {
-                let r = ui.button(if ctx.radians { "Radianos" } else { "Graus" });
+                let r = ui.button(&if ctx.radians { mide::tr!("Radians") } else { mide::tr!("Degrees") });
                 toggle = r.clicked();
                 button = Some(r.rect);
             });

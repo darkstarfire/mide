@@ -106,9 +106,9 @@ pub enum Unary {
 }
 
 impl Unary {
-    /// Nome no histórico.
-    pub fn name(self) -> &'static str {
-        match self {
+    /// Nome no histórico, traduzido ("sin" vira "sen" no pt-BR).
+    pub fn name(self) -> std::borrow::Cow<'static, str> {
+        crate::i18n::tr(match self {
             Unary::Square => "sqr",
             Unary::Cube => "cube",
             Unary::Exp => "exp",
@@ -121,21 +121,21 @@ impl Unary {
             Unary::Log10 => "log",
             Unary::Log2 => "log₂",
             Unary::Fact => "fact",
-            Unary::Sin => "sen",
+            Unary::Sin => "sin",
             Unary::Cos => "cos",
-            Unary::Tan => "tg",
-            Unary::Asin => "arcsen",
+            Unary::Tan => "tan",
+            Unary::Asin => "arcsin",
             Unary::Acos => "arccos",
-            Unary::Atan => "arctg",
-            Unary::Sinh => "senh",
+            Unary::Atan => "arctan",
+            Unary::Sinh => "sinh",
             Unary::Cosh => "cosh",
-            Unary::Tanh => "tgh",
-            Unary::Asinh => "arcsenh",
+            Unary::Tanh => "tanh",
+            Unary::Asinh => "arcsinh",
             Unary::Acosh => "arccosh",
-            Unary::Atanh => "arctgh",
+            Unary::Atanh => "arctanh",
             Unary::Percent => "%",
             Unary::Negate => "−",
-        }
+        })
     }
 
     /// Aplica a `x`; `radians`: ângulos em radianos (senão, em graus).
@@ -374,7 +374,7 @@ impl Engine {
 
     fn shown_with(&self, style: Style) -> String {
         if self.error {
-            return "Erro".into();
+            return crate::tr!("Error").into_owned();
         }
         match &self.shown {
             Shown::Typed(t) if t.is_empty() => "0".into(),
@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(result("50%"), "0,5");
         assert_eq!(result("12n"), "-12");
         assert_eq!(result("123<"), "12");
-        assert_eq!(result("1/0="), "Erro");
+        assert_eq!(result("1/0="), crate::tr!("Error"));
         assert_eq!(result("1/0=c7"), "7");
         assert_eq!(result("1/0=7"), "7");
     }
@@ -910,7 +910,7 @@ mod tests {
         assert_eq!(e.display(), "0");
         let mut e = run(&keys("90"));
         e.press(Key::Un(Unary::Tan));
-        assert_eq!(e.display(), "Erro");
+        assert_eq!(e.display(), crate::tr!("Error"));
         let mut e = run(&keys("5"));
         e.press(Key::Un(Unary::Fact));
         assert_eq!(e.display(), "120");
@@ -988,7 +988,7 @@ mod tests {
         assert_eq!(result("2,50="), "2,5");
         // Colar depois do Erro começa uma conta nova.
         let mut e = run(&keys("1/0*"));
-        assert_eq!(e.display(), "Erro");
+        assert_eq!(e.display(), crate::tr!("Error"));
         e.paste("5");
         e.press(Key::Equals);
         assert_eq!(e.display(), "5");
@@ -1122,7 +1122,7 @@ mod tests {
         // Com Erro, nada acontece.
         let mut e = run(&keys("1/0="));
         e.apply(5.0, "x");
-        assert_eq!(e.display(), "Erro");
+        assert_eq!(e.display(), crate::tr!("Error"));
     }
 
     #[test]

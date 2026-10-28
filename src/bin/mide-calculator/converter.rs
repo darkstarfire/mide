@@ -29,9 +29,10 @@ pub fn is_money(category: usize) -> bool {
     category == units::money()
 }
 
-/// Nome da categoria ("Comprimento", "Moeda").
-pub fn category_name(category: usize) -> &'static str {
-    if is_money(category) { "Moeda" } else { units::categories()[category].name }
+/// Nome da categoria na tela, traduzido ("Length" ou "Comprimento", "Currency" ou
+/// "Moeda").
+pub fn category_name(category: usize) -> std::borrow::Cow<'static, str> {
+    if is_money(category) { mide::tr!("Currency") } else { mide::i18n::tr(units::categories()[category].display) }
 }
 
 /// Identificador da categoria no log e no config ("comprimento", "moeda").
@@ -39,24 +40,27 @@ pub fn category_id(category: usize) -> &'static str {
     if is_money(category) { units::MONEY_ID } else { units::categories()[category].id }
 }
 
-/// Todas as categorias, na ordem do seletor e do menu: a Moeda primeiro.
+/// Todas as categorias, na ordem do seletor e do menu: a Moeda primeiro, depois as
+/// outras em ordem alfabética do nome traduzido.
 pub fn category_order() -> Vec<usize> {
-    std::iter::once(units::money()).chain(0..units::money()).collect()
+    let mut rest: Vec<usize> = (0..units::money()).collect();
+    rest.sort_by_cached_key(|&c| mide::apps::fold(&category_name(c)));
+    std::iter::once(units::money()).chain(rest).collect()
 }
 
 fn money(unit: usize) -> &'static Currency {
     &currency::currencies()[unit]
 }
 
-/// (nome, símbolo, identificador) de uma unidade; numa moeda, o símbolo é o código
-/// ("USD": "$" sozinho seria ambíguo na tela).
-pub fn unit_label(category: usize, unit: usize) -> (&'static str, &'static str, &'static str) {
+/// (nome traduzido, símbolo, identificador) de uma unidade; numa moeda, o símbolo é o
+/// código ("USD": "$" sozinho seria ambíguo na tela).
+pub fn unit_label(category: usize, unit: usize) -> (std::borrow::Cow<'static, str>, &'static str, &'static str) {
     if is_money(category) {
         let c = money(unit);
-        (c.name, c.code, c.code)
+        (mide::i18n::tr(c.display), c.code, c.code)
     } else {
         let u = &units::categories()[category].units[unit];
-        (u.name, u.symbol, u.id)
+        (mide::i18n::tr(u.display), u.symbol, u.id)
     }
 }
 
@@ -91,7 +95,7 @@ impl Conv {
     }
 
     /// Nome, símbolo e identificador da unidade de uma linha.
-    pub fn label(&self, row: usize) -> (&'static str, &'static str, &'static str) {
+    pub fn label(&self, row: usize) -> (std::borrow::Cow<'static, str>, &'static str, &'static str) {
         unit_label(self.category, self.unit[row])
     }
 
@@ -168,9 +172,9 @@ impl Conv {
     /// volta para a categoria por `category_order()[grupo]`.
     pub fn picker(&self, row: usize) -> ListPicker {
         let order = category_order();
-        let title = if row == self.active { "Converter de" } else { "Converter para" };
+        let title = if row == self.active { mide::tr!("Convert From") } else { mide::tr!("Convert To") };
         let group = order.iter().position(|&c| c == self.category).unwrap_or(0);
-        ListPicker::new(title, "Todas as categorias", "Buscar unidade", picker_groups(), (group, self.unit[row]))
+        ListPicker::new(&title, &mide::tr!("All Categories"), &mide::tr!("Search Units"), picker_groups(), (group, self.unit[row]))
     }
 }
 
@@ -184,14 +188,20 @@ fn picker_groups() -> Vec<PickGroup> {
                         .iter()
                         .map(|m| {
                             let keys: Vec<&str> = [m.code, m.symbol(), m.plural, "moeda", "dinheiro", "câmbio"].into_iter().chain(m.aliases.iter().copied()).collect();
-                            PickItem::new(m.name, m.code, &keys)
+                            let mut item = PickItem::new(&mide::i18n::tr(m.display), m.code, &keys);
+                            // A busca acha pelo nome nos dois idiomas, qualquer que seja o da tela.
+                            for extra in [m.name, m.display, "currency", "money", "exchange"] {
+                                item.search.push(' ');
+                                item.search.push_str(&mide::apps::fold(extra));
+                            }
+                            item
                         })
                         .collect();
-                    return PickGroup { name: "Moeda".into(), items };
+                    return PickGroup { name: category_name(c).into_owned(), items };
                 }
                 let cat = &units::categories()[c];
                 PickGroup {
-                    name: cat.name.into(),
+                    name: category_name(c).into_owned(),
                     items: cat
                         .units
                         .iter()
@@ -199,10 +209,11 @@ fn picker_groups() -> Vec<PickGroup> {
                             // O símbolo e os apelidos da unidade são as chaves exatas da busca
                             // ("MB"); os da categoria ("peso" na Massa) só entram na busca,
                             // sem passar à frente ("peso" acha antes o Peso argentino).
-                            let detail = if u.detail.is_empty() { u.symbol.to_string() } else { format!("{} · {}", u.symbol, u.detail) };
+                            let detail = if u.detail.is_empty() { u.symbol.to_string() } else { format!("{} · {}", u.symbol, mide::i18n::tr(u.detail)) };
                             let keys: Vec<&str> = std::iter::once(u.symbol).chain(u.aliases.iter().copied()).collect();
-                            let mut item = PickItem::new(u.name, &detail, &keys);
-                            for alias in cat.aliases {
+                            let mut item = PickItem::new(&mide::i18n::tr(u.display), &detail, &keys);
+                            // O nome nos dois idiomas, qualquer que seja o da tela.
+                            for alias in [u.name, u.display].iter().chain(cat.aliases) {
                                 item.search.push(' ');
                                 item.search.push_str(&mide::apps::fold(alias));
                             }
@@ -423,6 +434,7 @@ mod tests {
 
     #[test]
     fn busca_por_peso_acha_as_moedas_antes_da_massa() {
+        mide::i18n::set_language("pt_BR");
         let groups = picker_groups();
         let found = mide::kit::picker::filter(&groups, "peso");
         // O primeiro resultado é uma moeda (grupo 0, a Moeda); a Massa vem depois (o
@@ -432,6 +444,7 @@ mod tests {
         assert!(found.iter().any(|&(g, _)| g == mass));
         // A busca exata pelo símbolo continua na frente ("kg").
         let (g, i) = mide::kit::picker::filter(&groups, "kg")[0];
+        mide::i18n::set_language("pt_BR");
         assert_eq!(groups[g].items[i].label, "Quilogramas");
     }
 

@@ -445,8 +445,8 @@ fn build(
     // centrado no retângulo dado, descontadas as margens do título das janelas.
     let margin = crate::title::TITLE_SIDE_MARGIN;
     let (text, center, width) = match reading.kind {
-        Kind::Mic => (if reading.muted { "Microfone desligado".to_string() } else { "Microfone ligado".to_string() }, W / 2 + 18, W - 70),
-        _ if reading.muted => ("Mudo".to_string(), W - 34, 50),
+        Kind::Mic => (if reading.muted { mide::tr!("Microphone Off").into_owned() } else { mide::tr!("Microphone On").into_owned() }, W / 2 + 18, W - 70),
+        _ if reading.muted => (mide::tr!("Muted").into_owned(), W - 34, 50),
         _ => (format!("{}%", (reading.level * 100.0).round() as i32), W - 34, 50),
     };
     let text_box = Rectangle::new(at(center - width / 2 - margin, 0), (width + 2 * margin, H).into());

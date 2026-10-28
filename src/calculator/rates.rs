@@ -108,16 +108,16 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// O que dizer à pessoa, em português do Brasil.
-    pub fn message(self) -> &'static str {
+    /// O que dizer à pessoa, no idioma da sessão.
+    pub fn message(self) -> std::borrow::Cow<'static, str> {
         match self {
-            Outcome::Updated => "Cotações atualizadas",
-            Outcome::NoBulletin => "O Banco Central ainda não publicou cotações mais novas",
-            Outcome::Offline => "Houve um problema de rede e não foi possível buscar as cotações agora",
-            Outcome::NeedsLogin => "A rede parece pedir login (Wi-Fi de hotel ou aeroporto) e não foi possível buscar as cotações agora",
-            Outcome::Unexpected => "O Banco Central respondeu algo inesperado; vale a última cotação guardada",
-            Outcome::NoCurl => "Para buscar as cotações, instale o programa curl",
-            Outcome::Disk => "Não foi possível gravar as cotações na pasta do cache",
+            Outcome::Updated => crate::tr!("Exchange rates updated"),
+            Outcome::NoBulletin => crate::tr!("The Central Bank of Brazil hasn't published newer rates yet"),
+            Outcome::Offline => crate::tr!("There was a network problem and the exchange rates couldn't be fetched now"),
+            Outcome::NeedsLogin => crate::tr!("The network seems to require a login (hotel or airport Wi-Fi) and the exchange rates couldn't be fetched now"),
+            Outcome::Unexpected => crate::tr!("The Central Bank sent an unexpected response; the last saved rate still applies"),
+            Outcome::NoCurl => crate::tr!("To fetch exchange rates, install the curl program"),
+            Outcome::Disk => crate::tr!("The exchange rates couldn't be saved in the cache folder"),
         }
     }
 
