@@ -157,10 +157,10 @@ else
     echo "FALHA ocultar a dock grava no config.toml"; FAIL=$((FAIL + 1))
 fi
 sed -i '/autohide = true/d' "$SCFG/mide/config.toml"
-# Barra superior (B12): "Configurações" (engrenagem) é o primeiro interruptor da lista,
-# em (808, 237), abaixo de "Mostrar o fundo da barra". Escondido, some da barra na hora
+# Barra superior (B12): "Configurações" (engrenagem) é o segundo interruptor da lista,
+# em (808, 293), depois de "Controles de mídia" (808, 237). Escondido, some da barra na hora
 # (a barra relê a cada meio segundo).
-RUST_LOG="mide=debug,mide_bar=info" check "Configurações → Barra superior: esconder a engrenagem tira o item da barra" "itens da barra: sound wifi bluetooth battery control$" "400 click 808 237; 520 list" "$SETTINGS bar"
+RUST_LOG="mide=debug,mide_bar=info" check "Configurações → Barra superior: esconder a engrenagem tira o item da barra" "itens da barra: media sound wifi bluetooth battery control$" "400 click 808 293; 520 list" "$SETTINGS bar"
 if grep -q "gear = false" "$SCFG/mide/config.toml"; then
     echo "ok    esconder item da barra grava no config.toml"; PASS=$((PASS + 1))
 else
