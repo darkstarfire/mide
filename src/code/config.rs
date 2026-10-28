@@ -158,23 +158,23 @@ fn config_dir() -> Option<PathBuf> {
     Some(base.join("mide"))
 }
 
-/// Lê o texto do `code-servers.toml`. O erro vem em português, com a linha (para a
-/// barra de status do Code mostrar ao salvar).
+/// Lê o texto do `code-servers.toml`. O erro vem no idioma da sessão, com a linha
+/// (para a barra de status do Code mostrar ao salvar).
 pub fn parse_servers(text: &str) -> Result<Vec<Server>, String> {
     let file: ServersFile = toml::from_str(text).map_err(|e| {
         let line = e.span().map(|s| text[..s.start.min(text.len())].matches('\n').count() + 1);
         let what = e.message().to_string();
         match line {
-            Some(l) => format!("linha {l}: {what}"),
+            Some(l) => crate::tr!("line {line}: {error}", line = l, error = what),
             None => what,
         }
     })?;
     for (i, s) in file.server.iter().enumerate() {
         if s.command.trim().is_empty() {
-            return Err(format!("servidor {} sem \"command\"", i + 1));
+            return Err(crate::tr!("server {n} has no \"command\"", n = i + 1));
         }
         if s.languages.is_empty() {
-            return Err(format!("servidor {} ({}) sem \"languages\"", i + 1, s.command));
+            return Err(crate::tr!("server {n} ({command}) has no \"languages\"", n = i + 1, command = s.command));
         }
     }
     Ok(file.server)
@@ -239,7 +239,7 @@ mod tests {
         assert!(short[0].enabled && short[0].args.is_empty());
         // Erros com a linha.
         let err = parse_servers("[[server]]\nlanguages = [\"go\"]\ncommand = gopls\n").unwrap_err();
-        assert!(err.starts_with("linha 3"), "{err}");
+        assert!(err.contains(" 3: "), "{err}");
         assert!(parse_servers("[[server]]\nlanguages = []\ncommand = \"x\"\n").unwrap_err().contains("languages"));
         // Arquivo vazio: nenhum servidor.
         assert!(parse_servers("").unwrap().is_empty());

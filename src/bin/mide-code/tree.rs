@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use mide::kit::{Key, Ui};
+use mide::tr;
 
 use super::{Code, Dialog, Drag, DragWhat};
 
@@ -56,20 +57,20 @@ fn rows(root: &Path, expanded: &HashSet<PathBuf>) -> Vec<(usize, PathBuf, bool)>
 
 /// Itens do menu de um arquivo ou pasta (`dir`: onde criar itens novos).
 fn item_menu(m: &mut mide::kit::Menu, path: &Path, dir: &Path, chosen: &mut Option<TreeAction>) {
-    if m.item_icon("document-new-symbolic", "Novo arquivo…", None) {
+    if m.item_icon("document-new-symbolic", &tr!("New File…"), None) {
         *chosen = Some(TreeAction::NewFile(dir.to_path_buf()));
     }
-    if m.item_icon("folder-new-symbolic", "Nova pasta…", None) {
+    if m.item_icon("folder-new-symbolic", &tr!("New Folder…"), None) {
         *chosen = Some(TreeAction::NewFolder(dir.to_path_buf()));
     }
     m.separator();
-    if m.item("Renomear…") {
+    if m.item(&tr!("Rename…")) {
         *chosen = Some(TreeAction::Rename(path.to_path_buf()));
     }
-    if m.item("Duplicar") {
+    if m.item(&tr!("Duplicate")) {
         *chosen = Some(TreeAction::Duplicate(path.to_path_buf()));
     }
-    if m.danger("Mover para a Lixeira") {
+    if m.danger(&tr!("Move to Trash")) {
         *chosen = Some(TreeAction::Trash(path.to_path_buf()));
     }
     m.separator();
@@ -78,13 +79,13 @@ fn item_menu(m: &mut mide::kit::Menu, path: &Path, dir: &Path, chosen: &mut Opti
 
 /// Itens que valem também para o fundo da gaveta (a pasta do projeto).
 fn folder_items(m: &mut mide::kit::Menu, path: &Path, dir: &Path, chosen: &mut Option<TreeAction>) {
-    if m.item("Copiar caminho") {
+    if m.item(&tr!("Copy Path")) {
         *chosen = Some(TreeAction::CopyPath(path.to_path_buf()));
     }
-    if m.item("Mostrar no Arquivos") {
+    if m.item(&tr!("Show in Files")) {
         *chosen = Some(TreeAction::Reveal(path.to_path_buf()));
     }
-    if m.item("Abrir no Terminal") {
+    if m.item(&tr!("Open in Terminal")) {
         *chosen = Some(TreeAction::Terminal(dir.to_path_buf()));
     }
 }
@@ -135,16 +136,16 @@ impl Code {
             // Fundo da gaveta (fora dos itens): o menu da pasta do projeto.
             let bg = ui.background((0.0, top, width, height));
             ui.context_menu(&bg, |m| {
-                if m.item_icon("document-new-symbolic", "Novo arquivo…", None) {
+                if m.item_icon("document-new-symbolic", &tr!("New File…"), None) {
                     chosen = Some(TreeAction::NewFile(root.clone()));
                 }
-                if m.item_icon("folder-new-symbolic", "Nova pasta…", None) {
+                if m.item_icon("folder-new-symbolic", &tr!("New Folder…"), None) {
                     chosen = Some(TreeAction::NewFolder(root.clone()));
                 }
                 m.separator();
                 folder_items(m, &root, &root, &mut chosen);
                 m.separator();
-                if m.item_icon("window-close-symbolic", "Fechar pasta", None) {
+                if m.item_icon("window-close-symbolic", &tr!("Close Folder"), None) {
                     chosen = Some(TreeAction::CloseFolder);
                 }
             });
@@ -181,9 +182,9 @@ impl Code {
             TreeAction::Duplicate(path) => match mide::files::duplicate(&path) {
                 Ok(copy) => {
                     tracing::info!("duplicado: {}", copy.display());
-                    self.say(format!("Duplicado como \"{}\"", copy.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+                    self.say(tr!("Duplicated as “{name}”", name = copy.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
                 }
-                Err(err) => self.say(format!("Não foi possível duplicar: {err}")),
+                Err(err) => self.say(tr!("Couldn’t duplicate: {err}", err = err)),
             },
             TreeAction::Trash(path) => match mide::places::move_to_trash(&path, &mide::places::trash_dir()) {
                 Ok(_) => {
@@ -196,15 +197,15 @@ impl Code {
                             self.close_tab(i, true);
                         }
                     }
-                    self.say(format!("\"{}\" foi para a Lixeira", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+                    self.say(tr!("“{name}” was moved to the Trash", name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
                 }
-                Err(err) => self.say(format!("Não foi possível mover para a Lixeira: {err}")),
+                Err(err) => self.say(tr!("Couldn’t move to the Trash: {err}", err = err)),
             },
             TreeAction::CopyPath(path) => {
                 let text = path.to_string_lossy().into_owned();
                 ui.copy(&text);
                 mide::places::copy_text(&text);
-                self.say("Caminho copiado");
+                self.say(tr!("Path copied"));
             }
             TreeAction::Reveal(path) => show_in_files(&path),
             TreeAction::CloseFolder => self.close_folder(),
@@ -222,26 +223,26 @@ impl Code {
     /// desses (os outros ficam com `dialogs`).
     pub(crate) fn name_dialog(&mut self, ui: &mut Ui) -> bool {
         let esc = ui.input().key(Key::Escape);
-        let (title, value, focus, error) = match self.dialog.as_mut() {
-            Some(Dialog::NewItem { folder, name, focus, error, .. }) => (if *folder { "Nova pasta" } else { "Novo arquivo" }, name, focus, error),
-            Some(Dialog::Rename { name, focus, error, .. }) => ("Renomear", name, focus, error),
+        let (title, rename, value, focus, error) = match self.dialog.as_mut() {
+            Some(Dialog::NewItem { folder, name, focus, error, .. }) => (if *folder { tr!("New Folder") } else { tr!("New File") }, false, name, focus, error),
+            Some(Dialog::Rename { name, focus, error, .. }) => (tr!("Rename"), true, name, focus, error),
             _ => return false,
         };
         let mut ok = false;
         let mut cancel = esc;
         let first = std::mem::take(focus);
         ui.modal(380.0, |ui| {
-            ui.strong(title);
+            ui.strong(&title);
             if first {
                 // Ao renomear, o nome sem a extensão já vem escolhido (como no Finder).
                 let end = value.rfind('.').filter(|&i| i > 0).unwrap_or(value.len());
                 ui.focus_next_input_selecting(end);
             }
-            ok |= ui.text_input(value, "Nome").submitted();
+            ok |= ui.text_input(value, &tr!("Name")).submitted();
             if let Some(e) = error.as_ref() {
                 ui.error_note(e);
             }
-            match ui.dialog_buttons(&["Cancelar", if title == "Renomear" { "Renomear" } else { "Criar" }]) {
+            match ui.dialog_buttons(&[&*tr!("Cancel"), &*if rename { tr!("Rename") } else { tr!("Create") }]) {
                 Some(0) => cancel = true,
                 Some(_) => ok = true,
                 None => {}

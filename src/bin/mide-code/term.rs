@@ -172,7 +172,7 @@ impl TermPanel {
             }
             if ended {
                 let fg = term.default_fg();
-                text.draw(pixmap, "O shell terminou. Ctrl+` fecha o painel.", x0 + rect.2 - 300.0, y0 + rect.3 - 22.0, 12.0, mide::ui::text::FontWeight::Regular, [fg[0], fg[1], fg[2], 160]);
+                text.draw(pixmap, &mide::tr!("The shell exited. Ctrl+` closes the panel."), x0 + rect.2 - 300.0, y0 + rect.3 - 22.0, 12.0, mide::ui::text::FontWeight::Regular, [fg[0], fg[1], fg[2], 160]);
             }
         });
         self.cell = measured;

@@ -41,6 +41,14 @@ pub struct Language {
     pub types: &'static [&'static str],
 }
 
+impl Language {
+    /// Nome mostrado na tela, no idioma da sessão (só "Plain Text" muda; os nomes das
+    /// linguagens são os mesmos em todo idioma).
+    pub fn label(&self) -> std::borrow::Cow<'static, str> {
+        if self.id == "plaintext" { crate::tr!("Plain Text") } else { std::borrow::Cow::Borrowed(self.name) }
+    }
+}
+
 const RUST_KW: &[&str] = &[
     "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
     "ref", "return", "self", "Self", "static", "struct", "super", "trait", "type", "unsafe", "use", "where", "while", "true", "false",
@@ -91,7 +99,7 @@ const PHP_KW: &[&str] = &["function", "class", "public", "private", "protected",
 
 /// Todas as linguagens conhecidas (a primeira é texto simples).
 pub const LANGUAGES: &[Language] = &[
-    Language { id: "plaintext", name: "Texto simples", exts: &["txt", "log", "text"], files: &[], family: Family::Plain, comment: "", keywords: &[], types: &[] },
+    Language { id: "plaintext", name: "Plain Text", exts: &["txt", "log", "text"], files: &[], family: Family::Plain, comment: "", keywords: &[], types: &[] },
     Language { id: "rust", name: "Rust", exts: &["rs"], files: &[], family: Family::CLike, comment: "//", keywords: RUST_KW, types: RUST_TYPES },
     Language { id: "c", name: "C", exts: &["c", "h"], files: &[], family: Family::CLike, comment: "//", keywords: C_KW, types: C_TYPES },
     Language { id: "cpp", name: "C++", exts: &["cpp", "cc", "cxx", "hpp", "hh", "hxx"], files: &[], family: Family::CLike, comment: "//", keywords: C_KW, types: C_TYPES },

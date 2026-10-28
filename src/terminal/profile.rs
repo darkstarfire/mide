@@ -2,7 +2,7 @@
 //! cursor, histórico e o que abrir. Ficam em `~/.config/mide/terminal.toml`, mas o
 //! usuário nunca edita o arquivo: tudo muda na janela de Preferências do terminal.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{borrow::Cow, collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -94,29 +94,49 @@ pub struct Profile {
     pub triggers: Vec<Trigger>,
 }
 
-/// Cores que o usuário pode trocar: chave e nome na tela.
-pub const COLOR_SLOTS: [(&str, &str); 20] = [
-    ("foreground", "Texto"),
-    ("background", "Fundo"),
-    ("cursor", "Cursor"),
-    ("selection", "Seleção"),
-    ("ansi0", "Preto"),
-    ("ansi1", "Vermelho"),
-    ("ansi2", "Verde"),
-    ("ansi3", "Amarelo"),
-    ("ansi4", "Azul"),
-    ("ansi5", "Magenta"),
-    ("ansi6", "Ciano"),
-    ("ansi7", "Branco"),
-    ("ansi8", "Preto claro"),
-    ("ansi9", "Vermelho claro"),
-    ("ansi10", "Verde claro"),
-    ("ansi11", "Amarelo claro"),
-    ("ansi12", "Azul claro"),
-    ("ansi13", "Magenta claro"),
-    ("ansi14", "Ciano claro"),
-    ("ansi15", "Branco claro"),
+/// Cores que o usuário pode trocar (chaves gravadas no perfil; o nome na tela vem de
+/// [`color_slot_label`]).
+pub const COLOR_SLOTS: [&str; 20] = [
+    "foreground", "background", "cursor", "selection", "ansi0", "ansi1", "ansi2", "ansi3", "ansi4", "ansi5", "ansi6", "ansi7", "ansi8", "ansi9", "ansi10", "ansi11",
+    "ansi12", "ansi13", "ansi14", "ansi15",
 ];
+
+/// Nome na tela (traduzido) de uma cor de `COLOR_SLOTS`.
+pub fn color_slot_label(key: &str) -> Cow<'static, str> {
+    match key {
+        "foreground" => crate::tr!("Text"),
+        "background" => crate::tr!("Background"),
+        "cursor" => crate::tr!("Cursor"),
+        "selection" => crate::tr!("Selection"),
+        "ansi0" => crate::tr!("Black"),
+        "ansi1" => crate::tr!("Red"),
+        "ansi2" => crate::tr!("Green"),
+        "ansi3" => crate::tr!("Yellow"),
+        "ansi4" => crate::tr!("Blue"),
+        "ansi5" => crate::tr!("Magenta"),
+        "ansi6" => crate::tr!("Cyan"),
+        "ansi7" => crate::tr!("White"),
+        "ansi8" => crate::tr!("Bright Black"),
+        "ansi9" => crate::tr!("Bright Red"),
+        "ansi10" => crate::tr!("Bright Green"),
+        "ansi11" => crate::tr!("Bright Yellow"),
+        "ansi12" => crate::tr!("Bright Blue"),
+        "ansi13" => crate::tr!("Bright Magenta"),
+        "ansi14" => crate::tr!("Bright Cyan"),
+        "ansi15" => crate::tr!("Bright White"),
+        other => Cow::Owned(other.to_string()),
+    }
+}
+
+/// Nome do perfil criado pelo mide. Fica gravado assim no `terminal.toml` (é a chave
+/// do perfil, e arquivos antigos já o usam); na tela aparece traduzido ([`profile_label`]).
+pub const DEFAULT_NAME: &str = "Padrão";
+
+/// Nome de um perfil na tela: o perfil padrão do mide aparece no idioma da sessão; os
+/// outros, como o usuário os chamou.
+pub fn profile_label(name: &str) -> Cow<'_, str> {
+    if name == DEFAULT_NAME { crate::tr!("Default") } else { Cow::Borrowed(name) }
+}
 
 impl Profile {
     /// Tema do perfil com as cores trocadas pelo usuário.
@@ -164,7 +184,7 @@ pub fn parse_hex(text: &str) -> Option<Rgb> {
 impl Default for Profile {
     fn default() -> Self {
         Self {
-            name: "Padrão".into(),
+            name: DEFAULT_NAME.into(),
             theme: "Claro".into(),
             font_size: 13.0,
             font: String::new(),
@@ -199,7 +219,7 @@ pub struct Profiles {
 
 impl Default for Profiles {
     fn default() -> Self {
-        Self { default: "Padrão".into(), restore: false, hotkey_height: 0.45, profiles: vec![Profile::default()] }
+        Self { default: DEFAULT_NAME.into(), restore: false, hotkey_height: 0.45, profiles: vec![Profile::default()] }
     }
 }
 
@@ -244,7 +264,7 @@ impl Profiles {
             p.font_size = p.font_size.clamp(8.0, 32.0);
             p.scrollback = p.scrollback.clamp(100, 200_000);
             p.opacity = p.opacity.clamp(0.3, 1.0);
-            p.colors.retain(|k, v| COLOR_SLOTS.iter().any(|(s, _)| s == k) && parse_hex(v).is_some());
+            p.colors.retain(|k, v| COLOR_SLOTS.iter().any(|s| s == k) && parse_hex(v).is_some());
         }
         self.hotkey_height = self.hotkey_height.clamp(0.2, 0.95);
         if !self.profiles.iter().any(|p| p.name == self.default) {

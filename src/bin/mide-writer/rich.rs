@@ -4,7 +4,11 @@
 
 use std::time::{Duration, Instant};
 
-use mide::kit::{ButtonStyle, Key, MenuGroup, MenuItem, Ui};
+use std::borrow::Cow;
+
+use mide::i18n::trn;
+use mide::kit::{ButtonStyle, Key, MenuGroup, MenuItem, Response, Ui};
+use mide::tr;
 use mide::richtext::{
     cm,
     layout::{Layout, Layouter},
@@ -46,8 +50,46 @@ const COLORS: [[u8; 3]; 16] = [
 /// Cores de realce (marca-texto).
 const HIGHLIGHTS: [[u8; 3]; 6] = [[255, 241, 118], [178, 235, 160], [160, 214, 255], [255, 190, 220], [255, 205, 150], [215, 215, 220]];
 
-/// Estilos de parágrafo do menu ¶ (nome e como aplica).
+/// Estilos de parágrafo do menu ¶. Os nomes são as chaves gravadas nos documentos
+/// (`ParaStyle::name`, lidas também pelo DOCX/ODT) e não mudam com o idioma; na tela
+/// aparecem por [`style_label`].
 const STYLES: [&str; 8] = ["Corpo", "Título", "Título 1", "Título 2", "Título 3", "Citação", "Legenda", "Referência"];
+
+/// Nome de um estilo de parágrafo na tela, no idioma da sessão.
+fn style_label(name: &str) -> Cow<'_, str> {
+    match name {
+        "" | "Corpo" => tr!("Body"),
+        "Título" => tr!("Title"),
+        "Título 1" => tr!("Heading 1"),
+        "Título 2" => tr!("Heading 2"),
+        "Título 3" => tr!("Heading 3"),
+        "Citação" => tr!("Quote"),
+        "Legenda" => tr!("Caption"),
+        "Referência" => tr!("Reference"),
+        "Sumário" => tr!("Table of Contents"),
+        "Sumário título" => tr!("Table of Contents Title"),
+        other => Cow::Borrowed(other),
+    }
+}
+
+/// Dicas dos botões de um grupo de `toolbar_buttons` (o último componente posto),
+/// para os grupos com ícones desenhados aqui (que não podem usar `tool_group`).
+fn group_tips(ui: &mut Ui, tips: &[Cow<'_, str>]) {
+    let group = ui.last_rect();
+    // `last_rect` vem na janela; a dica quer a área atual: a diferença é o deslocamento
+    // entre o ponteiro na janela e na área.
+    let off = match (ui.pointer_global(), ui.pointer()) {
+        (Some(g), Some(l)) => (g.0 - l.0, g.1 - l.1),
+        _ => (0.0, 0.0),
+    };
+    for (i, tip) in tips.iter().enumerate() {
+        let s = seg(group, i);
+        let rect = (s.0 - off.0, s.1 - off.1, s.2, s.3);
+        // Número fixo e alto por botão (a memória da dica é pelo número do componente).
+        let id = 0x7EE7_0000_0000 + ((group.0 as u64) << 12) + ((group.1 as u64) << 4) + i as u64;
+        ui.tooltip(&Response { hovered: ui.over(rect), rect, id, ..Default::default() }, tip);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pop {
@@ -698,7 +740,7 @@ impl Rich {
 
     pub fn insert_image(&mut self, path: &std::path::Path) {
         let Ok(data) = std::fs::read(path) else {
-            self.message = Some("Não foi possível ler a imagem.".into());
+            self.message = Some(tr!("Couldn’t read the image.").into_owned());
             return;
         };
         match Image::from_bytes(data, self.doc.page.content_width()) {
@@ -711,7 +753,7 @@ impl Rich {
                 self.anchor = self.cursor;
                 tracing::info!("editor: imagem inserida ({})", path.display());
             }
-            None => self.message = Some("Formato de imagem não suportado (use PNG, JPEG, WebP, GIF ou BMP).".into()),
+            None => self.message = Some(tr!("Image format not supported (use PNG, JPEG, WebP, GIF or BMP).").into_owned()),
         }
     }
 
@@ -881,7 +923,7 @@ impl Rich {
     /// Operações de tabela (com a célula em edição como referência).
     fn table_op(&mut self, op: &str) {
         let Some((t, r, c)) = self.outer.as_ref().map(|o| (o.table, o.row, o.col)) else {
-            self.message = Some("Clique numa célula da tabela primeiro.".into());
+            self.message = Some(tr!("Click a table cell first.").into_owned());
             return;
         };
         self.leave_cell();
@@ -951,7 +993,7 @@ impl Rich {
     /// número da página à direita (acertado depois de quebrar o documento).
     fn insert_toc(&mut self) {
         if self.headings().is_empty() {
-            self.message = Some("Não há títulos no documento: use os estilos Título 1, 2 e 3 (menu ¶) nos títulos das seções.".into());
+            self.message = Some(tr!("The document has no headings: use the Heading 1, 2 and 3 styles (¶ menu) on the section titles.").into_owned());
             return;
         }
         self.begin(None);
@@ -964,7 +1006,7 @@ impl Rich {
         }
         let body = self.doc.paras[at.para].spans[0].style.clone();
         let title_style = CharStyle { bold: true, size: body.size.max(12.0), ..body.clone() };
-        let title = Paragraph::new("SUMÁRIO", title_style, ParaStyle { align: Align::Center, space_after: 18.0, name: "Sumário título".into(), ..ParaStyle::default() });
+        let title = Paragraph::new(&tr!("CONTENTS"), title_style, ParaStyle { align: Align::Center, space_after: 18.0, name: "Sumário título".into(), ..ParaStyle::default() });
         self.doc.paras[at.para] = title;
         self.doc.paras.insert(at.para + 1, Paragraph::new("", body, ParaStyle { name: "Sumário".into(), leader: true, ..ParaStyle::default() }));
         // O texto depois do sumário começa numa página nova.
@@ -1108,7 +1150,7 @@ impl Rich {
         ui.context_menu(&r, |m| {
             if let Some((_, _, _, sugg)) = &target {
                 if sugg.is_empty() {
-                    m.item("Nenhuma sugestão");
+                    m.item(&tr!("No Guesses Found"));
                 }
                 for s in sugg {
                     if m.item(s) {
@@ -1116,21 +1158,21 @@ impl Rich {
                     }
                 }
                 m.separator();
-                if m.item("Aprender ortografia") {
+                if m.item(&tr!("Learn Spelling")) {
                     learn = true;
                 }
-                if m.item("Ignorar") {
+                if m.item(&tr!("Ignore Spelling")) {
                     ignore = true;
                 }
                 m.separator();
             }
-            if has_sel && m.item("Recortar") {
+            if has_sel && m.item(&tr!("Cut")) {
                 action = Some("recortar");
             }
-            if has_sel && m.item("Copiar") {
+            if has_sel && m.item(&tr!("Copy")) {
                 action = Some("copiar");
             }
-            if m.item("Colar") {
+            if m.item(&tr!("Paste")) {
                 action = Some("colar");
             }
         });
@@ -1383,7 +1425,7 @@ impl Rich {
                 self.reveal = true;
                 self.message = None;
             }
-            None => self.message = Some(format!("\"{query}\" não encontrado.")),
+            None => self.message = Some(tr!("“{query}” not found.", query = query)),
         }
     }
 
@@ -1429,7 +1471,7 @@ impl Rich {
         }
         self.cursor = self.doc.clamp(self.cursor);
         self.anchor = self.cursor;
-        self.message = Some(format!("{count} {} substituída(s).", if count == 1 { "ocorrência" } else { "ocorrências" }));
+        self.message = Some(trn("{n} occurrence replaced.", "{n} occurrences replaced.", count as u64));
     }
 
     /// A barra de busca, abaixo da barra de formatação.
@@ -1450,17 +1492,19 @@ impl Rich {
                 if focus {
                     ui.focus_next_input();
                 }
-                ui.sized(240.0, |ui| next = ui.search_field(&mut f.query, "Buscar").submitted());
-                match ui.toolbar_buttons(&[("go-up-symbolic", "‹", false, true), ("go-down-symbolic", "›", false, true), ("", "Aa", case, true)]) {
+                ui.sized(240.0, |ui| next = ui.search_field(&mut f.query, &tr!("Find")).submitted());
+                let clicked = ui.toolbar_buttons(&[("go-up-symbolic", "‹", false, true), ("go-down-symbolic", "›", false, true), ("", "Aa", case, true)]);
+                group_tips(ui, &[tr!("Find Previous"), tr!("Find Next"), tr!("Match Case")]);
+                match clicked {
                     Some(0) => prev = true,
                     Some(1) => next = true,
                     Some(2) => case = !case,
                     _ => {}
                 }
-                ui.sized(200.0, |ui| one = ui.search_field(&mut f.replace, "Substituir por").submitted());
-                ui.sized(100.0, |ui| one |= ui.button_styled("Substituir", ButtonStyle::Bordered).clicked());
-                ui.sized(70.0, |ui| all = ui.button_styled("Tudo", ButtonStyle::Bordered).clicked());
-                ui.sized(60.0, |ui| close = ui.button_styled("OK", ButtonStyle::Prominent).clicked());
+                ui.sized(200.0, |ui| one = ui.search_field(&mut f.replace, &tr!("Replace with")).submitted());
+                ui.sized(100.0, |ui| one |= ui.button_styled(&tr!("Replace"), ButtonStyle::Bordered).clicked());
+                ui.sized(70.0, |ui| all = ui.button_styled(&tr!("All"), ButtonStyle::Bordered).clicked());
+                ui.sized(60.0, |ui| close = ui.button_styled(&tr!("OK"), ButtonStyle::Prominent).clicked());
             });
         });
         f.case = case;
@@ -1493,83 +1537,83 @@ impl Rich {
         let ps = self.current_para();
         vec![
             MenuGroup {
-                title: "Formatar".into(),
+                title: tr!("Format").into(),
                 items: vec![
                     MenuItem::Submenu {
-                        label: "Fonte".into(),
+                        label: tr!("Font").into(),
                         items: vec![
-                            MenuItem::action("negrito", "Negrito").shortcut("Ctrl+B").checked(st.bold),
-                            MenuItem::action("italico", "Itálico").shortcut("Ctrl+I").checked(st.italic),
-                            MenuItem::action("sublinhado", "Sublinhado").shortcut("Ctrl+U").checked(st.underline),
-                            MenuItem::action("tachado", "Tachado").checked(st.strike),
+                            MenuItem::action("negrito", &tr!("Bold")).shortcut("Ctrl+B").checked(st.bold),
+                            MenuItem::action("italico", &tr!("Italic")).shortcut("Ctrl+I").checked(st.italic),
+                            MenuItem::action("sublinhado", &tr!("Underline")).shortcut("Ctrl+U").checked(st.underline),
+                            MenuItem::action("tachado", &tr!("Strikethrough")).checked(st.strike),
                             MenuItem::Separator,
-                            MenuItem::action("sobrescrito", "Sobrescrito").checked(st.baseline == Baseline::Super),
-                            MenuItem::action("subscrito", "Subscrito").checked(st.baseline == Baseline::Sub),
+                            MenuItem::action("sobrescrito", &tr!("Superscript")).checked(st.baseline == Baseline::Super),
+                            MenuItem::action("subscrito", &tr!("Subscript")).checked(st.baseline == Baseline::Sub),
                             MenuItem::Separator,
-                            MenuItem::action("maior", "Maior").shortcut("Ctrl+Shift+."),
-                            MenuItem::action("menor", "Menor").shortcut("Ctrl+Shift+,"),
+                            MenuItem::action("maior", &tr!("Bigger")).shortcut("Ctrl+Shift+."),
+                            MenuItem::action("menor", &tr!("Smaller")).shortcut("Ctrl+Shift+,"),
                         ],
                     },
                     MenuItem::Submenu {
-                        label: "Texto".into(),
+                        label: tr!("Text").into(),
                         items: vec![
-                            MenuItem::action("alinhar-esquerda", "Alinhar à esquerda").shortcut("Ctrl+L").checked(ps.align == Align::Left),
-                            MenuItem::action("centralizar", "Centralizar").shortcut("Ctrl+E").checked(ps.align == Align::Center),
-                            MenuItem::action("justificar", "Justificar").shortcut("Ctrl+J").checked(ps.align == Align::Justify),
-                            MenuItem::action("alinhar-direita", "Alinhar à direita").shortcut("Ctrl+R").checked(ps.align == Align::Right),
+                            MenuItem::action("alinhar-esquerda", &tr!("Align Left")).shortcut("Ctrl+L").checked(ps.align == Align::Left),
+                            MenuItem::action("centralizar", &tr!("Center")).shortcut("Ctrl+E").checked(ps.align == Align::Center),
+                            MenuItem::action("justificar", &tr!("Justify")).shortcut("Ctrl+J").checked(ps.align == Align::Justify),
+                            MenuItem::action("alinhar-direita", &tr!("Align Right")).shortcut("Ctrl+R").checked(ps.align == Align::Right),
                         ],
                     },
                     MenuItem::Submenu {
-                        label: "Lista".into(),
+                        label: tr!("List").into(),
                         items: vec![
-                            MenuItem::action("lista-nenhuma", "Nenhuma").checked(ps.list.is_none()),
-                            MenuItem::action("lista-marcadores", "• Marcadores").checked(ps.list == Some(ListKind::Bullet)),
-                            MenuItem::action("lista-travessao", "– Travessões").checked(ps.list == Some(ListKind::Dash)),
-                            MenuItem::action("lista-numeros", "1. Números").checked(ps.list == Some(ListKind::Number)),
-                            MenuItem::action("lista-letras", "a) Letras").checked(ps.list == Some(ListKind::Letter)),
+                            MenuItem::action("lista-nenhuma", &mide::i18n::trc("list", "None")).checked(ps.list.is_none()),
+                            MenuItem::action("lista-marcadores", &tr!("• Bullets")).checked(ps.list == Some(ListKind::Bullet)),
+                            MenuItem::action("lista-travessao", &tr!("– Dashes")).checked(ps.list == Some(ListKind::Dash)),
+                            MenuItem::action("lista-numeros", &tr!("1. Numbers")).checked(ps.list == Some(ListKind::Number)),
+                            MenuItem::action("lista-letras", &tr!("a) Letters")).checked(ps.list == Some(ListKind::Letter)),
                         ],
                     },
                     MenuItem::Separator,
-                    MenuItem::action("inserir-imagem", "Inserir imagem…"),
-                    MenuItem::action("imagem-tamanho", "Tamanho da imagem…").enabled(self.doc.paras.get(self.cursor.para).is_some_and(|p| p.image.is_some())),
-                    MenuItem::action("quebra-pagina", "Inserir quebra de página").shortcut("Ctrl+Enter"),
-                    MenuItem::action("link", "Adicionar link…").shortcut("Ctrl+K"),
-                    MenuItem::action("nota", "Inserir nota de rodapé…").shortcut("Ctrl+Alt+F"),
-                    MenuItem::action("sumario", "Inserir sumário"),
-                    MenuItem::action("atualizar-sumario", "Atualizar sumário"),
+                    MenuItem::action("inserir-imagem", &tr!("Insert Image…")),
+                    MenuItem::action("imagem-tamanho", &tr!("Image Size…")).enabled(self.doc.paras.get(self.cursor.para).is_some_and(|p| p.image.is_some())),
+                    MenuItem::action("quebra-pagina", &tr!("Insert Page Break")).shortcut("Ctrl+Enter"),
+                    MenuItem::action("link", &tr!("Add Link…")).shortcut("Ctrl+K"),
+                    MenuItem::action("nota", &tr!("Insert Footnote…")).shortcut("Ctrl+Alt+F"),
+                    MenuItem::action("sumario", &tr!("Insert Table of Contents")),
+                    MenuItem::action("atualizar-sumario", &tr!("Update Table of Contents")),
                     MenuItem::Separator,
-                    MenuItem::action("configurar-pagina", "Configurar página…").shortcut("Ctrl+Shift+P"),
-                    MenuItem::action("abnt", "Aplicar normas ABNT…"),
+                    MenuItem::action("configurar-pagina", &tr!("Page Setup…")).shortcut("Ctrl+Shift+P"),
+                    MenuItem::action("abnt", &tr!("Apply ABNT Standards…")),
                 ],
             },
             MenuGroup {
-                title: "Tabela".into(),
+                title: tr!("Table").into(),
                 items: {
                     let on = self.in_cell();
                     vec![
-                        MenuItem::action("tabela", "Inserir tabela…").shortcut("Ctrl+Alt+T"),
+                        MenuItem::action("tabela", &tr!("Insert Table…")).shortcut("Ctrl+Alt+T"),
                         MenuItem::Separator,
-                        MenuItem::action("tabela-linha-acima", "Inserir linha acima").enabled(on),
-                        MenuItem::action("tabela-linha-abaixo", "Inserir linha abaixo").enabled(on),
-                        MenuItem::action("tabela-coluna-esquerda", "Inserir coluna à esquerda").enabled(on),
-                        MenuItem::action("tabela-coluna-direita", "Inserir coluna à direita").enabled(on),
+                        MenuItem::action("tabela-linha-acima", &tr!("Insert Row Above")).enabled(on),
+                        MenuItem::action("tabela-linha-abaixo", &tr!("Insert Row Below")).enabled(on),
+                        MenuItem::action("tabela-coluna-esquerda", &tr!("Insert Column Left")).enabled(on),
+                        MenuItem::action("tabela-coluna-direita", &tr!("Insert Column Right")).enabled(on),
                         MenuItem::Separator,
-                        MenuItem::action("tabela-excluir-linha", "Excluir linha").enabled(on),
-                        MenuItem::action("tabela-excluir-coluna", "Excluir coluna").enabled(on),
-                        MenuItem::action("tabela-excluir", "Excluir tabela").enabled(on),
+                        MenuItem::action("tabela-excluir-linha", &tr!("Delete Row")).enabled(on),
+                        MenuItem::action("tabela-excluir-coluna", &tr!("Delete Column")).enabled(on),
+                        MenuItem::action("tabela-excluir", &tr!("Delete Table")).enabled(on),
                         MenuItem::Separator,
-                        MenuItem::action("tabela-bordas", "Mostrar bordas").enabled(on).checked(self.outer.as_ref().and_then(|o| o.doc.paras[o.table].table.as_ref()).is_some_and(|t| t.borders)),
+                        MenuItem::action("tabela-bordas", &tr!("Show Borders")).enabled(on).checked(self.outer.as_ref().and_then(|o| o.doc.paras[o.table].table.as_ref()).is_some_and(|t| t.borders)),
                     ]
                 },
             },
             MenuGroup {
-                title: "Visualizar".into(),
+                title: tr!("View").into(),
                 items: vec![
-                    MenuItem::action("regua", "Mostrar régua").shortcut("Ctrl+Shift+R").checked(self.ruler),
+                    MenuItem::action("regua", &tr!("Show Ruler")).shortcut("Ctrl+Shift+R").checked(self.ruler),
                     MenuItem::Separator,
-                    MenuItem::action("zoom-mais", "Aumentar zoom").shortcut("Ctrl+="),
-                    MenuItem::action("zoom-menos", "Diminuir zoom").shortcut("Ctrl+-"),
-                    MenuItem::action("zoom-real", "Tamanho real").shortcut("Ctrl+0"),
+                    MenuItem::action("zoom-mais", &tr!("Zoom In")).shortcut("Ctrl+="),
+                    MenuItem::action("zoom-menos", &tr!("Zoom Out")).shortcut("Ctrl+-"),
+                    MenuItem::action("zoom-real", &tr!("Actual Size")).shortcut("Ctrl+0"),
                 ],
             },
         ]
@@ -1700,7 +1744,7 @@ impl Rich {
         let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
         let tmp = runtime.join(format!("mide-imprimir-{}.pdf", std::process::id()));
         if let Err(err) = self.write_pdf(fonts, &tmp, range) {
-            self.message = Some(format!("Não foi possível preparar a impressão: {err}"));
+            self.message = Some(tr!("Couldn’t prepare the print job: {err}", err = err));
             return;
         }
         let mut cmd = std::process::Command::new("lp");
@@ -1712,10 +1756,10 @@ impl Rich {
         match cmd.output() {
             Ok(out) if out.status.success() => {
                 tracing::info!("editor: impressão enviada para {printer}: {}", String::from_utf8_lossy(&out.stdout).trim());
-                self.message = Some(format!("Enviado para a impressora {printer}."));
+                self.message = Some(tr!("Sent to the printer {printer}.", printer = printer));
             }
-            Ok(out) => self.message = Some(format!("A impressora recusou: {}", String::from_utf8_lossy(&out.stderr).trim())),
-            Err(err) => self.message = Some(format!("Não foi possível imprimir (o CUPS está instalado?): {err}")),
+            Ok(out) => self.message = Some(tr!("The printer refused: {error}", error = String::from_utf8_lossy(&out.stderr).trim())),
+            Err(err) => self.message = Some(tr!("Couldn’t print (is CUPS installed?): {err}", err = err)),
         }
         let _ = std::fs::remove_file(&tmp);
     }
@@ -1811,7 +1855,7 @@ impl Rich {
             }
         }
         tracing::info!("editor: normas ABNT aplicadas ({family})");
-        self.message = Some(format!("Normas ABNT aplicadas: A4, margens 3/2/2/3 cm, {family} 12, entrelinha 1,5, recuo de 1,25 cm, números no canto de cima a partir da página {from}."));
+        self.message = Some(tr!("ABNT standards applied: A4, margins 3/2/2/3 cm, {family} 12, 1.5 line spacing, 1.25 cm indent, page numbers at the top from page {from}.", family = family, from = from));
     }
 
     /// Teclas (sem outro campo com o foco).
@@ -2172,9 +2216,9 @@ impl Rich {
                 self.message = Some(match r {
                     Ok(()) => {
                         tracing::info!("editor: PDF salvo em {}", path.display());
-                        format!("PDF salvo: {}", path.display())
+                        tr!("PDF saved: {path}", path = path.display())
                     }
-                    Err(err) => format!("Não foi possível salvar o PDF: {err}"),
+                    Err(err) => tr!("Couldn’t save the PDF: {err}", err = err),
                 });
             }
         }
@@ -2274,7 +2318,13 @@ impl Rich {
             None => self.layout.line_of(self.cursor).map_or(1, |p| p.page + 1),
         };
         let (words, chars, _) = self.page_doc().counts();
-        let status = format!("Página {page_now} de {} · {words} {} · {chars} caracteres · {:.0}%", self.page_layout().pages.max(1), if words == 1 { "palavra" } else { "palavras" }, self.zoom * 100.0);
+        let status = format!(
+            "{} · {} · {} · {:.0}%",
+            tr!("Page {page} of {pages}", page = page_now, pages = self.page_layout().pages.max(1)),
+            trn("{n} word", "{n} words", words as u64),
+            trn("{n} character", "{n} characters", chars as u64),
+            self.zoom * 100.0
+        );
         ui.paint(|pixmap, _| {
             let c = theme.background;
             mide::ui::draw::paint_rounded_solid(pixmap, 0.0, h - STATUS_H, w, STATUS_H, 0.0, [c[0], c[1], c[2], 255]);
@@ -2308,7 +2358,7 @@ impl Rich {
         ui.at(12.0, top + 4.0, w - 24.0, |ui| {
             ui.row(|ui| {
                 // Estilo de parágrafo (¶) e fonte.
-                let style_name = if ps.name.is_empty() { "Corpo".to_string() } else { ps.name.clone() };
+                let style_name = style_label(&ps.name).into_owned();
                 ui.sized(style_w, |ui| {
                     if ui.button_styled(&format!("¶ {style_name}"), ButtonStyle::Bordered).clicked() {
                         pop = Some((Pop::Styles, ui.last_rect()));
@@ -2333,7 +2383,9 @@ impl Rich {
                     }
                 });
                 // Cor do texto e realce: os ícones são desenhados aqui, sem o texto de reserva.
-                match ui.toolbar_buttons(&[("", " ", open == Some(Pop::Color), true), ("", " ", open == Some(Pop::Highlight), true)]) {
+                let clicked = ui.toolbar_buttons(&[("", " ", open == Some(Pop::Color), true), ("", " ", open == Some(Pop::Highlight), true)]);
+                group_tips(ui, &[tr!("Text Color"), tr!("Highlight")]);
+                match clicked {
                     Some(0) => pop = Some((Pop::Color, seg(ui.last_rect(), 0))),
                     Some(1) => pop = Some((Pop::Highlight, seg(ui.last_rect(), 1))),
                     _ => {}
@@ -2356,35 +2408,41 @@ impl Rich {
                     }
                     text.draw(pixmap, "a", bx + 5.0, by + 0.5, 14.0, mide::ui::text::FontWeight::Semibold, [ink[0], ink[1], ink[2], 255]);
                 });
-                match ui.toolbar_buttons(&[
+                let clicked = ui.toolbar_buttons(&[
                     ("", "B", st.bold, true),
                     ("", "I", st.italic, true),
                     ("", "U", st.underline, true),
                     ("", "S", st.strike, true),
-                ]) {
+                ]);
+                group_tips(ui, &[tr!("Bold (Ctrl+B)"), tr!("Italic (Ctrl+I)"), tr!("Underline (Ctrl+U)"), tr!("Strikethrough")]);
+                match clicked {
                     Some(0) => action = Some("negrito"),
                     Some(1) => action = Some("italico"),
                     Some(2) => action = Some("sublinhado"),
                     Some(3) => action = Some("tachado"),
                     _ => {}
                 }
-                match ui.toolbar_buttons(&[
+                let clicked = ui.toolbar_buttons(&[
                     ("format-justify-left-symbolic", "⫷", ps.align == Align::Left, true),
                     ("format-justify-center-symbolic", "≡", ps.align == Align::Center, true),
                     ("format-justify-fill-symbolic", "☰", ps.align == Align::Justify, true),
                     ("format-justify-right-symbolic", "⫸", ps.align == Align::Right, true),
-                ]) {
+                ]);
+                group_tips(ui, &[tr!("Align Left"), tr!("Center"), tr!("Justify"), tr!("Align Right")]);
+                match clicked {
                     Some(0) => action = Some("alinhar-esquerda"),
                     Some(1) => action = Some("centralizar"),
                     Some(2) => action = Some("justificar"),
                     Some(3) => action = Some("alinhar-direita"),
                     _ => {}
                 }
-                match ui.toolbar_buttons(&[
+                let clicked = ui.toolbar_buttons(&[
                     ("format-line-spacing-symbolic", "↕", open == Some(Pop::Spacing), true),
                     ("view-list-bullet-symbolic", "•≡", open == Some(Pop::List) || ps.list.is_some(), true),
                     ("insert-image-symbolic", "▣", false, true),
-                ]) {
+                ]);
+                group_tips(ui, &[tr!("Line and Paragraph Spacing"), tr!("Lists"), tr!("Insert Image…")]);
+                match clicked {
                     Some(0) => pop = Some((Pop::Spacing, seg(ui.last_rect(), 0))),
                     Some(1) => pop = Some((Pop::List, seg(ui.last_rect(), 1))),
                     Some(2) => action = Some("inserir-imagem"),
@@ -2445,7 +2503,7 @@ impl Rich {
         ui.popover(&mut open, self.pop_anchor, width, |ui| match pop {
             Pop::Styles => {
                 for name in STYLES {
-                    let label = if same_style_name(&ps.name, name) { format!("✓  {name}") } else { format!("    {name}") };
+                    let label = if same_style_name(&ps.name, name) { format!("✓  {}", style_label(name)) } else { format!("    {}", style_label(name)) };
                     if ui.button_styled(&label, ButtonStyle::Plain).clicked() {
                         chosen_style = Some(name);
                     }
@@ -2453,7 +2511,7 @@ impl Rich {
             }
             Pop::Fonts => {
                 if ui.window_size().0 < 1000.0 {
-                    ui.heading("Face");
+                    ui.heading(&tr!("Typeface"));
                     for (bold, italic, label) in [(false, false, "Regular"), (true, false, "Bold"), (false, true, "Italic"), (true, true, "Bold Italic")] {
                         let mark = if (cur.bold, cur.italic) == (bold, italic) { "✓ " } else { "   " };
                         if ui.button_styled(&format!("{mark}{label}"), ButtonStyle::Plain).clicked() {
@@ -2462,7 +2520,7 @@ impl Rich {
                     }
                     ui.separator();
                 }
-                ui.search_field(query, "Buscar fonte");
+                ui.search_field(query, &tr!("Search Fonts"));
                 let q = query.to_lowercase();
                 let list: Vec<&String> = families.iter().filter(|f| q.is_empty() || f.to_lowercase().contains(&q)).take(400).collect();
                 ui.scroll_area(list_h, |ui| {
@@ -2493,7 +2551,7 @@ impl Rich {
                 });
             }
             Pop::Color | Pop::Highlight => {
-                ui.heading(if pop == Pop::Color { "Cor do texto" } else { "Realce" });
+                ui.heading(&if pop == Pop::Color { tr!("Text Color") } else { tr!("Highlight") });
                 let palette: Vec<[u8; 3]> = if pop == Pop::Color { COLORS.to_vec() } else { HIGHLIGHTS.to_vec() };
                 for row in palette.chunks(8) {
                     ui.row(|ui| {
@@ -2509,11 +2567,11 @@ impl Rich {
                         }
                     });
                 }
-                if pop == Pop::Highlight && ui.button_styled("Sem realce", ButtonStyle::Plain).clicked() {
+                if pop == Pop::Highlight && ui.button_styled(&tr!("No Highlight"), ButtonStyle::Plain).clicked() {
                     chosen_highlight = Some(None);
                 }
                 ui.separator();
-                ui.heading("Cor personalizada");
+                ui.heading(&tr!("Custom Color"));
                 // O texto digitado (válido e diferente do que a roda mostra) move a roda.
                 let typed = parse_hex_color(custom);
                 if drag.is_none() && typed.is_some_and(|c| c != hsv_to_rgb(*hsv)) {
@@ -2570,7 +2628,7 @@ impl Rich {
                     let sw = shown.unwrap_or([200, 200, 204]);
                     ui.tag_toggle([sw[0], sw[1], sw[2], if shown.is_some() { 255 } else { 90 }], false);
                     ui.sized(76.0, |ui| {
-                        if ui.button_styled("Aplicar", ButtonStyle::Prominent).clicked()
+                        if ui.button_styled(&tr!("Apply"), ButtonStyle::Prominent).clicked()
                             && let Some(c) = shown {
                                 if pop == Pop::Color {
                                     chosen_color = Some(c);
@@ -2582,15 +2640,15 @@ impl Rich {
                 });
             }
             Pop::Spacing => {
-                ui.heading("Entrelinha");
-                for (v, label) in [(1.0, "Simples (1,0)"), (1.15, "1,15"), (1.5, "1,5 (ABNT)"), (2.0, "Dupla (2,0)")] {
+                ui.heading(&tr!("Line Spacing"));
+                for (v, label) in [(1.0, tr!("Single (1.0)")), (1.15, tr!("1.15")), (1.5, tr!("1.5 (ABNT)")), (2.0, tr!("Double (2.0)"))] {
                     let mark = if (ps.line_spacing - v).abs() < 0.01 { "✓ " } else { "   " };
                     if ui.button_styled(&format!("{mark}{label}"), ButtonStyle::Plain).clicked() {
                         spacing = Some(v);
                     }
                 }
-                ui.heading("Espaço depois do parágrafo");
-                for (v, label) in [(0.0, "Nenhum"), (6.0, "6 pt"), (12.0, "12 pt")] {
+                ui.heading(&tr!("Space After Paragraph"));
+                for (v, label) in [(0.0, tr!("None")), (6.0, Cow::Borrowed("6 pt")), (12.0, Cow::Borrowed("12 pt"))] {
                     let mark = if (ps.space_after - v).abs() < 0.01 { "✓ " } else { "   " };
                     if ui.button_styled(&format!("{mark}{label}"), ButtonStyle::Plain).clicked() {
                         space_after = Some(v);
@@ -2598,7 +2656,7 @@ impl Rich {
                 }
             }
             Pop::List => {
-                for (kind, label) in [(None, "Nenhuma"), (Some(ListKind::Bullet), "•  Marcadores"), (Some(ListKind::Dash), "–  Travessões"), (Some(ListKind::Number), "1.  Números"), (Some(ListKind::Letter), "a)  Letras")] {
+                for (kind, label) in [(None, mide::i18n::trc("list", "None")), (Some(ListKind::Bullet), tr!("•  Bullets")), (Some(ListKind::Dash), tr!("–  Dashes")), (Some(ListKind::Number), tr!("1.  Numbers")), (Some(ListKind::Letter), tr!("a)  Letters"))] {
                     let mark = if ps.list == kind { "✓ " } else { "   " };
                     if ui.button_styled(&format!("{mark}{label}"), ButtonStyle::Plain).clicked() {
                         list = Some(kind);
@@ -2654,56 +2712,56 @@ impl Rich {
         if let Some(d) = self.page_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
             ui.modal(480.0, |ui| {
-                ui.title("Configurar página");
-                ui.form_row("Papel", 96.0, |ui| {
+                ui.title(&tr!("Page Setup"));
+                ui.form_row(&tr!("Paper"), 96.0, |ui| {
                     ui.sized(150.0, |ui| {
-                        ui.segmented(&["A4", "Carta"], &mut d.paper, None);
+                        ui.segmented(&["A4", &tr!("Letter")], &mut d.paper, None);
                     });
                     let mut orient = usize::from(d.landscape);
                     ui.sized(190.0, |ui| {
-                        if ui.segmented(&["Retrato", "Paisagem"], &mut orient, None).changed() {
+                        if ui.segmented(&[&tr!("Portrait"), &tr!("Landscape")], &mut orient, None).changed() {
                             d.landscape = orient == 1;
                         }
                     });
                 });
-                ui.heading("Margens (cm)");
+                ui.heading(&tr!("Margins (cm)"));
                 for (a, b) in [(0usize, 2usize), (3, 1)] {
-                    let names = ["Superior", "Direita", "Inferior", "Esquerda"];
-                    ui.form_row(names[a], 96.0, |ui| {
+                    let names = [mide::i18n::trc("margin", "Top"), tr!("Right"), mide::i18n::trc("margin", "Bottom"), tr!("Left")];
+                    ui.form_row(&names[a], 96.0, |ui| {
                         ui.sized(90.0, |ui| {
                             ui.text_input(&mut d.margins[a], "2,5");
                         });
                         ui.space_x(24.0);
-                        ui.fixed_label(names[b], 80.0);
+                        ui.fixed_label(&names[b], 80.0);
                         ui.sized(90.0, |ui| {
                             ui.text_input(&mut d.margins[b], "2,5");
                         });
                     });
                 }
-                ui.heading("Cabeçalho e rodapé");
-                ui.form_row("Cabeçalho", 96.0, |ui| {
-                    ui.text_input(&mut d.header, "Nenhum");
+                ui.heading(&tr!("Header and Footer"));
+                ui.form_row(&tr!("Header"), 96.0, |ui| {
+                    ui.text_input(&mut d.header, &tr!("None"));
                 });
-                ui.form_row("Rodapé", 96.0, |ui| {
-                    ui.text_input(&mut d.footer, "Nenhum");
+                ui.form_row(&tr!("Footer"), 96.0, |ui| {
+                    ui.text_input(&mut d.footer, &tr!("None"));
                 });
-                ui.switch("Numerar as páginas", &mut d.numbers);
+                ui.switch(&tr!("Number pages"), &mut d.numbers);
                 if d.numbers {
-                    ui.form_row("Posição", 96.0, |ui| {
-                        ui.segmented(&["Em cima, à direita", "Embaixo", "Embaixo, à direita"], &mut d.position, None);
+                    ui.form_row(&tr!("Position"), 96.0, |ui| {
+                        ui.segmented(&[&tr!("Top Right"), &tr!("Bottom"), &tr!("Bottom Right")], &mut d.position, None);
                     });
-                    ui.form_row("A partir da", 96.0, |ui| {
+                    ui.form_row(&tr!("Starting on page"), 96.0, |ui| {
                         ui.sized(70.0, |ui| {
                             ui.text_input(&mut d.from, "1");
                         });
-                        ui.fixed_label("ª página (as anteriores contam)", 230.0);
+                        ui.fixed_label(&tr!("(earlier pages count)"), 230.0);
                     });
                 }
                 ui.space(4.0);
                 ui.row(|ui| {
                     ui.push_right(2.0 * 110.0 + 8.0);
-                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                    ui.sized(110.0, |ui| ok = ui.primary_button("OK").clicked());
+                    ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                    ui.sized(110.0, |ui| ok = ui.primary_button(&tr!("OK")).clicked());
                 });
             });
             if cancel || ui.input().key(Key::Escape) {
@@ -2730,26 +2788,26 @@ impl Rich {
         if let Some(d) = self.image_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
             ui.modal(400.0, |ui| {
-                ui.title("Tamanho da imagem");
-                ui.switch("Manter proporção", &mut d.keep_ratio);
+                ui.title(&tr!("Image Size"));
+                ui.switch(&tr!("Keep proportions"), &mut d.keep_ratio);
                 if std::mem::take(&mut d.focus) {
                     ui.focus_next_input();
                 }
-                ui.form_row("Largura (cm)", 100.0, |ui| {
+                ui.form_row(&tr!("Width (cm)"), 100.0, |ui| {
                     ui.text_input(&mut d.width, "10,0");
                 });
                 if d.keep_ratio {
                     let height = d.width.trim().replace(',', ".").parse::<f32>().ok().filter(|w| w.is_finite() && *w > 0.0).map(|w| format!("{:.2} cm", w * d.ratio)).unwrap_or_else(|| "—".into());
-                    ui.form_row("Altura", 100.0, |ui| ui.fixed_label(&height, 100.0));
+                    ui.form_row(&tr!("Height"), 100.0, |ui| ui.fixed_label(&height, 100.0));
                 } else {
-                    ui.form_row("Altura (cm)", 100.0, |ui| {
+                    ui.form_row(&tr!("Height (cm)"), 100.0, |ui| {
                         ui.text_input(&mut d.height, "10,0");
                     });
                 }
                 ui.row(|ui| {
                     ui.push_right(2.0 * 110.0 + 8.0);
-                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                    ui.sized(110.0, |ui| ok = ui.primary_button("Aplicar").clicked());
+                    ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                    ui.sized(110.0, |ui| ok = ui.primary_button(&tr!("Apply")).clicked());
                 });
             });
             if cancel || ui.input().key(Key::Escape) {
@@ -2773,7 +2831,7 @@ impl Rich {
                         tracing::info!("editor: imagem redimensionada para {:.2} x {:.2} cm", to_cm(width), to_cm(height));
                     }
                     _ => {
-                        self.message = Some("Informe dimensões válidas entre 0,1 e 1000 cm.".into());
+                        self.message = Some(tr!("Enter valid dimensions between 0.1 and 1000 cm.").into_owned());
                         self.image_dialog = Some(d);
                     }
                 }
@@ -2786,19 +2844,19 @@ impl Rich {
             let (mut ok, mut cancel, mut remove) = (false, false, false);
             let had = !d.url.is_empty();
             ui.modal(460.0, |ui| {
-                ui.title("Link");
-                ui.note("Ctrl+clique no texto abre o endereço no navegador.");
+                ui.title(&tr!("Link"));
+                ui.note(&tr!("Ctrl+click on the text opens the address in the browser."));
                 if std::mem::take(&mut d.focus) {
                     ui.focus_next_input();
                 }
-                ok = ui.text_input(&mut d.url, "https://exemplo.com.br").submitted();
+                ok = ui.text_input(&mut d.url, &tr!("https://example.com")).submitted();
                 ui.row(|ui| {
                     if had {
-                        ui.sized(130.0, |ui| remove = ui.button_styled("Remover link", ButtonStyle::Bordered).clicked());
+                        ui.sized(130.0, |ui| remove = ui.button_styled(&tr!("Remove Link"), ButtonStyle::Bordered).clicked());
                     }
                     ui.push_right(2.0 * 110.0 + 8.0);
-                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                    ui.sized(110.0, |ui| ok |= ui.primary_button("OK").clicked());
+                    ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                    ui.sized(110.0, |ui| ok |= ui.primary_button(&tr!("OK")).clicked());
                 });
             });
             if cancel || ui.input().key(Key::Escape) {
@@ -2828,17 +2886,17 @@ impl Rich {
         if let Some(d) = self.table_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
             ui.modal(360.0, |ui| {
-                ui.title("Inserir tabela");
-                ui.form_row("Linhas", 90.0, |ui| {
+                ui.title(&tr!("Insert Table"));
+                ui.form_row(&tr!("Rows"), 90.0, |ui| {
                     ui.stepper(&mut d.rows, 1, 200);
                 });
-                ui.form_row("Colunas", 90.0, |ui| {
+                ui.form_row(&tr!("Columns"), 90.0, |ui| {
                     ui.stepper(&mut d.cols, 1, 20);
                 });
                 ui.row(|ui| {
                     ui.push_right(2.0 * 110.0 + 8.0);
-                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                    ui.sized(110.0, |ui| ok = ui.primary_button("Inserir").clicked());
+                    ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                    ui.sized(110.0, |ui| ok = ui.primary_button(&tr!("Insert")).clicked());
                 });
             });
             if cancel || ui.input().key(Key::Escape) {
@@ -2861,19 +2919,19 @@ impl Rich {
             let (mut ok, mut cancel, mut remove) = (false, false, false);
             let editing = d.id.is_some();
             ui.modal(480.0, |ui| {
-                ui.title(if editing { "Editar nota de rodapé" } else { "Nota de rodapé" });
-                ui.note("O número aparece no texto, onde está o cursor, e a nota no pé da mesma página (letra 10, como na ABNT).");
+                ui.title(&if editing { tr!("Edit Footnote") } else { tr!("Footnote") });
+                ui.note(&tr!("The number appears in the text at the cursor, and the note at the foot of the same page (10 pt, as ABNT requires)."));
                 if std::mem::take(&mut d.focus) {
                     ui.focus_next_input();
                 }
-                ok = ui.text_input(&mut d.text, "Texto da nota").submitted();
+                ok = ui.text_input(&mut d.text, &tr!("Footnote text")).submitted();
                 ui.row(|ui| {
                     if editing {
-                        ui.sized(110.0, |ui| remove = ui.button_styled("Remover", ButtonStyle::Bordered).clicked());
+                        ui.sized(110.0, |ui| remove = ui.button_styled(&tr!("Remove"), ButtonStyle::Bordered).clicked());
                     }
                     ui.push_right(2.0 * 110.0 + 8.0);
-                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                    ui.sized(110.0, |ui| ok |= ui.primary_button("OK").clicked());
+                    ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                    ui.sized(110.0, |ui| ok |= ui.primary_button(&tr!("OK")).clicked());
                 });
             });
             if cancel || ui.input().key(Key::Escape) {
@@ -2913,22 +2971,22 @@ impl Rich {
         if let Some(d) = self.abnt_dialog.as_mut() {
             let (mut ok, mut cancel) = (false, false);
             ui.modal(460.0, |ui| {
-                ui.title("Normas ABNT");
-                ui.note("Trabalho acadêmico (NBR 14724): papel A4, margens de 3 cm em cima e à esquerda e 2 cm embaixo e à direita, letra 12, entrelinha 1,5, recuo de 1,25 cm na primeira linha e texto justificado. Citações longas (estilo Citação) com recuo de 4 cm, letra 10 e entrelinha simples. Números das páginas no canto de cima, à direita.");
-                ui.form_row("Fonte", 150.0, |ui| {
+                ui.title(&tr!("ABNT Standards"));
+                ui.note(&tr!("Academic paper (NBR 14724): A4 paper, 3 cm margins at the top and left and 2 cm at the bottom and right, 12 pt type, 1.5 line spacing, 1.25 cm first-line indent and justified text. Long quotations (Quote style) with a 4 cm indent, 10 pt type and single spacing. Page numbers in the top right corner."));
+                ui.form_row(&tr!("Font"), 150.0, |ui| {
                     ui.segmented(&["Times New Roman", "Arial"], &mut d.font, None);
                 });
-                ui.form_row("Número a partir da", 150.0, |ui| {
+                ui.form_row(&tr!("Numbers start on page"), 150.0, |ui| {
                     ui.sized(70.0, |ui| {
                         ui.text_input(&mut d.numbers_from, "2");
                     });
-                    ui.fixed_label("ª página", 80.0);
+                    ui.fixed_label(&tr!("of the document"), 80.0);
                 });
-                ui.note("A capa e a folha de rosto contam, mas não mostram o número.");
+                ui.note(&tr!("The cover and title page count, but don’t show the number."));
                 ui.row(|ui| {
                     ui.push_right(2.0 * 110.0 + 8.0);
-                    ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                    ui.sized(110.0, |ui| ok = ui.primary_button("Aplicar").clicked());
+                    ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                    ui.sized(110.0, |ui| ok = ui.primary_button(&tr!("Apply")).clicked());
                 });
             });
             if cancel || ui.input().key(Key::Escape) {
@@ -2950,12 +3008,12 @@ impl Rich {
         };
         d.preview = d.preview.min(pages - 1);
         let (mut ok, mut cancel, mut prev, mut next) = (false, false, false, false);
-        let mut dests = vec!["Salvar como PDF".to_string()];
+        let mut dests = vec![tr!("Save as PDF").into_owned()];
         dests.extend(d.printers.iter().cloned());
         let mut thumb = (0.0, 0.0, 0.0, 0.0);
         let (pw, ph) = (self.doc.page.width, self.doc.page.height);
         ui.modal(600.0, |ui| {
-            ui.title("Imprimir");
+            ui.title(&tr!("Print"));
             let tw = 180.0;
             let th = tw * ph / pw;
             ui.columns(tw + 16.0, 16.0, |ui| {
@@ -2963,48 +3021,52 @@ impl Rich {
                 ui.custom(th + 6.0, |_, _| {});
                 thumb = ui.last_rect();
                 ui.row(|ui| {
-                    if ui.button_styled("‹", ButtonStyle::Plain).clicked() {
+                    let r = ui.button_styled("‹", ButtonStyle::Plain);
+                    ui.tooltip(&r, &tr!("Previous Page"));
+                    if r.clicked() {
                         prev = true;
                     }
-                    ui.fixed_label(&format!("{} de {pages}", d.preview + 1), 70.0);
-                    if ui.button_styled("›", ButtonStyle::Plain).clicked() {
+                    ui.fixed_label(&tr!("{n} of {total}", n = d.preview + 1, total = pages), 70.0);
+                    let r = ui.button_styled("›", ButtonStyle::Plain);
+                    ui.tooltip(&r, &tr!("Next Page"));
+                    if r.clicked() {
                         next = true;
                     }
                 });
             }, |ui| {
-                ui.form_row("Destino", 80.0, |ui| {
+                ui.form_row(&tr!("Destination"), 80.0, |ui| {
                     ui.dropdown("", &dests, &mut d.dest);
                 });
                 if d.printers.is_empty() {
-                    ui.note("Nenhuma impressora configurada: salve em PDF. Para adicionar uma impressora, use as configurações de impressoras do sistema.");
+                    ui.note(&tr!("No printer set up: save as PDF. To add a printer, use the system’s printer settings."));
                 }
                 if d.dest > 0 {
-                    ui.form_row("Cópias", 80.0, |ui| {
+                    ui.form_row(&tr!("Copies"), 80.0, |ui| {
                         ui.stepper(&mut d.copies, 1, 999);
                     });
                 }
-                ui.form_row("Páginas", 80.0, |ui| {
-                    ui.segmented(&["Todas", "Atual", "Intervalo"], &mut d.pages, None);
+                ui.form_row(&tr!("Pages"), 80.0, |ui| {
+                    ui.segmented(&[&mide::i18n::trc("pages", "All"), &tr!("Current"), &tr!("Range")], &mut d.pages, None);
                 });
                 if d.pages == 2 {
-                    ui.form_row("De", 80.0, |ui| {
+                    ui.form_row(&tr!("From"), 80.0, |ui| {
                         ui.sized(64.0, |ui| {
                             ui.text_input(&mut d.from, "1");
                         });
-                        ui.fixed_label("até", 36.0);
+                        ui.fixed_label(&tr!("to"), 36.0);
                         ui.sized(64.0, |ui| {
                             ui.text_input(&mut d.to, &pages.to_string());
                         });
                     });
                 }
                 if d.dest > 0 {
-                    ui.switch("Frente e verso", &mut d.duplex);
+                    ui.switch(&tr!("Two-sided"), &mut d.duplex);
                 }
             });
             ui.row(|ui| {
                 ui.push_right(110.0 + 130.0 + 8.0);
-                ui.sized(110.0, |ui| cancel = ui.button("Cancelar").clicked());
-                ui.sized(130.0, |ui| ok = ui.primary_button(if d.dest == 0 { "Salvar PDF…" } else { "Imprimir" }).clicked());
+                ui.sized(110.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                ui.sized(130.0, |ui| ok = ui.primary_button(&if d.dest == 0 { tr!("Save PDF…") } else { tr!("Print") }).clicked());
             });
         });
         if prev {
@@ -3282,7 +3344,7 @@ mod tests {
             r.fill_toc();
         }
         let toc: Vec<String> = r.doc.paras.iter().filter(|p| p.style.name == "Sumário").map(|p| p.text.clone()).collect();
-        assert_eq!(r.doc.paras[0].text, "SUMÁRIO");
+        assert_eq!(r.doc.paras[0].text, tr!("CONTENTS"));
         // O sumário fica na página 1; a introdução começa na 2 e o desenvolvimento na 3.
         assert_eq!(toc, ["1 INTRODUÇÃO\t2", "2 DESENVOLVIMENTO\t3", "2.1 Método\t3"], "{toc:?}");
         // O pontilhado vai até a margem.

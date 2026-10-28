@@ -1,0 +1,419 @@
+# Tradução do mide para o português do Brasil: o Terminal (mide-terminal).
+# Os textos em inglês (msgid) são os do código (src/bin/mide-terminal.rs e src/terminal/).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Trigger: {text}"
+msgstr "Gatilho: {text}"
+
+msgid "Couldn’t start the shell: {err}"
+msgstr "Não foi possível abrir o shell: {err}"
+
+msgid "tmux detached"
+msgstr "tmux desanexado"
+
+msgid "Command finished"
+msgstr "Comando terminado"
+
+msgid "Command failed (exit code {code})"
+msgstr "Comando falhou (código {code})"
+
+msgid "{command} — in {time}"
+msgstr "{command} — em {time}"
+
+msgid "Open Link"
+msgstr "Abrir endereço"
+
+msgid "Copy Link"
+msgstr "Copiar endereço"
+
+msgid "New Tab"
+msgstr "Nova aba"
+
+msgid "Not found"
+msgstr "Nada encontrado"
+
+msgid "{n} of {total}"
+msgstr "{n} de {total}"
+
+msgid "Find in Terminal"
+msgstr "Buscar no terminal"
+
+msgid "Previous Match"
+msgstr "Ocorrência anterior"
+
+msgid "Next Match"
+msgstr "Próxima ocorrência"
+
+msgid "Done"
+msgstr "Concluído"
+
+msgid "tmux is in control mode: its windows opened as tabs."
+msgstr "O tmux está em modo de controle: as janelas dele abriram em abas."
+
+msgid "Press Esc here (or Shell → Detach from tmux) to detach."
+msgstr "Esc aqui (ou Shell → Desanexar do tmux) desanexa."
+
+msgid "Close this window?"
+msgstr "Fechar esta janela?"
+
+msgid "Close this tab?"
+msgstr "Fechar esta aba?"
+
+msgid "Close this pane?"
+msgstr "Fechar este painel?"
+
+msgid "Programs are still running: {programs}. Closing will terminate them."
+msgstr "Ainda há programas rodando: {programs}. Fechar encerra esses programas."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "New Tab with “{name}”"
+msgstr "Nova aba com “{name}”"
+
+msgid "Shell"
+msgstr "Shell"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "View"
+msgstr "Visualizar"
+
+msgid "Profiles"
+msgstr "Perfis"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Paste"
+msgstr "Colar"
+
+msgid "Select All"
+msgstr "Selecionar tudo"
+
+msgid "New Window"
+msgstr "Nova janela"
+
+msgid "Close Window"
+msgstr "Fechar janela"
+
+msgid "Close Pane"
+msgstr "Fechar painel"
+
+msgid "Split Pane Vertically"
+msgstr "Dividir lado a lado"
+
+msgid "Split Pane Horizontally"
+msgstr "Dividir em cima e embaixo"
+
+msgid "Find…"
+msgstr "Buscar…"
+
+msgid "Find Next Match"
+msgstr "Próxima ocorrência"
+
+msgid "Find Previous Match"
+msgstr "Ocorrência anterior"
+
+msgid "Clear Buffer"
+msgstr "Limpar"
+
+msgid "Settings…"
+msgstr "Preferências…"
+
+msgid "Make Text Bigger"
+msgstr "Aumentar fonte"
+
+msgid "Make Text Smaller"
+msgstr "Diminuir fonte"
+
+msgid "Default Font Size"
+msgstr "Tamanho normal"
+
+msgid "Maximize Active Pane"
+msgstr "Ampliar painel"
+
+msgid "Show Next Tab"
+msgstr "Próxima aba"
+
+msgid "Show Previous Tab"
+msgstr "Aba anterior"
+
+msgid "Select Next Pane"
+msgstr "Próximo painel"
+
+msgid "Select Previous Pane"
+msgstr "Painel anterior"
+
+msgid "Scroll to Top"
+msgstr "Início do histórico"
+
+msgid "Scroll to Bottom"
+msgstr "Fim do histórico"
+
+msgid "Jump to Previous Prompt"
+msgstr "Prompt anterior"
+
+msgid "Jump to Next Prompt"
+msgstr "Próximo prompt"
+
+msgid "Detach from tmux"
+msgstr "Desanexar do tmux"
+
+msgid "Block"
+msgstr "Bloco"
+
+msgid "Vertical Bar"
+msgstr "Barra"
+
+msgid "Underline"
+msgstr "Sublinhado"
+
+msgid "Couldn’t write the profiles: {err}"
+msgstr "Não foi possível gravar: {err}"
+
+msgid "Default profile for new windows and tabs."
+msgstr "Perfil padrão das janelas e abas novas."
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Profile name"
+msgstr "Nome do perfil"
+
+msgid "Appearance"
+msgstr "Aparência"
+
+msgid "Colors"
+msgstr "Cores"
+
+msgid "System Default"
+msgstr "Padrão do sistema"
+
+msgid "Font"
+msgstr "Fonte"
+
+msgid "Font Size"
+msgstr "Tamanho da fonte"
+
+msgid "Cursor"
+msgstr "Cursor"
+
+msgid "Blinking cursor"
+msgstr "Cursor piscando"
+
+msgid "Draw bold text in bright colors"
+msgstr "Negrito em cor clara"
+
+msgid "Visual bell"
+msgstr "Aviso visual do sino"
+
+msgid "Transparency"
+msgstr "Transparência"
+
+msgid "Opacity"
+msgstr "Opacidade"
+
+msgid "Glass"
+msgstr "Vidro"
+
+msgid "Blurs what is behind the translucent background"
+msgstr "Desfoca o que está atrás do fundo translúcido"
+
+msgid "Color"
+msgstr "Cor"
+
+msgid "Use Theme Colors"
+msgstr "Usar as cores do tema"
+
+msgid "Triggers"
+msgstr "Gatilhos"
+
+msgid "When the text appears in the output (ignoring case and accents)."
+msgstr "Quando o texto aparece na saída (sem diferenciar maiúsculas nem acentos)."
+
+msgid "Notify"
+msgstr "Notificar"
+
+msgid "Flash"
+msgstr "Piscar"
+
+msgid "Text (e.g. error)"
+msgstr "Texto (ex.: erro)"
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "New Trigger"
+msgstr "Novo gatilho"
+
+msgid "Session"
+msgstr "Sessão"
+
+msgid "{n} lines"
+msgstr "{n} linhas"
+
+msgid "Scrollback"
+msgstr "Histórico"
+
+msgid "Reopen tabs and panes"
+msgstr "Reabrir abas e painéis"
+
+msgid "Restores the last closed window as it was"
+msgstr "Volta como estava a última janela fechada"
+
+msgid "Hotkey window height (F12)"
+msgstr "Altura do terminal de atalho (F12)"
+
+msgid "In the same folder"
+msgstr "Na mesma pasta"
+
+msgid "In the home folder"
+msgstr "Na pasta pessoal"
+
+msgid "New tabs and panes open"
+msgstr "Abas e painéis novos abrem"
+
+msgid "Shell integration"
+msgstr "Integração do shell"
+
+msgid "Marks prompts, notifies when a command finishes and adds imgcat (bash and zsh)"
+msgstr "Marca os prompts, avisa quando um comando termina e traz o imgcat (bash e zsh)"
+
+msgid "Never"
+msgstr "Nunca"
+
+msgid "5 seconds"
+msgstr "5 segundos"
+
+msgid "10 seconds"
+msgstr "10 segundos"
+
+msgid "30 seconds"
+msgstr "30 segundos"
+
+msgid "1 minute"
+msgstr "1 minuto"
+
+msgid "Notify about long commands after"
+msgstr "Avisar comando demorado após"
+
+msgid "Command at startup"
+msgstr "Comando ao abrir"
+
+msgid "User’s shell"
+msgstr "Shell do usuário"
+
+msgid "New Profile"
+msgstr "Novo perfil"
+
+msgid "Duplicate"
+msgstr "Duplicar"
+
+msgid "Set as Default"
+msgstr "Usar como padrão"
+
+msgid "Delete"
+msgstr "Apagar"
+
+msgid "Profile"
+msgstr "Perfil"
+
+msgid "Terminal Settings"
+msgstr "Preferências do Terminal"
+
+msgctxt "trigger"
+msgid "Highlight"
+msgstr "Destacar"
+
+msgid "Text"
+msgstr "Texto"
+
+msgid "Background"
+msgstr "Fundo"
+
+msgid "Selection"
+msgstr "Seleção"
+
+msgid "Black"
+msgstr "Preto"
+
+msgid "Red"
+msgstr "Vermelho"
+
+msgid "Green"
+msgstr "Verde"
+
+msgid "Yellow"
+msgstr "Amarelo"
+
+msgid "Blue"
+msgstr "Azul"
+
+msgid "Magenta"
+msgstr "Magenta"
+
+msgid "Cyan"
+msgstr "Ciano"
+
+msgid "White"
+msgstr "Branco"
+
+msgid "Bright Black"
+msgstr "Preto claro"
+
+msgid "Bright Red"
+msgstr "Vermelho claro"
+
+msgid "Bright Green"
+msgstr "Verde claro"
+
+msgid "Bright Yellow"
+msgstr "Amarelo claro"
+
+msgid "Bright Blue"
+msgstr "Azul claro"
+
+msgid "Bright Magenta"
+msgstr "Magenta claro"
+
+msgid "Bright Cyan"
+msgstr "Ciano claro"
+
+msgid "Bright White"
+msgstr "Branco claro"
+
+msgid "Default"
+msgstr "Padrão"
+
+msgid "Light"
+msgstr "Claro"
+
+msgid "Dark"
+msgstr "Escuro"
+
+msgid "Graphite"
+msgstr "Grafite"
+
+msgid "Ocean"
+msgstr "Oceano"
+
+msgid "Paper"
+msgstr "Papel"
+
+msgid "Forest"
+msgstr "Floresta"
+
+msgid "Midnight"
+msgstr "Meia-noite"
+
+msgid "High Contrast"
+msgstr "Alto contraste"

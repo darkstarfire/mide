@@ -223,6 +223,22 @@ pub const THEMES: &[Theme] = &[
     },
 ];
 
+/// Nome de um tema na tela, no idioma da sessão. O `name` do tema é a chave gravada nos
+/// perfis (`theme = "Escuro"`) e não muda.
+pub fn theme_label(name: &str) -> std::borrow::Cow<'_, str> {
+    match name {
+        "Claro" => crate::tr!("Light"),
+        "Escuro" => crate::tr!("Dark"),
+        "Grafite" => crate::tr!("Graphite"),
+        "Oceano" => crate::tr!("Ocean"),
+        "Papel" => crate::tr!("Paper"),
+        "Floresta" => crate::tr!("Forest"),
+        "Meia-noite" => crate::tr!("Midnight"),
+        "Alto contraste" => crate::tr!("High Contrast"),
+        other => std::borrow::Cow::Borrowed(other),
+    }
+}
+
 /// Tema pelo nome (o padrão se não existir).
 pub fn theme(name: &str) -> Theme {
     THEMES.iter().find(|t| t.name == name).cloned().unwrap_or_default()

@@ -45,6 +45,8 @@ use mide::code::{
     project, search,
     session::Session,
 };
+use mide::i18n::trn;
+use mide::tr;
 use mide::kit::{
     run,
     textarea::{line_of, Decorations, TextDoc},
@@ -84,7 +86,7 @@ impl Doc {
     }
 
     fn name(&self) -> String {
-        self.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| "sem título".to_string(), |n| n.to_string_lossy().into_owned())
+        self.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| tr!("untitled").into_owned(), |n| n.to_string_lossy().into_owned())
     }
 
     fn title(&self) -> String {
@@ -192,10 +194,10 @@ pub(crate) struct Code {
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
     if std::fs::metadata(path)?.len() > MAX_BYTES {
-        return Err(std::io::Error::other("arquivo grande demais para o editor"));
+        return Err(std::io::Error::other(tr!("file too large for the editor").into_owned()));
     }
     let bytes = std::fs::read(path)?;
-    let text = String::from_utf8(bytes).map_err(|_| std::io::Error::other("não é texto UTF-8 (arquivo binário?)"))?;
+    let text = String::from_utf8(bytes).map_err(|_| std::io::Error::other(tr!("not UTF-8 text (binary file?)").into_owned()))?;
     let crlf = text.contains("\r\n");
     Ok((if crlf { text.replace("\r\n", "\n") } else { text }, crlf))
 }
@@ -289,7 +291,7 @@ impl Code {
             // Arquivo novo: começa vazio e é criado ao salvar.
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Doc::new(Some(path.clone()), String::new(), false),
             Err(err) => {
-                self.say(format!("Não foi possível abrir \"{}\": {err}", path.display()));
+                self.say(tr!("Couldn’t open “{path}”: {err}", path = path.display(), err = err));
                 return;
             }
         };
@@ -320,7 +322,7 @@ impl Code {
     fn save(&mut self, then_close: bool) -> bool {
         if self.doc().path.is_none() {
             let dir = default_dir(self.root.as_deref());
-            self.dialog = Some(Dialog::SaveAs(FileChooser::save("Salvar como", Some(&dir), "sem título.txt"), then_close));
+            self.dialog = Some(Dialog::SaveAs(FileChooser::save(&tr!("Save As"), Some(&dir), &format!("{}.txt", tr!("untitled"))), then_close));
             return false;
         }
         self.save_index(self.cur.min(self.docs.len() - 1))
@@ -348,7 +350,7 @@ impl Code {
                 true
             }
             Err(err) => {
-                self.say(format!("Não foi possível salvar: {err}"));
+                self.say(tr!("Couldn’t save: {err}", err = err));
                 false
             }
         }
@@ -364,9 +366,9 @@ impl Code {
         }
         let unnamed = self.docs.iter().filter(|d| d.text.modified && d.path.is_none()).count();
         if unnamed > 0 {
-            self.say(format!("{n} arquivo(s) salvo(s); {unnamed} sem nome (use Salvar como)"));
+            self.say(tr!("{saved}; {unnamed} untitled (use Save As)", saved = trn("{n} file saved", "{n} files saved", n as u64), unnamed = unnamed));
         } else {
-            self.say(format!("{n} arquivo(s) salvo(s)"));
+            self.say(trn("{n} file saved", "{n} files saved", n as u64));
         }
     }
 
@@ -385,9 +387,9 @@ impl Code {
                     doc.diags.clear();
                 }
                 let n = self.config.servers.len();
-                self.say(format!("Servidores de linguagem atualizados ({n})"));
+                self.say(tr!("Language servers updated ({n})", n = n));
             }
-            Err(err) => self.say(format!("Erro no code-servers.toml, {err}")),
+            Err(err) => self.say(tr!("Error in code-servers.toml, {err}", err = err)),
         }
     }
 
@@ -471,7 +473,7 @@ impl Code {
                     self.servers.insert(server.command.clone(), client);
                 }
                 Err(err) => {
-                    self.say(format!("Não foi possível iniciar {}: {err}", server.command));
+                    self.say(tr!("Couldn’t start {command}: {err}", command = server.command, err = err));
                     self.failed.insert(server.command.clone());
                     return None;
                 }
@@ -583,7 +585,7 @@ impl Code {
         let path = self.doc().path.clone();
         self.sync_now();
         let (Some(path), Some(client)) = (path, self.client_for_current()) else {
-            self.say("Completar precisa de um servidor de linguagem (Preferências).");
+            self.say(tr!("Completion needs a language server (Settings)."));
             return;
         };
         if let Some(id) = client.completion(&path, &text, cursor) {
@@ -635,7 +637,7 @@ impl Code {
         if let (Some(path), Some(client)) = (path, self.client_for_current()) {
             self.definition = client.definition(&path, &text, cursor);
         } else {
-            self.say("Ir para a definição precisa de um servidor de linguagem (Preferências).");
+            self.say(tr!("Go to Definition needs a language server (Settings)."));
         }
     }
 
@@ -657,7 +659,7 @@ impl Code {
         let utf8 = self.config.server_for(lang).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8);
         let doc = self.doc();
         if doc.diags.is_empty() {
-            self.say("Nenhum problema neste arquivo");
+            self.say(tr!("No problems in this file"));
             return;
         }
         let cursor = doc.text.edit.cursor;
@@ -734,7 +736,7 @@ impl Code {
                 doc.edit = mide::kit::textedit::Edit { cursor: i + query.len(), anchor: Some(i) };
                 self.start = true;
             }
-            None => self.say(format!("\"{query}\" não encontrado")),
+            None => self.say(tr!("“{query}” not found", query = query)),
         }
     }
 
@@ -767,7 +769,7 @@ impl Code {
             doc.text = text;
             doc.edit = mide::kit::textedit::Edit { cursor: 0, anchor: None };
         }
-        self.say(format!("{n} substituição(ões)"));
+        self.say(trn("{n} replacement", "{n} replacements", n as u64));
     }
 
     /// Substitui no projeto inteiro: nas abas abertas troca no texto (fica para salvar),
@@ -794,8 +796,8 @@ impl Code {
             }
         }
         match search::replace(&root, query, with, case, &open) {
-            Ok((files, n)) => self.say(format!("{} substituição(ões) em {files} arquivo(s) e {in_open} nas abas abertas", n)),
-            Err(err) => self.say(format!("Erro ao substituir: {err}")),
+            Ok((files, n)) => self.say(tr!("{replacements} in {files} and {open} in open tabs", replacements = trn("{n} replacement", "{n} replacements", n as u64), files = trn("{n} file", "{n} files", files as u64), open = in_open)),
+            Err(err) => self.say(tr!("Error while replacing: {err}", err = err)),
         }
     }
 
@@ -846,7 +848,7 @@ impl Code {
             match term::TermPanel::open(dir, wake) {
                 Ok(t) => self.terminal = Some(t),
                 Err(err) => {
-                    self.say(format!("Não foi possível abrir o terminal: {err}"));
+                    self.say(tr!("Couldn’t open the terminal: {err}", err = err));
                     return false;
                 }
             }
@@ -868,11 +870,11 @@ impl Code {
             "open" => {
                 // Na pasta do arquivo aberto (ou do projeto).
                 let dir = self.docs.get(self.cur).and_then(|d| d.path.as_ref()).and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| default_dir(self.root.as_deref()));
-                self.dialog = Some(Dialog::Open(FileChooser::open("Abrir", Some(&dir)).multiple(true)));
+                self.dialog = Some(Dialog::Open(FileChooser::open(&tr!("Open"), Some(&dir)).multiple(true)));
             }
             "open-folder" => {
                 let dir = self.root.clone().unwrap_or_else(mide::places::home_dir);
-                self.dialog = Some(Dialog::OpenFolder(FileChooser::folder("Abrir pasta", Some(&dir))));
+                self.dialog = Some(Dialog::OpenFolder(FileChooser::folder(&tr!("Open Folder"), Some(&dir))));
             }
             "close-folder" => self.close_folder(),
             "save" => {
@@ -882,7 +884,7 @@ impl Code {
             "save-as" => {
                 let dir = self.doc().path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf)).or_else(|| self.root.clone()).unwrap_or_else(mide::places::home_dir);
                 let name = self.doc().name();
-                self.dialog = Some(Dialog::SaveAs(FileChooser::save("Salvar como", Some(&dir), &name), false));
+                self.dialog = Some(Dialog::SaveAs(FileChooser::save(&tr!("Save As"), Some(&dir), &name), false));
             }
             "close-tab" => self.close_tab(self.cur, false),
             "quit" => {
@@ -906,7 +908,7 @@ impl Code {
             "find-prev" => self.find_step(false),
             "find-project" => {
                 if self.root.is_none() {
-                    self.say("Abra uma pasta (Arquivo → Abrir pasta) para buscar no projeto.");
+                    self.say(tr!("Open a folder (File → Open Folder) to search the project."));
                 } else {
                     let doc = &self.docs[self.cur.min(self.docs.len() - 1)].text;
                     let query = doc.edit.selected(&doc.text).filter(|s| !s.contains('\n')).unwrap_or("").to_string();
@@ -916,7 +918,7 @@ impl Code {
             "goto-file" => {
                 let files = self.root.as_ref().map(|r| project::files(r, 20_000)).unwrap_or_default();
                 if files.is_empty() {
-                    self.say("Abra uma pasta (Arquivo → Abrir pasta) para ir para os arquivos dela.");
+                    self.say(tr!("Open a folder (File → Open Folder) to go to its files."));
                 } else {
                     self.overlay = Overlay::GoToFile { query: String::new(), files, sel: 0, focus: true };
                 }
@@ -937,14 +939,14 @@ impl Code {
                 if ui.is_window_open(PREFS) {
                     ui.close_window(PREFS);
                 } else {
-                    ui.open_window(PREFS, Window::new("Preferências do Code").size(560, 470).min_size(480, 400).glass());
+                    ui.open_window(PREFS, Window::new(&tr!("Code Settings")).size(560, 470).min_size(480, 400).glass());
                 }
             }
             "edit-servers" => {
                 self.overlay = Overlay::None;
                 match self.config.ensure_servers_file() {
                     Ok(path) => self.open_path(path),
-                    Err(err) => self.say(format!("Não foi possível criar o arquivo dos servidores: {err}")),
+                    Err(err) => self.say(tr!("Couldn’t create the language servers file: {err}", err = err)),
                 }
             }
             "drawer" => {
@@ -1088,11 +1090,11 @@ impl Code {
                 let mut chosen = None;
                 let root = self.root.clone();
                 ui.modal(560.0, |ui| {
-                    ui.strong("Ir para arquivo");
+                    ui.strong(&tr!("Go to File"));
                     if std::mem::take(focus) {
                         ui.focus_next_input();
                     }
-                    ui.text_input(query, "Nome do arquivo (letras em qualquer parte)");
+                    ui.text_input(query, &tr!("File name (letters anywhere)"));
                     let best = project::best(query, files, 12);
                     if up {
                         *sel = sel.saturating_sub(1);
@@ -1126,11 +1128,11 @@ impl Code {
             Overlay::GoToLine { text, focus } => {
                 let mut go = None;
                 ui.modal(320.0, |ui| {
-                    ui.strong("Ir para a linha");
+                    ui.strong(&tr!("Go to Line"));
                     if std::mem::take(focus) {
                         ui.focus_next_input();
                     }
-                    if ui.text_input(text, "Linha (ou linha:coluna)").submitted() {
+                    if ui.text_input(text, &tr!("Line (or line:column)")).submitted() {
                         go = edit::parse_goto(text);
                     }
                 });
@@ -1156,23 +1158,24 @@ impl Code {
         let mut chosen: Option<search::Hit> = None;
         let mut close = esc;
         ui.modal(680.0, |ui| {
-            ui.strong("Buscar no projeto");
+            ui.strong(&tr!("Find in Project"));
             if std::mem::take(&mut pf.focus) {
                 ui.focus_next_input();
             }
-            run_search |= ui.text_input(&mut pf.query, "Buscar").submitted();
-            ui.text_input(&mut pf.replace, "Substituir por");
+            run_search |= ui.text_input(&mut pf.query, &tr!("Find")).submitted();
+            ui.text_input(&mut pf.replace, &tr!("Replace with"));
             ui.row(|ui| {
-                if ui.checkbox("Diferenciar maiúsculas", &mut pf.case).changed() {
+                if ui.checkbox(&tr!("Match case"), &mut pf.case).changed() {
                     run_search = true;
                 }
                 ui.push_right(2.0 * 170.0 + 8.0);
-                ui.sized(170.0, |ui| replace |= ui.button("Substituir em tudo").clicked());
-                ui.sized(170.0, |ui| run_search |= ui.primary_button("Buscar").clicked());
+                ui.sized(170.0, |ui| replace |= ui.button(&tr!("Replace All")).clicked());
+                ui.sized(170.0, |ui| run_search |= ui.primary_button(&tr!("Find")).clicked());
             });
             match &pf.searched {
-                Some(q) if pf.hits.is_empty() => ui.note(&format!("Nada encontrado para \"{q}\".")),
-                Some(_) => ui.note(&format!("{} linha(s){}", pf.hits.len(), if pf.hits.len() >= 500 { " (as primeiras 500)" } else { "" })),
+                Some(q) if pf.hits.is_empty() => ui.note(&tr!("Nothing found for “{query}”.", query = q)),
+                Some(_) if pf.hits.len() >= 500 => ui.note(&tr!("{lines} (the first 500)", lines = trn("{n} line", "{n} lines", pf.hits.len() as u64))),
+                Some(_) => ui.note(&trn("{n} line", "{n} lines", pf.hits.len() as u64)),
                 None => {}
             }
             if !pf.hits.is_empty() {
@@ -1187,7 +1190,7 @@ impl Code {
             }
             ui.row(|ui| {
                 ui.push_right(110.0);
-                ui.sized(110.0, |ui| close |= ui.button("Fechar").clicked());
+                ui.sized(110.0, |ui| close |= ui.button(&tr!("Close")).clicked());
             });
         });
         let (query, with, case) = (pf.query.clone(), pf.replace.clone(), pf.case);
@@ -1217,48 +1220,48 @@ impl Code {
         let c = &mut self.config;
         let mut close = ui.input().key(Key::Escape);
         let mut edit_servers = false;
-        let fonts: Vec<String> = std::iter::once("Fonte do sistema".to_string()).chain(ui.mono_fonts()).collect();
+        let fonts: Vec<String> = std::iter::once(tr!("System Font").into_owned()).chain(ui.mono_fonts()).collect();
         let mut font_i = c.font.as_ref().and_then(|f| fonts.iter().position(|x| x == f)).unwrap_or(0);
         let servers_running: Vec<String> = self.servers.keys().cloned().collect();
         let servers_file = "code-servers.toml";
         ui.page(|ui| {
             ui.card(|ui| {
-                if ui.dropdown("Fonte", &fonts, &mut font_i).changed() {
+                if ui.dropdown(&tr!("Font"), &fonts, &mut font_i).changed() {
                     c.font = (font_i > 0).then(|| fonts[font_i].clone());
                 }
                 let mut size = c.size;
-                ui.slider("Tamanho da fonte", &mut size, 9.0, 28.0);
+                ui.slider(&tr!("Font Size"), &mut size, 9.0, 28.0);
                 c.size = size.round();
-                ui.switch("Números de linha", &mut c.line_numbers);
-                ui.switch("Destacar a linha atual", &mut c.current_line);
-                ui.switch("Recuo com espaços (desligado: tabulação)", &mut c.soft_tabs);
+                ui.switch(&tr!("Line numbers"), &mut c.line_numbers);
+                ui.switch(&tr!("Highlight current line"), &mut c.current_line);
+                ui.switch(&tr!("Indent with spaces (off: tabs)"), &mut c.soft_tabs);
                 let mut tab = c.tab_size as f32;
-                ui.slider("Espaços por recuo", &mut tab, 1.0, 8.0);
+                ui.slider(&tr!("Spaces per indent"), &mut tab, 1.0, 8.0);
                 c.tab_size = tab.round() as usize;
-                ui.switch("Gaveta do projeto à esquerda", &mut c.drawer);
+                ui.switch(&tr!("Project drawer on the left"), &mut c.drawer);
             });
             // Servidores: um resumo (a lista fica no arquivo, editado no próprio Code).
             let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
             let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
-            let mut summary = format!("{} configurado(s)", c.servers.len());
+            let mut summary = tr!("{n} configured", n = c.servers.len());
             if !running.is_empty() {
-                summary.push_str(&format!(" · rodando: {}", running.join(", ")));
+                summary.push_str(&tr!(" · running: {list}", list = running.join(", ")));
             }
             if !ready.is_empty() {
-                summary.push_str(&format!(" · instalados: {}", ready.join(", ")));
+                summary.push_str(&tr!(" · installed: {list}", list = ready.join(", ")));
             }
-            ui.note(&format!("Servidores de linguagem (LSP): {summary}. Ficam no {servers_file}, que vale ao salvar."));
+            ui.note(&tr!("Language servers (LSP): {summary}. They are listed in {file}, which takes effect when saved.", summary = summary, file = servers_file));
             ui.row(|ui| {
-                edit_servers |= ui.button("Editar servidores de linguagem…").clicked();
+                edit_servers |= ui.button(&tr!("Edit Language Servers…")).clicked();
                 ui.push_right(110.0);
-                ui.sized(110.0, |ui| close |= ui.primary_button("Pronto").clicked());
+                ui.sized(110.0, |ui| close |= ui.primary_button(&mide::i18n::trc("settings", "Done")).clicked());
             });
         });
         if edit_servers {
             // O arquivo abre numa aba da janela principal.
             match self.config.ensure_servers_file() {
                 Ok(path) => self.open_path(path),
-                Err(err) => self.say(format!("Não foi possível criar o arquivo dos servidores: {err}")),
+                Err(err) => self.say(tr!("Couldn’t create the language servers file: {err}", err = err)),
             }
             close = true;
         }
@@ -1319,20 +1322,20 @@ impl Code {
                 let name = self.docs.get(i).map(Doc::name).unwrap_or_default();
                 let mut choice = None;
                 ui.modal(420.0, |ui| {
-                    ui.strong(&format!("Salvar as alterações de \"{name}\"?"));
-                    ui.note("Sem salvar, as alterações se perdem.");
+                    ui.strong(&tr!("Save the changes to “{name}”?", name = name));
+                    ui.note(&tr!("Without saving, the changes are lost."));
                     ui.row(|ui| {
-                        if ui.button("Não salvar").clicked() {
+                        if ui.button(&tr!("Don’t Save")).clicked() {
                             choice = Some(0);
                         }
                         ui.push_right(2.0 * 110.0 + 8.0);
                         ui.sized(110.0, |ui| {
-                            if ui.button("Cancelar").clicked() {
+                            if ui.button(&tr!("Cancel")).clicked() {
                                 choice = Some(1);
                             }
                         });
                         ui.sized(110.0, |ui| {
-                            if ui.primary_button("Salvar").clicked() {
+                            if ui.primary_button(&tr!("Save")).clicked() {
                                 choice = Some(2);
                             }
                         });
@@ -1358,17 +1361,17 @@ impl Code {
                 let n = self.docs.iter().filter(|d| d.text.modified).count();
                 let mut choice = None;
                 ui.modal(420.0, |ui| {
-                    ui.strong(&format!("{n} arquivo(s) com alterações não salvas"));
-                    ui.note("Sair sem salvar perde as alterações.");
+                    ui.strong(&trn("{n} file has unsaved changes", "{n} files have unsaved changes", n as u64));
+                    ui.note(&tr!("Quitting without saving loses the changes."));
                     ui.row(|ui| {
                         ui.push_right(2.0 * 130.0 + 8.0);
                         ui.sized(130.0, |ui| {
-                            if ui.button("Cancelar").clicked() {
+                            if ui.button(&tr!("Cancel")).clicked() {
                                 choice = Some(false);
                             }
                         });
                         ui.sized(130.0, |ui| {
-                            if ui.primary_button("Sair sem salvar").clicked() {
+                            if ui.primary_button(&tr!("Quit Without Saving")).clicked() {
                                 choice = Some(true);
                             }
                         });
@@ -1426,9 +1429,9 @@ impl Code {
         }
         let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         if kept > 0 {
-            self.say(format!("Pasta \"{name}\" fechada; {kept} aba(s) com alterações continuam abertas"));
+            self.say(tr!("Folder “{name}” closed; {tabs} with changes still open", name = name, tabs = trn("{n} tab", "{n} tabs", kept as u64)));
         } else {
-            self.say(format!("Pasta \"{name}\" fechada"));
+            self.say(tr!("Folder “{name}” closed", name = name));
         }
     }
 
@@ -1457,7 +1460,7 @@ impl Code {
     fn divider_moved(&mut self) {
         tracing::info!("divisória: gaveta {:.0}, terminal {:.0}", self.config.drawer_width, self.config.terminal_height);
         if let Err(err) = self.config.save() {
-            self.say(format!("Preferências não gravadas: {err}"));
+            self.say(tr!("Settings not saved: {err}", err = err));
         }
     }
 
@@ -1556,14 +1559,14 @@ impl Code {
         // Menu de contexto do editor.
         let mut chosen = None;
         ui.context_menu(&r.response, |m| {
-            for (action, label) in [("definition", "Ir para a definição"), ("hover", "Mostrar informações"), ("complete", "Completar")] {
-                if m.item(label) {
+            for (action, label) in [("definition", tr!("Go to Definition")), ("hover", tr!("Show Info")), ("complete", tr!("Complete"))] {
+                if m.item(&label) {
                     chosen = Some(action);
                 }
             }
             m.separator();
-            for (action, label) in [("comment", "Comentar linhas"), ("duplicate", "Duplicar linha"), ("move-up", "Mover linha para cima"), ("move-down", "Mover linha para baixo")] {
-                if m.item(label) {
+            for (action, label) in [("comment", tr!("Comment Lines")), ("duplicate", tr!("Duplicate Line")), ("move-up", tr!("Move Line Up")), ("move-down", tr!("Move Line Down"))] {
+                if m.item(&label) {
                     chosen = Some(action);
                 }
             }
@@ -1729,15 +1732,15 @@ impl App for Code {
         let term_on = self.terminal_open;
         ui.at(left, 0.0, width, |ui| {
             ui.toolbar(|ui| {
-                if ui.tool_toggle("view-sidebar-start-symbolic", "Mostrar ou esconder a gaveta do projeto", drawer_on).clicked() {
+                if ui.tool_toggle("view-sidebar-start-symbolic", &tr!("Show or hide the project drawer"), drawer_on).clicked() {
                     clicked = Some("drawer");
                 }
                 ui.toolbar_title(&title, 360.0);
                 ui.push_right(2.0 * (3.0 * 40.0 + 4.0) + 8.0 + 8.0);
                 match ui.tool_group(&[
-                    Tool::new("document-open-symbolic", "Abrir arquivo (Ctrl+O)"),
-                    Tool::new("folder-open-symbolic", "Abrir pasta (Ctrl+Shift+O)"),
-                    Tool::new("document-save-symbolic", "Salvar (Ctrl+S)"),
+                    Tool::new("document-open-symbolic", &tr!("Open File (Ctrl+O)")),
+                    Tool::new("folder-open-symbolic", &tr!("Open Folder (Ctrl+Shift+O)")),
+                    Tool::new("document-save-symbolic", &tr!("Save (Ctrl+S)")),
                 ]) {
                     Some(0) => clicked = Some("open"),
                     Some(1) => clicked = Some("open-folder"),
@@ -1745,9 +1748,9 @@ impl App for Code {
                     _ => {}
                 }
                 match ui.tool_group(&[
-                    Tool::new("edit-find-symbolic", "Buscar e substituir (Ctrl+F)").on(finding),
-                    Tool::new("utilities-terminal-symbolic", "Terminal (Ctrl+J)").on(term_on),
-                    Tool::new("preferences-system-symbolic", "Preferências (Ctrl+,)"),
+                    Tool::new("edit-find-symbolic", &tr!("Find and Replace (Ctrl+F)")).on(finding),
+                    Tool::new("utilities-terminal-symbolic", &tr!("Terminal (Ctrl+J)")).on(term_on),
+                    Tool::new("preferences-system-symbolic", &tr!("Settings (Ctrl+,)")),
                 ]) {
                     Some(0) => clicked = Some("find"),
                     Some(1) => clicked = Some("terminal"),
@@ -1797,7 +1800,7 @@ impl App for Code {
                         ui.focus_next_input();
                     }
                     ui.sized(190.0, |ui| {
-                        if ui.text_input(&mut find.query, "Buscar").submitted() {
+                        if ui.text_input(&mut find.query, &tr!("Find")).submitted() {
                             if ui.input().shift {
                                 prev = true;
                             } else {
@@ -1806,16 +1809,23 @@ impl App for Code {
                         }
                     });
                     ui.sized(170.0, |ui| {
-                        if ui.text_input(&mut find.replace, "Substituir por").submitted() {
+                        if ui.text_input(&mut find.replace, &tr!("Replace with")).submitted() {
                             one = true;
                         }
                     });
-                    ui.checkbox("Aa", &mut find.case);
-                    prev |= ui.button("‹").clicked();
-                    next |= ui.button("›").clicked();
-                    one |= ui.button("Substituir").clicked();
-                    all |= ui.button("Todos").clicked();
-                    close |= ui.button("×").clicked();
+                    let case = ui.checkbox("Aa", &mut find.case);
+                    ui.tooltip(&case, &tr!("Match case"));
+                    let r = ui.button("‹");
+                    ui.tooltip(&r, &tr!("Find Previous"));
+                    prev |= r.clicked();
+                    let r = ui.button("›");
+                    ui.tooltip(&r, &tr!("Find Next"));
+                    next |= r.clicked();
+                    one |= ui.button(&tr!("Replace")).clicked();
+                    all |= ui.button(&mide::i18n::trc("replace", "All")).clicked();
+                    let r = ui.button("×");
+                    ui.tooltip(&r, &tr!("Close"));
+                    close |= r.clicked();
                     if !find.query.is_empty() {
                         ui.note(&format!("{count}"));
                     }
@@ -1974,20 +1984,20 @@ impl App for Code {
         let lang = self.docs[i].lang;
         let lsp_state = match self.config.server_for(lang.id) {
             Some(s) if self.servers.get(&s.command).is_some_and(|c| c.ready) => format!(" · {}", s.command),
-            Some(s) if self.failed.contains(&s.command) || !installed(&s.command) => format!(" · {} não disponível", s.command),
-            Some(s) => format!(" · {} iniciando…", s.command),
+            Some(s) if self.failed.contains(&s.command) || !installed(&s.command) => tr!(" · {command} not available", command = s.command),
+            Some(s) => tr!(" · {command} starting…", command = s.command),
             None => String::new(),
         };
         let errors = self.docs[i].diags.iter().filter(|d| d.severity == Severity::Error).count();
         let warns = self.docs[i].diags.iter().filter(|d| d.severity == Severity::Warning).count();
-        let problems = if errors + warns > 0 { format!(" · {errors} erro(s), {warns} aviso(s)") } else { String::new() };
-        let tabs = if self.config.soft_tabs { format!("Espaços: {}", self.config.tab_size) } else { "Tabulação".into() };
+        let problems = if errors + warns > 0 { format!(" · {}, {}", trn("{n} error", "{n} errors", errors as u64), trn("{n} warning", "{n} warnings", warns as u64)) } else { String::new() };
+        let tabs = if self.config.soft_tabs { tr!("Spaces: {n}", n = self.config.tab_size) } else { mide::i18n::trc("indent", "Tabs").into_owned() };
         let note = match &self.message {
             Some((m, at)) if at.elapsed() < Duration::from_secs(6) => format!("  —  {m}"),
             _ => String::new(),
         };
         ui.at(left, status_y, win_w - left, |ui| {
-            ui.status_bar(&format!("Linha {line}, coluna {col} · {} · {tabs}{lsp_state}{problems}{note}", lang.name));
+            ui.status_bar(&format!("{} · {} · {tabs}{lsp_state}{problems}{note}", tr!("Line {line}, Column {col}", line = line, col = col), lang.label()));
         });
         // Dica do símbolo (Ctrl+I).
         if let Some((_, text)) = &self.hover
@@ -1999,7 +2009,7 @@ impl App for Code {
                 for l in text.lines() {
                     ui.label(l);
                 }
-                close |= ui.button("Fechar").clicked();
+                close |= ui.button(&tr!("Close")).clicked();
             });
             if close {
                 self.hover = None;
@@ -2029,7 +2039,7 @@ impl App for Code {
         if id == PREFS {
             tracing::info!("preferências fechadas e gravadas");
             if let Err(err) = self.config.save() {
-                self.say(format!("Preferências não gravadas: {err}"));
+                self.say(tr!("Settings not saved: {err}", err = err));
             }
         }
     }
@@ -2038,72 +2048,72 @@ impl App for Code {
     fn menu_bar(&mut self) -> Vec<MenuGroup> {
         let langs: Vec<MenuItem> = lang::LANGUAGES
             .iter()
-            .map(|l| MenuItem::action(&format!("lang:{}", l.id), l.name).checked(self.docs.get(self.cur).is_some_and(|d| d.lang.id == l.id)))
+            .map(|l| MenuItem::action(&format!("lang:{}", l.id), &l.label()).checked(self.docs.get(self.cur).is_some_and(|d| d.lang.id == l.id)))
             .collect();
         let tabs: Vec<MenuItem> = self.docs.iter().enumerate().map(|(i, d)| MenuItem::action(&format!("tab:{i}"), &d.title()).checked(i == self.cur)).collect();
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
+                title: tr!("File").into(),
                 items: vec![
-                    MenuItem::action("new", "Novo").shortcut("Ctrl+N"),
-                    MenuItem::action("open", "Abrir…").shortcut("Ctrl+O"),
-                    MenuItem::action("open-folder", "Abrir pasta…").shortcut("Ctrl+Shift+O"),
-                    MenuItem::action("close-folder", "Fechar pasta").enabled(self.root.is_some()),
+                    MenuItem::action("new", &tr!("New")).shortcut("Ctrl+N"),
+                    MenuItem::action("open", &tr!("Open…")).shortcut("Ctrl+O"),
+                    MenuItem::action("open-folder", &tr!("Open Folder…")).shortcut("Ctrl+Shift+O"),
+                    MenuItem::action("close-folder", &tr!("Close Folder")).enabled(self.root.is_some()),
                     MenuItem::Separator,
-                    MenuItem::action("save", "Salvar").shortcut("Ctrl+S"),
-                    MenuItem::action("save-as", "Salvar como…").shortcut("Ctrl+Shift+S"),
-                    MenuItem::action("save-all", "Salvar tudo").shortcut("Ctrl+Alt+S"),
+                    MenuItem::action("save", &tr!("Save")).shortcut("Ctrl+S"),
+                    MenuItem::action("save-as", &tr!("Save As…")).shortcut("Ctrl+Shift+S"),
+                    MenuItem::action("save-all", &tr!("Save All")).shortcut("Ctrl+Alt+S"),
                     MenuItem::Separator,
-                    MenuItem::action("close-tab", "Fechar aba").shortcut("Ctrl+W"),
-                    MenuItem::action("quit", "Sair").shortcut("Ctrl+Q"),
+                    MenuItem::action("close-tab", &tr!("Close Tab")).shortcut("Ctrl+W"),
+                    MenuItem::action("quit", &tr!("Quit")).shortcut("Ctrl+Q"),
                 ],
             },
             MenuGroup {
-                title: "Editar".into(),
+                title: tr!("Edit").into(),
                 items: vec![
-                    MenuItem::action("find", "Buscar e substituir").shortcut("Ctrl+F"),
-                    MenuItem::action("find-next", "Buscar próximo").shortcut("Ctrl+G"),
-                    MenuItem::action("find-prev", "Buscar anterior").shortcut("Ctrl+Shift+G"),
-                    MenuItem::action("find-project", "Buscar no projeto…").shortcut("Ctrl+Shift+F"),
+                    MenuItem::action("find", &tr!("Find and Replace")).shortcut("Ctrl+F"),
+                    MenuItem::action("find-next", &tr!("Find Next")).shortcut("Ctrl+G"),
+                    MenuItem::action("find-prev", &tr!("Find Previous")).shortcut("Ctrl+Shift+G"),
+                    MenuItem::action("find-project", &tr!("Find in Project…")).shortcut("Ctrl+Shift+F"),
                     MenuItem::Separator,
-                    MenuItem::action("comment", "Comentar linhas").shortcut("Ctrl+/"),
-                    MenuItem::action("duplicate", "Duplicar linha").shortcut("Ctrl+Shift+D"),
-                    MenuItem::action("move-up", "Mover linha para cima").shortcut("Alt+↑"),
-                    MenuItem::action("move-down", "Mover linha para baixo").shortcut("Alt+↓"),
+                    MenuItem::action("comment", &tr!("Comment Lines")).shortcut("Ctrl+/"),
+                    MenuItem::action("duplicate", &tr!("Duplicate Line")).shortcut("Ctrl+Shift+D"),
+                    MenuItem::action("move-up", &tr!("Move Line Up")).shortcut("Alt+↑"),
+                    MenuItem::action("move-down", &tr!("Move Line Down")).shortcut("Alt+↓"),
                     MenuItem::Separator,
-                    MenuItem::action("complete", "Completar").shortcut("Alt+Space"),
-                    MenuItem::action("prefs", "Preferências…").shortcut("Ctrl+,"),
-                    MenuItem::action("edit-servers", "Servidores de linguagem…"),
+                    MenuItem::action("complete", &tr!("Complete")).shortcut("Alt+Space"),
+                    MenuItem::action("prefs", &tr!("Settings…")).shortcut("Ctrl+,"),
+                    MenuItem::action("edit-servers", &tr!("Language Servers…")),
                 ],
             },
             MenuGroup {
-                title: "Visualizar".into(),
+                title: tr!("View").into(),
                 items: vec![
-                    MenuItem::action("drawer", "Gaveta de arquivos").checked(self.config.drawer),
-                    MenuItem::action("line-numbers", "Números de linha").checked(self.config.line_numbers),
-                    MenuItem::action("terminal", "Terminal").shortcut("Ctrl+J").checked(self.terminal_open),
+                    MenuItem::action("drawer", &tr!("File Drawer")).checked(self.config.drawer),
+                    MenuItem::action("line-numbers", &tr!("Line Numbers")).checked(self.config.line_numbers),
+                    MenuItem::action("terminal", &tr!("Terminal")).shortcut("Ctrl+J").checked(self.terminal_open),
                     MenuItem::Separator,
-                    MenuItem::action("split-right", "Dividir à direita").shortcut("Ctrl+\\"),
-                    MenuItem::action("split-down", "Dividir embaixo").shortcut("Ctrl+Shift+\\"),
-                    MenuItem::action("unsplit", "Juntar os painéis"),
+                    MenuItem::action("split-right", &tr!("Split Right")).shortcut("Ctrl+\\"),
+                    MenuItem::action("split-down", &tr!("Split Down")).shortcut("Ctrl+Shift+\\"),
+                    MenuItem::action("unsplit", &tr!("Merge Panes")),
                     MenuItem::Separator,
-                    MenuItem::action("zoom-in", "Aumentar a fonte").shortcut("Ctrl+="),
-                    MenuItem::action("zoom-out", "Diminuir a fonte").shortcut("Ctrl+-"),
-                    MenuItem::action("zoom-reset", "Tamanho normal").shortcut("Ctrl+0"),
+                    MenuItem::action("zoom-in", &tr!("Bigger Font")).shortcut("Ctrl+="),
+                    MenuItem::action("zoom-out", &tr!("Smaller Font")).shortcut("Ctrl+-"),
+                    MenuItem::action("zoom-reset", &tr!("Default Font Size")).shortcut("Ctrl+0"),
                     MenuItem::Separator,
-                    MenuItem::Submenu { label: "Linguagem".into(), items: langs },
+                    MenuItem::Submenu { label: mide::i18n::trc("programming", "Language").into(), items: langs },
                 ],
             },
             MenuGroup {
-                title: "Navegar".into(),
+                title: tr!("Navigate").into(),
                 items: vec![
-                    MenuItem::action("goto-file", "Ir para arquivo…").shortcut("Ctrl+T"),
-                    MenuItem::action("goto-line", "Ir para a linha…").shortcut("Ctrl+L"),
+                    MenuItem::action("goto-file", &tr!("Go to File…")).shortcut("Ctrl+T"),
+                    MenuItem::action("goto-line", &tr!("Go to Line…")).shortcut("Ctrl+L"),
                     MenuItem::Separator,
-                    MenuItem::action("definition", "Ir para a definição (ou Ctrl+clique)").shortcut("F12"),
-                    MenuItem::action("hover", "Mostrar informações do símbolo").shortcut("Ctrl+I"),
-                    MenuItem::action("next-problem", "Próximo problema").shortcut("F8"),
-                    MenuItem::action("prev-problem", "Problema anterior").shortcut("Shift+F8"),
+                    MenuItem::action("definition", &tr!("Go to Definition (or Ctrl+Click)")).shortcut("F12"),
+                    MenuItem::action("hover", &tr!("Show Symbol Info")).shortcut("Ctrl+I"),
+                    MenuItem::action("next-problem", &tr!("Next Problem")).shortcut("F8"),
+                    MenuItem::action("prev-problem", &tr!("Previous Problem")).shortcut("Shift+F8"),
                 ],
             },
             window_menu(tabs),

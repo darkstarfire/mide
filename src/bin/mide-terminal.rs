@@ -37,6 +37,8 @@ use mide::{
     ui::text::{FontWeight, Text},
 };
 use mide::terminal::boxdraw;
+use mide::tr;
+use std::borrow::Cow;
 use tiny_skia::{Paint, Pixmap, Rect as SkRect, Transform};
 
 /// Margem em volta do texto de cada painel.
@@ -298,7 +300,7 @@ impl Pane {
                         notices += 1;
                         let cols = self.term.cols();
                         let line = self.term.text_between((a.0, 0), (a.0, cols - 1));
-                        mide::notify::send("Terminal", &format!("Gatilho: {}", trigger.text), line.trim());
+                        mide::notify::send("Terminal", &tr!("Trigger: {text}", text = trigger.text), line.trim());
                     }
                     TriggerAction::Notify => {}
                     TriggerAction::Bell => self.bell_at = Some(Instant::now()),
@@ -533,7 +535,7 @@ impl TerminalApp {
                 Some(id)
             }
             Err(err) => {
-                self.error = Some(format!("Não foi possível abrir o shell: {err}"));
+                self.error = Some(tr!("Couldn’t start the shell: {err}", err = err));
                 None
             }
         }
@@ -798,7 +800,7 @@ impl TerminalApp {
         }
         self.tabs.retain(|t| t.tmux.is_none_or(|(g, _)| g != session.gateway));
         if let Some(pane) = self.panes.get_mut(&session.gateway) {
-            pane.term.feed("\r\n\x1b[2m[tmux desanexado]\x1b[0m\r\n".as_bytes());
+            pane.term.feed(format!("\r\n\x1b[2m[{}]\x1b[0m\r\n", tr!("tmux detached")).as_bytes());
             if let Some(t) = self.tabs.iter().position(|t| t.layout.panes().contains(&session.gateway)) {
                 self.active = t;
             }
@@ -831,8 +833,8 @@ impl TerminalApp {
                 }
                 let cols = pane.term.cols();
                 let command = pane.term.text_between((done.line, 0), (done.line, cols - 1));
-                let summary = if done.status == 0 { "Comando terminado".to_string() } else { format!("Comando falhou (código {})", done.status) };
-                let body = format!("{} — em {}", command.trim(), duration_text(done.duration));
+                let summary = if done.status == 0 { tr!("Command finished").into_owned() } else { tr!("Command failed (exit code {code})", code = done.status) };
+                let body = tr!("{command} — in {time}", command = command.trim(), time = duration_text(done.duration));
                 mide::notify::send("Terminal", &summary, &body);
             }
         }
@@ -1345,10 +1347,10 @@ impl TerminalApp {
             let link = self.menu_url.clone();
             ui.context_menu(&response, |menu| {
                 if let Some(link) = &link {
-                    if menu.item("Abrir endereço") {
+                    if menu.item(&tr!("Open Link")) {
                         open_link = Some(link.clone());
                     }
-                    if menu.item("Copiar endereço") {
+                    if menu.item(&tr!("Copy Link")) {
                         copy_link = Some(link.clone());
                     }
                     menu.separator();
@@ -1363,7 +1365,7 @@ impl TerminalApp {
                             Action::Zoom => several,
                             _ => true,
                         };
-                        let chosen = if action == Action::ClosePane { menu.danger(action.label()) } else { shown && menu.item(action.label()) };
+                        let chosen = if action == Action::ClosePane { menu.danger(&action.label()) } else { shown && menu.item(&action.label()) };
                         if chosen {
                             menu_action = Some(action);
                         }
@@ -1405,7 +1407,9 @@ impl TerminalApp {
                 }
             }
         }
-        let new_tab = ui.background((rect.0 + n as f32 * width, rect.1, plus, rect.3)).clicked;
+        let plus_button = ui.background((rect.0 + n as f32 * width, rect.1, plus, rect.3));
+        ui.tooltip(&plus_button, &tr!("New Tab"));
+        let new_tab = plus_button.clicked;
         // Arrastar uma aba para os lados muda a ordem.
         let input = ui.input().clone();
         if let (Some(i), Some((px, _))) = (clicked, input.pointer) {
@@ -1504,9 +1508,9 @@ impl TerminalApp {
         let count = if find.query.is_empty() {
             String::new()
         } else if find.matches.is_empty() {
-            "Nada encontrado".into()
+            tr!("Not found").into_owned()
         } else {
-            format!("{} de {}", find.current + 1, find.matches.len())
+            tr!("{n} of {total}", n = find.current + 1, total = find.matches.len())
         };
         ui.paint(|pixmap, (ox, oy)| {
             fill(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, [236, 236, 240]);
@@ -1520,16 +1524,20 @@ impl TerminalApp {
                     ui.focus_next_input();
                 }
                 ui.sized(260.0, |ui| {
-                    let r = ui.text_input(&mut find.query, "Buscar no terminal");
+                    let r = ui.text_input(&mut find.query, &tr!("Find in Terminal"));
                     if r.submitted() {
                         next = true;
                     }
                 });
                 ui.sized(120.0, |ui| ui.note(&count));
-                previous = ui.icon_button("go-up-symbolic", "‹", true).clicked();
-                next |= ui.icon_button("go-down-symbolic", "›", true).clicked();
+                let up = ui.icon_button("go-up-symbolic", "‹", true);
+                ui.tooltip(&up, &tr!("Previous Match"));
+                previous = up.clicked();
+                let down = ui.icon_button("go-down-symbolic", "›", true);
+                ui.tooltip(&down, &tr!("Next Match"));
+                next |= down.clicked();
                 ui.push_right(100.0);
-                done = ui.button("Concluído").clicked();
+                done = ui.button(&tr!("Done")).clicked();
             });
         });
         if done {
@@ -1577,13 +1585,13 @@ impl TerminalApp {
                 if gateways.contains(id) {
                     // Painel que roda o tmux -CC: um aviso no lugar do protocolo.
                     fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, pane.term.default_bg(), 0.92);
-                    let msg = "O tmux está em modo de controle: as janelas dele abriram em abas.";
-                    let sub = "Esc aqui (ou Shell → Desanexar do tmux) desanexa.";
+                    let msg = tr!("tmux is in control mode: its windows opened as tabs.");
+                    let sub = tr!("Press Esc here (or Shell → Detach from tmux) to detach.");
                     let fg = pane.term.default_fg();
                     let rgba = [fg[0], fg[1], fg[2], 255];
                     let (tx, ty) = (ox + rect.0 + 16.0, oy + rect.1 + 16.0);
-                    text.draw(pixmap, msg, tx, ty, 13.5, FontWeight::Semibold, rgba);
-                    text.draw(pixmap, sub, tx, ty + 22.0, 12.5, FontWeight::Regular, rgba);
+                    text.draw(pixmap, &msg, tx, ty, 13.5, FontWeight::Semibold, rgba);
+                    text.draw(pixmap, &sub, tx, ty + 22.0, 12.5, FontWeight::Regular, rgba);
                 }
                 if several && Some(*id) != focus {
                     // Painéis sem foco ficam um pouco apagados (como no iTerm2): um véu da
@@ -1610,17 +1618,17 @@ impl TerminalApp {
         let (what, programs) = (*what, programs.clone());
         let (mut yes, mut no) = (false, false);
         ui.modal(380.0, |ui| {
-            ui.title(match what {
-                Closing::Window => "Fechar esta janela?",
-                Closing::Tab(_) => "Fechar esta aba?",
-                Closing::Pane(_) => "Fechar este painel?",
+            ui.title(&match what {
+                Closing::Window => tr!("Close this window?"),
+                Closing::Tab(_) => tr!("Close this tab?"),
+                Closing::Pane(_) => tr!("Close this pane?"),
             });
-            ui.label(&format!("Ainda há programas rodando: {}. Fechar encerra esses programas.", programs.join(", ")));
+            ui.label(&tr!("Programs are still running: {programs}. Closing will terminate them.", programs = programs.join(", ")));
             ui.space(8.0);
             ui.row(|ui| {
                 ui.push_right(200.0);
-                no = ui.button("Cancelar").clicked();
-                yes = ui.primary_button("Fechar").clicked();
+                no = ui.button(&tr!("Cancel")).clicked();
+                yes = ui.primary_button(&tr!("Close")).clicked();
             });
         });
         let keys = ui.input().keys.clone();
@@ -1794,7 +1802,7 @@ impl App for TerminalApp {
             .profiles
             .profiles
             .iter()
-            .map(|p| MenuItem::action(&format!("perfil:{}", p.name), &format!("Nova aba com “{}”", p.name)))
+            .map(|p| MenuItem::action(&format!("perfil:{}", p.name), &tr!("New Tab with “{name}”", name = profile::profile_label(&p.name))))
             .collect();
         profiles.push(MenuItem::Separator);
         profiles.push(item(Action::Preferences));
@@ -1817,7 +1825,7 @@ impl App for TerminalApp {
         }
         vec![
             MenuGroup {
-                title: "Shell".into(),
+                title: tr!("Shell").into(),
                 items: vec![
                     item(Action::NewWindow),
                     item(Action::NewTab),
@@ -1832,7 +1840,7 @@ impl App for TerminalApp {
                 ],
             },
             MenuGroup {
-                title: "Editar".into(),
+                title: tr!("Edit").into(),
                 items: vec![
                     item(Action::Copy).enabled(has_selection),
                     item(Action::Paste),
@@ -1846,7 +1854,7 @@ impl App for TerminalApp {
                 ],
             },
             MenuGroup {
-                title: "Visualizar".into(),
+                title: tr!("View").into(),
                 items: vec![
                     item(Action::FontBigger),
                     item(Action::FontSmaller),
@@ -1860,7 +1868,7 @@ impl App for TerminalApp {
                     item(Action::Bottom),
                 ],
             },
-            MenuGroup { title: "Perfis".into(), items: profiles },
+            MenuGroup { title: tr!("Profiles").into(), items: profiles },
             window_menu(window),
         ]
     }
@@ -2285,36 +2293,36 @@ const SIMPLE: [Action; 27] = [
 
 impl Action {
     /// Nome nos menus (o mesmo na barra superior e no botão direito).
-    fn label(self) -> &'static str {
+    fn label(self) -> Cow<'static, str> {
         match self {
-            Action::Copy => "Copiar",
-            Action::Paste => "Colar",
-            Action::SelectAll => "Selecionar tudo",
-            Action::NewWindow => "Nova janela",
-            Action::CloseWindow => "Fechar janela",
-            Action::NewTab => "Nova aba",
-            Action::ClosePane => "Fechar painel",
-            Action::SplitSide => "Dividir lado a lado",
-            Action::SplitStack => "Dividir em cima e embaixo",
-            Action::Find => "Buscar…",
-            Action::FindNext => "Próxima ocorrência",
-            Action::FindPrevious => "Ocorrência anterior",
-            Action::Clear => "Limpar",
-            Action::Preferences => "Preferências…",
-            Action::FontBigger => "Aumentar fonte",
-            Action::FontSmaller => "Diminuir fonte",
-            Action::FontReset => "Tamanho normal",
-            Action::Zoom => "Ampliar painel",
-            Action::NextTab => "Próxima aba",
-            Action::PreviousTab => "Aba anterior",
-            Action::NextPane => "Próximo painel",
-            Action::PreviousPane => "Painel anterior",
-            Action::Top => "Início do histórico",
-            Action::Bottom => "Fim do histórico",
-            Action::PreviousPrompt => "Prompt anterior",
-            Action::NextPrompt => "Próximo prompt",
-            Action::TmuxDetach => "Desanexar do tmux",
-            Action::Tab(_) | Action::PaneDirection(_) | Action::PageUp | Action::PageDown => "",
+            Action::Copy => tr!("Copy"),
+            Action::Paste => tr!("Paste"),
+            Action::SelectAll => tr!("Select All"),
+            Action::NewWindow => tr!("New Window"),
+            Action::CloseWindow => tr!("Close Window"),
+            Action::NewTab => tr!("New Tab"),
+            Action::ClosePane => tr!("Close Pane"),
+            Action::SplitSide => tr!("Split Pane Vertically"),
+            Action::SplitStack => tr!("Split Pane Horizontally"),
+            Action::Find => tr!("Find…"),
+            Action::FindNext => tr!("Find Next Match"),
+            Action::FindPrevious => tr!("Find Previous Match"),
+            Action::Clear => tr!("Clear Buffer"),
+            Action::Preferences => tr!("Settings…"),
+            Action::FontBigger => tr!("Make Text Bigger"),
+            Action::FontSmaller => tr!("Make Text Smaller"),
+            Action::FontReset => tr!("Default Font Size"),
+            Action::Zoom => tr!("Maximize Active Pane"),
+            Action::NextTab => tr!("Show Next Tab"),
+            Action::PreviousTab => tr!("Show Previous Tab"),
+            Action::NextPane => tr!("Select Next Pane"),
+            Action::PreviousPane => tr!("Select Previous Pane"),
+            Action::Top => tr!("Scroll to Top"),
+            Action::Bottom => tr!("Scroll to Bottom"),
+            Action::PreviousPrompt => tr!("Jump to Previous Prompt"),
+            Action::NextPrompt => tr!("Jump to Next Prompt"),
+            Action::TmuxDetach => tr!("Detach from tmux"),
+            Action::Tab(_) | Action::PaneDirection(_) | Action::PageUp | Action::PageDown => Cow::Borrowed(""),
         }
     }
 
@@ -2367,7 +2375,7 @@ impl Action {
     }
 
     fn item(self, mac: bool) -> MenuItem {
-        MenuItem::action(&self.id(), self.label()).shortcut(self.shortcut(mac))
+        MenuItem::action(&self.id(), &self.label()).shortcut(self.shortcut(mac))
     }
 }
 
@@ -2545,19 +2553,29 @@ struct Preferences {
     families: Vec<String>,
 }
 
-const CURSORS: [(&str, Cursor); 3] = [("Bloco", Cursor::Block), ("Barra", Cursor::Bar), ("Sublinhado", Cursor::Underline)];
+const CURSORS: [Cursor; 3] = [Cursor::Block, Cursor::Bar, Cursor::Underline];
+
+/// Nome de um formato de cursor nas Preferências.
+fn cursor_label(cursor: Cursor) -> Cow<'static, str> {
+    match cursor {
+        Cursor::Block => tr!("Block"),
+        Cursor::Bar => tr!("Vertical Bar"),
+        Cursor::Underline => tr!("Underline"),
+    }
+}
 const SCROLLBACKS: [usize; 5] = [1_000, 5_000, 10_000, 50_000, 100_000];
 
 impl Preferences {
     fn save(&mut self) {
-        self.message = self.profiles.save().err().map(|e| format!("Não foi possível gravar: {e}"));
+        self.message = self.profiles.save().err().map(|e| tr!("Couldn’t write the profiles: {err}", err = e));
     }
 }
 
 impl App for Preferences {
     fn view(&mut self, ui: &mut Ui) {
         let names: Vec<String> = self.profiles.profiles.iter().map(|p| p.name.clone()).collect();
-        let items: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "mide-terminal")).collect();
+        let labels: Vec<String> = names.iter().map(|n| profile::profile_label(n).into_owned()).collect();
+        let items: Vec<(&str, &str)> = labels.iter().map(|n| (n.as_str(), "mide-terminal")).collect();
         let default = self.profiles.default.clone();
         let mut changed = false;
         let mut add = None;
@@ -2574,26 +2592,26 @@ impl App for Preferences {
         let families = &self.families;
         let mut make_default = false;
         self.selected = ui.sidebar(&items, selected, |ui, _| {
-            ui.title(&profile.name);
+            ui.title(&profile::profile_label(&profile.name));
             if profile.name == default {
-                ui.note("Perfil padrão das janelas e abas novas.");
+                ui.note(&tr!("Default profile for new windows and tabs."));
             }
             if let Some(m) = &message {
                 ui.note(m);
             }
             ui.card(|ui| {
-                ui.label("Nome");
-                let mut name = profile.name.clone();
-                if ui.text_input(&mut name, "Nome do perfil").changed() && !name.trim().is_empty() && !names.iter().any(|n| n == &name) {
+                ui.label(&tr!("Name"));
+                let mut name = profile::profile_label(&profile.name).into_owned();
+                if ui.text_input(&mut name, &tr!("Profile name")).changed() && !name.trim().is_empty() && !names.iter().any(|n| n == &name) {
                     profile.name = name;
                     changed = true;
                 }
             });
-            ui.heading("Aparência");
+            ui.heading(&tr!("Appearance"));
             ui.card(|ui| {
-                let themes: Vec<String> = THEMES.iter().map(|t| t.name.to_string()).collect();
+                let themes: Vec<String> = THEMES.iter().map(|t| palette::theme_label(t.name).into_owned()).collect();
                 let mut theme = THEMES.iter().position(|t| t.name == profile.theme).unwrap_or(0);
-                if ui.dropdown("Cores", &themes, &mut theme).changed() {
+                if ui.dropdown(&tr!("Colors"), &themes, &mut theme).changed() {
                     profile.theme = THEMES[theme].name.into();
                     changed = true;
                 }
@@ -2606,51 +2624,51 @@ impl App for Preferences {
                         fill(pixmap, x + 28.0 + i as f32 * 18.0, y + 5.0, 16.0, 16.0, *c);
                     }
                 });
-                let mut fonts = vec!["Padrão do sistema".to_string()];
+                let mut fonts = vec![tr!("System Default").into_owned()];
                 fonts.extend(families.iter().cloned());
                 let mut f = families.iter().position(|n| *n == profile.font).map_or(0, |i| i + 1);
-                if ui.dropdown("Fonte", &fonts, &mut f).changed() {
+                if ui.dropdown(&tr!("Font"), &fonts, &mut f).changed() {
                     profile.font = if f == 0 { String::new() } else { families[f - 1].clone() };
                     changed = true;
                 }
                 let mut size = profile.font_size;
-                if ui.slider("Tamanho da fonte", &mut size, 9.0, 24.0).changed() {
+                if ui.slider(&tr!("Font Size"), &mut size, 9.0, 24.0).changed() {
                     profile.font_size = size.round();
                     changed = true;
                 }
-                let names: Vec<String> = CURSORS.iter().map(|(n, _)| n.to_string()).collect();
-                let mut cursor = CURSORS.iter().position(|(_, c)| *c == profile.cursor).unwrap_or(0);
-                if ui.dropdown("Cursor", &names, &mut cursor).changed() {
-                    profile.cursor = CURSORS[cursor].1;
+                let names: Vec<String> = CURSORS.iter().map(|c| cursor_label(*c).into_owned()).collect();
+                let mut cursor = CURSORS.iter().position(|c| *c == profile.cursor).unwrap_or(0);
+                if ui.dropdown(&tr!("Cursor"), &names, &mut cursor).changed() {
+                    profile.cursor = CURSORS[cursor];
                     changed = true;
                 }
-                changed |= ui.switch("Cursor piscando", &mut profile.cursor_blink).changed();
-                changed |= ui.switch("Negrito em cor clara", &mut profile.bold_bright).changed();
-                changed |= ui.switch("Aviso visual do sino", &mut profile.visual_bell).changed();
+                changed |= ui.switch(&tr!("Blinking cursor"), &mut profile.cursor_blink).changed();
+                changed |= ui.switch(&tr!("Draw bold text in bright colors"), &mut profile.bold_bright).changed();
+                changed |= ui.switch(&tr!("Visual bell"), &mut profile.visual_bell).changed();
             });
-            ui.heading("Transparência");
+            ui.heading(&tr!("Transparency"));
             ui.card(|ui| {
                 let mut opacity = profile.opacity * 100.0;
-                if ui.slider("Opacidade", &mut opacity, 30.0, 100.0).changed() {
+                if ui.slider(&tr!("Opacity"), &mut opacity, 30.0, 100.0).changed() {
                     profile.opacity = (opacity.round() / 100.0).clamp(0.3, 1.0);
                     changed = true;
                 }
-                changed |= ui.switch_detail("Vidro", "Desfoca o que está atrás do fundo translúcido", &mut profile.blur).changed();
+                changed |= ui.switch_detail(&tr!("Glass"), &tr!("Blurs what is behind the translucent background"), &mut profile.blur).changed();
             });
-            ui.heading("Cores");
+            ui.heading(&tr!("Colors"));
             ui.card(|ui| {
-                let slots: Vec<String> = COLOR_SLOTS.iter().map(|(_, name)| name.to_string()).collect();
+                let slots: Vec<String> = COLOR_SLOTS.iter().map(|key| profile::color_slot_label(key).into_owned()).collect();
                 let mut slot = *color_slot;
-                if ui.dropdown("Cor", &slots, &mut slot).changed() || color_text.is_empty() || profile_changed {
+                if ui.dropdown(&tr!("Color"), &slots, &mut slot).changed() || color_text.is_empty() || profile_changed {
                     *color_slot = slot;
-                    *color_text = profile.color_hex(COLOR_SLOTS[slot].0);
+                    *color_text = profile.color_hex(COLOR_SLOTS[slot]);
                 }
-                let current = mide::terminal::profile::parse_hex(&profile.color_hex(COLOR_SLOTS[*color_slot].0)).unwrap_or([0, 0, 0]);
+                let current = mide::terminal::profile::parse_hex(&profile.color_hex(COLOR_SLOTS[*color_slot])).unwrap_or([0, 0, 0]);
                 ui.row(|ui| {
                     ui.sized(160.0, |ui| {
                         if ui.text_input(color_text, "#rrggbb").changed() {
                             if let Some(rgb) = mide::terminal::profile::parse_hex(color_text) {
-                                profile.colors.insert(COLOR_SLOTS[*color_slot].0.into(), format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]));
+                                profile.colors.insert(COLOR_SLOTS[*color_slot].into(), format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]));
                                 changed = true;
                             }
                         }
@@ -2661,20 +2679,20 @@ impl App for Preferences {
                         mide::ui::draw::fill_rounded(pixmap, x + 1.0, y + 1.0, 46.0, h - 2.0, 5.0, mide::ui::draw::rgba(current[0], current[1], current[2], 255));
                     });
                 });
-                if !profile.colors.is_empty() && ui.button("Usar as cores do tema").clicked() {
+                if !profile.colors.is_empty() && ui.button(&tr!("Use Theme Colors")).clicked() {
                     profile.colors.clear();
-                    *color_text = profile.color_hex(COLOR_SLOTS[*color_slot].0);
+                    *color_text = profile.color_hex(COLOR_SLOTS[*color_slot]);
                     changed = true;
                 }
             });
-            ui.heading("Gatilhos");
+            ui.heading(&tr!("Triggers"));
             ui.card(|ui| {
-                ui.note("Quando o texto aparece na saída (sem diferenciar maiúsculas nem acentos).");
-                let actions = ["Destacar", "Notificar", "Piscar"].map(String::from);
+                ui.note(&tr!("When the text appears in the output (ignoring case and accents)."));
+                let actions = [mide::i18n::trc("trigger", "Highlight"), tr!("Notify"), tr!("Flash")].map(String::from);
                 let mut remove = None;
                 for (i, trigger) in profile.triggers.iter_mut().enumerate() {
                     ui.row(|ui| {
-                        ui.sized(200.0, |ui| changed |= ui.text_input(&mut trigger.text, "Texto (ex.: erro)").changed());
+                        ui.sized(200.0, |ui| changed |= ui.text_input(&mut trigger.text, &tr!("Text (e.g. error)")).changed());
                         let mut a = match trigger.action {
                             TriggerAction::Highlight => 0,
                             TriggerAction::Notify => 1,
@@ -2686,7 +2704,7 @@ impl App for Preferences {
                                 changed = true;
                             }
                         });
-                        if ui.button("Remover").clicked() {
+                        if ui.button(&tr!("Remove")).clicked() {
                             remove = Some(i);
                         }
                     });
@@ -2695,56 +2713,56 @@ impl App for Preferences {
                     profile.triggers.remove(i);
                     changed = true;
                 }
-                if ui.button("Novo gatilho").clicked() {
+                if ui.button(&tr!("New Trigger")).clicked() {
                     profile.triggers.push(Trigger::default());
                     changed = true;
                 }
             });
-            ui.heading("Sessão");
+            ui.heading(&tr!("Session"));
             ui.card(|ui| {
-                let options: Vec<String> = SCROLLBACKS.iter().map(|n| format!("{} linhas", group(*n))).collect();
+                let options: Vec<String> = SCROLLBACKS.iter().map(|n| tr!("{n} lines", n = group(*n))).collect();
                 let mut i = SCROLLBACKS.iter().position(|n| *n >= profile.scrollback).unwrap_or(2);
-                if ui.dropdown("Histórico", &options, &mut i).changed() {
+                if ui.dropdown(&tr!("Scrollback"), &options, &mut i).changed() {
                     profile.scrollback = SCROLLBACKS[i];
                     changed = true;
                 }
-                changed |= ui.switch_detail("Reabrir abas e painéis", "Volta como estava a última janela fechada", restore).changed();
+                changed |= ui.switch_detail(&tr!("Reopen tabs and panes"), &tr!("Restores the last closed window as it was"), restore).changed();
                 let mut height = *hotkey_height * 100.0;
-                if ui.slider("Altura do terminal de atalho (F12)", &mut height, 20.0, 95.0).changed() {
+                if ui.slider(&tr!("Hotkey window height (F12)"), &mut height, 20.0, 95.0).changed() {
                     *hotkey_height = (height.round() / 100.0).clamp(0.2, 0.95);
                     changed = true;
                 }
-                let dirs = vec!["Na mesma pasta".to_string(), "Na pasta pessoal".to_string()];
+                let dirs = vec![tr!("In the same folder").into_owned(), tr!("In the home folder").into_owned()];
                 let mut d = if profile.start_dir == StartDir::Same { 0 } else { 1 };
-                if ui.dropdown("Abas e painéis novos abrem", &dirs, &mut d).changed() {
+                if ui.dropdown(&tr!("New tabs and panes open"), &dirs, &mut d).changed() {
                     profile.start_dir = if d == 0 { StartDir::Same } else { StartDir::Home };
                     changed = true;
                 }
                 changed |= ui
-                    .switch_detail("Integração do shell", "Marca os prompts, avisa quando um comando termina e traz o imgcat (bash e zsh)", &mut profile.shell_integration)
+                    .switch_detail(&tr!("Shell integration"), &tr!("Marks prompts, notifies when a command finishes and adds imgcat (bash and zsh)"), &mut profile.shell_integration)
                     .changed();
-                let waits = ["Nunca", "5 segundos", "10 segundos", "30 segundos", "1 minuto"].map(String::from);
+                let waits = [tr!("Never").into_owned(), tr!("5 seconds").into_owned(), tr!("10 seconds").into_owned(), tr!("30 seconds").into_owned(), tr!("1 minute").into_owned()];
                 const WAITS: [u32; 5] = [0, 5, 10, 30, 60];
                 let mut w = WAITS.iter().position(|&s| s == profile.notify_after).unwrap_or(2);
-                if ui.dropdown("Avisar comando demorado após", &waits, &mut w).changed() {
+                if ui.dropdown(&tr!("Notify about long commands after"), &waits, &mut w).changed() {
                     profile.notify_after = WAITS[w];
                     changed = true;
                 }
-                ui.label("Comando ao abrir");
-                changed |= ui.text_input(&mut profile.command, "Shell do usuário").changed();
+                ui.label(&tr!("Command at startup"));
+                changed |= ui.text_input(&mut profile.command, &tr!("User’s shell")).changed();
             });
             ui.space(8.0);
             ui.row(|ui| {
-                if ui.button("Novo perfil").clicked() {
+                if ui.button(&tr!("New Profile")).clicked() {
                     add = Some(None);
                 }
-                if ui.button("Duplicar").clicked() {
+                if ui.button(&tr!("Duplicate")).clicked() {
                     add = Some(Some(profile.clone()));
                 }
-                if profile.name != default && ui.button("Usar como padrão").clicked() {
+                if profile.name != default && ui.button(&tr!("Set as Default")).clicked() {
                     make_default = true;
                 }
-                if count > 1 && ui.button("Apagar").clicked() {
+                if count > 1 && ui.button(&tr!("Delete")).clicked() {
                     remove = true;
                 }
             });
@@ -2755,7 +2773,7 @@ impl App for Preferences {
         }
         if let Some(base) = add {
             let mut p = base.unwrap_or_default();
-            p.name = self.profiles.free_name(if p.name == "Padrão" || p.name.is_empty() { "Perfil" } else { &p.name });
+            p.name = self.profiles.free_name(&if p.name == profile::DEFAULT_NAME || p.name.is_empty() { tr!("Profile") } else { Cow::Borrowed(p.name.as_str()) });
             self.profiles.profiles.push(p);
             self.selected = self.profiles.profiles.len() - 1;
             changed = true;
@@ -2797,7 +2815,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .init();
     let options = Options::parse(std::env::args().skip(1));
     if options.preferences {
-        let window = Window::new("Preferências do Terminal").app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420).full_size_content();
+        let window = Window::new(&tr!("Terminal Settings")).app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420).full_size_content();
         return run(window, Preferences { profiles: Profiles::load(), selected: 0, message: None, color_slot: 1, color_text: String::new(), shown: None, families: Text::new().monospace_families() });
     }
     if options.hotkey {

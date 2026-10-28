@@ -1,0 +1,462 @@
+# Tradução do mide para o português do Brasil: o Code (mide-code).
+# Os textos em inglês (msgid) são os do código (src/bin/mide-code/ e src/code/).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "untitled"
+msgstr "sem título"
+
+msgid "file too large for the editor"
+msgstr "arquivo grande demais para o editor"
+
+msgid "not UTF-8 text (binary file?)"
+msgstr "não é texto UTF-8 (arquivo binário?)"
+
+msgid "Couldn’t open “{path}”: {err}"
+msgstr "Não foi possível abrir \"{path}\": {err}"
+
+msgid "Save As"
+msgstr "Salvar como"
+
+msgid "Couldn’t save: {err}"
+msgstr "Não foi possível salvar: {err}"
+
+msgid "{saved}; {unnamed} untitled (use Save As)"
+msgstr "{saved}; {unnamed} sem nome (use Salvar como)"
+
+msgid "Language servers updated ({n})"
+msgstr "Servidores de linguagem atualizados ({n})"
+
+msgid "Error in code-servers.toml, {err}"
+msgstr "Erro no code-servers.toml, {err}"
+
+msgid "Couldn’t start {command}: {err}"
+msgstr "Não foi possível iniciar {command}: {err}"
+
+msgid "Completion needs a language server (Settings)."
+msgstr "Completar precisa de um servidor de linguagem (Preferências)."
+
+msgid "Go to Definition needs a language server (Settings)."
+msgstr "Ir para a definição precisa de um servidor de linguagem (Preferências)."
+
+msgid "No problems in this file"
+msgstr "Nenhum problema neste arquivo"
+
+msgid "“{query}” not found"
+msgstr "\"{query}\" não encontrado"
+
+msgid "{replacements} in {files} and {open} in open tabs"
+msgstr "{replacements} em {files} e {open} nas abas abertas"
+
+msgid "Error while replacing: {err}"
+msgstr "Erro ao substituir: {err}"
+
+msgid "Couldn’t open the terminal: {err}"
+msgstr "Não foi possível abrir o terminal: {err}"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Open Folder"
+msgstr "Abrir pasta"
+
+msgid "Open a folder (File → Open Folder) to search the project."
+msgstr "Abra uma pasta (Arquivo → Abrir pasta) para buscar no projeto."
+
+msgid "Open a folder (File → Open Folder) to go to its files."
+msgstr "Abra uma pasta (Arquivo → Abrir pasta) para ir para os arquivos dela."
+
+msgid "Code Settings"
+msgstr "Preferências do Code"
+
+msgid "Couldn’t create the language servers file: {err}"
+msgstr "Não foi possível criar o arquivo dos servidores: {err}"
+
+msgid "Go to File"
+msgstr "Ir para arquivo"
+
+msgid "File name (letters anywhere)"
+msgstr "Nome do arquivo (letras em qualquer parte)"
+
+msgid "Go to Line"
+msgstr "Ir para a linha"
+
+msgid "Line (or line:column)"
+msgstr "Linha (ou linha:coluna)"
+
+msgid "Find in Project"
+msgstr "Buscar no projeto"
+
+msgid "Find"
+msgstr "Buscar"
+
+msgid "Replace with"
+msgstr "Substituir por"
+
+msgid "Match case"
+msgstr "Diferenciar maiúsculas"
+
+msgid "Replace All"
+msgstr "Substituir em tudo"
+
+msgid "Nothing found for “{query}”."
+msgstr "Nada encontrado para \"{query}\"."
+
+msgid "{lines} (the first 500)"
+msgstr "{lines} (as primeiras 500)"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "System Font"
+msgstr "Fonte do sistema"
+
+msgid "Font"
+msgstr "Fonte"
+
+msgid "Font Size"
+msgstr "Tamanho da fonte"
+
+msgid "Line numbers"
+msgstr "Números de linha"
+
+msgid "Highlight current line"
+msgstr "Destacar a linha atual"
+
+msgid "Indent with spaces (off: tabs)"
+msgstr "Recuo com espaços (desligado: tabulação)"
+
+msgid "Spaces per indent"
+msgstr "Espaços por recuo"
+
+msgid "Project drawer on the left"
+msgstr "Gaveta do projeto à esquerda"
+
+msgid "{n} configured"
+msgstr "{n} configurado(s)"
+
+msgid " · running: {list}"
+msgstr " · rodando: {list}"
+
+msgid " · installed: {list}"
+msgstr " · instalados: {list}"
+
+msgid "Language servers (LSP): {summary}. They are listed in {file}, which takes effect when saved."
+msgstr "Servidores de linguagem (LSP): {summary}. Ficam no {file}, que vale ao salvar."
+
+msgid "Edit Language Servers…"
+msgstr "Editar servidores de linguagem…"
+
+msgid "Save the changes to “{name}”?"
+msgstr "Salvar as alterações de \"{name}\"?"
+
+msgid "Without saving, the changes are lost."
+msgstr "Sem salvar, as alterações se perdem."
+
+msgid "Don’t Save"
+msgstr "Não salvar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Quitting without saving loses the changes."
+msgstr "Sair sem salvar perde as alterações."
+
+msgid "Quit Without Saving"
+msgstr "Sair sem salvar"
+
+msgid "Folder “{name}” closed; {tabs} with changes still open"
+msgstr "Pasta \"{name}\" fechada; {tabs} com alterações continuam abertas"
+
+msgid "Folder “{name}” closed"
+msgstr "Pasta \"{name}\" fechada"
+
+msgid "Settings not saved: {err}"
+msgstr "Preferências não gravadas: {err}"
+
+msgid "Go to Definition"
+msgstr "Ir para a definição"
+
+msgid "Show Info"
+msgstr "Mostrar informações"
+
+msgid "Complete"
+msgstr "Completar"
+
+msgid "Comment Lines"
+msgstr "Comentar linhas"
+
+msgid "Duplicate Line"
+msgstr "Duplicar linha"
+
+msgid "Move Line Up"
+msgstr "Mover linha para cima"
+
+msgid "Move Line Down"
+msgstr "Mover linha para baixo"
+
+msgid "Show or hide the project drawer"
+msgstr "Mostrar ou esconder a gaveta do projeto"
+
+msgid "Open File (Ctrl+O)"
+msgstr "Abrir arquivo (Ctrl+O)"
+
+msgid "Open Folder (Ctrl+Shift+O)"
+msgstr "Abrir pasta (Ctrl+Shift+O)"
+
+msgid "Save (Ctrl+S)"
+msgstr "Salvar (Ctrl+S)"
+
+msgid "Find and Replace (Ctrl+F)"
+msgstr "Buscar e substituir (Ctrl+F)"
+
+msgid "Terminal (Ctrl+J)"
+msgstr "Terminal (Ctrl+J)"
+
+msgid "Settings (Ctrl+,)"
+msgstr "Preferências (Ctrl+,)"
+
+msgid "Find Previous"
+msgstr "Buscar anterior"
+
+msgid "Find Next"
+msgstr "Buscar próximo"
+
+msgid "Replace"
+msgstr "Substituir"
+
+msgid " · {command} not available"
+msgstr " · {command} não disponível"
+
+msgid " · {command} starting…"
+msgstr " · {command} iniciando…"
+
+msgid "Spaces: {n}"
+msgstr "Espaços: {n}"
+
+msgid "Line {line}, Column {col}"
+msgstr "Linha {line}, coluna {col}"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "New"
+msgstr "Novo"
+
+msgid "Open…"
+msgstr "Abrir…"
+
+msgid "Open Folder…"
+msgstr "Abrir pasta…"
+
+msgid "Close Folder"
+msgstr "Fechar pasta"
+
+msgid "Save As…"
+msgstr "Salvar como…"
+
+msgid "Save All"
+msgstr "Salvar tudo"
+
+msgid "Close Tab"
+msgstr "Fechar aba"
+
+msgid "Quit"
+msgstr "Sair"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Find and Replace"
+msgstr "Buscar e substituir"
+
+msgid "Find in Project…"
+msgstr "Buscar no projeto…"
+
+msgid "Settings…"
+msgstr "Preferências…"
+
+msgid "Language Servers…"
+msgstr "Servidores de linguagem…"
+
+msgid "View"
+msgstr "Visualizar"
+
+msgid "File Drawer"
+msgstr "Gaveta de arquivos"
+
+msgid "Line Numbers"
+msgstr "Números de linha"
+
+msgid "Terminal"
+msgstr "Terminal"
+
+msgid "Split Right"
+msgstr "Dividir à direita"
+
+msgid "Split Down"
+msgstr "Dividir embaixo"
+
+msgid "Merge Panes"
+msgstr "Juntar os painéis"
+
+msgid "Bigger Font"
+msgstr "Aumentar a fonte"
+
+msgid "Smaller Font"
+msgstr "Diminuir a fonte"
+
+msgid "Default Font Size"
+msgstr "Tamanho normal"
+
+msgid "Navigate"
+msgstr "Navegar"
+
+msgid "Go to File…"
+msgstr "Ir para arquivo…"
+
+msgid "Go to Line…"
+msgstr "Ir para a linha…"
+
+msgid "Go to Definition (or Ctrl+Click)"
+msgstr "Ir para a definição (ou Ctrl+clique)"
+
+msgid "Show Symbol Info"
+msgstr "Mostrar informações do símbolo"
+
+msgid "Next Problem"
+msgstr "Próximo problema"
+
+msgid "Previous Problem"
+msgstr "Problema anterior"
+
+msgid "{n} file saved"
+msgid_plural "{n} files saved"
+msgstr[0] "{n} arquivo salvo"
+msgstr[1] "{n} arquivos salvos"
+
+msgid "{n} replacement"
+msgid_plural "{n} replacements"
+msgstr[0] "{n} substituição"
+msgstr[1] "{n} substituições"
+
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] "{n} arquivo"
+msgstr[1] "{n} arquivos"
+
+msgid "{n} line"
+msgid_plural "{n} lines"
+msgstr[0] "{n} linha"
+msgstr[1] "{n} linhas"
+
+msgid "{n} file has unsaved changes"
+msgid_plural "{n} files have unsaved changes"
+msgstr[0] "{n} arquivo com alterações não salvas"
+msgstr[1] "{n} arquivos com alterações não salvas"
+
+msgid "{n} tab"
+msgid_plural "{n} tabs"
+msgstr[0] "{n} aba"
+msgstr[1] "{n} abas"
+
+msgid "{n} error"
+msgid_plural "{n} errors"
+msgstr[0] "{n} erro"
+msgstr[1] "{n} erros"
+
+msgid "{n} warning"
+msgid_plural "{n} warnings"
+msgstr[0] "{n} aviso"
+msgstr[1] "{n} avisos"
+
+msgctxt "settings"
+msgid "Done"
+msgstr "Pronto"
+
+msgctxt "replace"
+msgid "All"
+msgstr "Todos"
+
+msgctxt "indent"
+msgid "Tabs"
+msgstr "Tabulação"
+
+msgctxt "programming"
+msgid "Language"
+msgstr "Linguagem"
+
+msgid "New File…"
+msgstr "Novo arquivo…"
+
+msgid "New Folder…"
+msgstr "Nova pasta…"
+
+msgid "Rename…"
+msgstr "Renomear…"
+
+msgid "Duplicate"
+msgstr "Duplicar"
+
+msgid "Move to Trash"
+msgstr "Mover para a Lixeira"
+
+msgid "Copy Path"
+msgstr "Copiar caminho"
+
+msgid "Show in Files"
+msgstr "Mostrar no Arquivos"
+
+msgid "Open in Terminal"
+msgstr "Abrir no Terminal"
+
+msgid "Duplicated as “{name}”"
+msgstr "Duplicado como \"{name}\""
+
+msgid "Couldn’t duplicate: {err}"
+msgstr "Não foi possível duplicar: {err}"
+
+msgid "“{name}” was moved to the Trash"
+msgstr "\"{name}\" foi para a Lixeira"
+
+msgid "Couldn’t move to the Trash: {err}"
+msgstr "Não foi possível mover para a Lixeira: {err}"
+
+msgid "Path copied"
+msgstr "Caminho copiado"
+
+msgid "New Folder"
+msgstr "Nova pasta"
+
+msgid "New File"
+msgstr "Novo arquivo"
+
+msgid "Rename"
+msgstr "Renomear"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "The shell exited. Ctrl+` closes the panel."
+msgstr "O shell terminou. Ctrl+` fecha o painel."
+
+msgid "Plain Text"
+msgstr "Texto simples"
+
+msgid "line {line}: {error}"
+msgstr "linha {line}: {error}"
+
+msgid "server {n} has no \"command\""
+msgstr "servidor {n} sem \"command\""
+
+msgid "server {n} ({command}) has no \"languages\""
+msgstr "servidor {n} ({command}) sem \"languages\""

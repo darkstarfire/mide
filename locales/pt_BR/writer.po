@@ -1,0 +1,642 @@
+# Tradução do mide para o português do Brasil: o Writer (mide-writer).
+# Os textos em inglês (msgid) são os do código (src/bin/mide-writer/).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Couldn’t read “{name}” (damaged file or another format). You can write in a new document; the original is not changed."
+msgstr "Não foi possível ler \"{name}\" (arquivo danificado ou de outro formato). Você pode escrever num documento novo; o original não é alterado."
+
+msgid "Couldn’t read “{name}”: {err}. You can write in a new document; the original is not changed."
+msgstr "Não foi possível ler \"{name}\": {err}. Você pode escrever num documento novo; o original não é alterado."
+
+msgid "Couldn’t open “{name}”: {err}"
+msgstr "Não foi possível abrir \"{name}\": {err}"
+
+msgid "Untitled"
+msgstr "Sem título"
+
+msgid "Couldn’t save: {err}"
+msgstr "Não foi possível salvar: {err}"
+
+msgid "Save As"
+msgstr "Salvar como"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Couldn’t open: {err}"
+msgstr "Não foi possível abrir: {err}"
+
+msgid "“{query}” not found."
+msgstr "\"{query}\" não encontrado."
+
+msgid "{name} — Edited"
+msgstr "{name} — Editado"
+
+msgid "Open (Ctrl+O)"
+msgstr "Abrir (Ctrl+O)"
+
+msgid "Save (Ctrl+S)"
+msgstr "Salvar (Ctrl+S)"
+
+msgid "Find and Replace (Ctrl+F)"
+msgstr "Buscar e substituir (Ctrl+F)"
+
+msgid "Line {line}, Column {col}"
+msgstr "Linha {line}, coluna {col}"
+
+msgid "Find"
+msgstr "Buscar"
+
+msgid "Find Previous"
+msgstr "Buscar anterior"
+
+msgid "Find Next"
+msgstr "Buscar próximo"
+
+msgid "Replace with"
+msgstr "Substituir por"
+
+msgid "Replace"
+msgstr "Substituir"
+
+msgid "All"
+msgstr "Tudo"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Insert Image"
+msgstr "Inserir imagem"
+
+msgid "Export as PDF"
+msgstr "Exportar como PDF"
+
+msgid "Do you want to save the changes made to “{name}”?"
+msgstr "Salvar as alterações em \"{name}\"?"
+
+msgid "Your changes will be lost if you don’t save them."
+msgstr "Se não salvar, as alterações serão perdidas."
+
+msgid "Don’t Save"
+msgstr "Não salvar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "New"
+msgstr "Novo"
+
+msgid "Open…"
+msgstr "Abrir…"
+
+msgid "Save As…"
+msgstr "Salvar como…"
+
+msgid "Export as PDF…"
+msgstr "Exportar como PDF…"
+
+msgid "Page Setup…"
+msgstr "Configurar página…"
+
+msgid "Print…"
+msgstr "Imprimir…"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Redo"
+msgstr "Refazer"
+
+msgid "Cut"
+msgstr "Recortar"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Paste"
+msgstr "Colar"
+
+msgid "Select All"
+msgstr "Selecionar tudo"
+
+msgid "Find and Replace…"
+msgstr "Buscar e substituir…"
+
+msgid "Check Spelling While Typing"
+msgstr "Verificar ortografia ao digitar"
+
+msgid "New Window"
+msgstr "Nova janela"
+
+msgid "Format"
+msgstr "Formatar"
+
+msgid "Make Rich Text"
+msgstr "Converter em texto formatado"
+
+msgid "file too large for the editor (over 20 MB)"
+msgstr "arquivo grande demais para o editor (mais de 20 MB)"
+
+msgid "not a text file (UTF-8)"
+msgstr "não é um arquivo de texto (UTF-8)"
+
+msgid "{n} replacement"
+msgid_plural "{n} replacements"
+msgstr[0] "{n} substituição"
+msgstr[1] "{n} substituições"
+
+msgid "{n} line"
+msgid_plural "{n} lines"
+msgstr[0] "{n} linha"
+msgstr[1] "{n} linhas"
+
+msgid "Body"
+msgstr "Corpo"
+
+msgid "Title"
+msgstr "Título"
+
+msgid "Heading 1"
+msgstr "Título 1"
+
+msgid "Heading 2"
+msgstr "Título 2"
+
+msgid "Heading 3"
+msgstr "Título 3"
+
+msgid "Quote"
+msgstr "Citação"
+
+msgid "Caption"
+msgstr "Legenda"
+
+msgid "Reference"
+msgstr "Referência"
+
+msgid "Table of Contents"
+msgstr "Sumário"
+
+msgid "Table of Contents Title"
+msgstr "Título do sumário"
+
+msgid "Couldn’t read the image."
+msgstr "Não foi possível ler a imagem."
+
+msgid "Image format not supported (use PNG, JPEG, WebP, GIF or BMP)."
+msgstr "Formato de imagem não suportado (use PNG, JPEG, WebP, GIF ou BMP)."
+
+msgid "Click a table cell first."
+msgstr "Clique numa célula da tabela primeiro."
+
+msgid "The document has no headings: use the Heading 1, 2 and 3 styles (¶ menu) on the section titles."
+msgstr "Não há títulos no documento: use os estilos Título 1, 2 e 3 (menu ¶) nos títulos das seções."
+
+msgid "CONTENTS"
+msgstr "SUMÁRIO"
+
+msgid "No Guesses Found"
+msgstr "Nenhuma sugestão"
+
+msgid "Learn Spelling"
+msgstr "Aprender ortografia"
+
+msgid "Ignore Spelling"
+msgstr "Ignorar"
+
+msgid "Match Case"
+msgstr "Diferenciar maiúsculas"
+
+msgid "Font"
+msgstr "Fonte"
+
+msgid "Bold"
+msgstr "Negrito"
+
+msgid "Italic"
+msgstr "Itálico"
+
+msgid "Underline"
+msgstr "Sublinhado"
+
+msgid "Strikethrough"
+msgstr "Tachado"
+
+msgid "Superscript"
+msgstr "Sobrescrito"
+
+msgid "Subscript"
+msgstr "Subscrito"
+
+msgid "Bigger"
+msgstr "Maior"
+
+msgid "Smaller"
+msgstr "Menor"
+
+msgid "Text"
+msgstr "Texto"
+
+msgid "Align Left"
+msgstr "Alinhar à esquerda"
+
+msgid "Center"
+msgstr "Centralizar"
+
+msgid "Justify"
+msgstr "Justificar"
+
+msgid "Align Right"
+msgstr "Alinhar à direita"
+
+msgid "List"
+msgstr "Lista"
+
+msgid "• Bullets"
+msgstr "• Marcadores"
+
+msgid "– Dashes"
+msgstr "– Travessões"
+
+msgid "1. Numbers"
+msgstr "1. Números"
+
+msgid "a) Letters"
+msgstr "a) Letras"
+
+msgid "Insert Image…"
+msgstr "Inserir imagem…"
+
+msgid "Image Size…"
+msgstr "Tamanho da imagem…"
+
+msgid "Insert Page Break"
+msgstr "Inserir quebra de página"
+
+msgid "Add Link…"
+msgstr "Adicionar link…"
+
+msgid "Insert Footnote…"
+msgstr "Inserir nota de rodapé…"
+
+msgid "Insert Table of Contents"
+msgstr "Inserir sumário"
+
+msgid "Update Table of Contents"
+msgstr "Atualizar sumário"
+
+msgid "Apply ABNT Standards…"
+msgstr "Aplicar normas ABNT…"
+
+msgid "Table"
+msgstr "Tabela"
+
+msgid "Insert Table…"
+msgstr "Inserir tabela…"
+
+msgid "Insert Row Above"
+msgstr "Inserir linha acima"
+
+msgid "Insert Row Below"
+msgstr "Inserir linha abaixo"
+
+msgid "Insert Column Left"
+msgstr "Inserir coluna à esquerda"
+
+msgid "Insert Column Right"
+msgstr "Inserir coluna à direita"
+
+msgid "Delete Row"
+msgstr "Excluir linha"
+
+msgid "Delete Column"
+msgstr "Excluir coluna"
+
+msgid "Delete Table"
+msgstr "Excluir tabela"
+
+msgid "Show Borders"
+msgstr "Mostrar bordas"
+
+msgid "View"
+msgstr "Visualizar"
+
+msgid "Show Ruler"
+msgstr "Mostrar régua"
+
+msgid "Zoom In"
+msgstr "Aumentar zoom"
+
+msgid "Zoom Out"
+msgstr "Diminuir zoom"
+
+msgid "Actual Size"
+msgstr "Tamanho real"
+
+msgid "Couldn’t prepare the print job: {err}"
+msgstr "Não foi possível preparar a impressão: {err}"
+
+msgid "Sent to the printer {printer}."
+msgstr "Enviado para a impressora {printer}."
+
+msgid "The printer refused: {error}"
+msgstr "A impressora recusou: {error}"
+
+msgid "Couldn’t print (is CUPS installed?): {err}"
+msgstr "Não foi possível imprimir (o CUPS está instalado?): {err}"
+
+msgid "ABNT standards applied: A4, margins 3/2/2/3 cm, {family} 12, 1.5 line spacing, 1.25 cm indent, page numbers at the top from page {from}."
+msgstr "Normas ABNT aplicadas: A4, margens 3/2/2/3 cm, {family} 12, entrelinha 1,5, recuo de 1,25 cm, números no canto de cima a partir da página {from}."
+
+msgid "PDF saved: {path}"
+msgstr "PDF salvo: {path}"
+
+msgid "Couldn’t save the PDF: {err}"
+msgstr "Não foi possível salvar o PDF: {err}"
+
+msgid "Page {page} of {pages}"
+msgstr "Página {page} de {pages}"
+
+msgid "Text Color"
+msgstr "Cor do texto"
+
+msgid "Highlight"
+msgstr "Realce"
+
+msgid "Bold (Ctrl+B)"
+msgstr "Negrito (Ctrl+B)"
+
+msgid "Italic (Ctrl+I)"
+msgstr "Itálico (Ctrl+I)"
+
+msgid "Underline (Ctrl+U)"
+msgstr "Sublinhado (Ctrl+U)"
+
+msgid "Line and Paragraph Spacing"
+msgstr "Espaçamento"
+
+msgid "Lists"
+msgstr "Listas"
+
+msgid "Typeface"
+msgstr "Face"
+
+msgid "Search Fonts"
+msgstr "Buscar fonte"
+
+msgid "No Highlight"
+msgstr "Sem realce"
+
+msgid "Custom Color"
+msgstr "Cor personalizada"
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Line Spacing"
+msgstr "Entrelinha"
+
+msgid "Single (1.0)"
+msgstr "Simples (1,0)"
+
+msgid "1.15"
+msgstr "1,15"
+
+msgid "1.5 (ABNT)"
+msgstr "1,5 (ABNT)"
+
+msgid "Double (2.0)"
+msgstr "Dupla (2,0)"
+
+msgid "Space After Paragraph"
+msgstr "Espaço depois do parágrafo"
+
+msgid "None"
+msgstr "Nenhum"
+
+msgid "•  Bullets"
+msgstr "•  Marcadores"
+
+msgid "–  Dashes"
+msgstr "–  Travessões"
+
+msgid "1.  Numbers"
+msgstr "1.  Números"
+
+msgid "a)  Letters"
+msgstr "a)  Letras"
+
+msgid "Page Setup"
+msgstr "Configurar página"
+
+msgid "Paper"
+msgstr "Papel"
+
+msgid "Letter"
+msgstr "Carta"
+
+msgid "Portrait"
+msgstr "Retrato"
+
+msgid "Landscape"
+msgstr "Paisagem"
+
+msgid "Margins (cm)"
+msgstr "Margens (cm)"
+
+msgid "Right"
+msgstr "Direita"
+
+msgid "Left"
+msgstr "Esquerda"
+
+msgid "Header and Footer"
+msgstr "Cabeçalho e rodapé"
+
+msgid "Header"
+msgstr "Cabeçalho"
+
+msgid "Footer"
+msgstr "Rodapé"
+
+msgid "Number pages"
+msgstr "Numerar as páginas"
+
+msgid "Position"
+msgstr "Posição"
+
+msgid "Top Right"
+msgstr "Em cima, à direita"
+
+msgid "Bottom"
+msgstr "Embaixo"
+
+msgid "Bottom Right"
+msgstr "Embaixo, à direita"
+
+msgid "Starting on page"
+msgstr "A partir da"
+
+msgid "(earlier pages count)"
+msgstr "ª página (as anteriores contam)"
+
+msgid "Image Size"
+msgstr "Tamanho da imagem"
+
+msgid "Keep proportions"
+msgstr "Manter proporção"
+
+msgid "Width (cm)"
+msgstr "Largura (cm)"
+
+msgid "Height"
+msgstr "Altura"
+
+msgid "Height (cm)"
+msgstr "Altura (cm)"
+
+msgid "Enter valid dimensions between 0.1 and 1000 cm."
+msgstr "Informe dimensões válidas entre 0,1 e 1000 cm."
+
+msgid "Link"
+msgstr "Link"
+
+msgid "Ctrl+click on the text opens the address in the browser."
+msgstr "Ctrl+clique no texto abre o endereço no navegador."
+
+msgid "https://example.com"
+msgstr "https://exemplo.com.br"
+
+msgid "Remove Link"
+msgstr "Remover link"
+
+msgid "Insert Table"
+msgstr "Inserir tabela"
+
+msgid "Rows"
+msgstr "Linhas"
+
+msgid "Columns"
+msgstr "Colunas"
+
+msgid "Insert"
+msgstr "Inserir"
+
+msgid "Edit Footnote"
+msgstr "Editar nota de rodapé"
+
+msgid "Footnote"
+msgstr "Nota de rodapé"
+
+msgid "The number appears in the text at the cursor, and the note at the foot of the same page (10 pt, as ABNT requires)."
+msgstr "O número aparece no texto, onde está o cursor, e a nota no pé da mesma página (letra 10, como na ABNT)."
+
+msgid "Footnote text"
+msgstr "Texto da nota"
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "ABNT Standards"
+msgstr "Normas ABNT"
+
+msgid "Academic paper (NBR 14724): A4 paper, 3 cm margins at the top and left and 2 cm at the bottom and right, 12 pt type, 1.5 line spacing, 1.25 cm first-line indent and justified text. Long quotations (Quote style) with a 4 cm indent, 10 pt type and single spacing. Page numbers in the top right corner."
+msgstr "Trabalho acadêmico (NBR 14724): papel A4, margens de 3 cm em cima e à esquerda e 2 cm embaixo e à direita, letra 12, entrelinha 1,5, recuo de 1,25 cm na primeira linha e texto justificado. Citações longas (estilo Citação) com recuo de 4 cm, letra 10 e entrelinha simples. Números das páginas no canto de cima, à direita."
+
+msgid "Numbers start on page"
+msgstr "Número a partir da"
+
+msgid "of the document"
+msgstr "ª página"
+
+msgid "The cover and title page count, but don’t show the number."
+msgstr "A capa e a folha de rosto contam, mas não mostram o número."
+
+msgid "Save as PDF"
+msgstr "Salvar como PDF"
+
+msgid "Print"
+msgstr "Imprimir"
+
+msgid "Previous Page"
+msgstr "Página anterior"
+
+msgid "{n} of {total}"
+msgstr "{n} de {total}"
+
+msgid "Next Page"
+msgstr "Próxima página"
+
+msgid "Destination"
+msgstr "Destino"
+
+msgid "No printer set up: save as PDF. To add a printer, use the system’s printer settings."
+msgstr "Nenhuma impressora configurada: salve em PDF. Para adicionar uma impressora, use as configurações de impressoras do sistema."
+
+msgid "Copies"
+msgstr "Cópias"
+
+msgid "Pages"
+msgstr "Páginas"
+
+msgid "Current"
+msgstr "Atual"
+
+msgid "Range"
+msgstr "Intervalo"
+
+msgid "From"
+msgstr "De"
+
+msgid "to"
+msgstr "até"
+
+msgid "Two-sided"
+msgstr "Frente e verso"
+
+msgid "Save PDF…"
+msgstr "Salvar PDF…"
+
+msgid "{n} occurrence replaced."
+msgid_plural "{n} occurrences replaced."
+msgstr[0] "{n} ocorrência substituída."
+msgstr[1] "{n} ocorrências substituídas."
+
+msgid "{n} word"
+msgid_plural "{n} words"
+msgstr[0] "{n} palavra"
+msgstr[1] "{n} palavras"
+
+msgid "{n} character"
+msgid_plural "{n} characters"
+msgstr[0] "{n} caractere"
+msgstr[1] "{n} caracteres"
+
+msgctxt "list"
+msgid "None"
+msgstr "Nenhuma"
+
+msgctxt "margin"
+msgid "Top"
+msgstr "Superior"
+
+msgctxt "margin"
+msgid "Bottom"
+msgstr "Inferior"
+
+msgctxt "pages"
+msgid "All"
+msgstr "Todas"

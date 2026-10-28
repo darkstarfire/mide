@@ -17,7 +17,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use mide::kit::{run, textarea::TextDoc, textedit::Edit, window_menu, App, ButtonStyle, Choice, FileChooser, Key, MenuGroup, MenuItem, Ui, Window};
+use mide::kit::{run, textarea::TextDoc, textedit::Edit, window_menu, App, ButtonStyle, Choice, FileChooser, Key, MenuGroup, MenuItem, Tool, Ui, Window};
+use mide::tr;
 
 /// Arquivos maiores que isso não são abertos (o editor mínimo guarda cópias do texto
 /// para desfazer).
@@ -104,7 +105,7 @@ impl Editor {
                 // pergunta onde; o original fica como está).
                 None => {
                     tracing::warn!("não foi possível ler {}", path.display());
-                    editor.message = Some(format!("Não foi possível ler \"{name}\" (arquivo danificado ou de outro formato). Você pode escrever num documento novo; o original não é alterado."));
+                    editor.message = Some(tr!("Couldn’t read “{name}” (damaged file or another format). You can write in a new document; the original is not changed.", name = name));
                 }
             },
             // Texto simples: entra como documento (ao salvar como .txt, volta a ser texto).
@@ -115,9 +116,9 @@ impl Editor {
                     editor.crlf = crlf;
                     editor.path = Some(path);
                 }
-                Err(err) => editor.message = Some(format!("Não foi possível ler \"{name}\": {err}. Você pode escrever num documento novo; o original não é alterado.")),
+                Err(err) => editor.message = Some(tr!("Couldn’t read “{name}”: {err}. You can write in a new document; the original is not changed.", name = name, err = err)),
             },
-            Err(err) => editor.message = Some(format!("Não foi possível abrir \"{name}\": {err}")),
+            Err(err) => editor.message = Some(tr!("Couldn’t open “{name}”: {err}", name = name, err = err)),
         }
         editor
     }
@@ -126,7 +127,7 @@ impl Editor {
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
-            .map_or_else(|| "Sem título".to_string(), |n| n.to_string_lossy().into_owned())
+            .map_or_else(|| tr!("Untitled").into_owned(), |n| n.to_string_lossy().into_owned())
     }
 
     fn modified(&self) -> bool {
@@ -163,7 +164,7 @@ impl Editor {
                     true
                 }
                 Err(err) => {
-                    self.message = Some(format!("Não foi possível salvar: {err}"));
+                    self.message = Some(tr!("Couldn’t save: {err}", err = err));
                     false
                 }
             };
@@ -177,7 +178,7 @@ impl Editor {
                 true
             }
             Err(err) => {
-                self.message = Some(format!("Não foi possível salvar: {err}"));
+                self.message = Some(tr!("Couldn’t save: {err}", err = err));
                 false
             }
         }
@@ -186,14 +187,14 @@ impl Editor {
     fn ask_save_as(&mut self, then_close: bool) {
         let (dir, name) = match &self.path {
             Some(path) => (path.parent().map(Path::to_path_buf), path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
-            None => (Some(default_dir()), if self.rich.is_some() { "Sem título.docx" } else { "Sem título.txt" }.to_string()),
+            None => (Some(default_dir()), format!("{}.{}", tr!("Untitled"), if self.rich.is_some() { "docx" } else { "txt" })),
         };
-        self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save("Salvar como", dir.as_deref(), &name), then_close });
+        self.dialog = Some(Dialog::SaveAs { chooser: FileChooser::save(&tr!("Save As"), dir.as_deref(), &name), then_close });
     }
 
     fn ask_open(&mut self) {
         let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
-        self.dialog = Some(Dialog::Open(FileChooser::open("Abrir", Some(&dir))));
+        self.dialog = Some(Dialog::Open(FileChooser::open(&tr!("Open"), Some(&dir))));
     }
 
     /// Abre o arquivo escolhido: nesta janela, se ela está sem título e sem nada
@@ -221,7 +222,7 @@ impl Editor {
                     let _ = child.wait();
                 });
             }
-            Err(err) => self.message = Some(format!("Não foi possível abrir: {err}")),
+            Err(err) => self.message = Some(tr!("Couldn’t open: {err}", err = err)),
         }
     }
 
@@ -242,7 +243,7 @@ impl Editor {
                 self.doc.edit = Edit { cursor: at + query.len(), anchor: Some(at) };
                 self.message = None;
             }
-            None => self.message = Some(format!("\"{query}\" não encontrado.")),
+            None => self.message = Some(tr!("“{query}” not found.", query = query)),
         }
     }
 
@@ -275,24 +276,24 @@ impl Editor {
             self.doc.text = self.doc.text.replace(&query, &replace);
             self.doc.edit = Edit::at_end(&self.doc.text);
         }
-        self.message = Some(format!("{count} substituição(ões)."));
+        self.message = Some(format!("{}.", mide::i18n::trn("{n} replacement", "{n} replacements", count as u64)));
     }
 
     /// Barra de ferramentas do Tahoe, como a do TextEdit: luzes, o nome do documento
     /// (com "Editado") e, à direita, as cápsulas de abrir/salvar e de buscar.
     fn toolbar(&mut self, ui: &mut Ui) {
         let mut clicked = None;
-        let title = if self.modified() { format!("{} — Editado", self.name()) } else { self.name() };
+        let title = if self.modified() { tr!("{name} — Edited", name = self.name()) } else { self.name() };
         let finding = self.find.is_some() || self.rich.as_ref().is_some_and(|r| r.find.is_some());
         ui.toolbar(|ui| {
             ui.toolbar_title(&title, 420.0);
             ui.push_right(2.0 * 40.0 + 4.0 + 10.0 + 40.0 + 4.0);
-            match ui.toolbar_buttons(&[("document-open-symbolic", "↥", false, true), ("document-save-symbolic", "↓", false, true)]) {
+            match ui.tool_group(&[Tool::new("document-open-symbolic", &tr!("Open (Ctrl+O)")), Tool::new("document-save-symbolic", &tr!("Save (Ctrl+S)"))]) {
                 Some(0) => clicked = Some("abrir"),
                 Some(1) => clicked = Some("salvar"),
                 _ => {}
             }
-            if ui.toolbar_buttons(&[("edit-find-symbolic", "⌕", finding, true)]).is_some() {
+            if ui.tool_group(&[Tool::new("edit-find-symbolic", &tr!("Find and Replace (Ctrl+F)")).on(finding)]).is_some() {
                 clicked = Some("buscar");
             }
         });
@@ -315,7 +316,7 @@ impl Editor {
         let line = mide::kit::textarea::line_of(&starts, self.doc.edit.cursor);
         let column = self.doc.text[starts[line]..self.doc.edit.cursor].chars().count() + 1;
         let lines = starts.len();
-        ui.status_bar(&format!("Linha {}, coluna {column} · {lines} {}", line + 1, if lines == 1 { "linha" } else { "linhas" }));
+        ui.status_bar(&format!("{} · {}", tr!("Line {line}, Column {col}", line = line + 1, col = column), mide::i18n::trn("{n} line", "{n} lines", lines as u64)));
     }
 
     fn toggle_find(&mut self) {
@@ -344,17 +345,17 @@ impl Editor {
             if focus {
                 ui.focus_next_input();
             }
-            ui.sized(240.0, |ui| next = ui.search_field(&mut query, "Buscar").submitted());
-            match ui.toolbar_buttons(&[("go-up-symbolic", "‹", false, true), ("go-down-symbolic", "›", false, true)]) {
+            ui.sized(240.0, |ui| next = ui.search_field(&mut query, &tr!("Find")).submitted());
+            match ui.tool_group(&[Tool::new("go-up-symbolic", &tr!("Find Previous")), Tool::new("go-down-symbolic", &tr!("Find Next"))]) {
                 Some(0) => prev = true,
                 Some(1) => next = true,
                 _ => {}
             }
             ui.space_x(8.0);
-            ui.sized(220.0, |ui| one = ui.search_field(&mut replace, "Substituir por").submitted());
-            ui.sized(100.0, |ui| one |= ui.button_styled("Substituir", ButtonStyle::Bordered).clicked());
-            ui.sized(70.0, |ui| all = ui.button_styled("Tudo", ButtonStyle::Bordered).clicked());
-            ui.sized(60.0, |ui| close = ui.button_styled("OK", ButtonStyle::Prominent).clicked());
+            ui.sized(220.0, |ui| one = ui.search_field(&mut replace, &tr!("Replace with")).submitted());
+            ui.sized(100.0, |ui| one |= ui.button_styled(&tr!("Replace"), ButtonStyle::Bordered).clicked());
+            ui.sized(70.0, |ui| all = ui.button_styled(&tr!("All"), ButtonStyle::Bordered).clicked());
+            ui.sized(60.0, |ui| close = ui.button_styled(&tr!("OK"), ButtonStyle::Prominent).clicked());
         });
         ui.space(6.0);
         if let Some(find) = self.find.as_mut() {
@@ -405,12 +406,12 @@ impl Editor {
             r.view(ui, top);
             if std::mem::take(&mut r.wants_image) {
                 let dir = mide::places::pictures_dir();
-                self.dialog = Some(Dialog::InsertImage(FileChooser::open("Inserir imagem", Some(&dir)).extensions(&["png", "jpg", "jpeg", "webp", "gif", "bmp"])));
+                self.dialog = Some(Dialog::InsertImage(FileChooser::open(&tr!("Insert Image"), Some(&dir)).extensions(&["png", "jpg", "jpeg", "webp", "gif", "bmp"])));
             }
             if let Some(range) = r.wants_pdf_path.take() {
                 let dir = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_else(default_dir);
-                let stem = self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "Sem título".to_string(), |n| n.to_string_lossy().into_owned());
-                self.dialog = Some(Dialog::ExportPdf(FileChooser::save("Exportar como PDF", Some(&dir), &format!("{stem}.pdf")), range));
+                let stem = self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| tr!("Untitled").into_owned(), |n| n.to_string_lossy().into_owned());
+                self.dialog = Some(Dialog::ExportPdf(FileChooser::save(&tr!("Export as PDF"), Some(&dir), &format!("{stem}.pdf")), range));
             }
             if let Some(m) = r.message.take() {
                 self.message = Some(m);
@@ -504,13 +505,13 @@ impl Editor {
                 let name = self.name();
                 let (mut save, mut discard, mut cancel) = (false, false, false);
                 ui.modal(440.0, |ui| {
-                    ui.strong(&format!("Salvar as alterações em \"{name}\"?"));
-                    ui.note("Se não salvar, as alterações serão perdidas.");
+                    ui.strong(&tr!("Do you want to save the changes made to “{name}”?", name = name));
+                    ui.note(&tr!("Your changes will be lost if you don’t save them."));
                     ui.row(|ui| {
                         ui.push_right(3.0 * 120.0 + 16.0);
-                        ui.sized(120.0, |ui| discard = ui.button("Não salvar").clicked());
-                        ui.sized(120.0, |ui| cancel = ui.button("Cancelar").clicked());
-                        ui.sized(120.0, |ui| save = ui.primary_button("Salvar").clicked());
+                        ui.sized(120.0, |ui| discard = ui.button(&tr!("Don’t Save")).clicked());
+                        ui.sized(120.0, |ui| cancel = ui.button(&tr!("Cancel")).clicked());
+                        ui.sized(120.0, |ui| save = ui.primary_button(&tr!("Save")).clicked());
                     });
                 });
                 esc |= cancel;
@@ -617,32 +618,32 @@ impl App for Editor {
         if let Some(r) = &self.rich {
             let mut groups = vec![
                 MenuGroup {
-                    title: "Arquivo".into(),
+                    title: tr!("File").into(),
                     items: vec![
-                        MenuItem::action("nova", "Novo").shortcut("Ctrl+N"),
-                        MenuItem::action("abrir", "Abrir…").shortcut("Ctrl+O"),
+                        MenuItem::action("nova", &tr!("New")).shortcut("Ctrl+N"),
+                        MenuItem::action("abrir", &tr!("Open…")).shortcut("Ctrl+O"),
                         MenuItem::Separator,
-                        MenuItem::action("salvar", "Salvar").shortcut("Ctrl+S"),
-                        MenuItem::action("salvar-como", "Salvar como…").shortcut("Ctrl+Shift+S"),
-                        MenuItem::action("exportar-pdf", "Exportar como PDF…"),
+                        MenuItem::action("salvar", &tr!("Save")).shortcut("Ctrl+S"),
+                        MenuItem::action("salvar-como", &tr!("Save As…")).shortcut("Ctrl+Shift+S"),
+                        MenuItem::action("exportar-pdf", &tr!("Export as PDF…")),
                         MenuItem::Separator,
-                        MenuItem::action("configurar-pagina", "Configurar página…").shortcut("Ctrl+Shift+P"),
-                        MenuItem::action("imprimir", "Imprimir…").shortcut("Ctrl+P"),
+                        MenuItem::action("configurar-pagina", &tr!("Page Setup…")).shortcut("Ctrl+Shift+P"),
+                        MenuItem::action("imprimir", &tr!("Print…")).shortcut("Ctrl+P"),
                     ],
                 },
                 MenuGroup {
-                    title: "Editar".into(),
+                    title: tr!("Edit").into(),
                     items: vec![
-                        MenuItem::action("desfazer", "Desfazer").shortcut("Ctrl+Z"),
-                        MenuItem::action("refazer", "Refazer").shortcut("Ctrl+Shift+Z"),
+                        MenuItem::action("desfazer", &tr!("Undo")).shortcut("Ctrl+Z"),
+                        MenuItem::action("refazer", &tr!("Redo")).shortcut("Ctrl+Shift+Z"),
                         MenuItem::Separator,
-                        MenuItem::action("recortar", "Recortar").shortcut("Ctrl+X"),
-                        MenuItem::action("copiar", "Copiar").shortcut("Ctrl+C"),
-                        MenuItem::action("colar", "Colar").shortcut("Ctrl+V"),
-                        MenuItem::action("selecionar-tudo", "Selecionar tudo").shortcut("Ctrl+A"),
+                        MenuItem::action("recortar", &tr!("Cut")).shortcut("Ctrl+X"),
+                        MenuItem::action("copiar", &tr!("Copy")).shortcut("Ctrl+C"),
+                        MenuItem::action("colar", &tr!("Paste")).shortcut("Ctrl+V"),
+                        MenuItem::action("selecionar-tudo", &tr!("Select All")).shortcut("Ctrl+A"),
                         MenuItem::Separator,
-                        MenuItem::action("buscar", "Buscar e substituir…").shortcut("Ctrl+F"),
-                        MenuItem::action("ortografia", "Verificar ortografia ao digitar").checked(r.spell_on),
+                        MenuItem::action("buscar", &tr!("Find and Replace…")).shortcut("Ctrl+F"),
+                        MenuItem::action("ortografia", &tr!("Check Spelling While Typing")).checked(r.spell_on),
                     ],
                 },
             ];
@@ -652,17 +653,17 @@ impl App for Editor {
         }
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
+                title: tr!("File").into(),
                 items: vec![
-                    MenuItem::action("nova", "Nova janela").shortcut("Ctrl+N"),
-                    MenuItem::action("abrir", "Abrir…").shortcut("Ctrl+O"),
+                    MenuItem::action("nova", &tr!("New Window")).shortcut("Ctrl+N"),
+                    MenuItem::action("abrir", &tr!("Open…")).shortcut("Ctrl+O"),
                     MenuItem::Separator,
-                    MenuItem::action("salvar", "Salvar").shortcut("Ctrl+S"),
-                    MenuItem::action("salvar-como", "Salvar como…").shortcut("Ctrl+Shift+S"),
+                    MenuItem::action("salvar", &tr!("Save")).shortcut("Ctrl+S"),
+                    MenuItem::action("salvar-como", &tr!("Save As…")).shortcut("Ctrl+Shift+S"),
                 ],
             },
-            MenuGroup { title: "Editar".into(), items: vec![MenuItem::action("buscar", "Buscar e substituir…").shortcut("Ctrl+F")] },
-            MenuGroup { title: "Formatar".into(), items: vec![MenuItem::action("texto-formatado", "Converter em texto formatado").shortcut("Ctrl+Shift+T")] },
+            MenuGroup { title: tr!("Edit").into(), items: vec![MenuItem::action("buscar", &tr!("Find and Replace…")).shortcut("Ctrl+F")] },
+            MenuGroup { title: tr!("Format").into(), items: vec![MenuItem::action("texto-formatado", &tr!("Make Rich Text")).shortcut("Ctrl+Shift+T")] },
             window_menu(Vec::new()),
         ]
     }
@@ -680,10 +681,10 @@ impl App for Editor {
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
     let meta = std::fs::metadata(path)?;
     if meta.len() > MAX_BYTES {
-        return Err(std::io::Error::other("arquivo grande demais para o editor (mais de 20 MB)"));
+        return Err(std::io::Error::other(tr!("file too large for the editor (over 20 MB)").into_owned()));
     }
     let bytes = std::fs::read(path)?;
-    let text = String::from_utf8(bytes).map_err(|_| std::io::Error::other("não é um arquivo de texto (UTF-8)"))?;
+    let text = String::from_utf8(bytes).map_err(|_| std::io::Error::other(tr!("not a text file (UTF-8)").into_owned()))?;
     let crlf = text.contains("\r\n");
     Ok((if crlf { text.replace("\r\n", "\n") } else { text }, crlf))
 }
