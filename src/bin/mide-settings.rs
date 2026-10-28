@@ -22,6 +22,8 @@ use mide::{
     kit::{run, App, ArrangedScreen, Key, Tile, Ui, Window},
     settings_file::{self, Value},
     system::{self, Status},
+    tr,
+    i18n::{trc, trn},
 };
 use tiny_skia::Pixmap;
 
@@ -51,92 +53,96 @@ enum Section {
 /// tema e cor do quadradinho.
 const SIDEBAR: &[(Option<Section>, &str, &str, [u8; 3])] = &[
     (Some(Section::Wifi), "Wi-Fi", "network-wireless-symbolic", [10, 132, 255]),
-    (Some(Section::Network), "Rede", "network-wired-symbolic", [10, 132, 255]),
+    (Some(Section::Network), "Network", "network-wired-symbolic", [10, 132, 255]),
     (Some(Section::Bluetooth), "Bluetooth", "bluetooth-symbolic", [10, 132, 255]),
     (None, "", "", [0, 0, 0]),
-    (Some(Section::Appearance), "Aparência", "preferences-desktop-appearance-symbolic", [72, 72, 80]),
-    (Some(Section::Sound), "Som", "audio-volume-high-symbolic", [255, 55, 95]),
-    (Some(Section::Displays), "Monitores", "video-display-symbolic", [52, 120, 246]),
-    (Some(Section::Wallpaper), "Papel de parede", "preferences-desktop-wallpaper-symbolic", [100, 210, 255]),
+    (Some(Section::Appearance), "Appearance", "preferences-desktop-appearance-symbolic", [72, 72, 80]),
+    (Some(Section::Sound), "Sound", "audio-volume-high-symbolic", [255, 55, 95]),
+    (Some(Section::Displays), "Displays", "video-display-symbolic", [52, 120, 246]),
+    (Some(Section::Wallpaper), "Wallpaper", "preferences-desktop-wallpaper-symbolic", [100, 210, 255]),
     (Some(Section::Dock), "Dock", "view-app-grid-symbolic", [52, 199, 89]),
-    (Some(Section::Bar), "Barra superior", "window-new-symbolic", [88, 86, 214]),
-    (Some(Section::Effects), "Efeitos", "starred-symbolic", [191, 90, 242]),
-    (Some(Section::Lock), "Bloqueio de tela", "system-lock-screen-symbolic", [255, 59, 48]),
+    (Some(Section::Bar), "Menu Bar", "window-new-symbolic", [88, 86, 214]),
+    (Some(Section::Effects), "Effects", "starred-symbolic", [191, 90, 242]),
+    (Some(Section::Lock), "Lock Screen", "system-lock-screen-symbolic", [255, 59, 48]),
     (None, "", "", [0, 0, 0]),
-    (Some(Section::Mouse), "Mouse e trackpad", "input-mouse-symbolic", [142, 142, 147]),
-    (Some(Section::Keyboard), "Teclado", "input-keyboard-symbolic", [142, 142, 147]),
-    (Some(Section::Region), "Idioma e região", "preferences-desktop-locale-symbolic", [10, 132, 255]),
-    (Some(Section::Energy), "Energia", "battery-full-symbolic", [52, 199, 89]),
-    (Some(Section::DefaultApps), "Apps padrão", "applications-system-symbolic", [142, 142, 147]),
-    (Some(Section::LoginItems), "Itens de início", "system-run-symbolic", [142, 142, 147]),
-    (Some(Section::About), "Sobre", "help-about-symbolic", [142, 142, 147]),
+    (Some(Section::Mouse), "Mouse & Trackpad", "input-mouse-symbolic", [142, 142, 147]),
+    (Some(Section::Keyboard), "Keyboard", "input-keyboard-symbolic", [142, 142, 147]),
+    (Some(Section::Region), "Language & Region", "preferences-desktop-locale-symbolic", [10, 132, 255]),
+    (Some(Section::Energy), "Energy", "battery-full-symbolic", [52, 199, 89]),
+    (Some(Section::DefaultApps), "Default Apps", "applications-system-symbolic", [142, 142, 147]),
+    (Some(Section::LoginItems), "Login Items", "system-run-symbolic", [142, 142, 147]),
+    (Some(Section::About), "About", "help-about-symbolic", [142, 142, 147]),
 ];
 
-/// Efeitos do `[effects]`: chave, rótulo e explicação.
+/// Efeitos do `[effects]`: chave, rótulo e explicação (em inglês; traduzidos na tela).
 const EFFECTS: &[(&str, &str, &str)] = &[
-    ("shadows", "Sombras das janelas", "Sombra suave em volta de cada janela"),
-    ("rounded_corners", "Cantos arredondados", "Janelas com cantos arredondados e contorno fino"),
-    ("animations", "Animações", "Maximizar, restaurar, fechar janelas e abrir o launcher com transição suave"),
-    ("lamp", "Efeito lâmpada", "Minimizar escorre a janela até o ícone da dock"),
-    ("dock_blur", "Desfoque na dock", "A dock desfoca o que está atrás dela, como vidro fosco"),
-    ("launcher_blur", "Desfoque no launcher", "O fundo do launcher é o papel de parede desfocado"),
-    ("liquid_glass", "Vidro líquido", "Dock e pastas do launcher com bordas que refratam a luz e reflexo, sobre o desfoque"),
-    ("panel_glass", "Vidro em barras e menus", "Barra superior, menus, notificações e prévias das janelas com vidro"),
-    ("menu_animation", "Animação dos menus", "Menus e listas aparecem com um esmaecer curto"),
-    ("transitions", "Transições suaves", "Prévias da dock e Alt+Tab, páginas e pastas do launcher, pastas do Arquivos, troca entre ícones e lista e a miniatura da captura"),
-    ("shake_cursor", "Agitar o ponteiro para localizá-lo", "Mexer o mouse rápido de um lado para o outro deixa o ponteiro grande por um instante"),
+    ("shadows", "Window shadows", "A soft shadow around each window"),
+    ("rounded_corners", "Rounded corners", "Windows with rounded corners and a thin outline"),
+    ("animations", "Animations", "Smooth transitions when maximizing, restoring and closing windows and opening the launcher"),
+    ("lamp", "Genie effect", "Minimizing pours the window into its Dock icon"),
+    ("dock_blur", "Dock blur", "The Dock blurs what is behind it, like frosted glass"),
+    ("launcher_blur", "Launcher blur", "The launcher background is the blurred wallpaper"),
+    ("liquid_glass", "Liquid glass", "Dock and launcher folders with edges that refract light and a reflection, over the blur"),
+    ("panel_glass", "Glass in bars and menus", "Menu bar, menus, notifications and window previews with glass"),
+    ("menu_animation", "Menu animation", "Menus and lists appear with a short fade"),
+    ("transitions", "Smooth transitions", "Dock previews and Alt+Tab, launcher pages and folders, Files folders, switching between icons and list, and the screenshot thumbnail"),
+    ("shake_cursor", "Shake mouse pointer to locate", "Moving the mouse quickly back and forth makes the pointer big for a moment"),
 ];
 
-/// O que a busca encontra: nome da opção, palavras-chave e a seção dela.
+/// O que a busca encontra: nome da opção, palavras-chave e a seção dela (em inglês;
+/// a busca olha o texto em inglês e o traduzido).
 const SEARCHABLE: &[(&str, &str, Section)] = &[
-    ("Bloquear a tela após", "bloqueio bloquear senha inatividade tempo sem uso protetor de tela", Section::Lock),
-    ("Bloquear ao suspender", "bloqueio suspender dormir senha", Section::Lock),
-    ("Apagar a tela após", "apagar tela monitor desligar energia dpms protetor", Section::Lock),
-    ("Cor de destaque", "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite accent", Section::Appearance),
-    ("Aparência", "tema claro escuro modo noturno dark cores", Section::Appearance),
-    ("Wi-Fi", "rede internet wireless conectar senha", Section::Wifi),
-    ("Rede", "rede cabo cabeada ethernet internet endereco ip conexao", Section::Network),
-    ("Bluetooth", "fone mouse teclado aparelhos parear sem fio", Section::Bluetooth),
-    ("Volume de saída", "som audio alto-falante volume", Section::Sound),
-    ("Sem som", "mudo silenciar som", Section::Sound),
-    ("Efeitos sonoros", "som efeitos alerta bip notificacao sons do sistema", Section::Sound),
-    ("Monitores", "tela telas monitor resolucao frequencia hz escala organizar principal segundo monitor", Section::Displays),
-    ("Resolução e frequência da tela", "monitor resolucao frequencia hz taxa atualizacao", Section::Displays),
-    ("Escala da tela", "monitor escala tamanho zoom hidpi", Section::Displays),
-    ("Papel de parede", "fundo imagem wallpaper area de trabalho", Section::Wallpaper),
-    ("Adicionar imagem de fundo", "papel de parede imagem foto", Section::Wallpaper),
-    ("Tamanho dos ícones da dock", "dock icones tamanho", Section::Dock),
-    ("Ocultar e mostrar a Dock automaticamente", "dock esconder ocultar automatico", Section::Dock),
-    ("Clicar no app em foco minimiza", "dock minimizar clique foco previas janelas", Section::Dock),
-    ("Itens da barra superior", "barra menu topo icones som wifi bluetooth bateria central controle engrenagem", Section::Bar),
-    ("Sombras das janelas", "efeitos sombra", Section::Effects),
-    ("Cantos arredondados", "efeitos cantos bordas", Section::Effects),
-    ("Animações", "efeitos animacao transicao", Section::Effects),
-    ("Efeito lâmpada", "efeitos minimizar genie", Section::Effects),
-    ("Desfoque na dock", "efeitos blur desfoque vidro", Section::Effects),
-    ("Desfoque no launcher", "efeitos blur desfoque launcher", Section::Effects),
-    ("Vidro líquido", "efeitos vidro liquid glass transparencia", Section::Effects),
-    ("Vidro em barras e menus", "efeitos vidro barra menus notificacoes transparencia", Section::Effects),
-    ("Animação dos menus", "efeitos animacao menus contexto esmaecer", Section::Effects),
-    ("Transições suaves", "efeitos animacao transicao suave launcher pastas arquivos lista icones", Section::Effects),
-    ("Velocidade do ponteiro", "mouse trackpad touchpad ponteiro velocidade cursor", Section::Mouse),
-    ("Rolagem natural", "mouse trackpad touchpad rolagem natural scroll invertida", Section::Mouse),
-    ("Toque para clicar", "trackpad touchpad toque clicar tap", Section::Mouse),
-    ("Aceleração do mouse", "mouse aceleracao ponteiro precisao", Section::Mouse),
-    ("Layout do teclado", "teclado layout abnt2 abnt idioma us internacional acentos", Section::Keyboard),
-    ("Teclas no estilo Mac", "teclado command option cmd super ctrl atalhos", Section::Keyboard),
-    ("Atalhos de teclado", "teclado atalhos teclas combinacoes", Section::Keyboard),
-    ("Mudar ou criar atalho", "teclado atalho novo gravar combinacao remover padrao", Section::Keyboard),
-    ("Idioma", "idioma lingua language traducao portugues ingles locale", Section::Region),
-    ("Formatos de data e números", "regiao formato data hora numeros moeda locale", Section::Region),
-    ("Suspender o computador após", "energia suspender dormir repouso inatividade bateria", Section::Energy),
-    ("Botão de ligar", "energia botao ligar desligar power suspender", Section::Energy),
-    ("Apps padrão", "apps padrao navegador email abrir com pdf imagens videos musica pastas texto", Section::DefaultApps),
-    ("Clicar no papel de parede mostra a mesa", "mesa area de trabalho papel de parede clicar afastar janelas mostrar desktop", Section::Wallpaper),
-    ("Itens de início", "iniciar sessao login startup autostart abrir ao entrar apps comandos scripts", Section::LoginItems),
-    ("Sobre este computador", "sistema versao memoria processador", Section::About),
+    ("Lock the screen after", "lock password inactivity idle time screen saver", Section::Lock),
+    ("Lock when suspending", "lock suspend sleep password", Section::Lock),
+    ("Turn off the display after", "turn off screen display monitor power dpms saver", Section::Lock),
+    ("Accent color", "appearance color accent blue purple pink red orange yellow green graphite", Section::Appearance),
+    ("Appearance", "theme light dark mode night colors", Section::Appearance),
+    ("Wi-Fi", "network internet wireless connect password", Section::Wifi),
+    ("Network", "network cable wired ethernet internet address ip connection", Section::Network),
+    ("Bluetooth", "headphones mouse keyboard devices pair wireless", Section::Bluetooth),
+    ("Output volume", "sound audio speaker volume", Section::Sound),
+    ("Mute sound", "mute silence sound", Section::Sound),
+    ("Sound effects", "sound effects alert beep notification system sounds", Section::Sound),
+    ("Displays", "screen screens monitor resolution refresh hz scale arrange main second display", Section::Displays),
+    ("Display resolution and refresh rate", "monitor resolution frequency hz refresh rate", Section::Displays),
+    ("Display scale", "monitor scale size zoom hidpi", Section::Displays),
+    ("Wallpaper", "background image wallpaper desktop", Section::Wallpaper),
+    ("Add a background image", "wallpaper image photo", Section::Wallpaper),
+    ("Dock icon size", "dock icons size", Section::Dock),
+    ("Automatically hide and show the Dock", "dock hide autohide automatic", Section::Dock),
+    ("Clicking the focused app minimizes it", "dock minimize click focus previews windows", Section::Dock),
+    ("Menu bar items", "bar menu top icons sound wifi bluetooth battery control center gear", Section::Bar),
+    ("Window shadows", "effects shadow", Section::Effects),
+    ("Rounded corners", "effects corners edges", Section::Effects),
+    ("Animations", "effects animation transition", Section::Effects),
+    ("Genie effect", "effects minimize genie lamp", Section::Effects),
+    ("Dock blur", "effects blur glass", Section::Effects),
+    ("Launcher blur", "effects blur launcher", Section::Effects),
+    ("Liquid glass", "effects glass liquid transparency", Section::Effects),
+    ("Glass in bars and menus", "effects glass bar menus notifications transparency", Section::Effects),
+    ("Menu animation", "effects animation menus context fade", Section::Effects),
+    ("Smooth transitions", "effects animation transition smooth launcher folders files list icons", Section::Effects),
+    ("Pointer speed", "mouse trackpad touchpad pointer speed cursor tracking", Section::Mouse),
+    ("Natural scrolling", "mouse trackpad touchpad scrolling natural scroll inverted", Section::Mouse),
+    ("Tap to click", "trackpad touchpad tap click", Section::Mouse),
+    ("Mouse acceleration", "mouse acceleration pointer precision", Section::Mouse),
+    ("Keyboard layout", "keyboard layout abnt2 abnt language us international accents input source", Section::Keyboard),
+    ("Mac-style keys", "keyboard command option cmd super ctrl shortcuts", Section::Keyboard),
+    ("Keyboard shortcuts", "keyboard shortcuts keys combinations", Section::Keyboard),
+    ("Change or create a shortcut", "keyboard shortcut new record combination remove default", Section::Keyboard),
+    ("Language", "language translation portuguese english locale", Section::Region),
+    ("Date and number formats", "region format date time numbers currency locale", Section::Region),
+    ("Put the computer to sleep after", "energy suspend sleep inactivity battery", Section::Energy),
+    ("Power button", "energy button power shut down suspend", Section::Energy),
+    ("Default apps", "apps default browser email open with pdf images videos music folders text", Section::DefaultApps),
+    ("Clicking the wallpaper reveals the desktop", "desktop wallpaper click move windows aside show desktop", Section::Wallpaper),
+    ("Login items", "login session startup autostart open at login apps commands scripts", Section::LoginItems),
+    ("About this computer", "system version memory processor", Section::About),
 ];
 
+/// Grupos da lista de atalhos, na ordem em que aparecem: a chave (gravada em
+/// `[settings] shortcuts_closed`, por isso não muda) e o nome na tela.
+const SHORTCUT_GROUPS: [(&str, &str); 4] = [("Janelas", "Windows"), ("Launcher e busca", "Launcher & Search"), ("Apps", "Apps"), ("Sistema", "System")];
 
 const DOCK_MIN: f32 = 32.0;
 const DOCK_MAX: f32 = 64.0;
@@ -355,13 +361,19 @@ impl Settings {
         if !on {
             return;
         }
-        ui.heading("Redes");
+        ui.heading(&tr!("Networks"));
         ui.card(|ui| {
             if networks.is_empty() {
-                ui.note("Procurando redes…");
+                ui.note(&tr!("Looking for networks…"));
             }
             for net in networks.iter().take(10) {
-                let detail = if net.active { "Conectado".to_string() } else { format!("{}%{}", net.signal, if net.secure { " · com senha" } else { "" }) };
+                let detail = if net.active {
+                    tr!("Connected").into_owned()
+                } else if net.secure {
+                    tr!("{signal}% · secured", signal = net.signal)
+                } else {
+                    format!("{}%", net.signal)
+                };
                 if ui.list_item(&net.ssid, &detail).clicked() && !net.active {
                     system::connect_network(&net.ssid);
                 }
@@ -372,7 +384,7 @@ impl Settings {
     /// Rede: as placas cabeadas (estado, conexão e endereço) e o resumo do Wi-Fi, com
     /// a conexão principal (por onde a internet sai) marcada, como em Ajustes → Rede.
     fn network(&mut self, ui: &mut Ui) {
-        ui.title("Rede");
+        ui.title(&tr!("Network"));
         let wired = self.status.wired.clone();
         let primary = self.status.primary.clone();
         let wifi_net = self.status.active_network().map(|n| n.ssid.clone());
@@ -382,23 +394,23 @@ impl Settings {
             for w in &wired {
                 let state = match w.state {
                     system::WiredState::Connected => match &w.address {
-                        Some(ip) => format!("Conectado · {ip}"),
-                        None => "Conectado".into(),
+                        Some(ip) => tr!("Connected · {ip}", ip = ip),
+                        None => tr!("Connected").into_owned(),
                     },
-                    system::WiredState::Connecting => "Conectando…".into(),
-                    system::WiredState::Disconnected => "Cabo ligado, sem conexão".into(),
-                    system::WiredState::Unplugged => "Cabo desconectado".into(),
+                    system::WiredState::Connecting => tr!("Connecting…").into_owned(),
+                    system::WiredState::Disconnected => tr!("Cable connected, no connection").into_owned(),
+                    system::WiredState::Unplugged => tr!("Cable unplugged").into_owned(),
                 };
                 let main = primary.as_deref() == Some(w.device.as_str()) && w.state == system::WiredState::Connected;
                 let label = if wired.len() > 1 { format!("Ethernet ({})", w.device) } else { "Ethernet".to_string() };
-                ui.list_item(&label, &if main { format!("{state} · principal") } else { state });
+                ui.list_item(&label, &if main { tr!("{state} · primary", state = state) } else { state });
             }
             let wifi_detail = match (&wifi_net, wifi_on) {
-                (_, false) => "Desligado".to_string(),
-                (None, true) => "Sem rede".to_string(),
+                (_, false) => tr!("Off").into_owned(),
+                (None, true) => tr!("No network").into_owned(),
                 (Some(ssid), true) => {
                     let main = primary.as_ref().is_some_and(|p| !wired.iter().any(|w| w.device == *p));
-                    if main { format!("{ssid} · principal") } else { ssid.clone() }
+                    if main { tr!("{ssid} · primary", ssid = ssid) } else { ssid.clone() }
                 }
             };
             if ui.list_item("Wi-Fi", &wifi_detail).clicked() {
@@ -406,15 +418,15 @@ impl Settings {
             }
         });
         if wired.is_empty() {
-            ui.note("Nenhuma placa de rede cabeada encontrada.");
+            ui.note(&tr!("No wired network adapter found."));
         }
         if let Some(w) = wired.iter().find(|w| w.state == system::WiredState::Connected && !w.connection.is_empty()) {
-            ui.heading("Conexão cabeada");
+            ui.heading(&tr!("Wired Connection"));
             ui.card(|ui| {
-                ui.list_item("Nome da conexão", &w.connection);
-                ui.list_item("Interface", &w.device);
+                ui.list_item(&tr!("Connection name"), &w.connection);
+                ui.list_item(&tr!("Interface"), &w.device);
                 if let Some(ip) = &w.address {
-                    ui.list_item("Endereço IP", ip);
+                    ui.list_item(&tr!("IP address"), ip);
                 }
             });
         }
@@ -428,8 +440,8 @@ impl Settings {
         let (on, devices) = self.status.bluetooth.clone().unwrap_or((false, Vec::new()));
         let mut value = on;
         ui.card(|ui| {
-            let detail = if on { "Visível para os aparelhos pareados" } else { "Desligado" };
-            if ui.switch_detail("Bluetooth", detail, &mut value).changed() {
+            let detail = if on { tr!("Visible to paired devices") } else { tr!("Off") };
+            if ui.switch_detail("Bluetooth", &detail, &mut value).changed() {
                 system::set_bluetooth(value);
             }
         });
@@ -441,14 +453,14 @@ impl Settings {
         if !on {
             return;
         }
-        ui.heading("Meus aparelhos");
+        ui.heading(&tr!("My Devices"));
         ui.card(|ui| {
             if devices.is_empty() {
-                ui.note("Nenhum aparelho pareado");
+                ui.note(&tr!("No paired devices"));
             }
             for d in &devices {
-                let detail = if d.connected { "Conectado · clique para desconectar" } else { "Não conectado · clique para conectar" };
-                if ui.list_item(&d.name, detail).clicked() {
+                let detail = if d.connected { tr!("Connected · click to disconnect") } else { tr!("Not connected · click to connect") };
+                if ui.list_item(&d.name, &detail).clicked() {
                     system::toggle_device(d);
                 }
             }
@@ -459,14 +471,14 @@ impl Settings {
     /// resolução, frequência e escala. "Aplicar" grava e o compositor muda na hora;
     /// sem confirmar em 15 s, volta ao que era (se a tela ficar preta, basta esperar).
     fn displays(&mut self, ui: &mut Ui) {
-        ui.title("Monitores");
+        ui.title(&tr!("Displays"));
         if self.screens_applied.is_empty() {
             self.screens_applied = displays::load();
             self.screens = self.screens_applied.clone();
             self.screen_selected = self.screens.iter().position(|d| d.primary).unwrap_or(0);
         }
         if self.screens.is_empty() {
-            ui.note("O mide não informou as telas (rodando numa janela, a tela é a da janela).");
+            ui.note(&tr!("mide did not report the displays (running in a window, the display is the window)."));
             return;
         }
         // Arranjo: só as telas ligadas.
@@ -491,15 +503,15 @@ impl Settings {
             }
             tracing::info!("monitores: {} movida para ({}, {})", arranged[pick].name, arranged[pick].pos.0, arranged[pick].pos.1);
         }
-        ui.note("Arraste as telas para organizar. A faixa branca marca a tela principal, com a barra e a dock.");
+        ui.note(&tr!("Drag the displays to arrange them. The white strip marks the main display, with the menu bar and the Dock."));
         // Aplicar logo abaixo do arranjo (à vista, sem rolar).
         let changed = self.screens != self.screens_applied;
         if changed && self.screens_revert.is_none() {
             ui.row(|ui| {
-                if ui.button("Desfazer").clicked() {
+                if ui.button(&tr!("Undo")).clicked() {
                     self.screens = self.screens_applied.clone();
                 }
-                if ui.primary_button("Aplicar").clicked() {
+                if ui.primary_button(&tr!("Apply")).clicked() {
                     match displays::save(&self.screens) {
                         Ok(()) => {
                             ask_compositor("outputs apply");
@@ -521,13 +533,13 @@ impl Settings {
         let others_on = self.screens.iter().enumerate().filter(|(i, d)| *i != self.screen_selected && d.enabled).count();
         ui.card(|ui| {
             if names.len() > 1 {
-                ui.dropdown("Tela", &names, &mut self.screen_selected);
+                ui.dropdown(&tr!("Display"), &names, &mut self.screen_selected);
             }
             let Some(d) = self.screens.get_mut(self.screen_selected) else {
                 return;
             };
             let mut on = d.enabled;
-            if ui.switch_detail("Ligada", "Desligada, a tela fica apagada e o mide não a usa", &mut on).changed() {
+            if ui.switch_detail(&trc("display", "On"), &tr!("When off, the display stays dark and mide does not use it"), &mut on).changed() {
                 // A última tela ligada não desliga.
                 d.enabled = on || others_on == 0;
             }
@@ -535,8 +547,8 @@ impl Settings {
                 return;
             }
             if d.primary {
-                ui.list_item("Tela principal", "barra, dock e launcher");
-            } else if ui.button("Usar como tela principal").clicked() {
+                ui.list_item(&tr!("Main display"), &tr!("menu bar, Dock and launcher"));
+            } else if ui.button(&tr!("Use as main display")).clicked() {
                 let name = d.name.clone();
                 for other in self.screens.iter_mut() {
                     other.primary = other.name == name;
@@ -549,7 +561,7 @@ impl Settings {
             let sizes = d.sizes();
             let mut size_i = sizes.iter().position(|s| *s == (d.current.0, d.current.1)).unwrap_or(0);
             let labels: Vec<String> = sizes.iter().map(|s| displays::size_label(*s)).collect();
-            if ui.dropdown("Resolução", &labels, &mut size_i).changed() {
+            if ui.dropdown(&tr!("Resolution"), &labels, &mut size_i).changed() {
                 let size = sizes[size_i];
                 let hz = d.rates(size).first().copied().unwrap_or(60.0);
                 d.current = (size.0, size.1, hz);
@@ -557,24 +569,24 @@ impl Settings {
             let rates = d.rates((d.current.0, d.current.1));
             let mut rate_i = rates.iter().position(|r| (r - d.current.2).abs() < 0.5).unwrap_or(0);
             let labels: Vec<String> = rates.iter().map(|r| displays::rate_label(*r)).collect();
-            if ui.dropdown("Frequência", &labels, &mut rate_i).changed() {
+            if ui.dropdown(&tr!("Refresh rate"), &labels, &mut rate_i).changed() {
                 d.current.2 = rates[rate_i];
             }
             // Tamanho físico (o arranjo desenha as telas do tamanho de verdade): o que o
             // monitor informa, ou a diagonal escolhida para quem não informa direito.
             let auto = match d.reported_mm() {
-                Some((w, h)) => format!("Automático ({:.0}\")", ((w * w + h * h).sqrt() / 25.4).round()),
-                None => "Automático (estimado)".to_string(),
+                Some((w, h)) => tr!("Automatic ({size}\")", size = format!("{:.0}", ((w * w + h * h).sqrt() / 25.4).round())),
+                None => tr!("Automatic (estimated)").into_owned(),
             };
             let mut sizes_label = vec![auto];
             sizes_label.extend(displays::DIAGONALS.iter().map(|d| format!("{}\"", d.to_string().replace('.', ","))));
             let mut diag_i = d.diagonal.and_then(|v| displays::DIAGONALS.iter().position(|x| (x - v).abs() < 0.05)).map(|i| i + 1).unwrap_or(0);
-            if ui.dropdown("Tamanho da tela", &sizes_label, &mut diag_i).changed() {
+            if ui.dropdown(&tr!("Screen size"), &sizes_label, &mut diag_i).changed() {
                 d.diagonal = (diag_i > 0).then(|| displays::DIAGONALS[diag_i - 1]);
             }
             let mut scale_i = displays::SCALES.iter().position(|s| (s - d.scale).abs() < 0.01).unwrap_or(0);
             let labels: Vec<String> = displays::SCALES.iter().map(|s| displays::scale_label(*s)).collect();
-            if ui.dropdown("Escala", &labels, &mut scale_i).changed() {
+            if ui.dropdown(&tr!("Scale"), &labels, &mut scale_i).changed() {
                 d.scale = displays::SCALES[scale_i];
             }
         });
@@ -582,7 +594,7 @@ impl Settings {
         if self.screens.len() >= 2 {
             let mut mirror = matches!(settings_file::get("monitors", "mirror"), Some(Value::Bool(true)));
             ui.card(|ui| {
-                if ui.switch_detail("Espelhar telas", "Todas as telas mostram a principal, com a barra e a dock dela", &mut mirror).changed() {
+                if ui.switch_detail(&tr!("Mirror displays"), &tr!("All displays show the main one, with its menu bar and Dock"), &mut mirror).changed() {
                     match settings_file::set("monitors", "mirror", mirror.then_some(Value::Bool(true))) {
                         Ok(()) => {
                             tracing::info!("monitores: espelhar {}", if mirror { "ligado" } else { "desligado" });
@@ -609,11 +621,11 @@ impl Settings {
         let mut keep = false;
         let mut revert = left == 0;
         ui.modal(360.0, |ui| {
-            ui.heading("Manter estas configurações?");
-            ui.note(&format!("As telas voltam ao que eram em {left} s."));
+            ui.heading(&tr!("Keep these display settings?"));
+            ui.note(&tr!("The displays go back to how they were in {seconds} s.", seconds = left));
             ui.row(|ui| {
-                revert |= ui.button("Reverter").clicked();
-                keep = ui.primary_button("Manter").clicked();
+                revert |= ui.button(&tr!("Revert")).clicked();
+                keep = ui.primary_button(&tr!("Keep")).clicked();
             });
         });
         if keep {
@@ -634,13 +646,13 @@ impl Settings {
     }
 
     fn sound(&mut self, ui: &mut Ui) {
-        ui.title("Som");
-        ui.heading("Saída");
+        ui.title(&tr!("Sound"));
+        ui.heading(&tr!("Output"));
         let (_, muted) = self.status.volume.unwrap_or((0.0, false));
         let mut mute = muted;
         let mut volume = self.volume;
         ui.card(|ui| {
-            let r = ui.slider("Volume de saída", &mut volume, 0.0, 100.0);
+            let r = ui.slider(&tr!("Output volume"), &mut volume, 0.0, 100.0);
             // Grava só ao soltar o trilho (cada mudança chama um comando do sistema).
             if r.submitted() {
                 system::set_volume(volume / 100.0);
@@ -648,7 +660,7 @@ impl Settings {
                     system::set_muted(false);
                 }
             }
-            if ui.switch("Sem som", &mut mute).changed() {
+            if ui.switch(&tr!("Mute sound"), &mut mute).changed() {
                 system::set_muted(mute);
             }
         });
@@ -685,7 +697,7 @@ impl Settings {
         // Entrada: o microfone usado pelos apps, o volume dele e o mudo.
         let inputs = self.status.inputs.clone();
         if !inputs.is_empty() {
-            ui.heading("Entrada");
+            ui.heading(&tr!("Input"));
             let mut chosen = None;
             let mut mic = self.mic_volume;
             let current = inputs.iter().find(|d| d.default).cloned();
@@ -697,7 +709,7 @@ impl Settings {
                 }
             });
             ui.card(|ui| {
-                if ui.slider("Volume de entrada", &mut mic, 0.0, 100.0).submitted()
+                if ui.slider(&tr!("Input volume"), &mut mic, 0.0, 100.0).submitted()
                     && let Some(d) = &current
                 {
                     tracing::info!("som: volume de entrada {:.0}", mic);
@@ -715,14 +727,14 @@ impl Settings {
             }
         }
         // Efeitos sonoros do mide (`[sounds]`): ligados, volume e o som de alerta.
-        ui.heading("Efeitos sonoros");
+        ui.heading(&tr!("Sound effects"));
         let mut on = mide::sounds::enabled();
         let mut effects = mide::sounds::volume() * 100.0;
-        let names: Vec<String> = mide::sounds::ALERTS.iter().map(|(_, n)| n.to_string()).collect();
+        let names: Vec<String> = mide::sounds::ALERTS.iter().map(|(key, n)| alert_name(key, n)).collect();
         let current = mide::sounds::alert_key();
         let mut alert_i = mide::sounds::ALERTS.iter().position(|(k, _)| *k == current).unwrap_or(0);
         ui.card(|ui| {
-            if ui.switch_detail("Tocar efeitos sonoros", "Notificações, captura de tela, Lixeira, volume e avisos", &mut on).changed() {
+            if ui.switch_detail(&tr!("Play sound effects"), &tr!("Notifications, screenshots, Trash, volume and alerts"), &mut on).changed() {
                 match settings_file::set("sounds", "enabled", (!on).then_some(Value::Bool(false))) {
                     Ok(()) => {
                         tracing::info!("efeitos sonoros: {}", if on { "ligados" } else { "desligados" });
@@ -732,14 +744,14 @@ impl Settings {
                     Err(err) => tracing::warn!("efeitos sonoros não gravados: {err}"),
                 }
             }
-            if ui.slider("Volume dos efeitos", &mut effects, 0.0, 100.0).submitted() {
+            if ui.slider(&tr!("Effects volume"), &mut effects, 0.0, 100.0).submitted() {
                 let value = effects.round() as i64;
                 tracing::info!("efeitos sonoros: volume {value}");
                 if settings_file::set("sounds", "volume", (value != 70).then_some(Value::Int(value))).is_ok() {
                     mide::sounds::play("audio-volume-change");
                 }
             }
-            if ui.dropdown("Som de alerta", &names, &mut alert_i).changed() {
+            if ui.dropdown(&tr!("Alert sound"), &names, &mut alert_i).changed() {
                 let (key, name) = mide::sounds::ALERTS[alert_i];
                 tracing::info!("efeitos sonoros: alerta {name}");
                 if settings_file::set("sounds", "alert", (key != "vidro").then(|| Value::Text(key.into()))).is_ok() {
@@ -747,7 +759,7 @@ impl Settings {
                 }
             }
         });
-        ui.note("O Não perturbe silencia o som das notificações. Os apps GTK abertos depois também usam estes sons.");
+        ui.note(&tr!("Do Not Disturb silences notification sounds. GTK apps opened afterwards also use these sounds."));
     }
 
     fn wallpaper(&mut self, ui: &mut Ui) {
@@ -755,10 +767,10 @@ impl Settings {
             self.picker_view(ui);
             return;
         }
-        ui.title("Papel de parede");
+        ui.title(&tr!("Wallpaper"));
         ui.card(|ui| {
             let mut on = settings_file::flag("desktop", "click_reveal", true);
-            if ui.switch_detail("Clicar no papel de parede mostra a mesa", "As janelas se afastam para as bordas; outro clique, Esc ou um clique numa janela as traz de volta", &mut on).changed() {
+            if ui.switch_detail(&tr!("Clicking the wallpaper reveals the desktop"), &tr!("Windows move aside to the edges; another click, Esc or a click on a window brings them back"), &mut on).changed() {
                 // Ligado é o padrão: grava só quando desliga.
                 match settings_file::set("desktop", "click_reveal", (!on).then_some(Value::Bool(false))) {
                     Ok(()) => {
@@ -777,7 +789,7 @@ impl Settings {
         ui.wrap(|ui| {
             for path in &wallpapers {
                 let name = match path {
-                    None => "Padrão do mide".to_string(),
+                    None => tr!("mide default").into_owned(),
                     Some(p) => p.file_stem().map(|s| s.to_string_lossy().replace(['-', '_'], " ")).unwrap_or_default(),
                 };
                 let thumb = self.thumbs.get(path).cloned().flatten();
@@ -792,15 +804,15 @@ impl Settings {
                 // Imagens adicionadas pelo usuário: menu para tirar da lista.
                 if let Some(p) = path.as_ref().filter(|p| p.starts_with(mide::places::user_backgrounds_dir())) {
                     ui.context_menu(&r, |m| {
-                        if m.danger("Remover da lista") {
+                        if m.danger(&tr!("Remove from List")) {
                             remove = Some(p.clone());
                         }
                     });
                 }
             }
-            add = ui.tile_wide(Tile::Icon("list-add"), "Adicionar imagem…", false, THUMB.0, THUMB.1).clicked();
+            add = ui.tile_wide(Tile::Icon("list-add"), &tr!("Add Image…"), false, THUMB.0, THUMB.1).clicked();
         });
-        ui.note("Clique com o botão direito numa imagem adicionada para tirá-la da lista.");
+        ui.note(&tr!("Right-click an added image to remove it from the list."));
         if let Some(path) = chosen {
             self.set_wallpaper(path);
         }
@@ -827,25 +839,25 @@ impl Settings {
         let dir = picker.dir.clone();
         let entries = picker.entries.clone();
         let thumbs = picker.thumbs.clone();
-        ui.title("Escolher uma imagem");
+        ui.title(&tr!("Choose an Image"));
         let mut go = None;
         let mut choose = None;
         let mut cancel = false;
         ui.row(|ui| {
-            for (name, place) in [("Imagens", mide::places::pictures_dir()), ("Downloads", mide::places::downloads_dir()), ("Pasta pessoal", mide::places::home_dir())] {
-                let r = if place == dir { ui.primary_button(name) } else { ui.button(name) };
+            for (name, place) in [(tr!("Pictures"), mide::places::pictures_dir()), (tr!("Downloads"), mide::places::downloads_dir()), (tr!("Home Folder"), mide::places::home_dir())] {
+                let r = if place == dir { ui.primary_button(&name) } else { ui.button(&name) };
                 if r.clicked() {
                     go = Some(place);
                 }
             }
-            if ui.button("‹ Voltar").clicked() {
+            if ui.button(&tr!("‹ Back")).clicked() {
                 go = dir.parent().map(|p| p.to_path_buf());
             }
-            cancel = ui.button("Cancelar").clicked();
+            cancel = ui.button(&tr!("Cancel")).clicked();
         });
         ui.note(&dir.display().to_string());
         if entries.is_empty() {
-            ui.note("Nenhuma imagem nesta pasta.");
+            ui.note(&tr!("No images in this folder."));
         }
         ui.wrap(|ui| {
             for (path, is_dir) in &entries {
@@ -887,7 +899,7 @@ impl Settings {
         let mut size = self.dock_size;
         let mut autohide = matches!(settings_file::get("dock", "autohide"), Some(Value::Bool(true)));
         ui.card(|ui| {
-            if ui.slider("Tamanho dos ícones", &mut size, DOCK_MIN, DOCK_MAX).submitted() {
+            if ui.slider(&tr!("Icon size"), &mut size, DOCK_MIN, DOCK_MAX).submitted() {
                 let n = size.round() as i64;
                 let value = (n != DOCK_DEFAULT).then_some(Value::Int(n));
                 match settings_file::set("dock", "icon_size", value) {
@@ -895,8 +907,8 @@ impl Settings {
                     Err(err) => tracing::warn!("tamanho da dock não gravado: {err}"),
                 }
             }
-            let detail = "A dock some e aparece ao levar o ponteiro até a borda de baixo";
-            if ui.switch_detail("Ocultar e mostrar a Dock automaticamente", detail, &mut autohide).changed() {
+            let detail = tr!("The Dock hides and appears when you move the pointer to the bottom edge");
+            if ui.switch_detail(&tr!("Automatically hide and show the Dock"), &detail, &mut autohide).changed() {
                 match settings_file::set("dock", "autohide", autohide.then_some(Value::Bool(true))) {
                     Ok(()) => tracing::info!("dock: ocultar automaticamente {}", if autohide { "ligado" } else { "desligado" }),
                     Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
@@ -904,7 +916,7 @@ impl Settings {
             }
             // Ampliação (como no Mac): os ícones crescem sob o ponteiro.
             let mut magnify = settings_file::flag("dock", "magnification", false);
-            if ui.switch_detail("Ampliação", "Os ícones crescem quando o ponteiro passa sobre eles", &mut magnify).changed() {
+            if ui.switch_detail(&tr!("Magnification"), &tr!("Icons grow when the pointer moves over them"), &mut magnify).changed() {
                 match settings_file::set("dock", "magnification", magnify.then_some(Value::Bool(true))) {
                     Ok(()) => tracing::info!("dock: ampliação {}", if magnify { "ligada" } else { "desligada" }),
                     Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
@@ -915,7 +927,7 @@ impl Settings {
                     Some(Value::Int(n)) => n as f32,
                     _ => 70.0,
                 };
-                if ui.slider("Tamanho da ampliação", &mut zoom, 56.0, 128.0).submitted() {
+                if ui.slider(&tr!("Magnification size"), &mut zoom, 56.0, 128.0).submitted() {
                     let n = zoom.round() as i64;
                     match settings_file::set("dock", "magnify_size", (n != 70).then_some(Value::Int(n))) {
                         Ok(()) => tracing::info!("dock: ampliação até {n} px"),
@@ -926,8 +938,8 @@ impl Settings {
         });
         let mut click_minimize = settings_file::flag("dock", "click_minimize", true);
         ui.card(|ui| {
-            let detail = "Com uma janela, minimiza; com várias, mostra as prévias para escolher";
-            if ui.switch_detail("Clicar no app em foco minimiza", detail, &mut click_minimize).changed() {
+            let detail = tr!("With one window, minimizes it; with several, shows previews to choose from");
+            if ui.switch_detail(&tr!("Clicking the focused app minimizes it"), &detail, &mut click_minimize).changed() {
                 match settings_file::set("dock", "click_minimize", (!click_minimize).then_some(Value::Bool(false))) {
                     Ok(()) => tracing::info!("dock: clicar no app em foco minimiza {}", if click_minimize { "ligado" } else { "desligado" }),
                     Err(err) => tracing::warn!("opção da dock não gravada: {err}"),
@@ -935,75 +947,66 @@ impl Settings {
             }
         });
         self.dock_size = size;
-        ui.note("Sem ocultar, as janelas maximizadas ficam acima da dock. Para fixar um app, clique com o botão direito no ícone dele e escolha \"Manter na Dock\".");
+        ui.note(&tr!("Without hiding, maximized windows stay above the Dock. To pin an app, right-click its icon and choose “Keep in Dock”."));
     }
 
     /// Bloqueio de tela (`[lock]`): depois de quanto tempo sem uso e ao suspender.
     fn lock(&mut self, ui: &mut Ui) {
-        ui.title("Bloqueio de tela");
+        ui.title(&tr!("Lock Screen"));
         const MINUTES: [i64; 7] = [0, 1, 2, 5, 10, 15, 30];
         let current = match settings_file::get("lock", "idle_minutes") {
             Some(Value::Int(n)) => n,
             _ => 5,
         };
-        let options: Vec<String> = MINUTES.iter().map(|m| match m {
-            0 => "Nunca".to_string(),
-            1 => "1 minuto".to_string(),
-            n => format!("{n} minutos"),
-        }).collect();
+        let options: Vec<String> = MINUTES.iter().map(|m| duration_label(*m)).collect();
         let mut index = MINUTES.iter().position(|m| *m == current).unwrap_or(3);
         const BLANK: [i64; 8] = [0, 1, 2, 5, 10, 15, 30, 60];
         let blank_current = match settings_file::get("lock", "blank_minutes") {
             Some(Value::Int(n)) => n,
             _ => 10,
         };
-        let blank_options: Vec<String> = BLANK.iter().map(|m| match m {
-            0 => "Nunca".to_string(),
-            1 => "1 minuto".to_string(),
-            60 => "1 hora".to_string(),
-            n => format!("{n} minutos"),
-        }).collect();
+        let blank_options: Vec<String> = BLANK.iter().map(|m| duration_label(*m)).collect();
         let mut blank_index = BLANK.iter().position(|m| *m == blank_current).unwrap_or(4);
         let mut on_suspend = settings_file::flag("lock", "on_suspend", true);
         ui.card(|ui| {
-            if ui.dropdown("Bloquear a tela após ficar sem uso", &options, &mut index).changed() {
+            if ui.dropdown(&tr!("Lock the screen when idle for"), &options, &mut index).changed() {
                 let n = MINUTES[index];
                 match settings_file::set("lock", "idle_minutes", (n != 5).then_some(Value::Int(n))) {
                     Ok(()) => tracing::info!("bloqueio: após {n} min sem uso"),
                     Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
                 }
             }
-            if ui.dropdown("Apagar a tela após ficar sem uso", &blank_options, &mut blank_index).changed() {
+            if ui.dropdown(&tr!("Turn off the display when idle for"), &blank_options, &mut blank_index).changed() {
                 let n = BLANK[blank_index];
                 match settings_file::set("lock", "blank_minutes", (n != 10).then_some(Value::Int(n))) {
                     Ok(()) => tracing::info!("apagar a tela após {n} min sem uso"),
                     Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
                 }
             }
-            if ui.switch_detail("Bloquear ao suspender", "Ao voltar da suspensão, a senha é pedida", &mut on_suspend).changed() {
+            if ui.switch_detail(&tr!("Lock when suspending"), &tr!("The password is required when waking from sleep"), &mut on_suspend).changed() {
                 match settings_file::set("lock", "on_suspend", (!on_suspend).then_some(Value::Bool(false))) {
                     Ok(()) => tracing::info!("bloqueio ao suspender {}", if on_suspend { "ligado" } else { "desligado" }),
                     Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
                 }
             }
         });
-        if ui.primary_button("Bloquear agora").clicked() {
+        if ui.primary_button(&tr!("Lock Now")).clicked() {
             if std::env::var_os("MIDE_SYSTEM_DRY_RUN").is_some() {
                 tracing::info!("sistema (teste): mide-lock");
             } else if let Err(err) = std::process::Command::new("mide-lock").spawn() {
                 tracing::warn!("não foi possível abrir a tela de bloqueio: {err}");
             }
         }
-        ui.note("Super+L também bloqueia. Com a tela bloqueada, ela apaga depois de 1 minuto. Vídeos tocando (no navegador, no mpv) impedem o bloqueio e o apagar. Num mide aberto em janela (desenvolvimento), quem bloqueia por tempo sem uso é o desktop de baixo.");
+        ui.note(&tr!("Super+L also locks. With the screen locked, the display turns off after 1 minute. Playing videos (in the browser, in mpv) prevent locking and turning off. In mide running in a window (development), the desktop underneath locks when idle."));
     }
 
     /// Itens da direita da barra superior (`[bar]`): todos à mostra por padrão.
     fn bar(&mut self, ui: &mut Ui) {
-        ui.title("Barra superior");
+        ui.title(&tr!("Menu Bar"));
         ui.card(|ui| {
             // Tahoe: sem fundo por padrão (o texto fica sobre o papel de parede).
             let mut bg = settings_file::flag("bar", "background", false);
-            if ui.switch_detail("Mostrar o fundo da barra", "Faixa translúcida atrás da barra; desligado, o texto fica direto sobre o papel de parede, como no macOS Tahoe", &mut bg).changed() {
+            if ui.switch_detail(&tr!("Show menu bar background"), &tr!("A translucent strip behind the menu bar; when off, the text sits right on the wallpaper, as in macOS Tahoe"), &mut bg).changed() {
                 match settings_file::set("bar", "background", bg.then_some(Value::Bool(true))) {
                     Ok(()) => tracing::info!("barra superior: fundo {}", if bg { "ligado" } else { "desligado" }),
                     Err(err) => tracing::warn!("fundo da barra não gravado: {err}"),
@@ -1013,7 +1016,8 @@ impl Settings {
         ui.card(|ui| {
             for (key, label, detail) in settings_file::BAR_ITEMS {
                 let mut on = settings_file::bar_item(key);
-                if ui.switch_detail(label, detail, &mut on).changed() {
+                let (name, about) = bar_item_text(key, label, detail);
+                if ui.switch_detail(&name, &about, &mut on).changed() {
                     // À mostra é o padrão: grava só quando esconde.
                     let value = if on { None } else { Some(Value::Bool(false)) };
                     match settings_file::set("bar", key, value) {
@@ -1023,17 +1027,17 @@ impl Settings {
                 }
             }
         });
-        ui.note("O relógio fica sempre na barra. Itens escondidos continuam nas Configurações e na central de controle.");
+        ui.note(&tr!("The clock is always in the menu bar. Hidden items are still in Settings and in Control Center."));
     }
 
     /// Claro ou escuro (`[appearance] theme`): os apps do mide mudam na hora; os apps
     /// GTK e Qt abertos depois também (`mide::appearance`).
     fn appearance(&mut self, ui: &mut Ui) {
-        ui.title("Aparência");
-        let options = ["Claro".to_string(), "Escuro".to_string()];
+        ui.title(&tr!("Appearance"));
+        let options = [tr!("Light").into_owned(), tr!("Dark").into_owned()];
         let mut chosen = usize::from(mide::kit::system_dark());
         ui.card(|ui| {
-            if ui.dropdown("Aparência", &options, &mut chosen).changed() {
+            if ui.dropdown(&tr!("Appearance"), &options, &mut chosen).changed() {
                 let value = (chosen == 1).then(|| Value::Text("dark".into()));
                 match settings_file::set("appearance", "theme", value) {
                     Ok(()) => {
@@ -1046,16 +1050,18 @@ impl Settings {
             }
             // Cor de destaque (botões, seleção, interruptores, deslizantes), como no Mac.
             let dark = mide::kit::system_dark();
+            let names: Vec<String> = mide::kit::ACCENTS.iter().map(|(key, name, ..)| accent_name(key, name)).collect();
             let colors: Vec<(mide::kit::Rgba, &str)> = mide::kit::ACCENTS
                 .iter()
-                .map(|(_, name, light, dim)| {
+                .zip(&names)
+                .map(|((_, _, light, dim), name)| {
                     let c = if dark { dim } else { light };
-                    ([c[0], c[1], c[2], 255], *name)
+                    ([c[0], c[1], c[2], 255], name.as_str())
                 })
                 .collect();
             let current = mide::kit::accent_key();
             let mut accent = mide::kit::ACCENTS.iter().position(|(k, ..)| *k == current).unwrap_or(0);
-            if ui.color_choice("Cor de destaque", &colors, &mut accent).changed() {
+            if ui.color_choice(&tr!("Accent color"), &colors, &mut accent).changed() {
                 let key = mide::kit::ACCENTS[accent].0;
                 // Azul é o padrão: grava só as outras.
                 match settings_file::set("appearance", "accent", (key != "blue").then(|| Value::Text(key.into()))) {
@@ -1064,20 +1070,20 @@ impl Settings {
                 }
             }
         });
-        ui.note("Os apps do mide, a barra e a dock mudam na hora. Apps GTK e Qt seguem claro ou escuro quando são abertos.");
+        ui.note(&tr!("mide apps, the menu bar and the Dock change immediately. GTK and Qt apps follow light or dark when they are opened."));
     }
 
     fn effects(&mut self, ui: &mut Ui) {
-        ui.title("Efeitos");
+        ui.title(&tr!("Effects"));
         ui.card(|ui| {
             for (key, label, detail) in EFFECTS {
                 let mut on = effect_on(key);
-                if ui.switch_detail(label, detail, &mut on).changed() {
+                if ui.switch_detail(&mide::i18n::tr(label), &mide::i18n::tr(detail), &mut on).changed() {
                     // Ligado é o padrão: grava só quando desliga, e apaga a chave ao religar.
                     let value = if on { None } else { Some(Value::Bool(false)) };
                     match settings_file::set("effects", key, value) {
                         Ok(()) => {
-                            tracing::info!("efeito {label}: {}", if on { "ligado" } else { "desligado" });
+                            tracing::info!("efeito {key}: {}", if on { "ligado" } else { "desligado" });
                             ask_compositor("reload");
                         }
                         Err(err) => tracing::warn!("efeito não gravado: {err}"),
@@ -1090,9 +1096,9 @@ impl Settings {
             Some(Value::Float(x)) => ((1.0 - x) * 100.0) as f32,
             _ => 0.0,
         };
-        ui.heading("Transparência");
+        ui.heading(&tr!("Transparency"));
         ui.card(|ui| {
-            if ui.slider("Janelas sem foco", &mut clear, 0.0, 60.0).submitted() {
+            if ui.slider(&tr!("Inactive windows"), &mut clear, 0.0, 60.0).submitted() {
                 let opacity = ((100.0 - clear.round()) / 100.0) as f64;
                 tracing::info!("janelas sem foco: opacidade {opacity}");
                 let value = (opacity < 0.995).then_some(Value::Float(opacity));
@@ -1104,13 +1110,13 @@ impl Settings {
                 }
             }
         });
-        ui.note("As mudanças valem na hora. Transparência por app: [opacity] no config.toml (\"app_id\" = 0.9).");
+        ui.note(&tr!("Changes take effect immediately. Per-app transparency: [opacity] in config.toml (\"app_id\" = 0.9)."));
     }
 
     /// Mouse e trackpad (`[input]`): velocidade, aceleração, rolagem natural e toque
     /// para clicar. Valem na hora para os aparelhos conectados.
     fn mouse(&mut self, ui: &mut Ui) {
-        ui.title("Mouse e trackpad");
+        ui.title(&tr!("Mouse & Trackpad"));
         // Grava só o que difere do padrão (o resto sai do arquivo).
         let save = |key: &str, value: Option<Value>| match settings_file::set("input", key, value) {
             Ok(()) => {
@@ -1133,58 +1139,58 @@ impl Settings {
         let mut pad_natural = flag("touchpad_natural_scroll", true);
         let mut tap = flag("tap_to_click", true);
         ui.card(|ui| {
-            if ui.slider("Velocidade do ponteiro", &mut speed, 0.0, 100.0).submitted() {
+            if ui.slider(&tr!("Pointer speed"), &mut speed, 0.0, 100.0).submitted() {
                 let value = ((speed - 50.0) / 50.0).clamp(-1.0, 1.0) as f64;
                 let value = (value * 100.0).round() / 100.0;
                 tracing::info!("mouse: velocidade {value}");
                 save("pointer_speed", (value.abs() > 0.005).then_some(Value::Float(value)));
             }
-            if ui.switch_detail("Aceleração do mouse", "Movimentos rápidos levam o ponteiro mais longe", &mut accel).changed() {
+            if ui.switch_detail(&tr!("Mouse acceleration"), &tr!("Fast movements take the pointer farther"), &mut accel).changed() {
                 tracing::info!("mouse: aceleração {}", if accel { "ligada" } else { "desligada" });
                 save("mouse_acceleration", (!accel).then_some(Value::Bool(false)));
             }
-            if ui.switch_detail("Rolagem natural no mouse", "O conteúdo acompanha o movimento da roda", &mut mouse_natural).changed() {
+            if ui.switch_detail(&tr!("Natural scrolling on the mouse"), &tr!("Content follows the movement of the wheel"), &mut mouse_natural).changed() {
                 tracing::info!("mouse: rolagem natural {}", if mouse_natural { "ligada" } else { "desligada" });
                 save("mouse_natural_scroll", mouse_natural.then_some(Value::Bool(true)));
             }
         });
         ui.heading("Trackpad");
         ui.card(|ui| {
-            if ui.switch_detail("Rolagem natural", "O conteúdo acompanha os dedos, como no Mac", &mut pad_natural).changed() {
+            if ui.switch_detail(&tr!("Natural scrolling"), &tr!("Content follows your fingers, as on the Mac"), &mut pad_natural).changed() {
                 tracing::info!("trackpad: rolagem natural {}", if pad_natural { "ligada" } else { "desligada" });
                 save("touchpad_natural_scroll", (!pad_natural).then_some(Value::Bool(false)));
             }
-            if ui.switch_detail("Toque para clicar", "Um toque no trackpad clica, sem apertar", &mut tap).changed() {
+            if ui.switch_detail(&tr!("Tap to click"), &tr!("A tap on the trackpad clicks, without pressing"), &mut tap).changed() {
                 tracing::info!("trackpad: toque para clicar {}", if tap { "ligado" } else { "desligado" });
                 save("tap_to_click", (!tap).then_some(Value::Bool(false)));
             }
         });
-        ui.note("As mudanças valem na hora para os mouses e trackpads conectados (na sessão do mide).");
+        ui.note(&tr!("Changes take effect immediately for connected mice and trackpads (in the mide session)."));
     }
 
     fn keyboard(&mut self, ui: &mut Ui) {
-        ui.title("Teclado");
+        ui.title(&tr!("Keyboard"));
         let mut mac = matches!(settings_file::get("keyboard", "mac_style"), Some(Value::Bool(true)));
         // Layouts: a lista escolhida (vazia: o do sistema). Com mais de um, o atalho
         // Ctrl+Super+Espaço e o seletor da barra trocam entre eles.
         let mut list = mide::keyboard_layouts::configured();
         let shown = if list.is_empty() { vec![mide::keyboard_layouts::system()] } else { list.clone() };
-        let mut add_options = vec!["Escolher…".to_string()];
+        let mut add_options = vec![tr!("Choose…").into_owned()];
         let addable: Vec<&(&str, &str, &str)> = mide::keyboard_layouts::LAYOUTS.iter().filter(|(_, l, v)| !shown.iter().any(|c| c.layout == *l && c.variant == *v)).collect();
-        add_options.extend(addable.iter().map(|(n, ..)| n.to_string()));
+        add_options.extend(addable.iter().map(|(n, ..)| mide::i18n::tr(n).into_owned()));
         let mut add_i = 0;
         let mut show_bar = settings_file::flag("keyboard", "show_layout", true);
         let mut changed = false;
         ui.card(|ui| {
             for (i, choice) in shown.iter().enumerate() {
-                let detail = if shown.len() > 1 { "Remover" } else { "" };
-                let label = if list.is_empty() { format!("{} (do sistema)", choice.name()) } else { choice.name() };
-                if ui.list_item(&label, detail).clicked() && shown.len() > 1 {
+                let detail = if shown.len() > 1 { tr!("Remove") } else { "".into() };
+                let label = if list.is_empty() { tr!("{layout} (system)", layout = choice.name()) } else { choice.name() };
+                if ui.list_item(&label, &detail).clicked() && shown.len() > 1 {
                     list.remove(i);
                     changed = true;
                 }
             }
-            if ui.dropdown("Adicionar layout", &add_options, &mut add_i).changed() && add_i > 0 {
+            if ui.dropdown(&tr!("Add layout"), &add_options, &mut add_i).changed() && add_i > 0 {
                 if list.is_empty() {
                     list.push(mide::keyboard_layouts::system());
                 }
@@ -1192,13 +1198,13 @@ impl Settings {
                 list.push(mide::keyboard_layouts::Choice { layout: l.to_string(), variant: v.to_string() });
                 changed = true;
             }
-            if shown.len() > 1 && ui.switch_detail("Mostrar o layout na barra superior", "Sigla do layout atual na barra, com a lista para trocar (Ctrl+Super+Espaço troca também)", &mut show_bar).changed() {
+            if shown.len() > 1 && ui.switch_detail(&tr!("Show the layout in the menu bar"), &tr!("Abbreviation of the current layout in the menu bar, with the list to switch (Ctrl+Super+Space also switches)"), &mut show_bar).changed() {
                 if let Err(err) = settings_file::set("keyboard", "show_layout", (!show_bar).then_some(Value::Bool(false))) {
                     tracing::warn!("opção do teclado não gravada: {err}");
                 }
             }
-            let detail = "Command (tecla Alt) faz o papel do Ctrl nos apps e Option (tecla Super/Windows) é o Alt; o Ctrl continua Ctrl. Bloquear: Ctrl+⌘+Q";
-            if ui.switch_detail("Teclas no estilo Mac", detail, &mut mac).changed() {
+            let detail = tr!("Command (Alt key) acts as Ctrl in apps and Option (Super/Windows key) is Alt; Ctrl stays Ctrl. Lock: Ctrl+⌘+Q");
+            if ui.switch_detail(&tr!("Mac-style keys"), &detail, &mut mac).changed() {
                 match settings_file::set("keyboard", "mac_style", mac.then_some(Value::Bool(true))) {
                     Ok(()) => {
                         tracing::info!("teclas no estilo Mac: {}", if mac { "ligado" } else { "desligado" });
@@ -1225,14 +1231,14 @@ impl Settings {
         }
         // Busca pelo nome do atalho (ou pela combinação), sem diferenciar acentos.
         let mut query = std::mem::take(&mut self.shortcut_query);
-        ui.text_input(&mut query, "Buscar atalho");
+        ui.text_input(&mut query, &tr!("Search shortcuts"));
         self.shortcut_query = query;
         let wanted = mide::apps::fold(self.shortcut_query.trim());
         let bindings = self.bindings.clone();
         let mut chosen = None;
         let mut shown = 0;
         // Por grupo: Janelas, Launcher e busca, Apps, Sistema.
-        for group in SHORTCUT_GROUPS {
+        for (group, group_name) in SHORTCUT_GROUPS {
             let items: Vec<(String, String, String)> = bindings
                 .iter()
                 .filter(|(_, action)| shortcut_group(action) == group)
@@ -1248,8 +1254,8 @@ impl Settings {
             // Grupos recolhem (lembrado em `[settings] shortcuts_closed`); buscando,
             // os grupos com resultado ficam abertos.
             let mut open = !wanted.is_empty() || !self.closed_groups.iter().any(|g| g == group);
-            let count = if items.len() == 1 { "1 atalho".to_string() } else { format!("{} atalhos", items.len()) };
-            if ui.disclosure(group, &count, &mut open).changed() && wanted.is_empty() {
+            let count = trn("{n} shortcut", "{n} shortcuts", items.len() as u64);
+            if ui.disclosure(&mide::i18n::tr(group_name), &count, &mut open).changed() && wanted.is_empty() {
                 if open {
                     self.closed_groups.retain(|g| g != group);
                 } else {
@@ -1272,14 +1278,14 @@ impl Settings {
             });
         }
         if shown == 0 {
-            ui.note(if bindings.is_empty() { "Nenhum atalho." } else { "Nenhum atalho com esse nome." });
+            ui.note(&if bindings.is_empty() { tr!("No shortcuts.") } else { tr!("No shortcuts with that name.") });
         }
         let (mut add, mut reset) = (false, false);
         ui.row(|ui| {
-            ui.sized(170.0, |ui| add = ui.button("Novo atalho…").clicked());
-            ui.sized(200.0, |ui| reset = ui.button("Restaurar os padrões").clicked());
+            ui.sized(170.0, |ui| add = ui.button(&tr!("New Shortcut…")).clicked());
+            ui.sized(200.0, |ui| reset = ui.button(&tr!("Restore Defaults")).clicked());
         });
-        ui.note("Clique num atalho para mudar a combinação ou removê-lo. As mudanças valem na hora.");
+        ui.note(&tr!("Click a shortcut to change its key combination or remove it. Changes take effect immediately."));
         if let Some((combo, action)) = chosen {
             self.shortcut = Some(ShortcutEditor::edit(combo, action));
             ui.request_repaint();
@@ -1300,7 +1306,7 @@ impl Settings {
     /// Idioma e formatos (`[locale] lang`/`formats`): o `mide-session` exporta no
     /// próximo login (`LANG` e `LC_TIME`, `LC_NUMERIC`, `LC_MONETARY`...).
     fn region(&mut self, ui: &mut Ui) {
-        ui.title("Idioma e região");
+        ui.title(&tr!("Language & Region"));
         if self.locales.is_empty() {
             self.locales = installed_locales();
         }
@@ -1308,7 +1314,7 @@ impl Settings {
             Some(Value::Text(t)) => t,
             _ => String::new(),
         };
-        let mut options = vec!["O do sistema".to_string()];
+        let mut options = vec![tr!("System default").into_owned()];
         options.extend(self.locales.iter().map(|l| locale_name(l)));
         let index_of = |value: &str| self.locales.iter().position(|l| *l == value).map_or(0, |i| i + 1);
         let (mut lang_i, mut formats_i) = (index_of(&current("lang")), index_of(&current("formats")));
@@ -1321,21 +1327,21 @@ impl Settings {
             }
         };
         ui.card(|ui| {
-            if ui.dropdown("Idioma", &options, &mut lang_i).changed() {
+            if ui.dropdown(&tr!("Language"), &options, &mut lang_i).changed() {
                 save("lang", lang_i);
             }
-            if ui.dropdown("Formatos (data, hora, números e moeda)", &options, &mut formats_i).changed() {
+            if ui.dropdown(&tr!("Formats (date, time, numbers and currency)"), &options, &mut formats_i).changed() {
                 save("formats", formats_i);
             }
         });
-        ui.note("Vale a partir do próximo login. Os idiomas da lista são os instalados no sistema (locale -a).");
+        ui.note(&tr!("Takes effect at the next login. The languages in the list are the ones installed on the system (locale -a)."));
     }
 
     /// Suspender por tempo sem uso e o botão de ligar (`[power]`).
     fn energy(&mut self, ui: &mut Ui) {
-        ui.title("Energia");
-        const SUSPEND: &[(&str, i64)] = &[("Nunca", 0), ("15 minutos", 15), ("30 minutos", 30), ("1 hora", 60), ("2 horas", 120), ("3 horas", 180)];
-        const BUTTON: &[(&str, &str)] = &[("Perguntar o que fazer", "ask"), ("Suspender", "suspend"), ("Desligar", "poweroff"), ("Não fazer nada", "nothing")];
+        ui.title(&tr!("Energy"));
+        const SUSPEND: &[i64] = &[0, 15, 30, 60, 120, 180];
+        const BUTTON: &[&str] = &["ask", "suspend", "poweroff", "nothing"];
         let minutes = match settings_file::get("power", "suspend_minutes") {
             Some(Value::Int(n)) => n,
             _ => 0,
@@ -1344,10 +1350,10 @@ impl Settings {
             Some(Value::Text(t)) => t,
             _ => "ask".into(),
         };
-        let suspend_names: Vec<String> = SUSPEND.iter().map(|(n, _)| n.to_string()).collect();
-        let button_names: Vec<String> = BUTTON.iter().map(|(n, _)| n.to_string()).collect();
-        let mut suspend_i = SUSPEND.iter().position(|(_, m)| *m == minutes).unwrap_or(0);
-        let mut button_i = BUTTON.iter().position(|(_, b)| *b == button).unwrap_or(0);
+        let suspend_names: Vec<String> = SUSPEND.iter().map(|m| duration_label(*m)).collect();
+        let button_names: Vec<String> = BUTTON.iter().map(|b| power_button_label(b)).collect();
+        let mut suspend_i = SUSPEND.iter().position(|m| *m == minutes).unwrap_or(0);
+        let mut button_i = BUTTON.iter().position(|b| *b == button).unwrap_or(0);
         let save = |key: &str, value: Option<Value>| match settings_file::set("power", key, value) {
             Ok(()) => {
                 ask_compositor("reload");
@@ -1355,23 +1361,23 @@ impl Settings {
             Err(err) => tracing::warn!("energia não gravada: {err}"),
         };
         ui.card(|ui| {
-            if ui.dropdown("Suspender o computador após", &suspend_names, &mut suspend_i).changed() {
-                let (name, m) = SUSPEND[suspend_i];
-                tracing::info!("energia: suspender após {name}");
+            if ui.dropdown(&tr!("Put the computer to sleep after"), &suspend_names, &mut suspend_i).changed() {
+                let m = SUSPEND[suspend_i];
+                tracing::info!("energia: suspender após {m} min");
                 save("suspend_minutes", (m > 0).then_some(Value::Int(m)));
             }
-            if ui.dropdown("Botão de ligar", &button_names, &mut button_i).changed() {
-                let (name, b) = BUTTON[button_i];
-                tracing::info!("energia: botão de ligar = {name}");
+            if ui.dropdown(&tr!("Power button"), &button_names, &mut button_i).changed() {
+                let b = BUTTON[button_i];
+                tracing::info!("energia: botão de ligar = {b}");
                 save("button", (b != "ask").then(|| Value::Text(b.into())));
             }
         });
-        ui.note("Sem uso: o computador não suspende enquanto um app pede para a tela ficar acesa (vídeo). Apagar e bloquear a tela ficam em Bloqueio de tela.");
+        ui.note(&tr!("When idle: the computer does not sleep while an app asks to keep the display on (video). Turning off and locking the display are in Lock Screen."));
     }
 
     /// App que abre cada tipo de arquivo (`~/.config/mide-mimeapps.list`, só na sessão do mide).
     fn default_apps(&mut self, ui: &mut Ui) {
-        ui.title("Apps padrão");
+        ui.title(&tr!("Default Apps"));
         // Por categoria: os apps que abrem o tipo (ids sem ".desktop"), os nomes e o
         // escolhido agora.
         let mut rows: Vec<(&mide::default_apps::Category, Vec<String>, Vec<String>, usize)> = Vec::new();
@@ -1392,7 +1398,7 @@ impl Settings {
                 Some(i) => i,
                 None => {
                     ids.insert(0, String::new());
-                    names.insert(0, "Nenhum".into());
+                    names.insert(0, tr!("None").into_owned());
                     0
                 }
             };
@@ -1401,7 +1407,7 @@ impl Settings {
         let mut changed = None;
         ui.card(|ui| {
             for (i, (category, _, names, chosen)) in rows.iter_mut().enumerate() {
-                if ui.dropdown(category.label, names, chosen).changed() {
+                if ui.dropdown(&category_name(category.key, category.label), names, chosen).changed() {
                     changed = Some(i);
                 }
             }
@@ -1416,25 +1422,25 @@ impl Settings {
             }
         }
         if rows.is_empty() {
-            ui.note("Nenhum app instalado abre esses tipos de arquivo.");
+            ui.note(&tr!("No installed app opens these file types."));
         }
-        ui.note("Vale só na sessão do mide: outros desktops instalados (Cinnamon, GNOME) continuam com as escolhas deles.");
+        ui.note(&tr!("Applies only to the mide session: other installed desktops (Cinnamon, GNOME) keep their own choices."));
     }
 
     /// Apps e comandos que abrem ao entrar na sessão (autostart do freedesktop,
     /// `mide::login_items`), como os Itens de início de sessão do Mac.
     fn login_items(&mut self, ui: &mut Ui) {
-        ui.title("Itens de início");
+        ui.title(&tr!("Login Items"));
         let items = self.login_items.get_or_insert_with(mide::login_items::list).clone();
         let mut changed = false;
-        ui.note("Abrem sozinhos quando você entra na sessão.");
+        ui.note(&tr!("These open automatically when you log in."));
         ui.card(|ui| {
             if items.is_empty() {
-                ui.note("Nenhum item. Use Adicionar app ou Adicionar comando.");
+                ui.note(&tr!("No items. Use Add App or Add Command."));
             }
             for item in &items {
                 let mut on = item.enabled;
-                let detail = if item.system { format!("{} · do sistema", item.exec) } else { item.exec.clone() };
+                let detail = if item.system { tr!("{command} · system", command = item.exec) } else { item.exec.clone() };
                 let mut remove = false;
                 ui.row(|ui| {
                     // Os do sistema não são apagados, só desligados: sem o botão de remover.
@@ -1449,7 +1455,9 @@ impl Settings {
                         }
                     });
                     if !item.system {
-                        remove = ui.icon_button("list-remove-symbolic", "−", true).clicked();
+                        let r = ui.icon_button("list-remove-symbolic", "−", true);
+                        ui.tooltip(&r, &tr!("Remove"));
+                        remove = r.clicked();
                     }
                 });
                 if remove {
@@ -1464,10 +1472,10 @@ impl Settings {
         let (mut add_app, mut add_cmd) = (false, false);
         ui.row(|ui| {
             ui.push_right(2.0 * 170.0 + 8.0);
-            ui.sized(170.0, |ui| add_app = ui.button("Adicionar app…").clicked());
-            ui.sized(170.0, |ui| add_cmd = ui.button("Adicionar comando…").clicked());
+            ui.sized(170.0, |ui| add_app = ui.button(&tr!("Add App…")).clicked());
+            ui.sized(170.0, |ui| add_cmd = ui.button(&tr!("Add Command…")).clicked());
         });
-        ui.note("Os itens do sistema só podem ser desligados. A lista vale também nos outros desktops, que leem a mesma pasta de início.");
+        ui.note(&tr!("System items can only be turned off. The list also applies to other desktops, which read the same autostart folder."));
         if add_app || add_cmd {
             self.login_dialog = Some(LoginDialog { command_mode: add_cmd, ..Default::default() });
         }
@@ -1508,12 +1516,12 @@ impl Settings {
         let apps = &self.apps;
         ui.modal(440.0, |ui| {
             if !dialog.command_mode {
-                ui.strong("Adicionar app");
-                ui.text_input(&mut dialog.query, "Buscar app");
+                ui.strong(&tr!("Add App"));
+                ui.text_input(&mut dialog.query, &tr!("Search apps"));
                 ui.card(|ui| {
                     let found = mide::apps::filter(apps, &dialog.query, None);
                     if found.is_empty() {
-                        ui.note("Nenhum app encontrado.");
+                        ui.note(&tr!("No apps found."));
                     }
                     for app in found.into_iter().take(6) {
                         if ui.list_item(&app.name, "").clicked() {
@@ -1523,19 +1531,19 @@ impl Settings {
                 });
                 ui.row(|ui| {
                     ui.push_right(110.0);
-                    ui.sized(110.0, |ui| close |= ui.button("Cancelar").clicked());
+                    ui.sized(110.0, |ui| close |= ui.button(&tr!("Cancel")).clicked());
                 });
                 return;
             }
-            ui.strong("Adicionar comando");
-            ui.note("Um nome, e o programa ou script que abre ao entrar na sessão.");
-            ui.text_input(&mut dialog.name, "Nome");
+            ui.strong(&tr!("Add Command"));
+            ui.note(&tr!("A name, and the program or script that opens when you log in."));
+            ui.text_input(&mut dialog.name, &tr!("Name"));
             ui.row(|ui| {
                 let w = ui.remaining_width() - 118.0;
                 ui.sized(w, |ui| {
-                    ui.text_input(&mut dialog.command, "Comando ou script");
+                    ui.text_input(&mut dialog.command, &tr!("Command or script"));
                 });
-                ui.sized(110.0, |ui| browse = ui.button("Escolher…").clicked());
+                ui.sized(110.0, |ui| browse = ui.button(&tr!("Choose…")).clicked());
             });
             if let Some(err) = &dialog.error {
                 ui.error_note(err);
@@ -1543,13 +1551,13 @@ impl Settings {
             let ok = !dialog.name.trim().is_empty() && !dialog.command.trim().is_empty();
             ui.row(|ui| {
                 ui.push_right(2.0 * 120.0 + 8.0);
-                ui.sized(120.0, |ui| close |= ui.button("Cancelar").clicked());
-                ui.sized(120.0, |ui| save = ui.primary_button("Adicionar").clicked() && ok);
+                ui.sized(120.0, |ui| close |= ui.button(&tr!("Cancel")).clicked());
+                ui.sized(120.0, |ui| save = ui.primary_button(&tr!("Add")).clicked() && ok);
             });
             save |= ok && ui.input().key(Key::Enter);
         });
         if browse {
-            dialog.chooser = Some(mide::kit::FileChooser::open("Escolher programa ou script", None));
+            dialog.chooser = Some(mide::kit::FileChooser::open(&tr!("Choose a Program or Script"), None));
         }
         if let Some(app) = pick {
             match mide::login_items::add_app(&app) {
@@ -1564,7 +1572,7 @@ impl Settings {
                     tracing::info!("itens de início: comando {} adicionado ({file})", dialog.name.trim());
                     added = true;
                 }
-                Err(err) => dialog.error = Some(format!("Não foi possível gravar: {err}")),
+                Err(err) => dialog.error = Some(tr!("Could not save: {error}", error = err)),
             }
         }
         if added {
@@ -1604,7 +1612,7 @@ impl Settings {
             Err(err) => {
                 tracing::warn!("atalho não gravado: {err}");
                 if let Some(editor) = self.shortcut.as_mut() {
-                    editor.error = Some(format!("Não foi possível gravar: {err}"));
+                    editor.error = Some(tr!("Could not save: {error}", error = err));
                 }
             }
         }
@@ -1624,7 +1632,7 @@ impl Settings {
                     editor.capturing = false;
                     editor.error = None;
                     match combo_problem(combo) {
-                        Some(problem) => editor.error = Some(problem.into()),
+                        Some(problem) => editor.error = Some(problem.into_owned()),
                         None => {
                             let other = self
                                 .bindings
@@ -1654,7 +1662,7 @@ impl Settings {
 
         let title = match editor.action.as_deref() {
             Some(action) => describe_action(action, &self.apps),
-            None => "Novo atalho".to_string(),
+            None => tr!("New Shortcut").into_owned(),
         };
         let mut close = !editor.capturing && ui.input().key(Key::Escape);
         let (mut record, mut remove, mut replace) = (false, false, false);
@@ -1665,8 +1673,8 @@ impl Settings {
             if editor.action.is_none() {
                 // Sem busca, as ações do mide; buscando, os apps encontrados no lugar delas
                 // (o diálogo cabe na janela).
-                ui.note("O que o atalho faz? Uma ação do mide ou abrir um app:");
-                ui.text_input(&mut query, "Buscar app");
+                ui.note(&tr!("What does the shortcut do? A mide action or opening an app:"));
+                ui.text_input(&mut query, &tr!("Search apps"));
                 ui.card(|ui| {
                     if query.trim().is_empty() {
                         for action in FIXED_ACTIONS {
@@ -1678,37 +1686,37 @@ impl Settings {
                     }
                     let found = mide::apps::filter(&self.apps, &query, None);
                     if found.is_empty() {
-                        ui.note("Nenhum app encontrado.");
+                        ui.note(&tr!("No apps found."));
                     }
                     for app in found.into_iter().take(5) {
-                        if ui.list_item(&app.name, "App").clicked() {
+                        if ui.list_item(&app.name, &tr!("App")).clicked() {
                             pick = Some(format!("launch:{}", app_command(app)));
                         }
                     }
                 });
                 ui.row(|ui| {
                     ui.push_right(110.0);
-                    ui.sized(110.0, |ui| close |= ui.button("Cancelar").clicked());
+                    ui.sized(110.0, |ui| close |= ui.button(&tr!("Cancel")).clicked());
                 });
                 return;
             }
             if let Some((combo, used_by)) = &editor.conflict {
-                ui.label(&format!("{} já é usado por \"{used_by}\".", pretty_combo(combo, mac)));
-                ui.note("Substituir faz essa combinação passar para este atalho.");
+                ui.label(&tr!("{keys} is already used by “{action}”.", keys = pretty_combo(combo, mac), action = used_by));
+                ui.note(&tr!("Replace moves this key combination to this shortcut."));
                 ui.row(|ui| {
                     ui.push_right(2.0 * 150.0 + 8.0);
-                    ui.sized(150.0, |ui| record = ui.button("Gravar outra").clicked());
-                    ui.sized(150.0, |ui| replace = ui.primary_button("Substituir").clicked());
+                    ui.sized(150.0, |ui| record = ui.button(&tr!("Record Another")).clicked());
+                    ui.sized(150.0, |ui| replace = ui.primary_button(&tr!("Replace")).clicked());
                 });
                 return;
             }
             if editor.capturing {
-                ui.label("Aperte a nova combinação de teclas…");
-                ui.note("Use Ctrl, Alt ou Super junto com a tecla. Esc cancela.");
+                ui.label(&tr!("Press the new key combination…"));
+                ui.note(&tr!("Use Ctrl, Alt or Super together with the key. Esc cancels."));
                 return;
             }
-            let current = editor.old.as_deref().map(|c| pretty_combo(c, mac)).unwrap_or_else(|| "Nenhuma".into());
-            ui.list_item("Combinação", &current);
+            let current = editor.old.as_deref().map(|c| pretty_combo(c, mac)).unwrap_or_else(|| trc("key combination", "None").into_owned());
+            ui.list_item(&tr!("Key combination"), &current);
             if let Some(err) = &editor.error {
                 ui.note(err);
             }
@@ -1716,10 +1724,10 @@ impl Settings {
                 let buttons = if editor.old.is_some() { 3.0 } else { 2.0 };
                 ui.push_right(buttons * 120.0 + (buttons - 1.0) * 8.0);
                 if editor.old.is_some() {
-                    ui.sized(120.0, |ui| remove = ui.button("Remover").clicked());
+                    ui.sized(120.0, |ui| remove = ui.button(&tr!("Remove")).clicked());
                 }
-                ui.sized(120.0, |ui| close |= ui.button("Cancelar").clicked());
-                ui.sized(120.0, |ui| record = ui.primary_button("Gravar…").clicked());
+                ui.sized(120.0, |ui| close |= ui.button(&tr!("Cancel")).clicked());
+                ui.sized(120.0, |ui| record = ui.primary_button(&tr!("Record…")).clicked());
             });
         });
         editor.query = query;
@@ -1734,7 +1742,7 @@ impl Settings {
                 editor.capturing = true;
                 ui.wake_after(Duration::from_millis(80));
             } else {
-                editor.error = Some("O compositor não respondeu.".into());
+                editor.error = Some(tr!("The compositor did not respond.").into_owned());
             }
             ui.request_repaint();
         }
@@ -1770,7 +1778,7 @@ impl Settings {
     }
 
     fn about(&mut self, ui: &mut Ui) {
-        ui.title("Sobre");
+        ui.title(&tr!("About"));
         let info = self.info.clone();
         ui.card(|ui| {
             for (label, value) in &info {
@@ -1782,23 +1790,17 @@ impl Settings {
 
     /// Resultados da busca: opções pelo nome ou por palavras-chave.
     fn results(&mut self, ui: &mut Ui) {
-        ui.title("Resultados");
+        ui.title(&tr!("Results"));
         let q = mide::apps::fold(self.query.trim());
-        let found: Vec<&(&str, &str, Section)> = SEARCHABLE
-            .iter()
-            .filter(|(name, keys, _)| {
-                let name = mide::apps::fold(name);
-                name.contains(&q) || mide::apps::fold(keys).split(' ').any(|k| k.starts_with(&q))
-            })
-            .collect();
+        let found: Vec<&(&str, &str, Section)> = SEARCHABLE.iter().filter(|(name, keys, _)| search_matches(&q, name, keys)).collect();
         if found.is_empty() {
-            ui.note("Nenhuma opção encontrada.");
+            ui.note(&tr!("No options found."));
             return;
         }
         let mut open = None;
         ui.card(|ui| {
             for (name, _, section) in &found {
-                if ui.list_item(name, section_name(*section)).clicked() {
+                if ui.list_item(&mide::i18n::tr(name), &section_name(*section)).clicked() {
                     open = Some(*section);
                 }
             }
@@ -1818,7 +1820,8 @@ impl Settings {
 impl App for Settings {
     fn view(&mut self, ui: &mut Ui) {
         self.poll(ui);
-        let items: Vec<(&str, &str, Option<[u8; 3]>)> = SIDEBAR.iter().map(|(s, name, icon, tint)| (*name, if s.is_some() { *icon } else { "" }, s.map(|_| *tint))).collect();
+        let names: Vec<std::borrow::Cow<str>> = SIDEBAR.iter().map(|(_, name, ..)| mide::i18n::tr(name)).collect();
+        let items: Vec<(&str, &str, Option<[u8; 3]>)> = SIDEBAR.iter().zip(&names).map(|((s, _, icon, tint), name)| (&**name, if s.is_some() { *icon } else { "" }, s.map(|_| *tint))).collect();
         let selected = SIDEBAR.iter().position(|(s, ..)| *s == Some(self.section)).unwrap_or(0);
         // O campo de busca fica na barra lateral; o conteúdo usa a busca deste quadro
         // (o que for digitado agora pede outro quadro, que já mostra os resultados).
@@ -1826,7 +1829,7 @@ impl App for Settings {
         let searching = !query.trim().is_empty();
         // Tahoe: barra lateral flutuante de vidro, como nos Ajustes do Sistema.
         ui.glass_sidebar();
-        let chosen = ui.sidebar_search(&items, if searching { usize::MAX } else { selected }, &mut query, "Buscar", |ui, _| {
+        let chosen = ui.sidebar_search(&items, if searching { usize::MAX } else { selected }, &mut query, &tr!("Search"), |ui, _| {
             if !self.query.trim().is_empty() {
                 self.results(ui);
                 return;
@@ -1938,8 +1941,99 @@ fn options_name(locales: &[String], i: usize) -> String {
     i.checked_sub(1).and_then(|i| locales.get(i)).cloned().unwrap_or_else(|| "o do sistema".into())
 }
 
-fn section_name(section: Section) -> &'static str {
-    SIDEBAR.iter().find(|(s, ..)| *s == Some(section)).map(|(_, n, ..)| *n).unwrap_or("")
+/// Nome da seção na tela (traduzido).
+fn section_name(section: Section) -> std::borrow::Cow<'static, str> {
+    mide::i18n::tr(SIDEBAR.iter().find(|(s, ..)| *s == Some(section)).map(|(_, n, ..)| *n).unwrap_or(""))
+}
+
+/// A busca acha a opção pelo nome ou pelas palavras-chave, em inglês ou traduzidos,
+/// sem diferenciar acentos (`q` já vem dobrado por `mide::apps::fold`).
+fn search_matches(q: &str, name: &str, keys: &str) -> bool {
+    let names = [mide::apps::fold(name), mide::apps::fold(&mide::i18n::tr(name))];
+    let keys = format!("{keys} {}", mide::i18n::tr(keys));
+    names.iter().any(|n| n.contains(q)) || mide::apps::fold(&keys).split(' ').any(|k| k.starts_with(q))
+}
+
+/// Tempo para as listas de Bloqueio de tela e Energia ("Nunca", "5 minutos", "1 hora").
+fn duration_label(minutes: i64) -> String {
+    match minutes {
+        0 => tr!("Never").into_owned(),
+        m if m % 60 == 0 => trn("{n} hour", "{n} hours", (m / 60) as u64),
+        m => trn("{n} minute", "{n} minutes", m as u64),
+    }
+}
+
+/// O que o botão de ligar faz, pela chave gravada em `[power] button`.
+fn power_button_label(key: &str) -> String {
+    match key {
+        "ask" => tr!("Ask What to Do"),
+        "suspend" => trc("power button", "Sleep"),
+        "poweroff" => trc("power button", "Shut Down"),
+        _ => tr!("Do Nothing"),
+    }
+    .into_owned()
+}
+
+/// Nome de um item da barra superior (`settings_file::BAR_ITEMS`, do mide-ui) e a
+/// explicação, pela chave; um item desconhecido fica com o texto do mide-ui.
+fn bar_item_text(key: &str, label: &str, detail: &str) -> (String, String) {
+    let (name, about) = match key {
+        "media" => (tr!("Media controls"), tr!("Current player, track and playback controls")),
+        "gear" => (tr!("Settings"), tr!("Gear that opens System Settings")),
+        "sound" => (tr!("Sound"), tr!("Volume and sound output")),
+        "wifi" => ("Wi-Fi".into(), tr!("Wireless networks")),
+        "bluetooth" => ("Bluetooth".into(), tr!("Wireless devices")),
+        "battery" => (tr!("Battery"), tr!("Charge and time remaining (laptops only)")),
+        "control" => (tr!("Control Center"), tr!("Wi-Fi, Bluetooth, Do Not Disturb, brightness and sound in a single panel")),
+        _ => (label.into(), detail.into()),
+    };
+    (name.into_owned(), about.into_owned())
+}
+
+/// Nome de um som de alerta (`mide::sounds::ALERTS`, do mide-ui), pela chave.
+fn alert_name(key: &str, name: &str) -> String {
+    match key {
+        "vidro" => trc("alert sound", "Glass"),
+        "gota" => trc("alert sound", "Drop"),
+        "sino" => trc("alert sound", "Bell"),
+        "pop" => trc("alert sound", "Pop"),
+        _ => name.into(),
+    }
+    .into_owned()
+}
+
+/// Nome de uma cor de destaque (`mide::kit::ACCENTS`, do mide-ui), pela chave.
+fn accent_name(key: &str, name: &str) -> String {
+    match key {
+        "blue" => tr!("Blue"),
+        "purple" => tr!("Purple"),
+        "pink" => tr!("Pink"),
+        "red" => tr!("Red"),
+        "orange" => tr!("Orange"),
+        "yellow" => tr!("Yellow"),
+        "green" => tr!("Green"),
+        "graphite" => tr!("Graphite"),
+        _ => name.into(),
+    }
+    .into_owned()
+}
+
+/// Nome de uma categoria de Apps padrão (`mide::default_apps::CATEGORIES`, do
+/// mide-ui), pela chave.
+fn category_name(key: &str, label: &str) -> String {
+    match key {
+        "web" => trc("default apps", "Web browser"),
+        "mail" => trc("default apps", "Email"),
+        "files" => trc("default apps", "Folders"),
+        "text" => trc("default apps", "Text"),
+        "documents" => trc("default apps", "Documents"),
+        "image" => trc("default apps", "Images"),
+        "video" => trc("default apps", "Videos"),
+        "music" => trc("default apps", "Music"),
+        "pdf" => "PDF".into(),
+        _ => label.into(),
+    }
+    .into_owned()
 }
 
 fn effect_on(key: &str) -> bool {
@@ -2012,7 +2106,7 @@ fn to_pixmap(img: &image::RgbaImage) -> Pixmap {
 fn pretty_combo(combo: &str, mac: bool) -> String {
     let parts: Vec<&str> = combo.split('+').collect();
     let key_name = |k: &str| match k {
-        "space" => "Espaço".to_string(),
+        "space" => tr!("Space").into_owned(),
         "escape" => "Esc".to_string(),
         "return" => "Enter".to_string(),
         "tab" => "Tab".to_string(),
@@ -2103,10 +2197,7 @@ const FIXED_ACTIONS: &[&str] = &[
     "quit",
 ];
 
-/// Grupos da lista de atalhos, na ordem em que aparecem.
-const SHORTCUT_GROUPS: [&str; 4] = ["Janelas", "Launcher e busca", "Apps", "Sistema"];
-
-/// Grupo de um atalho (pela ação).
+/// Grupo de um atalho (pela ação): a chave do grupo em `SHORTCUT_GROUPS`.
 fn shortcut_group(action: &str) -> &'static str {
     match action {
         "toggle_launcher" | "toggle_search" => "Launcher e busca",
@@ -2118,12 +2209,12 @@ fn shortcut_group(action: &str) -> &'static str {
 
 /// Combinação que não serve para atalho global: sem Ctrl, Alt ou Super ela tomaria
 /// uma tecla usada para digitar. Teclas de função (F1 a F24) podem ficar sozinhas.
-fn combo_problem(combo: &str) -> Option<&'static str> {
+fn combo_problem(combo: &str) -> Option<std::borrow::Cow<'static, str>> {
     let parts: Vec<&str> = combo.split('+').collect();
     let key = parts.last().copied().unwrap_or("");
     let function_key = key.strip_prefix('f').is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
     let held = parts.iter().any(|p| matches!(*p, "ctrl" | "alt" | "super"));
-    (!held && !function_key).then_some("Use Ctrl, Alt ou Super junto com a tecla, para não tomar uma tecla de digitar.")
+    (!held && !function_key).then(|| tr!("Use Ctrl, Alt or Super together with the key, so it does not take over a typing key."))
 }
 
 /// Comando que abre o app (apps de terminal abrem no terminal).
@@ -2135,35 +2226,38 @@ fn app_command(app: &mide::apps::App) -> String {
     }
 }
 
-/// Ação de um atalho em português. Atalhos que abrem um app mostram o nome dele.
+/// Ação de um atalho, no idioma da sessão. Atalhos que abrem um app mostram o nome dele.
 fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
-    match action {
-        "close_window" => "Fechar a janela".into(),
-        "quit" => "Encerrar a sessão do mide".into(),
-        "restore_minimized" => "Restaurar a última janela minimizada".into(),
-        "toggle_launcher" => "Abrir ou fechar o launcher".into(),
-        "toggle_search" => "Abrir ou fechar o buscador".into(),
-        "next_layout" => "Próximo layout de teclado".into(),
-        "switch_windows" => "Alternar janelas".into(),
-        "switch_windows_back" => "Alternar janelas (para trás)".into(),
-        "maximize" => "Maximizar a janela".into(),
-        "unmaximize" => "Restaurar o tamanho da janela".into(),
-        "toggle_maximize" => "Maximizar ou restaurar a janela".into(),
-        "minimize" => "Minimizar a janela".into(),
-        "tile_left" => "Janela na metade esquerda".into(),
-        "tile_right" => "Janela na metade direita".into(),
-        "show_desktop" => "Mostrar a mesa".into(),
-        "lock_screen" => "Bloquear a tela".into(),
-        "launch:mide-screenshot" => "Captura de tela".into(),
-        "launch:mide-terminal --hotkey" => "Mostrar ou esconder o terminal de atalho".into(),
-        other => match other.strip_prefix("launch:") {
-            Some(cmd) => match apps.iter().find(|a| a.command == cmd || app_command(a) == cmd) {
-                Some(app) => format!("Abrir {}", app.name),
-                None => format!("Abrir: {cmd}"),
-            },
-            None => other.into(),
-        },
-    }
+    let text = match action {
+        "close_window" => tr!("Close window"),
+        "quit" => tr!("Log out of mide"),
+        "restore_minimized" => tr!("Restore the last minimized window"),
+        "toggle_launcher" => tr!("Show or hide the launcher"),
+        "toggle_search" => tr!("Show or hide search"),
+        "next_layout" => tr!("Next keyboard layout"),
+        "switch_windows" => tr!("Switch windows"),
+        "switch_windows_back" => tr!("Switch windows (backwards)"),
+        "maximize" => tr!("Maximize window"),
+        "unmaximize" => tr!("Restore window size"),
+        "toggle_maximize" => tr!("Maximize or restore window"),
+        "minimize" => tr!("Minimize window"),
+        "tile_left" => tr!("Window on the left half"),
+        "tile_right" => tr!("Window on the right half"),
+        "show_desktop" => tr!("Show desktop"),
+        "lock_screen" => tr!("Lock screen"),
+        "launch:mide-screenshot" => tr!("Screenshot"),
+        "launch:mide-terminal --hotkey" => tr!("Show or hide the hotkey terminal"),
+        other => {
+            return match other.strip_prefix("launch:") {
+                Some(cmd) => match apps.iter().find(|a| a.command == cmd || app_command(a) == cmd) {
+                    Some(app) => tr!("Open {app}", app = app.name),
+                    None => tr!("Open: {command}", command = cmd),
+                },
+                None => other.into(),
+            };
+        }
+    };
+    text.into_owned()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -2191,7 +2285,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => Section::Wifi,
     };
     tracing::info!("configurações abertas: {section:?}");
-    let window = Window::new("Configurações do Sistema").app_id("mide-settings").size(820, 560).min_size(640, 440).full_size_content();
+    mide::i18n::init();
+    let window = Window::new(&tr!("System Settings")).app_id("mide-settings").size(820, 560).min_size(640, 440).full_size_content();
     run(window, Settings::new(section))
 }
 
@@ -2199,8 +2294,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
 
+    /// Os testes conferem os textos em pt-BR (todos pedem o mesmo idioma, então rodar
+    /// em paralelo não atrapalha).
+    fn pt_br() {
+        mide::i18n::init();
+        mide::i18n::set_language("pt_BR");
+    }
+
     #[test]
     fn atalhos_em_portugues() {
+        pt_br();
         assert_eq!(pretty_combo("ctrl+shift+space", false), "Ctrl ⇧ Espaço");
         assert_eq!(pretty_combo("ctrl+shift+t", false), "Ctrl ⇧ T");
         assert_eq!(pretty_combo("ctrl+space", true), "⌘ Espaço");
@@ -2216,6 +2319,7 @@ mod tests {
 
     #[test]
     fn atalho_de_app_mostra_o_nome() {
+        pt_br();
         let app = mide::apps::App {
             id: "org.codeberg.dnkl.foot".into(),
             name: "Foot".into(),
@@ -2242,8 +2346,31 @@ mod tests {
 
     #[test]
     fn busca_acha_opcoes_por_palavra_chave() {
-        let q = mide::apps::fold("volume");
-        let hits: Vec<&str> = SEARCHABLE.iter().filter(|(n, k, _)| mide::apps::fold(n).contains(&q) || mide::apps::fold(k).split(' ').any(|w| w.starts_with(&q))).map(|(n, ..)| *n).collect();
-        assert_eq!(hits, vec!["Volume de saída"]);
+        pt_br();
+        let hits = |q: &str| -> Vec<&str> {
+            let q = mide::apps::fold(q);
+            SEARCHABLE.iter().filter(|(n, k, _)| search_matches(&q, n, k)).map(|(n, ..)| *n).collect()
+        };
+        assert_eq!(hits("volume"), vec!["Output volume"]);
+        // Pelo nome traduzido e pelas palavras-chave das duas línguas.
+        assert_eq!(hits("teclas")[0], "Mac-style keys");
+        assert!(hits("acceleration").contains(&"Mouse acceleration"));
+        assert!(hits("aceleracao").contains(&"Mouse acceleration"));
+    }
+
+    /// Os textos das tabelas (barra lateral, efeitos, busca, grupos, layouts) passam pelo
+    /// `tr` na hora de aparecer, longe de um `tr!("…")` que o teste de `mide::i18n`
+    /// enxergue: este confere que todos têm tradução.
+    #[test]
+    fn tabelas_tem_traducao() {
+        pt_br();
+        let mut texts: Vec<&str> = Vec::new();
+        texts.extend(SIDEBAR.iter().filter(|(s, ..)| s.is_some()).map(|(_, n, ..)| *n));
+        texts.extend(EFFECTS.iter().flat_map(|(_, l, d)| [*l, *d]));
+        texts.extend(SEARCHABLE.iter().flat_map(|(n, k, _)| [*n, *k]));
+        texts.extend(SHORTCUT_GROUPS.iter().map(|(_, n)| *n));
+        texts.extend(mide::keyboard_layouts::LAYOUTS.iter().map(|(n, ..)| *n));
+        let missing: Vec<&str> = texts.into_iter().filter(|t| !mide_ui::kit::i18n::is_translated(None, t)).collect();
+        assert!(missing.is_empty(), "sem tradução em locales/pt_BR/settings.po: {missing:?}");
     }
 }

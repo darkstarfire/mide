@@ -232,37 +232,38 @@ pub fn parse_nodes(text: &str) -> Vec<Node> {
         .collect()
 }
 
-/// Nome em português de uma porta, pelo tipo e pela descrição (as descrições vêm do
-/// ALSA/UCM em inglês).
+/// Nome de uma porta no idioma da sessão, pelo tipo e pela descrição (as descrições
+/// vêm do ALSA/UCM em inglês).
 fn port_label(port: &Port) -> String {
+    use crate::tr;
     let desc = port.description.trim();
     let clean = desc.trim_end_matches(" Output").trim_end_matches(" Input").trim();
     let known = match clean {
-        "Speaker" | "Speakers" | "Internal Speaker" | "Internal Speakers" => Some("Alto-falantes"),
-        "Headphones" | "Headphone" => Some("Fones de ouvido"),
-        "Headset" => Some("Headset"),
-        "Line Out" => Some("Saída de linha"),
-        "Line In" => Some("Entrada de linha"),
-        "Digital Microphone" => Some("Microfone digital"),
-        "Internal Microphone" => Some("Microfone interno"),
-        "Stereo Microphone" => Some("Microfone estéreo"),
-        "Headset Microphone" => Some("Microfone do headset"),
-        "Headphones Stereo Microphone" => Some("Microfone dos fones"),
-        "Microphone" => Some("Microfone"),
-        "Front Microphone" => Some("Microfone frontal"),
-        "Rear Microphone" => Some("Microfone traseiro"),
-        "Analog Output" => Some("Saída analógica"),
-        "Analog Input" => Some("Entrada analógica"),
-        "Digital Output (S/PDIF)" => Some("Saída digital (S/PDIF)"),
+        "Speaker" | "Speakers" | "Internal Speaker" | "Internal Speakers" => Some(tr!("Speakers")),
+        "Headphones" | "Headphone" => Some(tr!("Headphones")),
+        "Headset" => Some(tr!("Headset")),
+        "Line Out" => Some(tr!("Line Out")),
+        "Line In" => Some(tr!("Line In")),
+        "Digital Microphone" => Some(tr!("Digital Microphone")),
+        "Internal Microphone" => Some(tr!("Internal Microphone")),
+        "Stereo Microphone" => Some(tr!("Stereo Microphone")),
+        "Headset Microphone" => Some(tr!("Headset Microphone")),
+        "Headphones Stereo Microphone" => Some(tr!("Headphones Microphone")),
+        "Microphone" => Some(tr!("Microphone")),
+        "Front Microphone" => Some(tr!("Front Microphone")),
+        "Rear Microphone" => Some(tr!("Rear Microphone")),
+        "Analog Output" => Some(tr!("Analog Output")),
+        "Analog Input" => Some(tr!("Analog Input")),
+        "Digital Output (S/PDIF)" => Some(tr!("Digital Output (S/PDIF)")),
         _ => None,
     };
     if let Some(k) = known {
-        return k.to_string();
+        return k.into_owned();
     }
     match port.kind.as_str() {
-        "speaker" if clean.is_empty() => "Alto-falantes".into(),
-        "headphones" if clean.is_empty() => "Fones de ouvido".into(),
-        "mic" if clean.is_empty() => "Microfone".into(),
+        "speaker" if clean.is_empty() => tr!("Speakers").into_owned(),
+        "headphones" if clean.is_empty() => tr!("Headphones").into_owned(),
+        "mic" if clean.is_empty() => tr!("Microphone").into_owned(),
         _ if clean.is_empty() => port.name.clone(),
         _ => clean.to_string(),
     }
@@ -438,6 +439,12 @@ pub fn node_for(nodes: &[Node], cards: &[Card], card: &str, port: &str) -> Optio
 mod tests {
     use super::*;
 
+    /// Os nomes das portas saem no idioma da sessão: os testes conferem o pt-BR.
+    fn pt_br() {
+        crate::i18n::init();
+        crate::i18n::set_language("pt_BR");
+    }
+
     const CARDS: &str = include_str!("testdata/pactl-cards.json");
     const SINKS: &str = include_str!("testdata/pactl-sinks.json");
     const SINKS_HEADPHONES: &str = include_str!("testdata/pactl-sinks-headphones.json");
@@ -449,6 +456,7 @@ mod tests {
 
     #[test]
     fn le_placa_sof_com_dois_perfis() {
+        pt_br();
         let cards = parse_cards(CARDS);
         assert_eq!(cards.len(), 1);
         let c = &cards[0];
@@ -465,6 +473,7 @@ mod tests {
 
     #[test]
     fn saidas_de_verdade_sem_o_nome_da_placa() {
+        pt_br();
         let cards = parse_cards(CARDS);
         let sinks = parse_nodes(SINKS);
         let outs = build(&cards, &sinks, SPEAKER_SINK, true);
@@ -481,6 +490,7 @@ mod tests {
 
     #[test]
     fn perfil_dos_fones_ativo_sem_fone_mostra_os_alto_falantes() {
+        pt_br();
         // O caso do usuário: o perfil "Headphones" ativo (prioridade maior) e nada no
         // conector. Os alto-falantes aparecem (pedindo a troca de perfil) e o padrão
         // está numa porta sem nada ligado.
@@ -505,6 +515,7 @@ mod tests {
 
     #[test]
     fn ligar_e_tirar_o_fone_acompanha() {
+        pt_br();
         let cards = parse_cards(CARDS);
         let sinks = parse_nodes(SINKS);
         let before = build(&cards, &sinks, SPEAKER_SINK, true);
@@ -529,6 +540,7 @@ mod tests {
 
     #[test]
     fn entradas_sem_os_monitores() {
+        pt_br();
         let cards = parse_cards(CARDS);
         let sources = parse_nodes(SOURCES);
         let ins = build(&cards, &sources, "alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic2__source", false);
@@ -541,6 +553,7 @@ mod tests {
 
     #[test]
     fn duas_placas_e_bluetooth() {
+        pt_br();
         let mut cards = parse_cards(CARDS);
         let mut bt = cards[0].clone();
         bt.index = 90;
@@ -558,6 +571,7 @@ mod tests {
 
     #[test]
     fn saida_virtual_sem_placa() {
+        pt_br();
         let text = r#"[{"index":7,"name":"easyeffects_sink","description":"Easy Effects Sink","mute":false,"volume":{"mono":{"value":32768}},"ports":[],"properties":{"media.class":"Audio/Sink"}}]"#;
         let outs = build(&[], &parse_nodes(text), "easyeffects_sink", true);
         assert_eq!(outs.len(), 1);

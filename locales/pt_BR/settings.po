@@ -1,0 +1,1158 @@
+# Tradução do mide para o português do Brasil: Configurações do Sistema (mide-settings)
+# e os textos de src/platform/ que aparecem na tela (layouts, áudio, informações).
+# Os textos em inglês (msgid) são os do código.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# Janela e barra lateral
+msgid "System Settings"
+msgstr "Configurações do Sistema"
+
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgid "Network"
+msgstr "Rede"
+
+msgid "Bluetooth"
+msgstr "Bluetooth"
+
+msgid "Appearance"
+msgstr "Aparência"
+
+msgid "Sound"
+msgstr "Som"
+
+msgid "Displays"
+msgstr "Monitores"
+
+msgid "Wallpaper"
+msgstr "Papel de parede"
+
+msgid "Dock"
+msgstr "Dock"
+
+msgid "Menu Bar"
+msgstr "Barra superior"
+
+msgid "Effects"
+msgstr "Efeitos"
+
+msgid "Lock Screen"
+msgstr "Bloqueio de tela"
+
+msgid "Mouse & Trackpad"
+msgstr "Mouse e trackpad"
+
+msgid "Keyboard"
+msgstr "Teclado"
+
+msgid "Language & Region"
+msgstr "Idioma e região"
+
+msgid "Energy"
+msgstr "Energia"
+
+msgid "Default Apps"
+msgstr "Apps padrão"
+
+msgid "Login Items"
+msgstr "Itens de início"
+
+msgid "About"
+msgstr "Sobre"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "Results"
+msgstr "Resultados"
+
+msgid "No options found."
+msgstr "Nenhuma opção encontrada."
+
+# Efeitos
+msgid "Window shadows"
+msgstr "Sombras das janelas"
+
+msgid "A soft shadow around each window"
+msgstr "Sombra suave em volta de cada janela"
+
+msgid "Rounded corners"
+msgstr "Cantos arredondados"
+
+msgid "Windows with rounded corners and a thin outline"
+msgstr "Janelas com cantos arredondados e contorno fino"
+
+msgid "Animations"
+msgstr "Animações"
+
+msgid "Smooth transitions when maximizing, restoring and closing windows and opening the launcher"
+msgstr "Maximizar, restaurar, fechar janelas e abrir o launcher com transição suave"
+
+msgid "Genie effect"
+msgstr "Efeito lâmpada"
+
+msgid "Minimizing pours the window into its Dock icon"
+msgstr "Minimizar escorre a janela até o ícone da dock"
+
+msgid "Dock blur"
+msgstr "Desfoque na dock"
+
+msgid "The Dock blurs what is behind it, like frosted glass"
+msgstr "A dock desfoca o que está atrás dela, como vidro fosco"
+
+msgid "Launcher blur"
+msgstr "Desfoque no launcher"
+
+msgid "The launcher background is the blurred wallpaper"
+msgstr "O fundo do launcher é o papel de parede desfocado"
+
+msgid "Liquid glass"
+msgstr "Vidro líquido"
+
+msgid "Dock and launcher folders with edges that refract light and a reflection, over the blur"
+msgstr "Dock e pastas do launcher com bordas que refratam a luz e reflexo, sobre o desfoque"
+
+msgid "Glass in bars and menus"
+msgstr "Vidro em barras e menus"
+
+msgid "Menu bar, menus, notifications and window previews with glass"
+msgstr "Barra superior, menus, notificações e prévias das janelas com vidro"
+
+msgid "Menu animation"
+msgstr "Animação dos menus"
+
+msgid "Menus and lists appear with a short fade"
+msgstr "Menus e listas aparecem com um esmaecer curto"
+
+msgid "Smooth transitions"
+msgstr "Transições suaves"
+
+msgid "Dock previews and Alt+Tab, launcher pages and folders, Files folders, switching between icons and list, and the screenshot thumbnail"
+msgstr "Prévias da dock e Alt+Tab, páginas e pastas do launcher, pastas do Arquivos, troca entre ícones e lista e a miniatura da captura"
+
+msgid "Shake mouse pointer to locate"
+msgstr "Agitar o ponteiro para localizá-lo"
+
+msgid "Moving the mouse quickly back and forth makes the pointer big for a moment"
+msgstr "Mexer o mouse rápido de um lado para o outro deixa o ponteiro grande por um instante"
+
+# Busca (nome da opção e palavras-chave; a busca olha as duas línguas)
+msgid "Lock the screen after"
+msgstr "Bloquear a tela após"
+
+msgid "lock password inactivity idle time screen saver"
+msgstr "bloqueio bloquear senha inatividade tempo sem uso protetor de tela"
+
+msgid "Lock when suspending"
+msgstr "Bloquear ao suspender"
+
+msgid "lock suspend sleep password"
+msgstr "bloqueio suspender dormir senha"
+
+msgid "Turn off the display after"
+msgstr "Apagar a tela após"
+
+msgid "turn off screen display monitor power dpms saver"
+msgstr "apagar tela monitor desligar energia dpms protetor"
+
+msgid "Accent color"
+msgstr "Cor de destaque"
+
+msgid "appearance color accent blue purple pink red orange yellow green graphite"
+msgstr "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite accent"
+
+msgid "theme light dark mode night colors"
+msgstr "tema claro escuro modo noturno dark cores"
+
+msgid "network internet wireless connect password"
+msgstr "rede internet wireless conectar senha"
+
+msgid "network cable wired ethernet internet address ip connection"
+msgstr "rede cabo cabeada ethernet internet endereco ip conexao"
+
+msgid "headphones mouse keyboard devices pair wireless"
+msgstr "fone mouse teclado aparelhos parear sem fio"
+
+msgid "Output volume"
+msgstr "Volume de saída"
+
+msgid "sound audio speaker volume"
+msgstr "som audio alto-falante volume"
+
+msgid "Mute sound"
+msgstr "Sem som"
+
+msgid "mute silence sound"
+msgstr "mudo silenciar som"
+
+msgid "Sound effects"
+msgstr "Efeitos sonoros"
+
+msgid "sound effects alert beep notification system sounds"
+msgstr "som efeitos alerta bip notificacao sons do sistema"
+
+msgid "screen screens monitor resolution refresh hz scale arrange main second display"
+msgstr "tela telas monitor resolucao frequencia hz escala organizar principal segundo monitor"
+
+msgid "Display resolution and refresh rate"
+msgstr "Resolução e frequência da tela"
+
+msgid "monitor resolution frequency hz refresh rate"
+msgstr "monitor resolucao frequencia hz taxa atualizacao"
+
+msgid "Display scale"
+msgstr "Escala da tela"
+
+msgid "monitor scale size zoom hidpi"
+msgstr "monitor escala tamanho zoom hidpi"
+
+msgid "background image wallpaper desktop"
+msgstr "fundo imagem wallpaper area de trabalho"
+
+msgid "Add a background image"
+msgstr "Adicionar imagem de fundo"
+
+msgid "wallpaper image photo"
+msgstr "papel de parede imagem foto"
+
+msgid "Dock icon size"
+msgstr "Tamanho dos ícones da dock"
+
+msgid "dock icons size"
+msgstr "dock icones tamanho"
+
+msgid "Automatically hide and show the Dock"
+msgstr "Ocultar e mostrar a Dock automaticamente"
+
+msgid "dock hide autohide automatic"
+msgstr "dock esconder ocultar automatico"
+
+msgid "Clicking the focused app minimizes it"
+msgstr "Clicar no app em foco minimiza"
+
+msgid "dock minimize click focus previews windows"
+msgstr "dock minimizar clique foco previas janelas"
+
+msgid "Menu bar items"
+msgstr "Itens da barra superior"
+
+msgid "bar menu top icons sound wifi bluetooth battery control center gear"
+msgstr "barra menu topo icones som wifi bluetooth bateria central controle engrenagem"
+
+msgid "effects shadow"
+msgstr "efeitos sombra"
+
+msgid "effects corners edges"
+msgstr "efeitos cantos bordas"
+
+msgid "effects animation transition"
+msgstr "efeitos animacao transicao"
+
+msgid "effects minimize genie lamp"
+msgstr "efeitos minimizar genie"
+
+msgid "effects blur glass"
+msgstr "efeitos blur desfoque vidro"
+
+msgid "effects blur launcher"
+msgstr "efeitos blur desfoque launcher"
+
+msgid "effects glass liquid transparency"
+msgstr "efeitos vidro liquid glass transparencia"
+
+msgid "effects glass bar menus notifications transparency"
+msgstr "efeitos vidro barra menus notificacoes transparencia"
+
+msgid "effects animation menus context fade"
+msgstr "efeitos animacao menus contexto esmaecer"
+
+msgid "effects animation transition smooth launcher folders files list icons"
+msgstr "efeitos animacao transicao suave launcher pastas arquivos lista icones"
+
+msgid "Pointer speed"
+msgstr "Velocidade do ponteiro"
+
+msgid "mouse trackpad touchpad pointer speed cursor tracking"
+msgstr "mouse trackpad touchpad ponteiro velocidade cursor"
+
+msgid "Natural scrolling"
+msgstr "Rolagem natural"
+
+msgid "mouse trackpad touchpad scrolling natural scroll inverted"
+msgstr "mouse trackpad touchpad rolagem natural scroll invertida"
+
+msgid "Tap to click"
+msgstr "Toque para clicar"
+
+msgid "trackpad touchpad tap click"
+msgstr "trackpad touchpad toque clicar tap"
+
+msgid "Mouse acceleration"
+msgstr "Aceleração do mouse"
+
+msgid "mouse acceleration pointer precision"
+msgstr "mouse aceleracao ponteiro precisao"
+
+msgid "Keyboard layout"
+msgstr "Layout do teclado"
+
+msgid "keyboard layout abnt2 abnt language us international accents input source"
+msgstr "teclado layout abnt2 abnt idioma us internacional acentos"
+
+msgid "Mac-style keys"
+msgstr "Teclas no estilo Mac"
+
+msgid "keyboard command option cmd super ctrl shortcuts"
+msgstr "teclado command option cmd super ctrl atalhos"
+
+msgid "Keyboard shortcuts"
+msgstr "Atalhos de teclado"
+
+msgid "keyboard shortcuts keys combinations"
+msgstr "teclado atalhos teclas combinacoes"
+
+msgid "Change or create a shortcut"
+msgstr "Mudar ou criar atalho"
+
+msgid "keyboard shortcut new record combination remove default"
+msgstr "teclado atalho novo gravar combinacao remover padrao"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "language translation portuguese english locale"
+msgstr "idioma lingua language traducao portugues ingles locale"
+
+msgid "Date and number formats"
+msgstr "Formatos de data e números"
+
+msgid "region format date time numbers currency locale"
+msgstr "regiao formato data hora numeros moeda locale"
+
+msgid "Put the computer to sleep after"
+msgstr "Suspender o computador após"
+
+msgid "energy suspend sleep inactivity battery"
+msgstr "energia suspender dormir repouso inatividade bateria"
+
+msgid "Power button"
+msgstr "Botão de ligar"
+
+msgid "energy button power shut down suspend"
+msgstr "energia botao ligar desligar power suspender"
+
+msgid "Default apps"
+msgstr "Apps padrão"
+
+msgid "apps default browser email open with pdf images videos music folders text"
+msgstr "apps padrao navegador email abrir com pdf imagens videos musica pastas texto"
+
+msgid "Clicking the wallpaper reveals the desktop"
+msgstr "Clicar no papel de parede mostra a mesa"
+
+msgid "desktop wallpaper click move windows aside show desktop"
+msgstr "mesa area de trabalho papel de parede clicar afastar janelas mostrar desktop"
+
+msgid "Login items"
+msgstr "Itens de início"
+
+msgid "login session startup autostart open at login apps commands scripts"
+msgstr "iniciar sessao login startup autostart abrir ao entrar apps comandos scripts"
+
+msgid "About this computer"
+msgstr "Sobre este computador"
+
+msgid "system version memory processor"
+msgstr "sistema versao memoria processador"
+
+# Grupos de atalhos
+msgid "Windows"
+msgstr "Janelas"
+
+msgid "Launcher & Search"
+msgstr "Launcher e busca"
+
+msgid "Apps"
+msgstr "Apps"
+
+msgid "System"
+msgstr "Sistema"
+
+# Wi-Fi, Rede e Bluetooth
+msgid "Networks"
+msgstr "Redes"
+
+msgid "Looking for networks…"
+msgstr "Procurando redes…"
+
+msgid "Connected"
+msgstr "Conectado"
+
+msgid "{signal}% · secured"
+msgstr "{signal}% · com senha"
+
+msgid "Connected · {ip}"
+msgstr "Conectado · {ip}"
+
+msgid "Connecting…"
+msgstr "Conectando…"
+
+msgid "Cable connected, no connection"
+msgstr "Cabo ligado, sem conexão"
+
+msgid "Cable unplugged"
+msgstr "Cabo desconectado"
+
+msgid "{state} · primary"
+msgstr "{state} · principal"
+
+msgid "Off"
+msgstr "Desligado"
+
+msgid "No network"
+msgstr "Sem rede"
+
+msgid "{ssid} · primary"
+msgstr "{ssid} · principal"
+
+msgid "No wired network adapter found."
+msgstr "Nenhuma placa de rede cabeada encontrada."
+
+msgid "Wired Connection"
+msgstr "Conexão cabeada"
+
+msgid "Connection name"
+msgstr "Nome da conexão"
+
+msgid "Interface"
+msgstr "Interface"
+
+msgid "IP address"
+msgstr "Endereço IP"
+
+msgid "Visible to paired devices"
+msgstr "Visível para os aparelhos pareados"
+
+msgid "My Devices"
+msgstr "Meus aparelhos"
+
+msgid "No paired devices"
+msgstr "Nenhum aparelho pareado"
+
+msgid "Connected · click to disconnect"
+msgstr "Conectado · clique para desconectar"
+
+msgid "Not connected · click to connect"
+msgstr "Não conectado · clique para conectar"
+
+# Monitores
+msgid "mide did not report the displays (running in a window, the display is the window)."
+msgstr "O mide não informou as telas (rodando numa janela, a tela é a da janela)."
+
+msgid "Drag the displays to arrange them. The white strip marks the main display, with the menu bar and the Dock."
+msgstr "Arraste as telas para organizar. A faixa branca marca a tela principal, com a barra e a dock."
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Display"
+msgstr "Tela"
+
+msgctxt "display"
+msgid "On"
+msgstr "Ligada"
+
+msgid "When off, the display stays dark and mide does not use it"
+msgstr "Desligada, a tela fica apagada e o mide não a usa"
+
+msgid "Main display"
+msgstr "Tela principal"
+
+msgid "menu bar, Dock and launcher"
+msgstr "barra, dock e launcher"
+
+msgid "Use as main display"
+msgstr "Usar como tela principal"
+
+msgid "Resolution"
+msgstr "Resolução"
+
+msgid "Refresh rate"
+msgstr "Frequência"
+
+msgid "Automatic ({size}\")"
+msgstr "Automático ({size}\")"
+
+msgid "Automatic (estimated)"
+msgstr "Automático (estimado)"
+
+msgid "Screen size"
+msgstr "Tamanho da tela"
+
+msgid "Scale"
+msgstr "Escala"
+
+msgid "Mirror displays"
+msgstr "Espelhar telas"
+
+msgid "All displays show the main one, with its menu bar and Dock"
+msgstr "Todas as telas mostram a principal, com a barra e a dock dela"
+
+msgid "Keep these display settings?"
+msgstr "Manter estas configurações?"
+
+msgid "The displays go back to how they were in {seconds} s."
+msgstr "As telas voltam ao que eram em {seconds} s."
+
+msgid "Revert"
+msgstr "Reverter"
+
+msgid "Keep"
+msgstr "Manter"
+
+# Som
+msgid "Output"
+msgstr "Saída"
+
+msgid "Input"
+msgstr "Entrada"
+
+msgid "Input volume"
+msgstr "Volume de entrada"
+
+msgid "Play sound effects"
+msgstr "Tocar efeitos sonoros"
+
+msgid "Notifications, screenshots, Trash, volume and alerts"
+msgstr "Notificações, captura de tela, Lixeira, volume e avisos"
+
+msgid "Effects volume"
+msgstr "Volume dos efeitos"
+
+msgid "Alert sound"
+msgstr "Som de alerta"
+
+msgid "Do Not Disturb silences notification sounds. GTK apps opened afterwards also use these sounds."
+msgstr "O Não perturbe silencia o som das notificações. Os apps GTK abertos depois também usam estes sons."
+
+msgctxt "alert sound"
+msgid "Glass"
+msgstr "Vidro"
+
+msgctxt "alert sound"
+msgid "Drop"
+msgstr "Gota"
+
+msgctxt "alert sound"
+msgid "Bell"
+msgstr "Sino"
+
+msgctxt "alert sound"
+msgid "Pop"
+msgstr "Pop"
+
+# Papel de parede
+msgid "Windows move aside to the edges; another click, Esc or a click on a window brings them back"
+msgstr "As janelas se afastam para as bordas; outro clique, Esc ou um clique numa janela as traz de volta"
+
+msgid "mide default"
+msgstr "Padrão do mide"
+
+msgid "Remove from List"
+msgstr "Remover da lista"
+
+msgid "Add Image…"
+msgstr "Adicionar imagem…"
+
+msgid "Right-click an added image to remove it from the list."
+msgstr "Clique com o botão direito numa imagem adicionada para tirá-la da lista."
+
+msgid "Choose an Image"
+msgstr "Escolher uma imagem"
+
+msgid "Pictures"
+msgstr "Imagens"
+
+msgid "Downloads"
+msgstr "Downloads"
+
+msgid "Home Folder"
+msgstr "Pasta pessoal"
+
+msgid "‹ Back"
+msgstr "‹ Voltar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "No images in this folder."
+msgstr "Nenhuma imagem nesta pasta."
+
+# Dock
+msgid "Icon size"
+msgstr "Tamanho dos ícones"
+
+msgid "The Dock hides and appears when you move the pointer to the bottom edge"
+msgstr "A dock some e aparece ao levar o ponteiro até a borda de baixo"
+
+msgid "Magnification"
+msgstr "Ampliação"
+
+msgid "Icons grow when the pointer moves over them"
+msgstr "Os ícones crescem quando o ponteiro passa sobre eles"
+
+msgid "Magnification size"
+msgstr "Tamanho da ampliação"
+
+msgid "With one window, minimizes it; with several, shows previews to choose from"
+msgstr "Com uma janela, minimiza; com várias, mostra as prévias para escolher"
+
+msgid "Without hiding, maximized windows stay above the Dock. To pin an app, right-click its icon and choose “Keep in Dock”."
+msgstr "Sem ocultar, as janelas maximizadas ficam acima da dock. Para fixar um app, clique com o botão direito no ícone dele e escolha \"Manter na Dock\"."
+
+# Bloqueio de tela e Energia
+msgid "Never"
+msgstr "Nunca"
+
+msgid "{n} minute"
+msgid_plural "{n} minutes"
+msgstr[0] "{n} minuto"
+msgstr[1] "{n} minutos"
+
+msgid "{n} hour"
+msgid_plural "{n} hours"
+msgstr[0] "{n} hora"
+msgstr[1] "{n} horas"
+
+msgid "Lock the screen when idle for"
+msgstr "Bloquear a tela após ficar sem uso"
+
+msgid "Turn off the display when idle for"
+msgstr "Apagar a tela após ficar sem uso"
+
+msgid "The password is required when waking from sleep"
+msgstr "Ao voltar da suspensão, a senha é pedida"
+
+msgid "Lock Now"
+msgstr "Bloquear agora"
+
+msgid "Super+L also locks. With the screen locked, the display turns off after 1 minute. Playing videos (in the browser, in mpv) prevent locking and turning off. In mide running in a window (development), the desktop underneath locks when idle."
+msgstr "Super+L também bloqueia. Com a tela bloqueada, ela apaga depois de 1 minuto. Vídeos tocando (no navegador, no mpv) impedem o bloqueio e o apagar. Num mide aberto em janela (desenvolvimento), quem bloqueia por tempo sem uso é o desktop de baixo."
+
+msgid "Ask What to Do"
+msgstr "Perguntar o que fazer"
+
+msgctxt "power button"
+msgid "Sleep"
+msgstr "Suspender"
+
+msgctxt "power button"
+msgid "Shut Down"
+msgstr "Desligar"
+
+msgid "Do Nothing"
+msgstr "Não fazer nada"
+
+msgid "When idle: the computer does not sleep while an app asks to keep the display on (video). Turning off and locking the display are in Lock Screen."
+msgstr "Sem uso: o computador não suspende enquanto um app pede para a tela ficar acesa (vídeo). Apagar e bloquear a tela ficam em Bloqueio de tela."
+
+# Barra superior
+msgid "Show menu bar background"
+msgstr "Mostrar o fundo da barra"
+
+msgid "A translucent strip behind the menu bar; when off, the text sits right on the wallpaper, as in macOS Tahoe"
+msgstr "Faixa translúcida atrás da barra; desligado, o texto fica direto sobre o papel de parede, como no macOS Tahoe"
+
+msgid "The clock is always in the menu bar. Hidden items are still in Settings and in Control Center."
+msgstr "O relógio fica sempre na barra. Itens escondidos continuam nas Configurações e na central de controle."
+
+msgid "Media controls"
+msgstr "Controles de mídia"
+
+msgid "Current player, track and playback controls"
+msgstr "Player atual, faixa e controles de reprodução"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Gear that opens System Settings"
+msgstr "Engrenagem que abre as Configurações do Sistema"
+
+msgid "Volume and sound output"
+msgstr "Volume e saída de som"
+
+msgid "Wireless networks"
+msgstr "Redes sem fio"
+
+msgid "Wireless devices"
+msgstr "Aparelhos sem fio"
+
+msgid "Battery"
+msgstr "Bateria"
+
+msgid "Charge and time remaining (laptops only)"
+msgstr "Carga e tempo restante (só em notebooks)"
+
+msgid "Control Center"
+msgstr "Central de controle"
+
+msgid "Wi-Fi, Bluetooth, Do Not Disturb, brightness and sound in a single panel"
+msgstr "Wi-Fi, Bluetooth, Não perturbe, brilho e som num painel só"
+
+# Aparência
+msgid "Light"
+msgstr "Claro"
+
+msgid "Dark"
+msgstr "Escuro"
+
+msgid "Blue"
+msgstr "Azul"
+
+msgid "Purple"
+msgstr "Roxo"
+
+msgid "Pink"
+msgstr "Rosa"
+
+msgid "Red"
+msgstr "Vermelho"
+
+msgid "Orange"
+msgstr "Laranja"
+
+msgid "Yellow"
+msgstr "Amarelo"
+
+msgid "Green"
+msgstr "Verde"
+
+msgid "Graphite"
+msgstr "Grafite"
+
+msgid "mide apps, the menu bar and the Dock change immediately. GTK and Qt apps follow light or dark when they are opened."
+msgstr "Os apps do mide, a barra e a dock mudam na hora. Apps GTK e Qt seguem claro ou escuro quando são abertos."
+
+# Efeitos
+msgid "Transparency"
+msgstr "Transparência"
+
+msgid "Inactive windows"
+msgstr "Janelas sem foco"
+
+msgid "Changes take effect immediately. Per-app transparency: [opacity] in config.toml (\"app_id\" = 0.9)."
+msgstr "As mudanças valem na hora. Transparência por app: [opacity] no config.toml (\"app_id\" = 0.9)."
+
+# Mouse e trackpad
+msgid "Fast movements take the pointer farther"
+msgstr "Movimentos rápidos levam o ponteiro mais longe"
+
+msgid "Natural scrolling on the mouse"
+msgstr "Rolagem natural no mouse"
+
+msgid "Content follows the movement of the wheel"
+msgstr "O conteúdo acompanha o movimento da roda"
+
+msgid "Content follows your fingers, as on the Mac"
+msgstr "O conteúdo acompanha os dedos, como no Mac"
+
+msgid "A tap on the trackpad clicks, without pressing"
+msgstr "Um toque no trackpad clica, sem apertar"
+
+msgid "Changes take effect immediately for connected mice and trackpads (in the mide session)."
+msgstr "As mudanças valem na hora para os mouses e trackpads conectados (na sessão do mide)."
+
+# Teclado
+msgid "Choose…"
+msgstr "Escolher…"
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "{layout} (system)"
+msgstr "{layout} (do sistema)"
+
+msgid "Add layout"
+msgstr "Adicionar layout"
+
+msgid "Show the layout in the menu bar"
+msgstr "Mostrar o layout na barra superior"
+
+msgid "Abbreviation of the current layout in the menu bar, with the list to switch (Ctrl+Super+Space also switches)"
+msgstr "Sigla do layout atual na barra, com a lista para trocar (Ctrl+Super+Espaço troca também)"
+
+msgid "Command (Alt key) acts as Ctrl in apps and Option (Super/Windows key) is Alt; Ctrl stays Ctrl. Lock: Ctrl+⌘+Q"
+msgstr "Command (tecla Alt) faz o papel do Ctrl nos apps e Option (tecla Super/Windows) é o Alt; o Ctrl continua Ctrl. Bloquear: Ctrl+⌘+Q"
+
+msgid "Search shortcuts"
+msgstr "Buscar atalho"
+
+msgid "{n} shortcut"
+msgid_plural "{n} shortcuts"
+msgstr[0] "{n} atalho"
+msgstr[1] "{n} atalhos"
+
+msgid "No shortcuts."
+msgstr "Nenhum atalho."
+
+msgid "No shortcuts with that name."
+msgstr "Nenhum atalho com esse nome."
+
+msgid "New Shortcut…"
+msgstr "Novo atalho…"
+
+msgid "Restore Defaults"
+msgstr "Restaurar os padrões"
+
+msgid "Click a shortcut to change its key combination or remove it. Changes take effect immediately."
+msgstr "Clique num atalho para mudar a combinação ou removê-lo. As mudanças valem na hora."
+
+msgid "Space"
+msgstr "Espaço"
+
+msgid "New Shortcut"
+msgstr "Novo atalho"
+
+msgid "What does the shortcut do? A mide action or opening an app:"
+msgstr "O que o atalho faz? Uma ação do mide ou abrir um app:"
+
+msgid "App"
+msgstr "App"
+
+msgid "{keys} is already used by “{action}”."
+msgstr "{keys} já é usado por \"{action}\"."
+
+msgid "Replace moves this key combination to this shortcut."
+msgstr "Substituir faz essa combinação passar para este atalho."
+
+msgid "Record Another"
+msgstr "Gravar outra"
+
+msgid "Replace"
+msgstr "Substituir"
+
+msgid "Press the new key combination…"
+msgstr "Aperte a nova combinação de teclas…"
+
+msgid "Use Ctrl, Alt or Super together with the key. Esc cancels."
+msgstr "Use Ctrl, Alt ou Super junto com a tecla. Esc cancela."
+
+msgctxt "key combination"
+msgid "None"
+msgstr "Nenhuma"
+
+msgid "Key combination"
+msgstr "Combinação"
+
+msgid "Record…"
+msgstr "Gravar…"
+
+msgid "The compositor did not respond."
+msgstr "O compositor não respondeu."
+
+msgid "Use Ctrl, Alt or Super together with the key, so it does not take over a typing key."
+msgstr "Use Ctrl, Alt ou Super junto com a tecla, para não tomar uma tecla de digitar."
+
+msgid "Could not save: {error}"
+msgstr "Não foi possível gravar: {error}"
+
+# Ações dos atalhos
+msgid "Close window"
+msgstr "Fechar a janela"
+
+msgid "Log out of mide"
+msgstr "Encerrar a sessão do mide"
+
+msgid "Restore the last minimized window"
+msgstr "Restaurar a última janela minimizada"
+
+msgid "Show or hide the launcher"
+msgstr "Abrir ou fechar o launcher"
+
+msgid "Show or hide search"
+msgstr "Abrir ou fechar o buscador"
+
+msgid "Next keyboard layout"
+msgstr "Próximo layout de teclado"
+
+msgid "Switch windows"
+msgstr "Alternar janelas"
+
+msgid "Switch windows (backwards)"
+msgstr "Alternar janelas (para trás)"
+
+msgid "Maximize window"
+msgstr "Maximizar a janela"
+
+msgid "Restore window size"
+msgstr "Restaurar o tamanho da janela"
+
+msgid "Maximize or restore window"
+msgstr "Maximizar ou restaurar a janela"
+
+msgid "Minimize window"
+msgstr "Minimizar a janela"
+
+msgid "Window on the left half"
+msgstr "Janela na metade esquerda"
+
+msgid "Window on the right half"
+msgstr "Janela na metade direita"
+
+msgid "Show desktop"
+msgstr "Mostrar a mesa"
+
+msgid "Lock screen"
+msgstr "Bloquear a tela"
+
+msgid "Screenshot"
+msgstr "Captura de tela"
+
+msgid "Show or hide the hotkey terminal"
+msgstr "Mostrar ou esconder o terminal de atalho"
+
+msgid "Open {app}"
+msgstr "Abrir {app}"
+
+msgid "Open: {command}"
+msgstr "Abrir: {command}"
+
+# Idioma e região
+msgid "System default"
+msgstr "O do sistema"
+
+msgid "Formats (date, time, numbers and currency)"
+msgstr "Formatos (data, hora, números e moeda)"
+
+msgid "Takes effect at the next login. The languages in the list are the ones installed on the system (locale -a)."
+msgstr "Vale a partir do próximo login. Os idiomas da lista são os instalados no sistema (locale -a)."
+
+# Apps padrão
+msgid "None"
+msgstr "Nenhum"
+
+msgctxt "default apps"
+msgid "Web browser"
+msgstr "Navegador"
+
+msgctxt "default apps"
+msgid "Email"
+msgstr "E-mail"
+
+msgctxt "default apps"
+msgid "Folders"
+msgstr "Pastas"
+
+msgctxt "default apps"
+msgid "Text"
+msgstr "Textos"
+
+msgctxt "default apps"
+msgid "Documents"
+msgstr "Documentos"
+
+msgctxt "default apps"
+msgid "Images"
+msgstr "Imagens"
+
+msgctxt "default apps"
+msgid "Videos"
+msgstr "Vídeos"
+
+msgctxt "default apps"
+msgid "Music"
+msgstr "Músicas"
+
+msgid "No installed app opens these file types."
+msgstr "Nenhum app instalado abre esses tipos de arquivo."
+
+msgid "Applies only to the mide session: other installed desktops (Cinnamon, GNOME) keep their own choices."
+msgstr "Vale só na sessão do mide: outros desktops instalados (Cinnamon, GNOME) continuam com as escolhas deles."
+
+# Itens de início
+msgid "These open automatically when you log in."
+msgstr "Abrem sozinhos quando você entra na sessão."
+
+msgid "No items. Use Add App or Add Command."
+msgstr "Nenhum item. Use Adicionar app ou Adicionar comando."
+
+msgid "{command} · system"
+msgstr "{command} · do sistema"
+
+msgid "Add App…"
+msgstr "Adicionar app…"
+
+msgid "Add Command…"
+msgstr "Adicionar comando…"
+
+msgid "System items can only be turned off. The list also applies to other desktops, which read the same autostart folder."
+msgstr "Os itens do sistema só podem ser desligados. A lista vale também nos outros desktops, que leem a mesma pasta de início."
+
+msgid "Add App"
+msgstr "Adicionar app"
+
+msgid "Search apps"
+msgstr "Buscar app"
+
+msgid "No apps found."
+msgstr "Nenhum app encontrado."
+
+msgid "Add Command"
+msgstr "Adicionar comando"
+
+msgid "A name, and the program or script that opens when you log in."
+msgstr "Um nome, e o programa ou script que abre ao entrar na sessão."
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Command or script"
+msgstr "Comando ou script"
+
+msgid "Add"
+msgstr "Adicionar"
+
+msgid "Choose a Program or Script"
+msgstr "Escolher programa ou script"
+
+msgid "no configuration folder"
+msgstr "sem pasta de configuração"
+
+msgid "item not found"
+msgstr "item não encontrado"
+
+# Layouts de teclado (src/platform/keyboard_layouts.rs)
+msgid "Portuguese (Brazil, ABNT2)"
+msgstr "Português (Brasil, ABNT2)"
+
+msgid "English (US)"
+msgstr "Inglês (EUA)"
+
+msgid "English (US, international with dead keys)"
+msgstr "Inglês (EUA, internacional, com acentos)"
+
+msgid "English (US, international AltGr)"
+msgstr "Inglês (EUA, internacional AltGr)"
+
+msgid "English (UK)"
+msgstr "Inglês (Reino Unido)"
+
+msgid "Portuguese (Portugal)"
+msgstr "Português (Portugal)"
+
+msgid "Spanish (Spain)"
+msgstr "Espanhol (Espanha)"
+
+msgid "Spanish (Latin America)"
+msgstr "Espanhol (América Latina)"
+
+msgid "French"
+msgstr "Francês"
+
+msgid "German"
+msgstr "Alemão"
+
+msgid "Italian"
+msgstr "Italiano"
+
+# Portas de áudio (src/platform/audio.rs)
+msgid "Speakers"
+msgstr "Alto-falantes"
+
+msgid "Headphones"
+msgstr "Fones de ouvido"
+
+msgid "Headset"
+msgstr "Headset"
+
+msgid "Line Out"
+msgstr "Saída de linha"
+
+msgid "Line In"
+msgstr "Entrada de linha"
+
+msgid "Digital Microphone"
+msgstr "Microfone digital"
+
+msgid "Internal Microphone"
+msgstr "Microfone interno"
+
+msgid "Stereo Microphone"
+msgstr "Microfone estéreo"
+
+msgid "Headset Microphone"
+msgstr "Microfone do headset"
+
+msgid "Headphones Microphone"
+msgstr "Microfone dos fones"
+
+msgid "Microphone"
+msgstr "Microfone"
+
+msgid "Front Microphone"
+msgstr "Microfone frontal"
+
+msgid "Rear Microphone"
+msgstr "Microfone traseiro"
+
+msgid "Analog Output"
+msgstr "Saída analógica"
+
+msgid "Analog Input"
+msgstr "Entrada analógica"
+
+msgid "Digital Output (S/PDIF)"
+msgstr "Saída digital (S/PDIF)"
+
+# Informações da máquina (src/platform/sysinfo.rs: Sobre e Sobre este computador)
+msgid "Kernel"
+msgstr "Kernel"
+
+msgid "Processor"
+msgstr "Processador"
+
+msgid "Memory"
+msgstr "Memória"
+
+msgid "Graphics driver"
+msgstr "Vídeo"
+
+msgid "Computer"
+msgstr "Computador"
+
+msgid "Uptime"
+msgstr "Ligado há"
+
+msgid "Graphics"
+msgstr "Gráficos"
+
+msgid "Startup disk"
+msgstr "Disco de inicialização"
+
+msgid "Computer name"
+msgstr "Nome do computador"
+
+msgid "unknown"
+msgstr "desconhecido"
+
+msgid "{cpu} ({n} core)"
+msgid_plural "{cpu} ({n} cores)"
+msgstr[0] "{cpu} ({n} núcleo)"
+msgstr[1] "{cpu} ({n} núcleos)"
+
+msgid "Laptop"
+msgstr "Notebook"
+
+msgid "Desktop computer"
+msgstr "Computador de mesa"
+
+msgid "mide {version} on {os}"
+msgstr "mide {version} sobre {os}"

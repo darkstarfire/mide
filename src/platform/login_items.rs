@@ -161,8 +161,8 @@ fn find_source(file: &str) -> Option<PathBuf> {
 
 /// Liga ou desliga um item (grava a versão do usuário).
 pub fn set_enabled(file: &str, on: bool) -> std::io::Result<()> {
-    let user = user_dir().ok_or_else(|| std::io::Error::other("sem pasta de configuração"))?;
-    let source = find_source(file).ok_or_else(|| std::io::Error::other("item não encontrado"))?;
+    let user = user_dir().ok_or_else(|| std::io::Error::other(crate::tr!("no configuration folder").into_owned()))?;
+    let source = find_source(file).ok_or_else(|| std::io::Error::other(crate::tr!("item not found").into_owned()))?;
     let text = std::fs::read_to_string(&source)?;
     let value = if on { "true" } else { "false" };
     let hidden = if on { "false" } else { "true" };
@@ -193,7 +193,7 @@ pub fn add_command(name: &str, command: &str) -> std::io::Result<String> {
 }
 
 fn write_new(file: &str, text: &str) -> std::io::Result<String> {
-    let user = user_dir().ok_or_else(|| std::io::Error::other("sem pasta de configuração"))?;
+    let user = user_dir().ok_or_else(|| std::io::Error::other(crate::tr!("no configuration folder").into_owned()))?;
     std::fs::create_dir_all(&user)?;
     // Nome livre (dois comandos com o mesmo nome não se sobrescrevem).
     let stem = file.trim_end_matches(".desktop");
@@ -209,7 +209,7 @@ fn write_new(file: &str, text: &str) -> std::io::Result<String> {
 
 /// Remove o item: o do usuário é apagado; o do sistema fica desligado no usuário.
 pub fn remove(file: &str) -> std::io::Result<()> {
-    let user = user_dir().ok_or_else(|| std::io::Error::other("sem pasta de configuração"))?;
+    let user = user_dir().ok_or_else(|| std::io::Error::other(crate::tr!("no configuration folder").into_owned()))?;
     let in_system = system_dirs().iter().any(|d| d.join(file).exists());
     if in_system {
         return set_enabled(file, false);
