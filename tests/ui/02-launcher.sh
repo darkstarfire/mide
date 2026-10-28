@@ -15,10 +15,20 @@ check "roda para baixo vai para a página da direita" "página 0 → 1" "$LAUNCH
 check "roda para cima volta para a página da esquerda" "página 1 → 0" "$LAUNCH; 450 move 683 384; 460 wheel down; 500 wheel up; 540 list"
 check "clique do meio vai para a próxima página" "página 0 → 1" "$LAUNCH; 450 mclick 683 384; 490 list"
 # Pasta Utilitários (2 páginas) na página 2 da grade, em (346, 397).
-# A pasta (Utilitários) muda de lugar conforme os apps instalados: o launcher
-# registra onde ela fica na página 2, e o teste clica lá.
-UPOS="$(timeout 150 "$SCEN" "$LAUNCH; 440 key pagedown; 480 list" 2>&1 | grep -oE "pasta Utilitários na página 1 em \([0-9]+, [0-9]+\)" | head -1 | grep -oE "[0-9]+, [0-9]+" | tr -d ',')"
-check "roda dentro da pasta troca de página (carrossel)" "página da pasta 0 → 1" "$LAUNCH; 440 key pagedown; 470 click ${UPOS:-346 397}; 500 move 683 384; 510 wheel down; 550 list"
+# A pasta (Utilitários) muda de página e de lugar conforme os apps instalados (as
+# pastas ficam no fim da grade): o launcher registra onde ela fica a cada página
+# mostrada; o teste passa as páginas, acha a pasta e volta lá para clicar nela.
+ULINE="$(timeout 150 "$SCEN" "$LAUNCH; 440 key pagedown; 455 key pagedown; 470 key pagedown; 485 key pagedown; 520 list" 2>&1 | grep -oE "pasta Utilitários na página [0-9]+ em \([0-9]+, [0-9]+\)" | head -1)"
+if [ -n "$ULINE" ]; then
+    UPAGE="$(echo "$ULINE" | sed -E 's/.*página ([0-9]+) em.*/\1/')"
+    UPOS="$(echo "$ULINE" | grep -oE "[0-9]+, [0-9]+" | tr -d ',')"
+    UKEYS=""
+    for i in $(seq 1 "$UPAGE"); do UKEYS="$UKEYS; $((425 + 15 * i)) key pagedown"; done
+    T=$((440 + 15 * UPAGE + 20))
+    check "roda dentro da pasta troca de página (carrossel)" "página da pasta 0 → 1" "$LAUNCH$UKEYS; $T click $UPOS; $((T + 30)) move 683 384; $((T + 40)) wheel down; $((T + 80)) list"
+else
+    echo "pulo  roda dentro da pasta troca de página (a pasta Utilitários não apareceu nas 4 primeiras páginas)"
+fi
 check "Configurações aparecem no launcher" 'janela "Configurações do Sistema"' "$LAUNCH; 440 type configuracoes_do_sistema; 450 key enter; 560 list"
 check_count "clicar num app da dock fecha o launcher" 'camada "mide-launcher"' 0 "$LAUNCH; 460 click 654 728; 520 list"
 

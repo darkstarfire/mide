@@ -29,13 +29,15 @@ HCFG="$(mktemp -d)"
 mkdir -p "$HCFG/mide"
 printf '[dock]\nautohide = true\n' >"$HCFG/mide/config.toml"
 HLOG="$(XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "500 list" 2>&1)"
-if echo "$HLOG" | grep -q 'camada "mide-dock"' && ! echo "$HLOG" | grep -q "dock escondida"; then
+# À mostra de verdade: no lugar de sempre (y=703), não só sem o aviso de escondida.
+if echo "$HLOG" | grep -Eq 'camada "mide-dock" em \([0-9]+, 703\)' && ! echo "$HLOG" | grep -q "dock escondida"; then
     echo "ok    ocultar inteligente: sem janela por cima, a dock fica à mostra"; PASS=$((PASS + 1))
 else
     echo "FALHA ocultar inteligente: sem janela por cima, a dock fica à mostra"; FAIL=$((FAIL + 1))
 fi
-# Em 1366x768 a janela nova não chega na dock: maximizada, ela cobre a dock.
-if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "400 click 103 61; 700 list" -- "$TERMINAL" 2>&1 | grep -q "dock escondida"; then
+# Em 1366x768 a janela nova não chega na dock: maximizada, ela cobre a dock. O Terminal
+# é de conteúdo inteiro: o botão verde fica dentro dela, em (109, 95) (seção janela).
+if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "400 click 109 95; 700 list" -- "$TERMINAL" 2>&1 | grep -q "dock escondida"; then
     echo "ok    ocultar inteligente: janela sobre a dock a esconde"; PASS=$((PASS + 1))
 else
     echo "FALHA ocultar inteligente: janela sobre a dock a esconde"; FAIL=$((FAIL + 1))
@@ -79,11 +81,22 @@ else
 fi
 
 # Menu global de app GTK no Wayland (gtk-shell + org.gtk.Menus): "Arquivo" do app em
-# (218, 14) na barra; "Abrir" em (215, 55) chega ao app. No barramento da sessão (o GTK
-# não mostra janela no barramento de teste); o app tem id próprio e NON_UNIQUE.
+# (218, 14) na barra; "Abrir" em (215, 55) chega ao app; o app tem id próprio e
+# NON_UNIQUE. Barramento de teste sem serviços ativáveis: no barramento comum do
+# dbus-run-session, o GDK 3 no Wayland pede o portal de configurações
+# (org.freedesktop.portal.Desktop) ao abrir, o dbus tenta ativar o xdg-desktop-portal,
+# que não sobe ali, e o app fica 25 s parado ("Settings portal not found: Timeout was
+# reached") sem mostrar janela até o cenário acabar. Sem nada para ativar, o pedido
+# falha na hora e o app segue.
 if python3 -c "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk" 2>/dev/null; then
     GTKM="$(mktemp -d)"
-    SCENARIO_OUT="$GTKM/scen" SCENARIO_WAIT=12 timeout 100 tests/scenario.sh "450 click 218 14; 490 click 215 55; 530 list" -- "GTK_TESTE_ARQUIVO=$GTKM/acao.txt python3 $PWD/tests/apps/gtk-menu-teste.py" >/dev/null 2>&1
+    mkdir -p "$GTKM/services"
+    cat >"$GTKM/bus.conf" <<EOF
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth><servicedir>$GTKM/services</servicedir>
+<policy context="default"><allow send_destination="*" eavesdrop="true"/><allow eavesdrop="true"/><allow own="*"/></policy></busconfig>
+EOF
+    MIDE_PRIVATE_BUS=1 SCENARIO_OUT="$GTKM/scen" SCENARIO_WAIT=12 timeout 100 dbus-run-session --config-file="$GTKM/bus.conf" -- tests/scenario.sh "450 click 218 14; 490 click 215 55; 530 list" -- "GTK_TESTE_ARQUIVO=$GTKM/acao.txt python3 $PWD/tests/apps/gtk-menu-teste.py" >/dev/null 2>&1
     if grep -q "menu do app gtk-menu-teste.py: Arquivo, Exibir, Ajuda" "$GTKM/scen/mide.log" && [ "$(cat "$GTKM/acao.txt" 2>/dev/null)" = "abrir" ]; then
         echo "ok    menu global: app GTK no Wayland (menus na barra, ação chega ao app)"; PASS=$((PASS + 1))
     else
