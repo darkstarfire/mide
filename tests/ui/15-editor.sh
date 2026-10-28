@@ -37,7 +37,7 @@ fi
 # Abrir… (Ctrl+O) pelo seletor de arquivos: pasta com Sub/, b.md e nota.txt; duplo
 # clique em "nota.txt" abre numa aba nova (o título passa a ser o dela).
 mkdir -p "$TDIR/abrir/Sub"; printf 'outro\n' > "$TDIR/abrir/b.md"; printf 'nota\n' > "$TDIR/abrir/nota.txt"
-check "editor: Abrir… pelo seletor de arquivos" 'janela "nota.txt — Code"' "400 click 400 300; 420 combo ctrl+o; 480 click 480 380; 485 click 480 380; 600 list" "$TEXT_APP '$TDIR/abrir/b.md'"
+check "editor: Abrir… pelo seletor de arquivos" 'janela "nota.txt — Code"' "400 click 400 300; 420 combo ctrl+o; 480 click 480 407; 485 click 480 407; 600 list" "$TEXT_APP '$TDIR/abrir/b.md'"
 # Salvar sem título: o seletor abre em Documentos (pasta pessoal de teste) com o nome
 # sugerido; Ctrl+A, "novo" e Enter salvam lá.
 mkdir -p "$TDIR/home/Documentos"
