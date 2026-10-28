@@ -203,6 +203,9 @@ enum MenuId {
     Wifi,
     Bluetooth,
     Media,
+    /// Controles rápidos do Tocando Agora na barra (0 anterior, 1 tocar/pausar, 2
+    /// próxima): o clique age direto, não abre menu.
+    MediaQuick(u8),
     /// Menu da bateria (lista).
     Battery,
     /// Seletor do layout de teclado (lista), com mais de um layout nas Configurações.
@@ -346,7 +349,7 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
         ],
         MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("energy")))],
         // Itens vêm dos layouts escolhidos (`Bar::layout_items`).
-        MenuId::Layout | MenuId::Record => Vec::new(),
+        MenuId::Layout | MenuId::Record | MenuId::MediaQuick(_) => Vec::new(),
         // Itens vêm do app (`Bar::native_items`).
         MenuId::Native(_) | MenuId::Tray(_) => Vec::new(),
         // Painéis desenhados à parte (e a engrenagem, que não é menu): sem itens de lista.
@@ -1625,12 +1628,28 @@ impl Bar {
             x = x0;
         }
         // Reprodução fica à esquerda do tray, seguindo a ordem visual da barra.
-        if shown("media") && self.media_session.is_some() {
-            let (x0, x1) = (x - 36.0, x - 8.0);
+        // Da direita para a esquerda: próxima, tocar/pausar, anterior e a nota (que
+        // abre o painel completo), lendo da esquerda: ♫ ⏮ ⏯ ⏭.
+        if shown("media") && let Some(session) = self.media_session.clone() {
+            let playing = session.playback_status == "Playing";
+            let quick = [
+                (2u8, MediaGlyph::Next, session.can_go_next),
+                (1, if playing { MediaGlyph::Pause } else { MediaGlyph::Play }, session.can_play || session.can_pause),
+                (0, MediaGlyph::Previous, session.can_go_previous),
+            ];
+            for (id, glyph, enabled) in quick {
+                let (x0, x1) = (x - 26.0, x - 4.0);
+                if enabled {
+                    highlight(&mut pixmap, MenuId::MediaQuick(id), x0, x1);
+                    self.titles.push((MenuId::MediaQuick(id), x0, x1));
+                }
+                let color = if enabled { fg } else { [fg[0], fg[1], fg[2], fg[3] / 3] };
+                draw_media_glyph(&mut pixmap, glyph, (x0 + x1) / 2.0, cy, 9.0, color);
+                x = x0;
+            }
+            let (x0, x1) = (x - 30.0, x - 6.0);
             highlight(&mut pixmap, MenuId::Media, x0, x1);
-            let glyph = "♫";
-            let width = self.text.measure(glyph, 17.0, FontWeight::Semibold);
-            self.text.draw(&mut pixmap, glyph, (x0 + x1 - width) / 2.0, text_y, 17.0, FontWeight::Semibold, fg);
+            draw_media_glyph(&mut pixmap, MediaGlyph::Note, (x0 + x1) / 2.0, cy, 15.0, fg);
             self.titles.push((MenuId::Media, x0, x1));
         }
 
@@ -1765,6 +1784,24 @@ impl Bar {
             self.close_menu();
             tracing::info!("engrenagem: Configurações");
             system::open_settings("");
+            return;
+        }
+        // Controles rápidos do Tocando Agora: agem direto no player.
+        if let MenuId::MediaQuick(which) = id {
+            self.close_menu();
+            let action = match which {
+                0 => mide::platform::media::MediaAction::Previous,
+                2 => mide::platform::media::MediaAction::Next,
+                _ => mide::platform::media::MediaAction::PlayPause,
+            };
+            tracing::info!("barra: controle rápido de mídia {action:?}");
+            if let Some(session) = self.media_session.clone() {
+                std::thread::spawn(move || {
+                    if let Err(err) = mide::platform::media::command(&session, action) {
+                        tracing::warn!("controle de mídia falhou: {err}");
+                    }
+                });
+            }
             return;
         }
         // O botão da gravação também não: para a gravação.
@@ -2227,13 +2264,16 @@ impl Bar {
         y + 26.0 + 8.0
     }
 
-    fn media_button(&mut self, p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, glyph: &str, enabled: bool, prominent: bool, action: mide::platform::media::MediaAction, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) {
+    #[allow(clippy::too_many_arguments)]
+    fn media_button(&mut self, p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, glyph: MediaGlyph, enabled: bool, prominent: bool, action: mide::platform::media::MediaAction, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) {
         let index = regions.len();
-        let background = if hover == Some(index) { pal().accent_color() } else if prominent { pal().accent_color() } else { pal().ink(22) };
+        let hovered = enabled && hover == Some(index);
+        // Cápsula: o botão principal (tocar/pausar) na cor de destaque; os outros
+        // neutros, um pouco mais escuros com o ponteiro em cima.
+        let background = if prominent { pal().accent_color() } else if hovered { pal().ink(34) } else { pal().ink(20) };
         fill_rounded(p, x, y, w, h, h / 2.0, if enabled { background } else { pal().ink(12) });
         let color = if !enabled { pal().secondary } else if prominent { [255, 255, 255, 255] } else { pal().text };
-        let width = self.text.measure(glyph, 16.0, FontWeight::Semibold);
-        self.text.draw(p, glyph, x + (w - width) / 2.0, y + (h - FONT * 1.25) / 2.0, 16.0, FontWeight::Semibold, color);
+        draw_media_glyph(p, glyph, x + w / 2.0, y + h / 2.0, h * 0.4, color);
         if enabled {
             regions.push(((x, y, w, h), PanelAction::Media(action)));
         }
@@ -2283,19 +2323,40 @@ impl Bar {
         let gap = 14.0;
         let start = (pw - (bw * 4.0 + gap * 3.0)) / 2.0;
         let playing = session.playback_status == "Playing";
-        self.media_button(p, start, by, bw, 34.0, "|◀", session.can_go_previous, false, mide::platform::media::MediaAction::Previous, regions, hover);
-        self.media_button(p, start + bw + gap, by, bw, 34.0, if playing { "Ⅱ" } else { "▶" }, session.can_play || session.can_pause, true, mide::platform::media::MediaAction::PlayPause, regions, hover);
-        self.media_button(p, start + (bw + gap) * 2.0, by, bw, 34.0, "■", session.can_control, false, mide::platform::media::MediaAction::Stop, regions, hover);
-        self.media_button(p, start + (bw + gap) * 3.0, by, bw, 34.0, "▶|", session.can_go_next, false, mide::platform::media::MediaAction::Next, regions, hover);
+        self.media_button(p, start, by, bw, 34.0, MediaGlyph::Previous, session.can_go_previous, false, mide::platform::media::MediaAction::Previous, regions, hover);
+        self.media_button(p, start + bw + gap, by, bw, 34.0, if playing { MediaGlyph::Pause } else { MediaGlyph::Play }, session.can_play || session.can_pause, true, mide::platform::media::MediaAction::PlayPause, regions, hover);
+        self.media_button(p, start + (bw + gap) * 2.0, by, bw, 34.0, MediaGlyph::Stop, session.can_control, false, mide::platform::media::MediaAction::Stop, regions, hover);
+        self.media_button(p, start + (bw + gap) * 3.0, by, bw, 34.0, MediaGlyph::Next, session.can_go_next, false, mide::platform::media::MediaAction::Next, regions, hover);
 
-        let shuffle = if session.shuffle { "Aleatório: ligado" } else { "Aleatório: desligado" };
-        let repeat = match session.loop_status.as_str() { "Playlist" => "Repetição: lista", "Track" => "Repetição: faixa", _ => "Repetição: desligada" };
-        let half = (pw - 36.0) / 2.0;
-        self.panel_row(p, pw, 224.0, 28.0, shuffle, regions, hover, PanelAction::Media(mide::platform::media::MediaAction::ToggleShuffle));
-        regions.last_mut().unwrap().0 = (18.0, 224.0, half, 28.0);
-        self.panel_row(p, pw, 224.0, 28.0, repeat, regions, hover, PanelAction::Media(mide::platform::media::MediaAction::CycleRepeat));
-        regions.last_mut().unwrap().0 = (18.0 + half, 224.0, half, 28.0);
-        let mut y = 264.0;
+        // Aleatório e Repetir: duas pílulas lado a lado, com ícone e nome, na cor de
+        // destaque quando ligadas (como os botões do Tocando Agora do Mac).
+        let (repeat_glyph, repeat_label) = match session.loop_status.as_str() {
+            "Track" => (MediaGlyph::RepeatOne, "Repetir faixa"),
+            "Playlist" => (MediaGlyph::Repeat, "Repetir lista"),
+            _ => (MediaGlyph::Repeat, "Repetir"),
+        };
+        let repeat_on = matches!(session.loop_status.as_str(), "Track" | "Playlist");
+        let toggles = [
+            (MediaGlyph::Shuffle, "Aleatório", session.shuffle, mide::platform::media::MediaAction::ToggleShuffle),
+            (repeat_glyph, repeat_label, repeat_on, mide::platform::media::MediaAction::CycleRepeat),
+        ];
+        let (ty, th, tgap) = (226.0, 30.0, 10.0);
+        let tw = (pw - 36.0 - tgap) / 2.0;
+        for (i, (glyph, label, on, action)) in toggles.into_iter().enumerate() {
+            let tx = 18.0 + i as f32 * (tw + tgap);
+            let index = regions.len();
+            let background = if on { pal().accent_color() } else if hover == Some(index) { pal().ink(34) } else { pal().ink(20) };
+            fill_rounded(p, tx, ty, tw, th, th / 2.0, background);
+            let color = if on { [255, 255, 255, 255] } else { pal().text };
+            // Ícone e nome centrados juntos na pílula.
+            let (icon_w, space) = (16.0, 7.0);
+            let text_w = self.text.measure(label, 12.0, FontWeight::Regular);
+            let left = tx + (tw - (icon_w + space + text_w)) / 2.0;
+            draw_media_glyph(p, glyph, left + icon_w / 2.0, ty + th / 2.0, 12.0, color);
+            self.text.draw(p, label, left + icon_w + space, ty + (th - 12.0 * 1.25) / 2.0, 12.0, FontWeight::Regular, color);
+            regions.push(((tx, ty, tw, th), PanelAction::Media(action)));
+        }
+        let mut y = ty + th + 14.0;
         if !session.tracks.is_empty() {
             self.text.draw(p, "Fila", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 20.0;
@@ -2912,6 +2973,150 @@ fn stroke_color(fg: [u8; 4], alpha: u8) -> Paint<'static> {
 }
 
 /// Ícone de Wi-Fi: leque com até 3 arcos acesos (`level` 0 a 3; `None` = desligado).
+/// Símbolos de mídia desenhados em vetor (centrados de verdade em qualquer escala,
+/// ao contrário de caracteres como "▶|", que cada fonte põe num lugar).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum MediaGlyph {
+    Previous,
+    Play,
+    Pause,
+    Stop,
+    Next,
+    Shuffle,
+    Repeat,
+    RepeatOne,
+    Note,
+}
+
+/// Desenha `glyph` centrado em (cx, cy), com `size` de altura e a cor `fg`.
+fn draw_media_glyph(p: &mut Pixmap, glyph: MediaGlyph, cx: f32, cy: f32, size: f32, fg: [u8; 4]) {
+    let paint = stroke_color(fg, 255);
+    let h = size;
+    let fill = |p: &mut Pixmap, pb: PathBuilder| {
+        if let Some(path) = pb.finish() {
+            p.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    };
+    let triangle = |pb: &mut PathBuilder, x0: f32, x1: f32| {
+        // Triângulo de x0 (base) a x1 (ponta), de altura `h`.
+        pb.move_to(x0, cy - h / 2.0);
+        pb.line_to(x1, cy);
+        pb.line_to(x0, cy + h / 2.0);
+        pb.close();
+    };
+    let bar = |pb: &mut PathBuilder, x: f32, w: f32| {
+        if let Some(r) = tiny_skia::Rect::from_xywh(x, cy - h / 2.0, w, h) {
+            pb.push_rect(r);
+        }
+    };
+    match glyph {
+        MediaGlyph::Play => {
+            let mut pb = PathBuilder::new();
+            triangle(&mut pb, cx - h * 0.38, cx + h * 0.48);
+            fill(p, pb);
+        }
+        MediaGlyph::Pause => {
+            let w = h * 0.26;
+            let mut pb = PathBuilder::new();
+            bar(&mut pb, cx - w - h * 0.1, w);
+            bar(&mut pb, cx + h * 0.1, w);
+            fill(p, pb);
+        }
+        MediaGlyph::Stop => {
+            let mut pb = PathBuilder::new();
+            if let Some(r) = tiny_skia::Rect::from_xywh(cx - h * 0.42, cy - h * 0.42, h * 0.84, h * 0.84) {
+                pb.push_rect(r);
+            }
+            fill(p, pb);
+        }
+        MediaGlyph::Next | MediaGlyph::Previous => {
+            // Dois triângulos e uma barra, espelhados para "anterior".
+            let dir = if glyph == MediaGlyph::Next { 1.0 } else { -1.0 };
+            let half = h * 0.5;
+            let mut pb = PathBuilder::new();
+            triangle(&mut pb, cx - dir * half, cx);
+            triangle(&mut pb, cx, cx + dir * half);
+            let bw = h * 0.14;
+            let bx = if dir > 0.0 { cx + half } else { cx - half - bw };
+            bar(&mut pb, bx, bw);
+            fill(p, pb);
+        }
+        MediaGlyph::Shuffle => {
+            // Duas linhas que se cruzam, com as pontas de seta à direita.
+            let w = h * 0.55;
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - w, cy - h * 0.3);
+            pb.cubic_to(cx - w * 0.2, cy - h * 0.3, cx + w * 0.2, cy + h * 0.3, cx + w, cy + h * 0.3);
+            pb.move_to(cx - w, cy + h * 0.3);
+            pb.cubic_to(cx - w * 0.2, cy + h * 0.3, cx + w * 0.2, cy - h * 0.3, cx + w, cy - h * 0.3);
+            // Pontas de seta nas duas pontas da direita.
+            let a = h * 0.2;
+            for tip_y in [cy - h * 0.3, cy + h * 0.3] {
+                pb.move_to(cx + w - a, tip_y - a);
+                pb.line_to(cx + w, tip_y);
+                pb.line_to(cx + w - a, tip_y + a);
+            }
+            if let Some(path) = pb.finish() {
+                let stroke = Stroke { width: (h * 0.13).max(1.4), line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+                p.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            }
+        }
+        MediaGlyph::Repeat | MediaGlyph::RepeatOne => {
+            // Laço retangular arredondado com uma seta em cima.
+            let (w, hh, r) = (h * 0.6, h * 0.34, h * 0.3);
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - w + r, cy - hh);
+            pb.line_to(cx + w - r * 0.2, cy - hh);
+            pb.move_to(cx + w, cy - hh + r * 0.6);
+            pb.quad_to(cx + w, cy + hh, cx + w - r, cy + hh);
+            pb.line_to(cx - w + r, cy + hh);
+            pb.quad_to(cx - w, cy + hh, cx - w, cy + hh - r);
+            pb.line_to(cx - w, cy - hh + r);
+            pb.quad_to(cx - w, cy - hh, cx - w + r, cy - hh);
+            // Ponta da seta no fim da linha de cima.
+            pb.move_to(cx + w - h * 0.24, cy - hh - h * 0.18);
+            pb.line_to(cx + w - r * 0.2, cy - hh);
+            pb.line_to(cx + w - h * 0.24, cy - hh + h * 0.18);
+            if let Some(path) = pb.finish() {
+                let stroke = Stroke { width: (h * 0.13).max(1.4), line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+                p.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            }
+            if glyph == MediaGlyph::RepeatOne {
+                // Um "1" pequeno no meio do laço: repetir só a faixa.
+                if let Some(r) = tiny_skia::Rect::from_xywh(cx - h * 0.06, cy - hh * 0.6, h * 0.12, hh * 1.2) {
+                    let mut one = PathBuilder::new();
+                    one.push_rect(r);
+                    fill(p, one);
+                }
+            }
+        }
+        MediaGlyph::Note => {
+            // Colcheia dupla: duas hastes ligadas em cima e duas cabeças ovais.
+            let (dx, top, bottom) = (h * 0.36, cy - h * 0.48, cy + h * 0.28);
+            let stem = h * 0.11;
+            let mut pb = PathBuilder::new();
+            if let Some(r) = tiny_skia::Rect::from_xywh(cx - dx, top + h * 0.08, stem, bottom - top - h * 0.08) {
+                pb.push_rect(r);
+            }
+            if let Some(r) = tiny_skia::Rect::from_xywh(cx + dx - stem, top, stem, bottom - top - h * 0.08) {
+                pb.push_rect(r);
+            }
+            // Viga inclinada entre as hastes.
+            pb.move_to(cx - dx, top + h * 0.08);
+            pb.line_to(cx + dx, top);
+            pb.line_to(cx + dx, top + h * 0.2);
+            pb.line_to(cx - dx, top + h * 0.28);
+            pb.close();
+            fill(p, pb);
+            for (hx, hy) in [(cx - dx - h * 0.1, bottom), (cx + dx - h * 0.1 - stem, bottom - h * 0.08)] {
+                if let Some(head) = tiny_skia::Rect::from_xywh(hx - h * 0.04, hy - h * 0.12, h * 0.3, h * 0.24).and_then(PathBuilder::from_oval) {
+                    p.fill_path(&head, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+        }
+    }
+}
+
 fn draw_wifi_icon(p: &mut Pixmap, cx: f32, cy: f32, level: Option<u8>, fg: [u8; 4]) {
     let base = cy + 5.0;
     for i in 0..3u8 {

@@ -2014,3 +2014,9 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - A barra superior consulta os players MPRIS ativos na sessão, prioriza o que está tocando e mostra um ícone de música; o painel envia comandos Previous, PlayPause e Next. Assim Spotify, VLC e navegadores que publicam mídia pelo MPRIS funcionam sem integração específica com cada serviço.
 - Os menus de contexto da Mesa e do Arquivos mostram apenas “Copiar” e “Recortar”. Na Mesa, os itens recortados aparecem com 48% de opacidade enquanto aguardam a colagem.
 - Unidade externa conectada durante a revisão: `/dev/sdb1`, exFAT, USB, sem ponto de montagem. A detecção está coberta por teste; o ambiente de execução isolado não disponibiliza a sessão Wayland nem o serviço D-Bus do UDisks para confirmar a exibição/montagem real.
+
+## Tocando Agora alinhado e controles rápidos na barra (2026-10-28, v0.10.5)
+
+- O painel de mídia ganhou símbolos desenhados em vetor (anterior, tocar, pausar, parar, próxima, aleatório, repetir e repetir faixa) no lugar dos caracteres de texto, que saíam desalinhados. Aleatório e Repetir, que se sobrepunham, viraram duas cápsulas lado a lado com ícone e nome centrados, azuis quando ligadas; o nome do Repetir diz o modo (Repetir, Repetir lista, Repetir faixa).
+- Na barra, ao lado da nota (que abre o painel), aparecem anterior, tocar/pausar e próxima, que mandam o comando direto ao player sem abrir o painel (pedido do usuário com a foto). Botões que o player não aceita ficam apagados.
+- Teste: `tests/apps/mpris-teste.py` é um player falso que anota os comandos recebidos; a seção `42-barra-midia` da bateria confere os três controles rápidos e a abertura do painel. Conferido em quadro a 1366x768 e em escala 1,5.
