@@ -38,6 +38,8 @@ FAIL=0
 # grava na configuração real.
 TESTCFG="$(mktemp -d)"
 export XDG_CONFIG_HOME="$TESTCFG"
+# As pastas do usuário (Documentos, Imagens...) vêm do xdg-user-dirs, como na sessão.
+[ -f "$HOME/.config/user-dirs.dirs" ] && cp "$HOME/.config/user-dirs.dirs" "$TESTCFG/"
 trap 'rm -rf "$TESTCFG"' EXIT
 
 # check "nome" "regex esperado no log" "roteiro" app...

@@ -80,11 +80,11 @@ file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a 
 # (430, 363). O documento novo vem com o nome (sem a extensão) escolhido.
 file_check "menu do fundo → Novo arquivo › Markdown com o nome digitado" '[ -f "$FDIR/leiame.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 600 450; 430 move 650 337; 450 click 430 363; 490 type leiame; 500 key enter; 540 list"
 # Menu de "Projetos" (pasta, em (581, 190)), que sobe para caber: "Comprimir" em
-# y=272, "Nova pasta aqui dentro" em y=498 e "Novo arquivo aqui dentro ›" em y=524
+# y=272, "Nova pasta aqui dentro" em y=524 e "Novo arquivo aqui dentro ›" em y=550
 # (o submenu abre à esquerda: Markdown em (450, 364)).
 file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 272; 560 list"
-file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 498; 470 type rascunhos; 490 key enter; 530 list"
-file_check "menu da pasta → Novo arquivo aqui dentro › Markdown" '[ -f "$FDIR/Projetos/Novo documento.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 581 190; 430 move 650 524; 450 click 450 364; 500 list"
+file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 524; 470 type rascunhos; 490 key enter; 530 list"
+file_check "menu da pasta → Novo arquivo aqui dentro › Markdown" '[ -f "$FDIR/Projetos/Novo documento.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 581 190; 430 move 650 550; 450 click 450 364; 500 list"
 # Barra lateral de vidro (acesso rápido): o compositor desfoca atrás da janela.
 check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
 # Vidro do menu de contexto dentro da janela (mide-ui, frost): na lista, com
