@@ -5,6 +5,7 @@
 //! Teclado: digitar busca, setas escolhem, Enter abre, Esc fecha. Clicar fora fecha.
 //! Feito com o mide-ui, como camada (`Window::overlay`).
 
+use mide::tr;
 use std::{
     error::Error,
     path::PathBuf,
@@ -110,7 +111,7 @@ impl Search {
         }
         if let Some(value) = search::calculate(q) {
             let text = search::number_text(value);
-            rows.push(Row { hit: Hit::Calc(text.clone()), icon: "mide-calculator".into(), title: format!("= {text}"), detail: "Enter copia o resultado".into() });
+            rows.push(Row { hit: Hit::Calc(text.clone()), icon: "mide-calculator".into(), title: format!("= {text}"), detail: tr!("Press Enter to copy the result").into_owned() });
         }
         // Apps com uma palavra do nome começando pela busca vêm antes das
         // Configurações; os que só contêm a busca no meio de uma palavra, depois.
@@ -120,11 +121,11 @@ impl Search {
         let app_row = |app: &DesktopApp| {
             let index = self.apps.iter().position(|a| a.id == app.id).unwrap_or(0);
             let icon = app.icon.clone().unwrap_or_else(|| "application-x-executable".into());
-            Row { hit: Hit::App(index), icon, title: app.name.clone(), detail: "Aplicativo".into() }
+            Row { hit: Hit::App(index), icon, title: app.name.clone(), detail: tr!("Application").into_owned() }
         };
         rows.extend(strong.into_iter().map(app_row));
         for (name, _, section, icon) in search::match_settings(q).into_iter().take(3) {
-            rows.push(Row { hit: Hit::Setting(section), icon: (*icon).into(), title: (*name).into(), detail: "Configurações".into() });
+            rows.push(Row { hit: Hit::Setting(section), icon: (*icon).into(), title: search::setting_name(name), detail: tr!("Settings").into_owned() });
         }
         rows.extend(weak.into_iter().map(app_row));
         let room = MAX_ROWS.saturating_sub(rows.len());
@@ -222,7 +223,7 @@ impl App for Search {
             if first {
                 ui.focus_next_input();
             }
-            ui.text_input(query, "Buscar apps, ajustes, arquivos e contas");
+            ui.text_input(query, &tr!("Search apps, settings, files and calculations"));
             for (i, row) in rows.iter().enumerate() {
                 if ui.result_row(&row.icon, &row.title, &row.detail, i == selected).clicked() {
                     clicked = Some(i);
@@ -251,5 +252,5 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Campo de busca mais alto e letra maior, como o Spotlight.
     theme.row = 44.0;
     theme.font = 15.0;
-    run(Window::new("Buscar").app_id("mide-search").overlay("mide-search").theme(theme), Search::new())
+    run(Window::new(&tr!("Search")).app_id("mide-search").overlay("mide-search").theme(theme), Search::new())
 }

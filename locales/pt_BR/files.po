@@ -1,0 +1,643 @@
+# Tradução do mide para o português do Brasil: Arquivos, área de trabalho (Mesa),
+# src/storage (Obter informações, modelos de documento) e src/applications.
+# Os textos em inglês (msgid) são os do código.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "{name} Info"
+msgstr "Informações de {name}"
+
+msgid "This item no longer exists."
+msgstr "O item não existe mais."
+
+msgid "Modified: {date}"
+msgstr "Modificado: {date}"
+
+msgid "Tags"
+msgstr "Etiquetas"
+
+msgid "Couldn’t apply the tag: {err}"
+msgstr "Não foi possível marcar a etiqueta: {err}"
+
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n} item"
+msgstr[1] "{n} itens"
+
+msgid "{bytes} bytes ({size} on disk)"
+msgstr "{bytes} bytes ({size} no disco)"
+
+msgid "Kind"
+msgstr "Tipo"
+
+msgid "Size"
+msgstr "Tamanho"
+
+msgid "Where"
+msgstr "Onde"
+
+msgctxt "Get Info"
+msgid "Copy as Pathname"
+msgstr "Copiar como nome do caminho"
+
+msgid "Created"
+msgstr "Criado"
+
+msgid "Modified"
+msgstr "Modificado"
+
+msgid "Last opened"
+msgstr "Último acesso"
+
+msgid "Dimensions"
+msgstr "Dimensões"
+
+msgid "Kind (MIME)"
+msgstr "Tipo (MIME)"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Couldn’t rename: {err}"
+msgstr "Não foi possível renomear: {err}"
+
+msgid "Add Comments"
+msgstr "Escreva um comentário"
+
+msgid "Couldn’t save the comment: {err}"
+msgstr "Não foi possível gravar o comentário: {err}"
+
+msgid "No app opens this kind of file."
+msgstr "Nenhum app abre este tipo de arquivo."
+
+msgid "Open with"
+msgstr "Abrir com"
+
+msgid "Use this app to open all documents like this one."
+msgstr "Use este app para abrir todos os documentos deste tipo."
+
+msgid "Change All…"
+msgstr "Alterar todos…"
+
+msgid "{name} opens all files of this kind."
+msgstr "{name} abre todos os arquivos deste tipo."
+
+msgid "Couldn’t change the default app: {err}"
+msgstr "Não foi possível mudar o app padrão: {err}"
+
+msgid "Read & Write"
+msgstr "Ler e gravar"
+
+msgid "Read only"
+msgstr "Somente leitura"
+
+msgid "No Access"
+msgstr "Sem acesso"
+
+msgid "{name} (owner)"
+msgstr "{name} (dono)"
+
+msgid "{name} (group)"
+msgstr "{name} (grupo)"
+
+msgid "everyone"
+msgstr "todos"
+
+msgid "Couldn’t change the permissions: {err}"
+msgstr "Não foi possível mudar as permissões: {err}"
+
+msgid "General"
+msgstr "Geral"
+
+msgid "More Info"
+msgstr "Mais informações"
+
+msgid "Name & Extension"
+msgstr "Nome e extensão"
+
+msgid "Comments"
+msgstr "Comentários"
+
+msgid "Preview"
+msgstr "Prévia"
+
+msgid "Sharing & Permissions"
+msgstr "Compartilhamento e permissões"
+
+msgid "%b %-d, %Y at %H:%M"
+msgstr "%d/%m/%Y às %H:%M"
+
+msgid "Plain Text (.txt)"
+msgstr "Texto simples (.txt)"
+
+msgid "Markdown (.md)"
+msgstr "Markdown (.md)"
+
+msgid "Word Document (.docx)"
+msgstr "Documento do Word (.docx)"
+
+msgid "Writer Document (.odt)"
+msgstr "Documento do Writer (.odt)"
+
+msgid "Rich Text (.rtf)"
+msgstr "Texto formatado (.rtf)"
+
+msgid "Excel Spreadsheet (.xlsx)"
+msgstr "Planilha do Excel (.xlsx)"
+
+msgid "Calc Spreadsheet (.ods)"
+msgstr "Planilha do Calc (.ods)"
+
+msgid "CSV Table (.csv)"
+msgstr "Tabela CSV (.csv)"
+
+msgid "JSON (.json)"
+msgstr "JSON (.json)"
+
+msgid "HTML Page (.html)"
+msgstr "Página HTML (.html)"
+
+msgid "New Document"
+msgstr "Novo documento"
+
+msgid "New Spreadsheet"
+msgstr "Nova planilha"
+
+msgid "New Table"
+msgstr "Nova tabela"
+
+msgid "New Page"
+msgstr "Nova página"
+
+msgid "New File"
+msgstr "Novo arquivo"
+
+msgid "This program came from {host}. Open it only if you trust it."
+msgstr "Este programa veio de {host}; abra só se confiar."
+
+msgid "This program came from the internet (it’s in Downloads). Open it only if you trust it."
+msgstr "Este programa veio da internet (está em Downloads); abra só se confiar."
+
+msgid "This program is in {dir}, on a USB drive or another disk. Open it only if you trust it."
+msgstr "Este programa está em {dir}, num pendrive ou em outro disco; abra só se confiar."
+
+msgid "This program came from {dir} and isn’t marked as executable. Open it only if you trust it."
+msgstr "Este programa veio de {dir} e não está marcado como executável; abra só se confiar."
+
+msgid "This shortcut is in {dir} and hasn’t been marked as trusted yet. Open it only if you trust it."
+msgstr "Este atalho está em {dir} e ainda não foi marcado como confiável; abra só se confiar."
+
+msgid "“{name}” isn’t a valid app shortcut."
+msgstr "\"{name}\" não é um atalho de app válido."
+
+msgid "“{name}” isn’t installed ({program} wasn’t found)."
+msgstr "\"{name}\" não está instalado ({program} não foi encontrado)."
+
+msgid "Couldn’t open “{name}”: {err}"
+msgstr "Não foi possível abrir \"{name}\": {err}"
+
+msgid "Couldn’t open the installer: {err}"
+msgstr "Não foi possível abrir o instalador: {err}"
+
+msgid "Run “{name}” or open it in the editor?"
+msgstr "Executar \"{name}\" ou abrir no editor?"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Open in Editor"
+msgstr "Abrir no editor"
+
+msgid "Run"
+msgstr "Executar"
+
+msgid "Install or open “{name}”?"
+msgstr "Instalar ou abrir \"{name}\"?"
+
+msgid "Install"
+msgstr "Instalar"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Open “{name}”?"
+msgstr "Abrir \"{name}\"?"
+
+msgid "{reason} Install puts the app in {folder}, in the launcher and in search."
+msgstr "{reason} Instalar põe o app em {folder}, no launcher e na busca."
+
+msgid "Install puts the app in {folder}, in the launcher and in search. Open only runs this copy."
+msgstr "Instalar põe o app em {folder}, no launcher e na busca; Abrir só roda esta cópia."
+
+msgid "This is a script: running it runs its commands."
+msgstr "É um script: executar roda os comandos dele."
+
+msgid "Couldn’t mark “{name}” as executable: {err}"
+msgstr "Não foi possível marcar \"{name}\" como executável: {err}"
+
+msgid "not an app installed by mide"
+msgstr "não é um app instalado pelo mide"
+
+msgid "{path} isn’t an AppImage"
+msgstr "{path} não é um AppImage"
+
+msgid "{name} alias"
+msgstr "{name} atalho"
+
+msgid "New Folder With Items"
+msgstr "Nova pasta com itens"
+
+msgid "untitled folder"
+msgstr "Nova pasta"
+
+msgid "New Folder with Selection ({n} Item)"
+msgid_plural "New Folder with Selection ({n} Items)"
+msgstr[0] "Nova pasta com a seleção ({n} item)"
+msgstr[1] "Nova pasta com a seleção ({n} itens)"
+
+msgid "Open {n} Item"
+msgid_plural "Open {n} Items"
+msgstr[0] "Abrir {n} item"
+msgstr[1] "Abrir {n} itens"
+
+msgid "Open With"
+msgstr "Abrir com"
+
+msgid "{name} (default)"
+msgstr "{name} (padrão)"
+
+msgid "Move {n} Item to Trash"
+msgid_plural "Move {n} Items to Trash"
+msgstr[0] "Mover {n} item para a Lixeira"
+msgstr[1] "Mover {n} itens para a Lixeira"
+
+msgid "Move to Trash"
+msgstr "Mover para a Lixeira"
+
+msgid "Get Info"
+msgstr "Obter informações"
+
+msgid "Rename…"
+msgstr "Renomear…"
+
+msgid "Compress {n} Item"
+msgid_plural "Compress {n} Items"
+msgstr[0] "Comprimir {n} item"
+msgstr[1] "Comprimir {n} itens"
+
+msgid "Compress “{name}”"
+msgstr "Comprimir \"{name}\""
+
+msgid "Duplicate"
+msgstr "Duplicar"
+
+msgid "Make Alias"
+msgstr "Criar atalho"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Cut"
+msgstr "Recortar"
+
+msgid "Tags…"
+msgstr "Etiquetas…"
+
+msgid "Eject “{name}”"
+msgstr "Ejetar \"{name}\""
+
+msgid "New Folder"
+msgstr "Nova pasta"
+
+msgid "Paste"
+msgstr "Colar"
+
+msgid "Open in Terminal"
+msgstr "Abrir no Terminal"
+
+msgid "Show in Files"
+msgstr "Mostrar no Arquivos"
+
+msgid "Clean Up"
+msgstr "Organizar"
+
+msgid "Change Wallpaper…"
+msgstr "Mudar papel de parede…"
+
+msgid "Desktop"
+msgstr "Área de trabalho"
+
+msgid "Copy as Pathname"
+msgstr "Copiar como caminho"
+
+msgid "Compressing…"
+msgstr "Compactando…"
+
+msgid "Extracting…"
+msgstr "Extraindo…"
+
+msgid "Trash"
+msgstr "Lixeira"
+
+msgid "That folder doesn’t exist."
+msgstr "Essa pasta não existe."
+
+msgid "Empty"
+msgstr "Esvaziar"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "Choose an app to open this file."
+msgstr "Escolha um app para abrir este arquivo."
+
+msgctxt "Files"
+msgid "Search Apps"
+msgstr "Buscar apps"
+
+msgid "Recommended Apps"
+msgstr "Recomendados"
+
+msgid "Other Apps"
+msgstr "Outros apps"
+
+msgid "Show All Apps"
+msgstr "Mostrar todos os apps"
+
+msgid "Always open files of this kind with this app"
+msgstr "Sempre abrir arquivos deste tipo com este app"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Put Back"
+msgstr "Restaurar"
+
+msgctxt "Files"
+msgid "Delete Immediately"
+msgstr "Apagar para sempre"
+
+msgctxt "Files"
+msgid "Empty Trash"
+msgstr "Esvaziar a Lixeira"
+
+msgid "Copy Folder Path"
+msgstr "Copiar caminho da pasta"
+
+msgid "Drop the files on a folder."
+msgstr "Solte os arquivos numa pasta."
+
+msgid "Computer"
+msgstr "Computador"
+
+msgid "No Selection"
+msgstr "Nenhum item escolhido"
+
+msgid "Information"
+msgstr "Informações"
+
+msgid "Quick Look"
+msgstr "Visualização Rápida"
+
+msgid "Open in New Window"
+msgstr "Abrir em nova janela"
+
+msgid "Other…"
+msgstr "Outro…"
+
+msgid "Extract Here"
+msgstr "Extrair aqui"
+
+msgid "Quick Actions"
+msgstr "Ações rápidas"
+
+msgid "Rotate Left"
+msgstr "Girar para a esquerda"
+
+msgid "Rotate Right"
+msgstr "Girar para a direita"
+
+msgid "Convert to PNG"
+msgstr "Converter em PNG"
+
+msgid "Convert to JPEG"
+msgstr "Converter em JPEG"
+
+msgid "New Folder Inside"
+msgstr "Nova pasta aqui dentro"
+
+msgid "New File Inside"
+msgstr "Novo arquivo aqui dentro"
+
+msgid "Move To"
+msgstr "Mover para"
+
+msgid "Copy To"
+msgstr "Copiar para"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Select All"
+msgstr "Selecionar tudo"
+
+msgid "View"
+msgstr "Visualizar"
+
+msgid "as Icons"
+msgstr "Como ícones"
+
+msgid "as List"
+msgstr "Como lista"
+
+msgid "as Columns"
+msgstr "Como colunas"
+
+msgid "Show Preview"
+msgstr "Mostrar pré-visualização"
+
+msgid "Show Hidden Files"
+msgstr "Mostrar arquivos ocultos"
+
+msgid "Hide Hidden Files"
+msgstr "Esconder arquivos ocultos"
+
+msgid "Go"
+msgstr "Ir"
+
+msgid "Back"
+msgstr "Voltar"
+
+msgid "Forward"
+msgstr "Avançar"
+
+msgid "Enclosing Folder"
+msgstr "Pasta de cima"
+
+msgid "Home"
+msgstr "Pasta pessoal"
+
+msgid "Documents"
+msgstr "Documentos"
+
+msgid "Downloads"
+msgstr "Downloads"
+
+msgid "Go to Folder…"
+msgstr "Ir para a pasta…"
+
+msgid "Favorites"
+msgstr "Favoritos"
+
+msgid "Locations"
+msgstr "Lugares"
+
+msgid "Files"
+msgstr "Arquivos"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "Rename"
+msgstr "Renomear"
+
+msgid "Go to Folder"
+msgstr "Ir para a pasta"
+
+msgid "Path (like ~/Documents)"
+msgstr "Caminho (como ~/Documentos)"
+
+msgid "Undo Move to Trash"
+msgstr "Desfazer Mover para a Lixeira"
+
+msgid "Undo Rename"
+msgstr "Desfazer Renomear"
+
+msgid "Undo Move"
+msgstr "Desfazer Mover"
+
+msgid "Undo Create"
+msgstr "Desfazer Criar"
+
+msgid "Couldn’t open the folder: {err}"
+msgstr "Não foi possível abrir a pasta: {err}"
+
+msgid "Couldn’t create it: {err}"
+msgstr "Não foi possível criar: {err}"
+
+msgid "Couldn’t duplicate: {err}"
+msgstr "Não foi possível duplicar: {err}"
+
+msgid "Couldn’t paste: {err}"
+msgstr "Não foi possível colar: {err}"
+
+msgid "Couldn’t move “{name}”: {err}"
+msgstr "Não foi possível mover \"{name}\": {err}"
+
+msgid "Couldn’t paste “{name}”: {err}"
+msgstr "Não foi possível colar \"{name}\": {err}"
+
+msgid "Couldn’t copy “{name}”: {err}"
+msgstr "Não foi possível copiar \"{name}\": {err}"
+
+msgid "{n} item copied to “{name}”."
+msgid_plural "{n} items copied to “{name}”."
+msgstr[0] "{n} item copiado para \"{name}\"."
+msgstr[1] "{n} itens copiados para \"{name}\"."
+
+msgid "{n} item moved to “{name}”."
+msgid_plural "{n} items moved to “{name}”."
+msgstr[0] "{n} item movido para \"{name}\"."
+msgstr[1] "{n} itens movidos para \"{name}\"."
+
+msgid "“{name}” is in the Trash. Put it back to open it."
+msgstr "\"{name}\" está na Lixeira. Restaure para abrir."
+
+msgid "Couldn’t move to the Trash: {err}"
+msgstr "Não foi possível mover para a Lixeira: {err}"
+
+msgid "“{name}” already exists"
+msgstr "já existe \"{name}\""
+
+msgid "Couldn’t undo everything: {err}"
+msgstr "Não foi possível desfazer tudo: {err}"
+
+msgid "Couldn’t put it back: {err}"
+msgstr "Não foi possível restaurar: {err}"
+
+msgid "Couldn’t delete: {err}"
+msgstr "Não foi possível apagar: {err}"
+
+msgid "Couldn’t empty the Trash: {err}"
+msgstr "Não foi possível esvaziar a Lixeira: {err}"
+
+msgid "Open “{name}” With"
+msgstr "Abrir \"{name}\" com"
+
+msgid "Looking for apps…"
+msgstr "Procurando apps…"
+
+msgid "No apps found."
+msgstr "Nenhum app encontrado."
+
+msgid "Couldn’t open with {app}: {err}"
+msgstr "Não foi possível abrir com {app}: {err}"
+
+msgid "Couldn’t open the info for “{name}”: {err}"
+msgstr "Não foi possível abrir as informações de \"{name}\": {err}"
+
+msgid "“{name}” Info"
+msgstr "Informações de \"{name}\""
+
+msgid "That didn’t work: {err}"
+msgstr "Não deu certo: {err}"
+
+msgid "The Trash is empty."
+msgstr "A Lixeira está vazia."
+
+msgid "No results."
+msgstr "Nada encontrado."
+
+msgid "This folder is empty."
+msgstr "Esta pasta está vazia."
+
+msgid "Date Modified"
+msgstr "Modificado"
+
+msgid "Couldn’t rename “{name}”: {err}"
+msgstr "Não foi possível renomear \"{name}\": {err}"
+
+msgid "Couldn’t move: {err}"
+msgstr "Não foi possível mover: {err}"
+
+msgid "Couldn’t make the alias: {err}"
+msgstr "Não foi possível criar o atalho: {err}"
+
+msgid "The folder “{name}” doesn’t exist."
+msgstr "A pasta \"{name}\" não existe."
+
+msgid "Couldn’t rotate: {err}"
+msgstr "Não foi possível girar: {err}"
+
+msgid "Couldn’t convert: {err}"
+msgstr "Não foi possível converter: {err}"
+
+msgid "{n} of {items} selected"
+msgid_plural "{n} of {items} selected"
+msgstr[0] "{n} de {items} escolhido"
+msgstr[1] "{n} de {items} escolhidos"
+
+msgid ", {size} available"
+msgstr ", {size} disponíveis"
+
+msgid "Icon Size"
+msgstr "Tamanho dos ícones"

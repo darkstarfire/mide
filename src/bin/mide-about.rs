@@ -4,6 +4,7 @@
 //! Configurações → Sobre. Só o botão de fechar funciona.
 
 use mide::kit::{run, App, ButtonStyle, Key, Ui, Window};
+use mide::tr;
 use tiny_skia::{Color, FillRule, GradientStop, LinearGradient, Paint, PathBuilder, Pixmap, Point, SpreadMode, Transform};
 
 /// Tamanho da janela (pontos): retrato, como a do Mac.
@@ -55,13 +56,13 @@ impl App for About {
                 let x = (ui.remaining_width() - bw) / 2.0;
                 ui.space_x(x);
                 ui.sized(bw, |ui| {
-                    if ui.button_styled("Mais informações…", ButtonStyle::Bordered).clicked() {
+                    if ui.button_styled(&tr!("More Info…"), ButtonStyle::Bordered).clicked() {
                         let _ = std::process::Command::new("mide-settings").arg("about").spawn();
                     }
                 });
             });
             ui.space(8.0);
-            ui.centered_note("O mide é criado do zero, sem código, imagens ou fontes da Apple.");
+            ui.centered_note(&tr!("mide is built from scratch, with no code, images or fonts from Apple."));
         });
     }
 }
@@ -145,6 +146,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let machine = mide::sysinfo::machine();
     tracing::info!("sobre este computador: {} ({})", machine.name, machine.subtitle);
-    let window = Window::new("Sobre este computador").app_id("mide-about").size(W as u32, H as u32).fixed_size().full_size_content();
+    let window = Window::new(&tr!("About This Computer")).app_id("mide-about").size(W as u32, H as u32).fixed_size().full_size_content();
     run(window, About { machine })
 }

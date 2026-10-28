@@ -12,7 +12,7 @@ use std::{
 use tiny_skia::Pixmap;
 
 use crate::{
-    files,
+    files, tr,
     kit::{run, App, Ui, Window, TAG_COLORS},
 };
 
@@ -22,7 +22,7 @@ pub fn run_info(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     // A mesma linha do "Obter informações" de dentro do Arquivos (a bateria confere as duas).
     tracing::info!("informações de {}", path.display());
     let app = Info::new(path);
-    let window = Window::new(&format!("Informações de {name}")).app_id("mide-files-info").size(360, 640).min_size(320, 420);
+    let window = Window::new(&tr!("{name} Info", name = name)).app_id("mide-files-info").size(360, 640).min_size(320, 420);
     run(window, app)
 }
 
@@ -95,7 +95,7 @@ impl Info {
 
     fn header(&mut self, ui: &mut Ui) {
         let Some(meta) = self.meta.clone() else {
-            ui.note("O item não existe mais.");
+            ui.note(&tr!("This item no longer exists."));
             return;
         };
         let size = if meta.is_dir() { String::new() } else { files::size_text(meta.len()) };
@@ -111,11 +111,11 @@ impl Info {
             ui.push_right(90.0);
             ui.sized(90.0, |ui| ui.strong(&size));
         });
-        ui.note(&format!("Modificado: {modified}"));
+        ui.note(&tr!("Modified: {date}", date = modified));
     }
 
     fn tags_row(&mut self, ui: &mut Ui) {
-        ui.heading("Etiquetas");
+        ui.heading(&tr!("Tags"));
         let mut toggled = None;
         ui.row(|ui| {
             for (i, c) in TAG_COLORS.iter().enumerate() {
@@ -130,7 +130,7 @@ impl Info {
         if let Some(i) = toggled {
             match files::toggle_tag(&self.path, i) {
                 Ok(()) => tracing::info!("etiqueta {} em {}", files::TAGS[i].0, self.path.display()),
-                Err(err) => self.message = Some(format!("Não foi possível marcar a etiqueta: {err}")),
+                Err(err) => self.message = Some(tr!("Couldn’t apply the tag: {err}", err = err)),
             }
             self.reload();
         }
@@ -144,40 +144,40 @@ impl Info {
         let kind = files::kind_text(&entry);
         let size = if meta.is_dir() {
             let count = std::fs::read_dir(&self.path).map(|r| r.count()).unwrap_or(0);
-            if count == 1 { "1 item".to_string() } else { format!("{count} itens") }
+            crate::i18n::trn("{n} item", "{n} items", count as u64)
         } else {
-            format!("{} bytes ({} no disco)", thousands(meta.len()), files::size_text(files::disk_usage(&meta)))
+            tr!("{bytes} bytes ({size} on disk)", bytes = thousands(meta.len()), size = files::size_text(files::disk_usage(&meta)))
         };
         let place = self.path.parent().map(|p| p.display().to_string().replace('/', " › ").trim_start_matches(" › ").to_string()).unwrap_or_default();
         let created = date_text(meta.created().ok());
         let modified = date_text(meta.modified().ok());
-        kv(ui, "Tipo", &kind);
-        kv(ui, "Tamanho", &size);
-        let r = kv(ui, "Onde", &place);
+        kv(ui, &tr!("Kind"), &kind);
+        kv(ui, &tr!("Size"), &size);
+        let r = kv(ui, &tr!("Where"), &place);
         let mut copy = false;
-        ui.context_menu(&r, |m| copy = m.item("Copiar como nome do caminho"));
+        ui.context_menu(&r, |m| copy = m.item(&crate::i18n::trc("Get Info", "Copy as Pathname")));
         if copy {
             ui.copy(&self.path.display().to_string());
         }
-        kv(ui, "Criado", &created);
-        kv(ui, "Modificado", &modified);
+        kv(ui, &tr!("Created"), &created);
+        kv(ui, &tr!("Modified"), &modified);
     }
 
     fn more(&mut self, ui: &mut Ui) {
         let Some(meta) = self.meta.clone() else {
             return;
         };
-        kv(ui, "Último acesso", &date_text(meta.accessed().ok()));
+        kv(ui, &tr!("Last opened"), &date_text(meta.accessed().ok()));
         if let Ok((w, h)) = image::image_dimensions(&self.path) {
-            kv(ui, "Dimensões", &format!("{w} × {h}"));
+            kv(ui, &tr!("Dimensions"), &format!("{w} × {h}"));
         }
         if let Some(mime) = &self.mime {
-            kv(ui, "Tipo (MIME)", mime);
+            kv(ui, &tr!("Kind (MIME)"), mime);
         }
     }
 
     fn name_section(&mut self, ui: &mut Ui) {
-        if ui.text_input(&mut self.name, "Nome").submitted() {
+        if ui.text_input(&mut self.name, &tr!("Name")).submitted() {
             let current = display_name(&self.path);
             if self.name.trim().is_empty() || self.name == current {
                 self.name = current;
@@ -187,11 +187,11 @@ impl Info {
                         tracing::info!("renomeado em Informações: {}", new_path.display());
                         self.path = new_path;
                         self.name = display_name(&self.path);
-                        ui.set_title(&format!("Informações de {}", self.name));
+                        ui.set_title(&tr!("{name} Info", name = self.name));
                         self.reload();
                     }
                     Err(err) => {
-                        self.message = Some(format!("Não foi possível renomear: {err}"));
+                        self.message = Some(tr!("Couldn’t rename: {err}", err = err));
                         self.name = current;
                     }
                 }
@@ -200,31 +200,31 @@ impl Info {
     }
 
     fn comments(&mut self, ui: &mut Ui) {
-        let r = ui.text_input(&mut self.comment, "Escreva um comentário");
+        let r = ui.text_input(&mut self.comment, &tr!("Add Comments"));
         // Grava ao apertar Enter e quando o campo perde o foco.
         if (r.submitted() || !ui.typing()) && self.comment != self.comment_saved {
             match files::set_comment(&self.path, &self.comment) {
                 Ok(()) => self.comment_saved = self.comment.clone(),
-                Err(err) => self.message = Some(format!("Não foi possível gravar o comentário: {err}")),
+                Err(err) => self.message = Some(tr!("Couldn’t save the comment: {err}", err = err)),
             }
         }
     }
 
     fn open_with(&mut self, ui: &mut Ui) {
         if self.apps.is_empty() {
-            ui.note("Nenhum app abre este tipo de arquivo.");
+            ui.note(&tr!("No app opens this kind of file."));
             return;
         }
         let names: Vec<String> = self.apps.iter().map(|(_, n)| n.clone()).collect();
         ui.card(|ui| {
-            ui.dropdown("Abrir com", &names, &mut self.app_index);
+            ui.dropdown(&tr!("Open with"), &names, &mut self.app_index);
         });
-        ui.note("Use este app para abrir todos os documentos deste tipo.");
-        if ui.button("Alterar todos…").clicked() {
+        ui.note(&tr!("Use this app to open all documents like this one."));
+        if ui.button(&tr!("Change All…")).clicked() {
             if let (Some(mime), Some((id, name))) = (&self.mime, self.apps.get(self.app_index)) {
                 match crate::default_apps::set_for_mime(mime, &format!("{id}.desktop")) {
-                    Ok(()) => self.message = Some(format!("{name} abre todos os arquivos deste tipo.")),
-                    Err(err) => self.message = Some(format!("Não foi possível mudar o app padrão: {err}")),
+                    Ok(()) => self.message = Some(tr!("{name} opens all files of this kind.", name = name)),
+                    Err(err) => self.message = Some(tr!("Couldn’t change the default app: {err}", err = err)),
                 }
             }
         }
@@ -234,7 +234,7 @@ impl Info {
         let Some(meta) = self.meta.clone() else {
             return;
         };
-        const LEVELS: [&str; 3] = ["Ler e gravar", "Somente leitura", "Sem acesso"];
+        let levels = [tr!("Read & Write"), tr!("Read only"), tr!("No Access")];
         let mode = meta.permissions().mode();
         let owner = files::account_name("/etc/passwd", meta.uid());
         let group = files::account_name("/etc/group", meta.gid());
@@ -242,13 +242,13 @@ impl Info {
             let bits = (mode >> shift) & 0o6;
             if bits & 0o2 != 0 { 0 } else if bits & 0o4 != 0 { 1 } else { 2 }
         };
-        let options: Vec<String> = LEVELS.iter().map(|s| s.to_string()).collect();
+        let options: Vec<String> = levels.iter().map(|s| s.to_string()).collect();
         let mut chosen = [level(6), level(3), level(0)];
         let before = chosen;
         ui.card(|ui| {
-            ui.dropdown(&format!("{owner} (dono)"), &options, &mut chosen[0]);
-            ui.dropdown(&format!("{group} (grupo)"), &options, &mut chosen[1]);
-            ui.dropdown("todos", &options, &mut chosen[2]);
+            ui.dropdown(&tr!("{name} (owner)", name = owner), &options, &mut chosen[0]);
+            ui.dropdown(&tr!("{name} (group)", name = group), &options, &mut chosen[1]);
+            ui.dropdown(&tr!("everyone"), &options, &mut chosen[2]);
         });
         if chosen != before {
             let mut new_mode = mode & !0o666;
@@ -262,7 +262,7 @@ impl Info {
             }
             match std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(new_mode)) {
                 Ok(()) => tracing::info!("permissões de {}: {:o}", self.path.display(), new_mode & 0o7777),
-                Err(err) => self.message = Some(format!("Não foi possível mudar as permissões: {err}")),
+                Err(err) => self.message = Some(tr!("Couldn’t change the permissions: {err}", err = err)),
             }
             self.reload();
         }
@@ -292,32 +292,32 @@ impl App for Info {
                 ui.note(message);
             }
             let mut s = std::mem::replace(&mut self.sections, Sections { general: false, more: false, name: false, comments: false, open_with: false, preview: false, sharing: false });
-            ui.disclosure("Geral", "", &mut s.general);
+            ui.disclosure(&tr!("General"), "", &mut s.general);
             if s.general {
                 self.general(ui);
             }
-            ui.disclosure("Mais informações", "", &mut s.more);
+            ui.disclosure(&tr!("More Info"), "", &mut s.more);
             if s.more {
                 self.more(ui);
             }
-            ui.disclosure("Nome e extensão", "", &mut s.name);
+            ui.disclosure(&tr!("Name & Extension"), "", &mut s.name);
             if s.name {
                 self.name_section(ui);
             }
-            ui.disclosure("Comentários", "", &mut s.comments);
+            ui.disclosure(&tr!("Comments"), "", &mut s.comments);
             if s.comments {
                 self.comments(ui);
             }
-            ui.disclosure("Abrir com", "", &mut s.open_with);
+            ui.disclosure(&tr!("Open with"), "", &mut s.open_with);
             if s.open_with {
                 self.open_with(ui);
             }
-            ui.disclosure("Prévia", "", &mut s.preview);
+            ui.disclosure(&tr!("Preview"), "", &mut s.preview);
             if s.preview {
                 let icon = if self.meta.as_ref().is_some_and(|m| m.is_dir()) { "folder" } else { "text-x-generic" };
                 ui.image_centered(self.preview.as_ref(), icon, 200);
             }
-            ui.disclosure("Compartilhamento e permissões", "", &mut s.sharing);
+            ui.disclosure(&tr!("Sharing & Permissions"), "", &mut s.sharing);
             if s.sharing {
                 self.sharing(ui);
             }
@@ -333,7 +333,7 @@ fn kv(ui: &mut Ui, key: &str, value: &str) -> crate::kit::Response {
 
 fn date_text(t: Option<std::time::SystemTime>) -> String {
     match t {
-        Some(t) => chrono::DateTime::<chrono::Local>::from(t).format("%d/%m/%Y às %H:%M").to_string(),
+        Some(t) => chrono::DateTime::<chrono::Local>::from(t).format(&tr!("%b %-d, %Y at %H:%M")).to_string(),
         None => "—".into(),
     }
 }
