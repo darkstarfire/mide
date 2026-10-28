@@ -174,7 +174,7 @@ $ESPERA_DOCK
 python3 -I '$PDIR/cliente.py' '$PASTA' '$RESPOSTA'
 EOF
     : >"$RESPOSTA"
-    MIDE_PORTAL_FORCE=1 SCENARIO_GRACE=3 timeout 150 dbus-run-session --config-file="$PDIR/bus.conf" -- tests/scenario.sh \
+    MIDE_PRIVATE_BUS=1 MIDE_PORTAL_FORCE=1 SCENARIO_GRACE=3 timeout 150 dbus-run-session --config-file="$PDIR/bus.conf" -- tests/scenario.sh \
         "600 list; 620 click 585 275; 660 click 923 565; 720 list" -- "sh '$PDIR/app.sh'" >/dev/null 2>&1
     if grep -q "^(0, {'uris': \['$URI/a.txt'\]})" "$RESPOSTA" && sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -q 'janela "Abrir pelo portal"'; then
         echo "ok    xdg-desktop-portal de verdade usa o seletor do mide (Response 0 com o arquivo)"; PASS=$((PASS + 1))
