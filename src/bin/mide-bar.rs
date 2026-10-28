@@ -21,6 +21,7 @@ use std::{
 };
 
 use chrono::{Datelike, Local, Timelike};
+use mide::tr;
 use mide::{
     calendar,
     system::{self, Status},
@@ -185,6 +186,11 @@ fn entry(label: impl Into<String>, shortcut: &str, action: Option<MenuAction>) -
     MenuItem::Entry(label.into(), shortcut.to_string(), action)
 }
 
+/// Item de submenu, com o recuo que os menus da barra usam para os submenus.
+fn sub(label: impl std::fmt::Display) -> String {
+    format!("    {label}")
+}
+
 /// Qual menu: o do sistema (marca do mide) ou um dos menus do app em foco.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MenuId {
@@ -280,8 +286,10 @@ enum PanelAction {
     Notification(usize),
 }
 
-/// Títulos dos menus do app, depois do nome dele.
-const APP_MENUS: &[(MenuId, &str)] = &[(MenuId::File, "Arquivo"), (MenuId::Edit, "Editar"), (MenuId::Window, "Janela")];
+/// Títulos dos menus do app, depois do nome dele (traduzidos).
+fn app_menus() -> [(MenuId, String); 3] {
+    [(MenuId::File, tr!("File").into_owned()), (MenuId::Edit, tr!("Edit").into_owned()), (MenuId::Window, tr!("Window").into_owned())]
+}
 
 /// Itens de cada menu. Os menus do app valem para qualquer app: as ações são feitas
 /// pelo compositor (janela, atalhos de teclado), como a barra do macOS.
@@ -290,64 +298,64 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
     let window = |what: &str| Some(MenuAction::Compositor(format!("window {what}")));
     match id {
         MenuId::System => vec![
-            entry("Sobre este computador", "", Some(MenuAction::About)),
+            entry(tr!("About This Computer"), "", Some(MenuAction::About)),
             MenuItem::Separator,
-            entry("Configurações do Sistema…", "", Some(MenuAction::Settings(""))),
+            entry(tr!("System Settings…"), "", Some(MenuAction::Settings(""))),
             MenuItem::Separator,
-            entry("Forçar encerrar o app", "", Some(MenuAction::ForceQuit)),
+            entry(tr!("Force Quit App"), "", Some(MenuAction::ForceQuit)),
             MenuItem::Separator,
-            entry("Repouso", "", Some(MenuAction::Power(system::Power::Sleep))),
-            entry("Reiniciar…", "", Some(MenuAction::Confirm(MenuId::ConfirmRestart))),
-            entry("Desligar…", "", Some(MenuAction::Confirm(MenuId::ConfirmShutdown))),
+            entry(tr!("Sleep"), "", Some(MenuAction::Power(system::Power::Sleep))),
+            entry(tr!("Restart…"), "", Some(MenuAction::Confirm(MenuId::ConfirmRestart))),
+            entry(tr!("Shut Down…"), "", Some(MenuAction::Confirm(MenuId::ConfirmShutdown))),
             MenuItem::Separator,
-            entry("Bloquear tela", "", Some(MenuAction::Power(system::Power::Lock))),
-            entry("Encerrar sessão…", "", Some(MenuAction::Confirm(MenuId::ConfirmLogout))),
+            entry(mide::i18n::trc("system menu", "Lock Screen"), "", Some(MenuAction::Power(system::Power::Lock))),
+            entry(tr!("Log Out…"), "", Some(MenuAction::Confirm(MenuId::ConfirmLogout))),
         ],
         MenuId::App => vec![
-            entry(format!("Ocultar {app}"), "", Some(MenuAction::AppWindows("hide"))),
+            entry(tr!("Hide {app}", app = app), "", Some(MenuAction::AppWindows("hide"))),
             MenuItem::Separator,
-            entry(format!("Encerrar {app}"), "", Some(MenuAction::AppWindows("close"))),
+            entry(tr!("Quit {app}", app = app), "", Some(MenuAction::AppWindows("close"))),
         ],
         MenuId::File => vec![
-            entry("Nova janela", "", Some(MenuAction::NewWindow)),
+            entry(tr!("New Window"), "", Some(MenuAction::NewWindow)),
             MenuItem::Separator,
-            entry("Fechar janela", "Ctrl+Shift+Q", window("close")),
+            entry(tr!("Close Window"), "Ctrl+Shift+Q", window("close")),
         ],
         MenuId::Edit => vec![
-            entry("Desfazer", "Ctrl+Z", keys("ctrl+z")),
-            entry("Refazer", "Ctrl+Shift+Z", keys("ctrl+shift+z")),
+            entry(tr!("Undo"), "Ctrl+Z", keys("ctrl+z")),
+            entry(tr!("Redo"), "Ctrl+Shift+Z", keys("ctrl+shift+z")),
             MenuItem::Separator,
-            entry("Recortar", "Ctrl+X", keys("ctrl+x")),
-            entry("Copiar", "Ctrl+C", keys("ctrl+c")),
-            entry("Colar", "Ctrl+V", keys("ctrl+v")),
-            entry("Selecionar tudo", "Ctrl+A", keys("ctrl+a")),
+            entry(tr!("Cut"), "Ctrl+X", keys("ctrl+x")),
+            entry(tr!("Copy"), "Ctrl+C", keys("ctrl+c")),
+            entry(tr!("Paste"), "Ctrl+V", keys("ctrl+v")),
+            entry(tr!("Select All"), "Ctrl+A", keys("ctrl+a")),
         ],
         // Como o menu Janela do Mac (o mesmo do `window_menu` do mide-ui); os submenus
         // aparecem com recuo, como os dos apps. As telas e as janelas do app entram em
         // `Bar::window_extras`.
         MenuId::Window => vec![
-            entry("Minimizar", "Super+H", window("minimize")),
-            entry("Preencher", "", window("fill")),
-            entry("Centralizar", "", window("center")),
+            entry(tr!("Minimize"), "Super+H", window("minimize")),
+            entry(tr!("Fill"), "", window("fill")),
+            entry(tr!("Center"), "", window("center")),
             MenuItem::Separator,
-            entry("Mover e redimensionar", "", None),
-            entry("    Metade esquerda", "", window("left")),
-            entry("    Metade direita", "", window("right")),
-            entry("    Metade de cima", "", window("top")),
-            entry("    Metade de baixo", "", window("bottom")),
-            entry("    Canto superior esquerdo", "", window("top-left")),
-            entry("    Canto superior direito", "", window("top-right")),
-            entry("    Canto inferior esquerdo", "", window("bottom-left")),
-            entry("    Canto inferior direito", "", window("bottom-right")),
-            entry("    Voltar ao tamanho anterior", "", window("restore")),
-            entry("Lado a lado na tela", "", None),
-            entry("    À esquerda da tela", "", window("left")),
-            entry("    À direita da tela", "", window("right")),
+            entry(tr!("Move & Resize"), "", None),
+            entry(sub(tr!("Left Half")), "", window("left")),
+            entry(sub(tr!("Right Half")), "", window("right")),
+            entry(sub(tr!("Top Half")), "", window("top")),
+            entry(sub(tr!("Bottom Half")), "", window("bottom")),
+            entry(sub(tr!("Top Left Quarter")), "", window("top-left")),
+            entry(sub(tr!("Top Right Quarter")), "", window("top-right")),
+            entry(sub(tr!("Bottom Left Quarter")), "", window("bottom-left")),
+            entry(sub(tr!("Bottom Right Quarter")), "", window("bottom-right")),
+            entry(sub(tr!("Return to Previous Size")), "", window("restore")),
+            entry(tr!("Full Screen Tile"), "", None),
+            entry(sub(tr!("Left of Screen")), "", window("left")),
+            entry(sub(tr!("Right of Screen")), "", window("right")),
             MenuItem::Separator,
-            entry("Minimizar todas", "", window("minimize-all")),
-            entry("Trazer todas para a frente", "", window("front")),
+            entry(tr!("Minimize All"), "", window("minimize-all")),
+            entry(tr!("Bring All to Front"), "", window("front")),
         ],
-        MenuId::Battery => vec![entry("Configurações de bateria…", "", Some(MenuAction::Settings("energy")))],
+        MenuId::Battery => vec![entry(tr!("Battery Settings…"), "", Some(MenuAction::Settings("energy")))],
         // Itens vêm dos layouts escolhidos (`Bar::layout_items`).
         MenuId::Layout | MenuId::Record | MenuId::MediaQuick(_) => Vec::new(),
         // Itens vêm do app (`Bar::native_items`).
@@ -441,6 +449,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         panel_room: 600.0,
         volume_sent: std::time::Instant::now(),
         menu: None,
+        tip_hover: None,
+        tip: None,
         bar_dirty: false,
         menu_dirty: false,
         glass_bar: Default::default(),
@@ -532,6 +542,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .insert_source(Timer::from_duration(Duration::from_millis(50)), move |_, _, bar| {
             bar.refresh_launcher();
             bar.refresh_tray();
+            bar.step_tip();
             if last_refresh.elapsed() >= Duration::from_millis(450) {
                 bar.refresh();
                 last_refresh = std::time::Instant::now();
@@ -613,10 +624,20 @@ fn ask_compositor(command: &str) -> Option<Vec<String>> {
     Some(lines)
 }
 
-/// Data e hora no estilo do macOS em português: "sáb 17 out  20:15".
 /// O que o relógio da barra mostra além da hora (`[clock]` no `config.toml`, escolhido
 /// em "Formato da hora…" no calendário). Por padrão, só a hora.
-const CLOCK_PARTS: &[(&str, &str)] = &[("weekday", "Dia da semana"), ("date", "Dia e mês"), ("year", "Ano"), ("seconds", "Segundos")];
+const CLOCK_PARTS: &[&str] = &["weekday", "date", "year", "seconds"];
+
+/// Nome (traduzido) de uma parte do relógio.
+fn clock_part_label(key: &str) -> String {
+    match key {
+        "weekday" => tr!("Day of the Week"),
+        "date" => tr!("Date"),
+        "year" => tr!("Year"),
+        _ => tr!("Seconds"),
+    }
+    .into_owned()
+}
 
 fn clock_part(key: &str) -> bool {
     matches!(mide::settings_file::get("clock", key), Some(mide::settings_file::Value::Bool(true)))
@@ -626,16 +647,30 @@ fn clock_text() -> String {
     clock_format(Local::now(), clock_part("weekday"), clock_part("date"), clock_part("year"), clock_part("seconds"))
 }
 
-/// "qua 18 out 2026  14:05:09", com as partes escolhidas (sempre a hora).
+/// Dia da semana curto ("Wed" / "qua"), 0 = domingo.
+fn short_weekday(from_sunday: u32) -> String {
+    use mide::i18n::trc;
+    match from_sunday % 7 {
+        0 => trc("short weekday", "Sun"),
+        1 => trc("short weekday", "Mon"),
+        2 => trc("short weekday", "Tue"),
+        3 => trc("short weekday", "Wed"),
+        4 => trc("short weekday", "Thu"),
+        5 => trc("short weekday", "Fri"),
+        _ => trc("short weekday", "Sat"),
+    }
+    .into_owned()
+}
+
+/// "Wed Oct 18 2026  14:05:09" ("qua 18 out 2026  14:05:09" em português), com as
+/// partes escolhidas (sempre a hora), como o relógio do macOS.
 fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: bool, seconds: bool) -> String {
-    const DAYS: [&str; 7] = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
-    const MONTHS: [&str; 12] = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
     let mut parts = Vec::new();
     if weekday {
-        parts.push(DAYS[now.weekday().num_days_from_monday() as usize].to_string());
+        parts.push(short_weekday(now.weekday().num_days_from_sunday()));
     }
     if date {
-        parts.push(format!("{} {}", now.day(), MONTHS[now.month0() as usize]));
+        parts.push(tr!("{month} {day}", month = calendar::month_short(now.month()), day = now.day()));
     }
     if year {
         parts.push(now.year().to_string());
@@ -960,8 +995,24 @@ struct Bar {
     menu: Option<Menu>,
     bar_dirty: bool,
     menu_dirty: bool,
+    /// Ícone da barra sob o ponteiro e desde quando (a dica aparece depois de 0,8 s).
+    tip_hover: Option<(MenuId, std::time::Instant)>,
+    /// Dica à mostra embaixo de um ícone da barra (I2).
+    tip: Option<Tip>,
     qh: QueueHandle<Bar>,
 }
+
+/// Dica de um ícone da barra (I2): camada pequena embaixo do ícone, no visual do
+/// `ui.tooltip` do mide-ui, sem receber cliques (eles passam para o que está atrás).
+struct Tip {
+    layer: LayerSurface,
+    pool: SlotPool,
+    size: (u32, u32),
+    text: String,
+}
+
+/// Quanto o ponteiro precisa parar num ícone da barra para a dica aparecer.
+const TIP_DELAY: Duration = Duration::from_millis(800);
 
 impl Bar {
     /// Com o launcher aberto, a barra fica transparente e com texto branco.
@@ -1107,7 +1158,7 @@ impl Bar {
             out.push(MenuItem::Separator);
             for (name, desc) in outputs {
                 let label = if desc.trim().is_empty() { name.clone() } else { desc };
-                out.push(entry(format!("Mover para {label}"), "", Some(MenuAction::Compositor(format!("window output={name}")))));
+                out.push(entry(tr!("Move to {screen}", screen = label), "", Some(MenuAction::Compositor(format!("window output={name}")))));
             }
         }
         let wins: Vec<(String, String, bool)> = ask_compositor("windows")
@@ -1194,7 +1245,7 @@ impl Bar {
             })
             .collect();
         items.push(MenuItem::Separator);
-        items.push(entry("Configurações de teclado…", "", Some(MenuAction::Settings("keyboard"))));
+        items.push(entry(tr!("Keyboard Settings…"), "", Some(MenuAction::Settings("keyboard"))));
         items
     }
 
@@ -1335,7 +1386,7 @@ impl Bar {
         if let (Some((was, _)), Some((now, false))) = (self.battery, battery) {
             if was > 10 && now <= 10 {
                 mide::sounds::play("battery-low");
-                mide::notify::send("Bateria", "Bateria fraca", &format!("{now}% restantes. Ligue o carregador."));
+                mide::notify::send(&tr!("Battery"), &tr!("Low Battery"), &tr!("{percent}% remaining. Plug in the charger.", percent = now));
             }
         }
         if clock != self.clock || battery != self.battery || focused != self.focused_name || focused_id != self.focused_id {
@@ -1482,7 +1533,7 @@ impl Bar {
             // Menus do próprio app (menu global).
             titles.extend(top.iter().enumerate().take(u8::MAX as usize).map(|(i, item)| (MenuId::Native(i as u8), item.label.clone(), FontWeight::Regular)));
         } else if !self.focused_id.is_empty() {
-            titles.extend(APP_MENUS.iter().map(|(id, t)| (*id, t.to_string(), FontWeight::Regular)));
+            titles.extend(app_menus().into_iter().map(|(id, t)| (id, t, FontWeight::Regular)));
         }
         for (id, title, weight) in titles {
             let tw = self.text.measure(&title, FONT, weight);
@@ -1840,8 +1891,8 @@ impl Bar {
         }
         if id == MenuId::Battery {
             if let Some((level, charging)) = self.battery {
-                let state = if charging { "carregando" } else { "na bateria" };
-                items.insert(0, entry(format!("Bateria: {level}% ({state})"), "", None));
+                let state = if charging { tr!("charging") } else { tr!("on battery") };
+                items.insert(0, entry(tr!("Battery: {level}% ({state})", level = level, state = state), "", None));
                 items.insert(1, MenuItem::Separator);
             }
         }
@@ -1924,6 +1975,138 @@ impl Bar {
             dragging_brightness: false,
         });
         self.draw_bar();
+    }
+
+    /// Texto da dica do ícone `id` da barra (só os ícones da direita, que não têm nome
+    /// escrito; os menus e o relógio não têm dica, como no macOS).
+    fn tip_text(&self, id: MenuId) -> Option<String> {
+        let on_off = |on: bool| if on { tr!("On") } else { tr!("Off") };
+        let text = match id {
+            MenuId::Control => tr!("Control Center").into_owned(),
+            MenuId::Gear => tr!("System Settings").into_owned(),
+            MenuId::Battery => {
+                let (level, charging) = self.battery?;
+                let state = if charging { tr!("charging") } else { tr!("on battery") };
+                tr!("Battery: {level}% ({state})", level = level, state = state)
+            }
+            MenuId::Record => tr!("Stop Recording").into_owned(),
+            MenuId::Layout => {
+                let layouts = mide::keyboard_layouts::configured();
+                let choice = layouts.get(self.layout_active? as usize)?;
+                tr!("Input Source: {name}", name = choice.name())
+            }
+            MenuId::Bluetooth => {
+                let on = self.status.bluetooth.as_ref().is_some_and(|(on, _)| *on);
+                tr!("Bluetooth: {state}", state = on_off(on))
+            }
+            MenuId::Wifi if self.status.wired_primary() => tr!("Ethernet: {state}", state = tr!("Connected")),
+            MenuId::Wifi => match (&self.status.wifi, self.status.active_network()) {
+                (Some((true, _)), Some(net)) => tr!("Wi-Fi: {network}", network = net.ssid),
+                (Some((true, _)), None) => tr!("Wi-Fi: {state}", state = tr!("Not connected")),
+                _ => tr!("Wi-Fi: {state}", state = tr!("Off")),
+            },
+            MenuId::Sound => match self.status.volume {
+                Some((_, true)) => tr!("Sound: {state}", state = tr!("Muted")),
+                Some((volume, false)) => tr!("Sound: {state}", state = format!("{}%", (volume * 100.0).round() as i32)),
+                None => tr!("Sound").into_owned(),
+            },
+            MenuId::Tray(i) => {
+                let item = self.tray_items.get(i as usize)?;
+                if item.title.is_empty() { item.id.clone() } else { item.title.clone() }
+            }
+            MenuId::Media => tr!("Now Playing").into_owned(),
+            MenuId::MediaQuick(0) => tr!("Previous").into_owned(),
+            MenuId::MediaQuick(1) => {
+                let playing = self.media_session.as_ref().is_some_and(|s| s.playback_status == "Playing");
+                if playing { tr!("Pause") } else { tr!("Play") }.into_owned()
+            }
+            MenuId::MediaQuick(_) => tr!("Next").into_owned(),
+            _ => return None,
+        };
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Ponteiro sobre a barra: `id` é o ícone sob ele (ou nada). Trocar de ícone
+    /// esconde a dica e começa a contar de novo.
+    fn tip_motion(&mut self, id: Option<MenuId>) {
+        if self.tip_hover.map(|(h, _)| h) == id {
+            return;
+        }
+        self.tip_hover = id.map(|id| (id, std::time::Instant::now()));
+        self.tip = None;
+    }
+
+    /// Clique na barra: a dica some e só volta depois de o ponteiro sair do ícone.
+    fn tip_pressed(&mut self) {
+        self.tip = None;
+        if let Some((_, since)) = self.tip_hover.as_mut() {
+            *since = std::time::Instant::now() + Duration::from_secs(24 * 3600);
+        }
+    }
+
+    /// A cada passo do relógio: mostra a dica quando o ponteiro parou tempo bastante.
+    fn step_tip(&mut self) {
+        if self.menu.is_some() {
+            self.tip = None;
+            return;
+        }
+        let Some((id, since)) = self.tip_hover else { return };
+        if self.tip.is_some() || std::time::Instant::now() < since + TIP_DELAY {
+            return;
+        }
+        let (Some(text), Some(center)) = (self.tip_text(id), self.anchor_of(id)) else {
+            return;
+        };
+        let theme = mide::kit::Theme::system();
+        let tw = (self.text.measure(&text, theme.font_small, FontWeight::Regular) + 16.0).ceil();
+        let size = (tw as u32 + 2, 25);
+        let x = (center - tw / 2.0).clamp(4.0, (self.width as f32 - tw - 4.0).max(4.0));
+        let surface = self.compositor.create_surface(&self.qh);
+        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-bar-tip"), None);
+        layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+        layer.set_margin(BAR_HEIGHT as i32 + 4, 0, 0, x as i32 - 1);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_size(size.0, size.1);
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            layer.wl_surface().set_input_region(Some(region.wl_region()));
+        }
+        layer.commit();
+        let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
+            return;
+        };
+        tracing::debug!("dica da barra: {text}");
+        self.tip = Some(Tip { layer, pool, size, text });
+    }
+
+    /// Desenha a dica: cápsula com a cor dos menus, cantos de 11, sombra leve e o texto
+    /// pequeno (como o `ui.tooltip` do mide-ui).
+    fn paint_tip(&mut self) {
+        let Some(tip) = self.tip.as_mut() else { return };
+        let (w, h) = tip.size;
+        let Some(mut pixmap) = Pixmap::new(w, h) else { return };
+        let theme = mide::kit::Theme::system();
+        let (bw, bh) = (w as f32 - 2.0, 22.0);
+        fill_rounded(&mut pixmap, 0.0, 2.0, bw + 2.0, bh + 1.0, 12.0, rgba(0, 0, 0, 30));
+        let m = theme.menu;
+        fill_rounded(&mut pixmap, 1.0, 1.0, bw, bh, 11.0, rgba(m[0], m[1], m[2], m[3]));
+        if let Some(path) = rounded_rect(1.5, 1.5, bw - 1.0, bh - 1.0, 10.5) {
+            let mut paint = Paint { anti_alias: true, ..Default::default() };
+            paint.set_color(if theme.dark { rgba(255, 255, 255, 30) } else { rgba(0, 0, 0, 18) });
+            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        }
+        let text = tip.text.clone();
+        self.text.draw(&mut pixmap, &text, 9.0, 1.0 + (bh - theme.font_small * 1.25) / 2.0, theme.font_small, FontWeight::Regular, theme.text);
+        let Some(tip) = self.tip.as_mut() else { return };
+        let Ok((buffer, canvas)) = tip.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        to_argb8888(&pixmap, canvas);
+        let surface = tip.layer.wl_surface();
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        if buffer.attach_to(surface).is_ok() {
+            tip.layer.commit();
+        }
     }
 
     fn close_menu(&mut self) {
@@ -2112,7 +2295,8 @@ impl Bar {
         let title = calendar::month_title(year, month);
         self.text.draw(p, &title, 16.0, 36.0, 15.0, FontWeight::Bold, pal().text);
         // Botões: ‹  Hoje  ›.
-        let buttons = [("‹", pw - 98.0, 26.0, PanelAction::PrevMonth), ("Hoje", pw - 70.0, 40.0, PanelAction::Today), ("›", pw - 28.0, 22.0, PanelAction::NextMonth)];
+        let today_label = tr!("Today");
+        let buttons = [("‹", pw - 98.0, 26.0, PanelAction::PrevMonth), (&*today_label, pw - 70.0, 40.0, PanelAction::Today), ("›", pw - 28.0, 22.0, PanelAction::NextMonth)];
         for (label, bx, bw, action) in buttons {
             if hover == Some(regions.len()) {
                 fill_rounded(p, bx, 34.0, bw, 24.0, 6.0, rgba(0, 0, 0, 22));
@@ -2123,7 +2307,7 @@ impl Bar {
             regions.push(((bx, 34.0, bw, 24.0), action));
         }
         let cell = (pw - 24.0) / 7.0;
-        for (i, wd) in calendar::WEEKDAYS.iter().enumerate() {
+        for (i, wd) in calendar::weekday_initials().iter().enumerate() {
             let ww = self.text.measure(wd, 11.5, FontWeight::Semibold);
             self.text.draw(p, wd, 12.0 + i as f32 * cell + (cell - ww) / 2.0, 68.0, 11.5, FontWeight::Semibold, pal().secondary);
         }
@@ -2147,7 +2331,7 @@ impl Bar {
         }
         let y = 98.0 + 5.0 * 30.0 + 14.0;
         Self::panel_separator(p, pw, y);
-        self.panel_row(p, pw, y + 10.0, 26.0, "Formato da hora…", regions, hover, PanelAction::ClockOptions);
+        self.panel_row(p, pw, y + 10.0, 26.0, &tr!("Clock Format…"), regions, hover, PanelAction::ClockOptions);
         let y = y + 10.0 + 26.0 + 8.0;
         self.panel_notifications(p, pw, y, regions, hover)
     }
@@ -2157,19 +2341,20 @@ impl Bar {
     fn panel_notifications(&mut self, p: &mut Pixmap, pw: f32, y: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
         Self::panel_separator(p, pw, y);
         let mut y = y + 12.0;
-        self.text.draw(p, "Notificações", 16.0, y, 13.5, FontWeight::Bold, pal().text);
+        self.text.draw(p, &tr!("Notifications"), 16.0, y, 13.5, FontWeight::Bold, pal().text);
         if !self.history.is_empty() {
-            let lw = self.text.measure("Limpar", 12.5, FontWeight::Semibold);
+            let clear = tr!("Clear");
+            let lw = self.text.measure(&clear, 12.5, FontWeight::Semibold);
             let bx = pw - 16.0 - lw;
             if hover == Some(regions.len()) {
                 fill_rounded(p, bx - 6.0, y - 2.0, lw + 12.0, 22.0, 6.0, rgba(0, 0, 0, 22));
             }
-            self.text.draw(p, "Limpar", bx, y + 1.0, 12.5, FontWeight::Semibold, pal().accent);
+            self.text.draw(p, &clear, bx, y + 1.0, 12.5, FontWeight::Semibold, pal().accent);
             regions.push(((bx - 6.0, y - 2.0, lw + 12.0, 22.0), PanelAction::ClearNotifications));
         }
         y += 26.0;
         if self.history.is_empty() {
-            self.text.draw(p, "Nenhuma notificação", 16.0, y, 12.5, FontWeight::Regular, pal().secondary);
+            self.text.draw(p, &tr!("No Notifications"), 16.0, y, 12.5, FontWeight::Regular, pal().secondary);
             return y + 26.0;
         }
         let now = std::time::SystemTime::now();
@@ -2197,7 +2382,7 @@ impl Bar {
             y += 62.0;
         }
         if self.history.len() > fits {
-            let more = format!("e mais {}", self.history.len() - fits);
+            let more = tr!("and {count} more", count = self.history.len() - fits);
             self.text.draw(p, &more, 16.0, y, 11.5, FontWeight::Regular, pal().secondary);
             y += 20.0;
         }
@@ -2206,25 +2391,25 @@ impl Bar {
 
     /// Opções do relógio da barra: o que aparece além da hora.
     fn panel_clock_options(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
-        self.text.draw(p, "Formato da hora", 16.0, 14.0, 14.0, FontWeight::Bold, pal().text);
+        self.text.draw(p, &tr!("Clock Format"), 16.0, 14.0, 14.0, FontWeight::Bold, pal().text);
         let preview = clock_text();
         self.text.draw(p, &preview, 16.0, 38.0, 12.5, FontWeight::Regular, pal().secondary);
         let mut y = 64.0;
         Self::panel_separator(p, pw, y - 8.0);
-        for (i, (key, label)) in CLOCK_PARTS.iter().enumerate() {
-            self.text.draw(p, label, 16.0, y + 6.0, FONT, FontWeight::Regular, pal().text);
+        for (i, key) in CLOCK_PARTS.iter().enumerate() {
+            self.text.draw(p, &clock_part_label(key), 16.0, y + 6.0, FONT, FontWeight::Regular, pal().text);
             draw_switch(p, pw - 54.0, y + 4.0, clock_part(key));
             regions.push(((pw - 60.0, y, 50.0, 30.0), PanelAction::ClockPart(i)));
             y += 32.0;
         }
         Self::panel_separator(p, pw, y);
-        self.panel_row(p, pw, y + 10.0, 26.0, "‹ Calendário", regions, hover, PanelAction::ClockOptions);
+        self.panel_row(p, pw, y + 10.0, 26.0, &format!("‹ {}", tr!("Calendar")), regions, hover, PanelAction::ClockOptions);
         y + 10.0 + 26.0 + 8.0
     }
 
     fn panel_sound(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
         let (volume, muted) = self.status.volume.unwrap_or((0.0, false));
-        self.panel_header(p, pw, "Som", None, regions, PanelAction::ToggleMute);
+        self.panel_header(p, pw, &tr!("Sound"), None, regions, PanelAction::ToggleMute);
         // Trilho do volume com o alto-falante à esquerda.
         draw_speaker_icon(p, 24.0, 58.0, Some((volume, muted)), pal().body);
         let (tx, tw) = (44.0, pw - 64.0);
@@ -2242,7 +2427,7 @@ impl Bar {
         }
         regions.push(((tx - 8.0, 44.0, tw + 16.0, 28.0), PanelAction::VolumeTrack));
         // "Sem som" com interruptor.
-        self.text.draw(p, "Sem som", 16.0, 86.0, FONT, FontWeight::Regular, pal().text);
+        self.text.draw(p, &tr!("Mute"), 16.0, 86.0, FONT, FontWeight::Regular, pal().text);
         draw_switch(p, pw - 54.0, 84.0, muted);
         regions.push(((pw - 60.0, 80.0, 50.0, 28.0), PanelAction::ToggleMute));
         Self::panel_separator(p, pw, 114.0);
@@ -2250,7 +2435,7 @@ impl Bar {
         let mut y = 124.0;
         let outputs = self.status.outputs.clone();
         if !outputs.is_empty() {
-            self.text.draw(p, "Saída", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            self.text.draw(p, &tr!("Output"), 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 22.0;
             for (i, device) in outputs.iter().enumerate() {
                 y = self.audio_row(p, pw, y, device, regions, hover, PanelAction::AudioOutput(i));
@@ -2261,7 +2446,7 @@ impl Bar {
         // Entrada: os microfones, do mesmo jeito.
         let inputs = self.status.inputs.clone();
         if inputs.len() > 1 {
-            self.text.draw(p, "Entrada", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            self.text.draw(p, &tr!("Input"), 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 22.0;
             for (i, device) in inputs.iter().enumerate() {
                 y = self.audio_row(p, pw, y, device, regions, hover, PanelAction::AudioInput(i));
@@ -2269,7 +2454,7 @@ impl Bar {
             Self::panel_separator(p, pw, y);
             y += 10.0;
         }
-        self.panel_row(p, pw, y, 26.0, "Configurações de som…", regions, hover, PanelAction::Settings("sound"));
+        self.panel_row(p, pw, y, 26.0, &tr!("Sound Settings…"), regions, hover, PanelAction::Settings("sound"));
         y + 26.0 + 8.0
     }
 
@@ -2290,7 +2475,7 @@ impl Bar {
 
     fn panel_media(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
         let Some(session) = self.media_session.clone() else { return 0.0 };
-        self.text.draw(p, "Reprodução", 16.0, 12.0, 14.0, FontWeight::Bold, pal().text);
+        self.text.draw(p, &tr!("Now Playing"), 16.0, 12.0, 14.0, FontWeight::Bold, pal().text);
         let identity = fit_label(&mut self.text, &session.identity, 11.5, pw - 32.0);
         self.text.draw(p, &identity, 16.0, 32.0, 11.5, FontWeight::Regular, pal().secondary);
         let art = self.media_artwork.clone();
@@ -2304,15 +2489,16 @@ impl Bar {
         }
         let text_x = 118.0;
         let max_text = pw - text_x - 16.0;
-        let title = fit_label(&mut self.text, if session.title.is_empty() { "Sem título" } else { &session.title }, 14.0, max_text);
+        let untitled = tr!("Untitled");
+        let title = fit_label(&mut self.text, if session.title.is_empty() { &untitled } else { &session.title }, 14.0, max_text);
         self.text.draw(p, &title, text_x, 62.0, 14.0, FontWeight::Semibold, pal().text);
         let artist_text = if session.artists.is_empty() { session.identity.clone() } else { session.artists.join(", ") };
         let artist = fit_label(&mut self.text, &artist_text, FONT, max_text);
         self.text.draw(p, &artist, text_x, 86.0, FONT, FontWeight::Regular, pal().text);
         let album = fit_label(&mut self.text, &session.album, 11.5, max_text);
         self.text.draw(p, &album, text_x, 107.0, 11.5, FontWeight::Regular, pal().secondary);
-        let status = match session.playback_status.as_str() { "Playing" => "Reproduzindo", "Paused" => "Pausado", _ => "Parado" };
-        self.text.draw(p, status, text_x, 127.0, 11.0, FontWeight::Regular, pal().secondary);
+        let status = match session.playback_status.as_str() { "Playing" => tr!("Playing"), "Paused" => tr!("Paused"), _ => tr!("Stopped") };
+        self.text.draw(p, &status, text_x, 127.0, 11.0, FontWeight::Regular, pal().secondary);
 
         let y = 150.0;
         let (tx, tw) = (18.0, pw - 36.0);
@@ -2340,13 +2526,13 @@ impl Bar {
         // Aleatório e Repetir: duas pílulas lado a lado, com ícone e nome, na cor de
         // destaque quando ligadas (como os botões do Tocando Agora do Mac).
         let (repeat_glyph, repeat_label) = match session.loop_status.as_str() {
-            "Track" => (MediaGlyph::RepeatOne, "Repetir faixa"),
-            "Playlist" => (MediaGlyph::Repeat, "Repetir lista"),
-            _ => (MediaGlyph::Repeat, "Repetir"),
+            "Track" => (MediaGlyph::RepeatOne, tr!("Repeat Track")),
+            "Playlist" => (MediaGlyph::Repeat, tr!("Repeat List")),
+            _ => (MediaGlyph::Repeat, tr!("Repeat")),
         };
         let repeat_on = matches!(session.loop_status.as_str(), "Track" | "Playlist");
         let toggles = [
-            (MediaGlyph::Shuffle, "Aleatório", session.shuffle, mide::platform::media::MediaAction::ToggleShuffle),
+            (MediaGlyph::Shuffle, tr!("Shuffle"), session.shuffle, mide::platform::media::MediaAction::ToggleShuffle),
             (repeat_glyph, repeat_label, repeat_on, mide::platform::media::MediaAction::CycleRepeat),
         ];
         let (ty, th, tgap) = (226.0, 30.0, 10.0);
@@ -2359,15 +2545,15 @@ impl Bar {
             let color = if on { [255, 255, 255, 255] } else { pal().text };
             // Ícone e nome centrados juntos na pílula.
             let (icon_w, space) = (16.0, 7.0);
-            let text_w = self.text.measure(label, 12.0, FontWeight::Regular);
+            let text_w = self.text.measure(&label, 12.0, FontWeight::Regular);
             let left = tx + (tw - (icon_w + space + text_w)) / 2.0;
             draw_media_glyph(p, glyph, left + icon_w / 2.0, ty + th / 2.0, 12.0, color);
-            self.text.draw(p, label, left + icon_w + space, ty + (th - 12.0 * 1.25) / 2.0, 12.0, FontWeight::Regular, color);
+            self.text.draw(p, &label, left + icon_w + space, ty + (th - 12.0 * 1.25) / 2.0, 12.0, FontWeight::Regular, color);
             regions.push(((tx, ty, tw, th), PanelAction::Media(action)));
         }
         let mut y = ty + th + 14.0;
         if !session.tracks.is_empty() {
-            self.text.draw(p, "Fila", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            self.text.draw(p, &tr!("Up Next"), 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 20.0;
             for track in session.tracks.iter().take(4) {
                 let artist = track.artists.first().map(String::as_str).unwrap_or("");
@@ -2379,7 +2565,7 @@ impl Bar {
         if !session.playlists.is_empty() {
             Self::panel_separator(p, pw, y);
             y += 8.0;
-            self.text.draw(p, "Playlists", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            self.text.draw(p, &tr!("Playlists"), 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 20.0;
             for playlist in session.playlists.iter().take(4) {
                 let label = fit_label(&mut self.text, &playlist.name, 11.5, pw - 34.0);
@@ -2389,7 +2575,7 @@ impl Bar {
         }
         if session.tracks.is_empty() && session.playlists.is_empty() {
             Self::panel_separator(p, pw, y);
-            self.text.draw(p, "Este player não compartilha a fila ou as playlists.", 16.0, y + 12.0, 11.0, FontWeight::Regular, pal().secondary);
+            self.text.draw(p, &tr!("This player doesn't share its queue or playlists."), 16.0, y + 12.0, 11.0, FontWeight::Regular, pal().secondary);
             y += 32.0;
         }
         y + 8.0
@@ -2426,7 +2612,7 @@ impl Bar {
         Self::panel_separator(p, pw, y - 6.0);
         if on {
             if networks.is_empty() {
-                self.text.draw(p, "Procurando redes…", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
+                self.text.draw(p, &tr!("Looking for networks…"), 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
                 y += 28.0;
             }
             for net in networks.iter().take(7) {
@@ -2445,7 +2631,7 @@ impl Bar {
                 y += 30.0;
             }
         } else {
-            self.text.draw(p, "Wi-Fi desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
+            self.text.draw(p, &tr!("Wi-Fi is off"), 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         }
         // Rede cabeada (como o Mac mostra a Ethernet): cada placa com cabo, o estado e
@@ -2454,7 +2640,7 @@ impl Bar {
         if !wired.is_empty() {
             Self::panel_separator(p, pw, y);
             y += 10.0;
-            self.text.draw(p, "Rede cabeada", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            self.text.draw(p, &tr!("Wired Network"), 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
             y += 22.0;
             for w in &wired {
                 let connected = w.state == system::WiredState::Connected;
@@ -2464,11 +2650,11 @@ impl Bar {
                 self.text.draw(p, "Ethernet", 50.0, y + 1.0, FONT, FontWeight::Regular, pal().text);
                 let detail = match w.state {
                     system::WiredState::Connected => match &w.address {
-                        Some(ip) => format!("Conectado · {ip}"),
-                        None => "Conectado".to_string(),
+                        Some(ip) => tr!("Connected · {ip}", ip = ip),
+                        None => tr!("Connected").into_owned(),
                     },
-                    system::WiredState::Connecting => "Conectando…".to_string(),
-                    _ => "Cabo ligado, sem conexão".to_string(),
+                    system::WiredState::Connecting => tr!("Connecting…").into_owned(),
+                    _ => tr!("Cable plugged in, not connected").into_owned(),
                 };
                 let detail = fit_label(&mut self.text, &detail, 11.0, pw - 64.0);
                 self.text.draw(p, &detail, 50.0, y + 18.0, 11.0, FontWeight::Regular, pal().secondary);
@@ -2477,7 +2663,7 @@ impl Bar {
         }
         Self::panel_separator(p, pw, y);
         y += 10.0;
-        self.panel_row(p, pw, y, 26.0, "Configurações de rede…", regions, hover, PanelAction::Settings("network"));
+        self.panel_row(p, pw, y, 26.0, &tr!("Network Settings…"), regions, hover, PanelAction::Settings("network"));
         y + 26.0 + 8.0
     }
 
@@ -2487,10 +2673,10 @@ impl Bar {
         let mut y = 46.0;
         Self::panel_separator(p, pw, y - 6.0);
         if !on {
-            self.text.draw(p, "Bluetooth desligado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
+            self.text.draw(p, &tr!("Bluetooth is off"), 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         } else if devices.is_empty() {
-            self.text.draw(p, "Nenhum aparelho pareado", 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
+            self.text.draw(p, &tr!("No paired devices"), 16.0, y + 4.0, FONT, FontWeight::Regular, pal().secondary);
             y += 28.0;
         }
         if on {
@@ -2502,16 +2688,17 @@ impl Bar {
                 fill_rounded(p, 16.0, y + 7.0, 16.0, 16.0, 8.0, if hovered { rgba(255, 255, 255, 255) } else { dot });
                 self.text.draw(p, &device.name, 42.0, y + (30.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
                 if device.connected {
-                    let lw = self.text.measure("Conectado", 11.5, FontWeight::Regular);
+                    let connected = tr!("Connected");
+                    let lw = self.text.measure(&connected, 11.5, FontWeight::Regular);
                     let dc = if hovered { [230, 236, 255, 255] } else { pal().secondary };
-                    self.text.draw(p, "Conectado", pw - 16.0 - lw, y + 8.0, 11.5, FontWeight::Regular, dc);
+                    self.text.draw(p, &connected, pw - 16.0 - lw, y + 8.0, 11.5, FontWeight::Regular, dc);
                 }
                 y += 30.0;
             }
         }
         Self::panel_separator(p, pw, y);
         y += 10.0;
-        self.panel_row(p, pw, y, 26.0, "Configurações de Bluetooth…", regions, hover, PanelAction::Settings("bluetooth"));
+        self.panel_row(p, pw, y, 26.0, &tr!("Bluetooth Settings…"), regions, hover, PanelAction::Settings("bluetooth"));
         y + 26.0 + 8.0
     }
 
@@ -2539,7 +2726,7 @@ impl Bar {
         round(p, gap + 26.0, gap + 28.0, wifi_on);
         draw_wifi_icon(p, gap + 26.0, gap + 28.0, wifi_on.then_some(3), if wifi_on { [255, 255, 255, 255] } else { dark });
         self.text.draw(p, "Wi-Fi", gap + 48.0, gap + 13.0, FONT, FontWeight::Semibold, dark);
-        let wifi_detail = if !wifi_on { "Desligado".to_string() } else { net.unwrap_or_else(|| "Sem rede".into()) };
+        let wifi_detail = if !wifi_on { tr!("Off").into_owned() } else { net.unwrap_or_else(|| tr!("Not connected").into_owned()) };
         let wifi_detail = fit_label(&mut self.text, &wifi_detail, 11.5, half - 56.0);
         self.text.draw(p, &wifi_detail, gap + 48.0, gap + 31.0, 11.5, FontWeight::Regular, gray);
         regions.push(((gap, gap, half, 52.0), PanelAction::ToggleWifi));
@@ -2547,7 +2734,7 @@ impl Bar {
         round(p, gap + 26.0, gap + 76.0, bt_on);
         draw_bluetooth_icon(p, gap + 26.0, gap + 76.0, true, if bt_on { [255, 255, 255, 255] } else { dark });
         self.text.draw(p, "Bluetooth", gap + 48.0, gap + 61.0, FONT, FontWeight::Semibold, dark);
-        self.text.draw(p, if bt_on { "Ligado" } else { "Desligado" }, gap + 48.0, gap + 79.0, 11.5, FontWeight::Regular, gray);
+        self.text.draw(p, &if bt_on { tr!("On") } else { tr!("Off") }, gap + 48.0, gap + 79.0, 11.5, FontWeight::Regular, gray);
         regions.push(((gap, gap + 52.0, half, 52.0), PanelAction::ToggleBluetooth));
         // Ladrilho da direita: Não perturbe.
         let dnd = dnd_on();
@@ -2555,8 +2742,8 @@ impl Bar {
         tile(p, rx, gap, half, 104.0);
         round(p, rx + 26.0, gap + 52.0, dnd);
         draw_moon_icon(p, rx + 26.0, gap + 52.0, if dnd { [255, 255, 255, 255] } else { dark });
-        self.text.draw(p, "Não", rx + 48.0, gap + 37.0, FONT, FontWeight::Semibold, dark);
-        self.text.draw(p, "perturbe", rx + 48.0, gap + 54.0, FONT, FontWeight::Semibold, dark);
+        self.text.draw(p, &mide::i18n::trc("Do Not Disturb, first line", "Do Not"), rx + 48.0, gap + 37.0, FONT, FontWeight::Semibold, dark);
+        self.text.draw(p, &mide::i18n::trc("Do Not Disturb, second line", "Disturb"), rx + 48.0, gap + 54.0, FONT, FontWeight::Semibold, dark);
         regions.push(((rx, gap, half, 104.0), PanelAction::ToggleDnd));
         let mut y = gap + 104.0 + gap;
         // Trilhos: brilho (se houver controle) e som.
@@ -2583,38 +2770,39 @@ impl Bar {
             regions.push(((tx - 8.0, ty - 3.0, tw + 16.0, th + 6.0), action));
         };
         if let Some(level) = self.status.brightness {
-            slider(self, p, y, "Tela", level, PanelAction::BrightnessTrack);
+            slider(self, p, y, &tr!("Display"), level, PanelAction::BrightnessTrack);
             y += 60.0 + gap;
         }
         if let Some((volume, muted)) = self.status.volume {
-            slider(self, p, y, "Som", if muted { 0.0 } else { volume.clamp(0.0, 1.0) }, PanelAction::VolumeTrack);
+            slider(self, p, y, &tr!("Sound"), if muted { 0.0 } else { volume.clamp(0.0, 1.0) }, PanelAction::VolumeTrack);
             y += 60.0 + gap;
         }
         Self::panel_separator(p, pw, y - 6.0);
-        self.panel_row(p, pw, y + 4.0, 26.0, "Configurações do Sistema…", regions, hover, PanelAction::Settings(""));
+        self.panel_row(p, pw, y + 4.0, 26.0, &tr!("System Settings…"), regions, hover, PanelAction::Settings(""));
         y + 4.0 + 26.0 + 8.0
     }
 
     /// Confirmação antes de reiniciar, desligar ou encerrar a sessão.
     fn panel_confirm(&mut self, p: &mut Pixmap, pw: f32, id: MenuId, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
         let (title, button) = match id {
-            MenuId::ConfirmRestart => ("Reiniciar o computador agora?", "Reiniciar"),
-            MenuId::ConfirmShutdown => ("Desligar o computador agora?", "Desligar"),
-            _ => ("Encerrar a sessão agora?", "Encerrar sessão"),
+            MenuId::ConfirmRestart => (tr!("Restart your computer now?"), tr!("Restart")),
+            MenuId::ConfirmShutdown => (tr!("Shut down your computer now?"), tr!("Shut Down")),
+            _ => (tr!("Log out now?"), tr!("Log Out")),
         };
-        self.text.draw(p, title, 18.0, 18.0, 14.5, FontWeight::Bold, pal().text);
-        self.text.draw(p, "Os apps abertos serão fechados.", 18.0, 42.0, 12.5, FontWeight::Regular, pal().secondary);
+        self.text.draw(p, &title, 18.0, 18.0, 14.5, FontWeight::Bold, pal().text);
+        self.text.draw(p, &tr!("Open apps will be closed."), 18.0, 42.0, 12.5, FontWeight::Regular, pal().secondary);
         let (bw, by) = ((pw - 48.0) / 2.0, 74.0);
         let cancel_hover = hover == Some(regions.len());
         fill_rounded(p, 18.0, by, bw, 30.0, 8.0, pal().ink(if cancel_hover { 36 } else { 20 }));
-        let cw = self.text.measure("Cancelar", FONT, FontWeight::Regular);
-        self.text.draw(p, "Cancelar", 18.0 + (bw - cw) / 2.0, by + 6.0, FONT, FontWeight::Regular, pal().text);
+        let cancel = tr!("Cancel");
+        let cw = self.text.measure(&cancel, FONT, FontWeight::Regular);
+        self.text.draw(p, &cancel, 18.0 + (bw - cw) / 2.0, by + 6.0, FONT, FontWeight::Regular, pal().text);
         regions.push(((18.0, by, bw, 30.0), PanelAction::ConfirmNo));
         let ok_hover = hover == Some(regions.len());
         let ox = 30.0 + bw;
         fill_rounded(p, ox, by, bw, 30.0, 8.0, if ok_hover { pal().accent_pressed() } else { pal().accent_color() });
-        let ow = self.text.measure(button, FONT, FontWeight::Semibold);
-        self.text.draw(p, button, ox + (bw - ow) / 2.0, by + 6.0, FONT, FontWeight::Semibold, [255, 255, 255, 255]);
+        let ow = self.text.measure(&button, FONT, FontWeight::Semibold);
+        self.text.draw(p, &button, ox + (bw - ow) / 2.0, by + 6.0, FONT, FontWeight::Semibold, [255, 255, 255, 255]);
         regions.push(((ox, by, bw, 30.0), PanelAction::ConfirmYes));
         by + 30.0 + 18.0
     }
@@ -2827,7 +3015,8 @@ impl Bar {
                 tracing::info!("notificações limpas");
             }
             PanelAction::ClockPart(i) => {
-                let (key, label) = CLOCK_PARTS[i];
+                let key = CLOCK_PARTS[i];
+                let label = clock_part_label(key);
                 let on = !clock_part(key);
                 match mide::settings_file::set("clock", key, on.then_some(mide::settings_file::Value::Bool(true))) {
                     Ok(()) => tracing::info!("relógio: {label} {}", if on { "ligado" } else { "desligado" }),
@@ -3376,7 +3565,9 @@ impl OutputHandler for Bar {
 
 impl LayerShellHandler for Bar {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if layer == &self.layer {
+        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+            self.tip = None;
+        } else if layer == &self.layer {
             self.exit = true;
         } else {
             self.menu = None;
@@ -3391,7 +3582,9 @@ impl LayerShellHandler for Bar {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        if layer == &self.layer {
+        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+            self.paint_tip();
+        } else if layer == &self.layer {
             self.width = configure.new_size.0;
             self.configured = true;
             self.draw_bar();
@@ -3431,6 +3624,15 @@ impl PointerHandler for Bar {
             let (x, y) = event.position;
             let on_menu = self.menu.as_ref().is_some_and(|m| m.layer.wl_surface() == &event.surface);
             let on_bar = self.layer.wl_surface() == &event.surface;
+            // Dicas dos ícones da barra (I2): contam enquanto o ponteiro para num ícone.
+            if on_bar {
+                match event.kind {
+                    PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => self.tip_motion(self.title_at(x)),
+                    PointerEventKind::Leave { .. } => self.tip_motion(None),
+                    PointerEventKind::Press { .. } => self.tip_pressed(),
+                    _ => {}
+                }
+            }
             match event.kind {
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } if on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
                     self.custom_motion(x, y);
@@ -3551,6 +3753,7 @@ mod tests {
 
     #[test]
     fn relogio_mostra_so_o_escolhido() {
+        mide::i18n::set_language("pt_BR");
         let now = Local.with_ymd_and_hms(2026, 10, 21, 9, 5, 7).unwrap();
         assert_eq!(clock_format(now, false, false, false, false), "09:05");
         assert_eq!(clock_format(now, false, false, false, true), "09:05:07");

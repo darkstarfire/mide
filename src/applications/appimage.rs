@@ -663,14 +663,14 @@ pub fn install(src: &Path, meta: &Meta, dirs: &Dirs, progress: &mut dyn FnMut(f3
 /// com a marca).
 pub fn uninstall(desktop: &Path, dirs: &Dirs) -> std::io::Result<Installed> {
     let is_ours = desktop.file_name().is_some_and(|n| n.to_string_lossy().starts_with(DESKTOP_PREFIX));
-    let info = read_installed(desktop).filter(|_| is_ours).ok_or_else(|| std::io::Error::other("não é um app instalado pelo mide"))?;
+    let info = read_installed(desktop).filter(|_| is_ours).ok_or_else(|| std::io::Error::other(crate::tr!("not an app installed by mide").into_owned()))?;
     // Só um AppImage numa pasta de apps vai para a Lixeira: a marca do atalho pode ter
     // sido trocada para apontar para qualquer arquivo.
     if info.appimage.is_file() && !in_managed_dir(dirs, &info.appimage) {
         tracing::warn!("AppImage fora da pasta de apps fica onde está: {}", info.appimage.display());
     } else if info.appimage.is_file() {
         if appimage_type(&info.appimage).is_none() {
-            return Err(std::io::Error::other(format!("{} não é um AppImage", info.appimage.display())));
+            return Err(std::io::Error::other(crate::tr!("{path} isn’t an AppImage", path = info.appimage.display())));
         }
         places::move_to_trash(&info.appimage, &dirs.trash())?;
         tracing::info!("AppImage na Lixeira: {}", info.appimage.display());

@@ -220,12 +220,13 @@ impl Layout {
     }
 }
 
-/// Nome de uma pasta nova com dois apps: o grupo deles, se for o mesmo, senão "Pasta".
+/// Nome de uma pasta nova com dois apps: o grupo deles, se for o mesmo, senão "Folder"
+/// (traduzido; o nome é gravado como o usuário o viu).
 pub fn folder_name_for(a: &App, b: &App) -> String {
     if a.group == b.group && a.group != "Outros" {
         a.group.to_string()
     } else {
-        "Pasta".to_string()
+        crate::tr!("Folder").into_owned()
     }
 }
 
@@ -317,6 +318,7 @@ mod tests {
 
     #[test]
     fn nome_da_pasta_nova() {
+        crate::i18n::set_language("pt_BR");
         assert_eq!(folder_name_for(&app("a", "Jogos"), &app("b", "Jogos")), "Jogos");
         assert_eq!(folder_name_for(&app("a", "Jogos"), &app("b", "Internet")), "Pasta");
     }

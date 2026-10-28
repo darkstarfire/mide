@@ -16,6 +16,7 @@
 //! - Lixeira: clique abre a Lixeira no gerenciador de arquivos; clique direito tem
 //!   "Esvaziar Lixeira…", que pede confirmação antes de apagar.
 
+use mide::tr;
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -329,6 +330,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         trash_items,
         menu: None,
         bounce: None,
+        tip: None,
         text: None,
         text_ready: Some(warm_text()),
         file_icons: HashMap::new(),
@@ -575,6 +577,8 @@ struct Dock {
     /// Ícone pulando enquanto o app abre (como no Mac), numa camada própria acima da
     /// dock, até a janela dele aparecer.
     bounce: Option<Bounce>,
+    /// Nome do ícone sob o ponteiro, acima da dock (como no Mac; I2).
+    tip: Option<Tip>,
     /// Texto dos painéis; as fontes só são carregadas no primeiro painel.
     text: Option<Text>,
     /// Fontes carregando em segundo plano (carregar leva ~60 ms: no primeiro menu,
@@ -1079,6 +1083,16 @@ const BOUNCE_PERIOD: f32 = 0.62;
 const BOUNCE_MAX: Duration = Duration::from_secs(10);
 
 /// Ícone pulando: a camada, o app (pelo id do `.desktop`) e o começo.
+/// Nome do ícone sob o ponteiro, numa camada acima da dock que não recebe cliques.
+struct Tip {
+    layer: LayerSurface,
+    pool: SlotPool,
+    size: (u32, u32),
+    /// Onde fica o centro do nome, na camada.
+    center: f32,
+    text: String,
+}
+
 struct Bounce {
     layer: LayerSurface,
     pool: SlotPool,
@@ -1616,9 +1630,9 @@ impl Dock {
             MenuKind::Downloads => {
                 let items = places::recent_items(&downloads, MAX_RECENT);
                 tracing::info!("pilha Downloads aberta: {} item(ns) em {}", items.len(), downloads.display());
-                let mut rows = vec![Row::new(RowKind::Header, "Downloads", RowAction::None)];
+                let mut rows = vec![Row::new(RowKind::Header, tr!("Downloads"), RowAction::None)];
                 if items.is_empty() {
-                    rows.push(Row::new(RowKind::Note, "Nenhum item", RowAction::None));
+                    rows.push(Row::new(RowKind::Note, tr!("No Items"), RowAction::None));
                 }
                 for item in items {
                     let path = item.path.to_string_lossy().into_owned();
@@ -1634,7 +1648,7 @@ impl Dock {
                 rows.push(Row::separator());
                 rows.push(Row::new(
                     RowKind::Item,
-                    "Abrir no Gerenciador de Arquivos",
+                    tr!("Open in Files"),
                     RowAction::Open(downloads.to_string_lossy().into_owned()),
                 ));
                 rows
@@ -1643,9 +1657,9 @@ impl Dock {
                 let trash = places::trash_dir();
                 let items = places::trash_items(&trash, MAX_RECENT);
                 tracing::info!("lista da Lixeira aberta: {} item(ns)", self.trash_items);
-                let mut rows = vec![Row::new(RowKind::Header, "Lixeira", RowAction::None)];
+                let mut rows = vec![Row::new(RowKind::Header, tr!("Trash"), RowAction::None)];
                 if items.is_empty() {
-                    rows.push(Row::new(RowKind::Note, "A Lixeira está vazia", RowAction::None));
+                    rows.push(Row::new(RowKind::Note, tr!("The Trash is empty"), RowAction::None));
                 }
                 for item in items {
                     let as_item = places::Item {
@@ -1666,9 +1680,9 @@ impl Dock {
                     });
                 }
                 rows.push(Row::separator());
-                rows.push(Row::new(RowKind::Item, "Abrir no Gerenciador de Arquivos", RowAction::Open("trash:///".into())));
+                rows.push(Row::new(RowKind::Item, tr!("Open in Files"), RowAction::Open("trash:///".into())));
                 let empty = if self.trash_items > 0 { RowAction::AskEmptyTrash } else { RowAction::None };
-                rows.push(Row::new(RowKind::Item, "Esvaziar Lixeira…", empty));
+                rows.push(Row::new(RowKind::Item, tr!("Empty Trash…"), empty));
                 rows
             }
             MenuKind::App(index) => {
@@ -1689,11 +1703,11 @@ impl Dock {
                 }
                 // Sem `.desktop` não dá para abrir de novo nem manter na dock.
                 if !app.exec.is_empty() {
-                    rows.push(Row::new(RowKind::Item, if running { "Nova janela" } else { "Abrir" }, RowAction::NewWindow(app.id.clone())));
+                    rows.push(Row::new(RowKind::Item, if running { tr!("New Window") } else { tr!("Open") }, RowAction::NewWindow(app.id.clone())));
                     rows.push(Row::separator());
                     rows.push(Row::new(
                         RowKind::Item,
-                        if app.pinned { "Remover da Dock" } else { "Manter na Dock" },
+                        if app.pinned { tr!("Remove from Dock") } else { tr!("Keep in Dock") },
                         RowAction::TogglePin(app.id.clone()),
                     ));
                 }
@@ -1701,8 +1715,8 @@ impl Dock {
                     if rows.last().is_some_and(|r| r.kind != RowKind::Separator) && rows.len() > 1 {
                         rows.push(Row::separator());
                     }
-                    rows.push(Row::new(RowKind::Item, "Ocultar", RowAction::Hide(app.match_ids.clone())));
-                    rows.push(Row::new(RowKind::Item, "Encerrar", RowAction::Quit(app.match_ids.clone())));
+                    rows.push(Row::new(RowKind::Item, tr!("Hide"), RowAction::Hide(app.match_ids.clone())));
+                    rows.push(Row::new(RowKind::Item, mide::i18n::trc("Dock", "Quit"), RowAction::Quit(app.match_ids.clone())));
                 }
                 rows
             }
@@ -1719,51 +1733,51 @@ impl Dock {
                 tracing::info!("menu do arquivo {name} aberto");
                 vec![
                     Row::new(RowKind::Header, name, RowAction::None),
-                    Row::new(RowKind::Item, "Abrir", RowAction::Open(path.clone())),
-                    Row::new(RowKind::Item, "Mostrar na pasta", RowAction::Open(folder)),
-                    Row::new(RowKind::Item, "Copiar caminho", RowAction::CopyPath(path.clone())),
+                    Row::new(RowKind::Item, tr!("Open"), RowAction::Open(path.clone())),
+                    Row::new(RowKind::Item, tr!("Show in Enclosing Folder"), RowAction::Open(folder)),
+                    Row::new(RowKind::Item, tr!("Copy Path"), RowAction::CopyPath(path.clone())),
                     Row::separator(),
-                    Row::new(RowKind::Danger, "Mover para a Lixeira", RowAction::Trash(path)),
+                    Row::new(RowKind::Danger, tr!("Move to Trash"), RowAction::Trash(path)),
                 ]
             }
             MenuKind::TrashItem => {
                 tracing::info!("menu do item apagado {target} aberto");
                 vec![
                     Row::new(RowKind::Header, target, RowAction::None),
-                    Row::new(RowKind::Item, "Restaurar", RowAction::Restore(target.to_string())),
+                    Row::new(RowKind::Item, tr!("Put Back"), RowAction::Restore(target.to_string())),
                     Row::separator(),
-                    Row::new(RowKind::Danger, "Apagar permanentemente", RowAction::DeleteForever(target.to_string())),
+                    Row::new(RowKind::Danger, tr!("Delete Immediately"), RowAction::DeleteForever(target.to_string())),
                 ]
             }
             MenuKind::Launchpad => vec![
-                Row::new(RowKind::Item, "Abrir o Launchpad", RowAction::Open("launcher:".into())),
+                Row::new(RowKind::Item, tr!("Open Launchpad"), RowAction::Open("launcher:".into())),
                 Row::separator(),
-                Row::new(RowKind::Item, "Ajustes da Dock…", RowAction::Settings("dock")),
+                Row::new(RowKind::Item, tr!("Dock Settings…"), RowAction::Settings("dock")),
             ],
             MenuKind::DownloadsContext => vec![Row::new(
                 RowKind::Item,
-                "Abrir pasta Downloads",
+                tr!("Open Downloads Folder"),
                 RowAction::Open(downloads.to_string_lossy().into_owned()),
             )],
             MenuKind::TrashContext => {
                 tracing::info!("menu da Lixeira aberto ({} item(ns))", self.trash_items);
                 let empty_action = if self.trash_items > 0 { RowAction::AskEmptyTrash } else { RowAction::None };
                 vec![
-                    Row::new(RowKind::Item, "Abrir", RowAction::Open("trash:///".into())),
+                    Row::new(RowKind::Item, tr!("Open"), RowAction::Open("trash:///".into())),
                     Row::separator(),
-                    Row::new(RowKind::Item, "Esvaziar Lixeira…", empty_action),
+                    Row::new(RowKind::Item, tr!("Empty Trash…"), empty_action),
                 ]
             }
             MenuKind::ConfirmEmpty => {
                 let n = self.trash_items;
-                let what = if n == 1 { "1 item será apagado".to_string() } else { format!("{n} itens serão apagados") };
+                let what = mide::i18n::trn("{n} item will be deleted forever.", "{n} items will be deleted forever.", n as u64);
                 vec![
-                    Row::new(RowKind::Header, "Esvaziar a Lixeira?", RowAction::None),
-                    Row::new(RowKind::Note, format!("{what} para sempre."), RowAction::None),
-                    Row::new(RowKind::Note, "Não dá para desfazer.", RowAction::None),
+                    Row::new(RowKind::Header, tr!("Empty the Trash?"), RowAction::None),
+                    Row::new(RowKind::Note, what, RowAction::None),
+                    Row::new(RowKind::Note, tr!("You can't undo this action."), RowAction::None),
                     Row::separator(),
-                    Row::new(RowKind::Danger, "Esvaziar Lixeira", RowAction::EmptyTrash),
-                    Row::new(RowKind::Item, "Cancelar", RowAction::Close),
+                    Row::new(RowKind::Danger, tr!("Empty Trash"), RowAction::EmptyTrash),
+                    Row::new(RowKind::Item, tr!("Cancel"), RowAction::Close),
                 ]
             }
         }
@@ -2188,6 +2202,7 @@ impl Dock {
         }
         self.hover_index = index;
         self.hover_gen += 1;
+        self.update_tip();
         let Some(index) = index.filter(|i| *i < self.items.len()) else {
             return;
         };
@@ -2208,10 +2223,94 @@ impl Dock {
         });
     }
 
+    /// Nome do ícone `index` da dock, como aparece em cima dele.
+    fn tip_name(&self, index: usize) -> Option<String> {
+        match index {
+            LAUNCHER => Some("Launchpad".to_string()),
+            i if i < self.items.len() => Some(self.items[i].name.clone()),
+            i if i - self.items.len() == STACK_DOWNLOADS => Some(tr!("Downloads").into_owned()),
+            i if i - self.items.len() == STACK_TRASH => Some(tr!("Trash").into_owned()),
+            _ => None,
+        }
+    }
+
+    /// Mostra (ou troca, ou esconde) o nome do ícone sob o ponteiro, acima da dock.
+    /// Some com um painel aberto, um clique, um arrasto ou as prévias das janelas.
+    fn update_tip(&mut self) {
+        let shown = self.hover_index.filter(|_| self.menu.is_none() && self.press.is_none() && !self.previews_shown);
+        let Some((index, name)) = shown.and_then(|i| Some((i, self.tip_name(i)?))) else {
+            self.tip = None;
+            return;
+        };
+        if self.tip.as_ref().is_some_and(|t| t.text == name) {
+            return;
+        }
+        self.tip = None;
+        // As fontes chegam da thread de aquecimento; até lá, sem nome.
+        self.poll_text();
+        let Some(text) = self.text.as_mut() else { return };
+        let tw = (text.measure(&name, 13.0, FontWeight::Regular) + 20.0).ceil();
+        let width = self.width.max(tw as u32 + 8);
+        let offset = (width - self.width) as f32 / 2.0;
+        // Centro do ícone: o ampliado, se a ampliação estiver aberta.
+        let icon_center = match index {
+            LAUNCHER => self.zoom_slots.iter().find(|s| s.0 == LAUNCHER).map(|s| s.1 + s.2 / 2.0).unwrap_or((PADDING + icon_size() / 2) as f32),
+            i => self.zoom_slots.iter().find(|s| s.0 == i).map(|s| s.1 + s.2 / 2.0).unwrap_or((icon_x(&self.items, i) + icon_size() / 2) as f32),
+        };
+        let center = (offset + icon_center).clamp(tw / 2.0 + 2.0, width as f32 - tw / 2.0 - 2.0);
+        let size = (width, 28);
+        let lift = if self.zoom.is_some() { self.magnify.unwrap_or(icon_size()).saturating_sub(icon_size()) } else { 0 };
+        let surface = self.compositor.create_surface(&self.qh);
+        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-tip"), None);
+        layer.set_anchor(Anchor::BOTTOM);
+        layer.set_margin(0, 0, BOTTOM_MARGIN + (dock_height() + lift) as i32 + 4, 0);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_size(size.0, size.1);
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
+            layer.wl_surface().set_input_region(Some(region.wl_region()));
+        }
+        layer.commit();
+        let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
+            return;
+        };
+        self.tip = Some(Tip { layer, pool, size, center, text: name });
+    }
+
+    /// Desenha o nome: cápsula com a cor dos menus e o texto, como as dicas do mide-ui.
+    fn paint_tip(&mut self) {
+        let Some(tip) = self.tip.as_mut() else { return };
+        let Some(text) = self.text.as_mut() else { return };
+        let (w, h) = tip.size;
+        let Some(mut pixmap) = Pixmap::new(w, h) else { return };
+        let theme = mide::kit::Theme::system();
+        let tw = (text.measure(&tip.text, 13.0, FontWeight::Regular) + 20.0).ceil();
+        let (x, y, bh) = (tip.center - tw / 2.0, 2.0, 24.0);
+        mide::ui::draw::fill_rounded(&mut pixmap, x - 1.0, y + 1.0, tw + 2.0, bh + 2.0, 12.0, Color::from_rgba8(0, 0, 0, 34));
+        let m = theme.menu;
+        mide::ui::draw::fill_rounded(&mut pixmap, x, y, tw, bh, 12.0, Color::from_rgba8(m[0], m[1], m[2], m[3]));
+        if let Some(path) = mide::ui::draw::rounded_rect(x + 0.5, y + 0.5, tw - 1.0, bh - 1.0, 11.5) {
+            let mut paint = Paint { anti_alias: true, ..Default::default() };
+            paint.set_color(if theme.dark { Color::from_rgba8(255, 255, 255, 30) } else { Color::from_rgba8(0, 0, 0, 18) });
+            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        }
+        text.draw(&mut pixmap, &tip.text, x + 10.0, y + (bh - 13.0 * 1.25) / 2.0, 13.0, FontWeight::Regular, theme.text);
+        let Ok((buffer, canvas)) = tip.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        mide::ui::draw::to_argb8888(&pixmap, canvas);
+        let surface = tip.layer.wl_surface();
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        if buffer.attach_to(surface).is_ok() {
+            tip.layer.commit();
+        }
+    }
+
     fn show_previews(&mut self, index: usize) {
         let Some(app) = self.items.get(index).cloned() else {
             return;
         };
+        self.tip = None;
         let windows = app_windows(&app);
         if windows.is_empty() {
             return;
@@ -2273,12 +2372,12 @@ fn warm_text() -> std::sync::mpsc::Receiver<Text> {
         let mut text = Text::new();
         let mut scratch = Pixmap::new(200, 40).unwrap();
         for (label, size, weight) in [
-            ("Abrir Esvaziar Lixeira… Remover da Dock Encerrar", 13.0, FontWeight::Regular),
-            ("Manter na Dock Ocultar Nova janela Mostrar na pasta", 13.0, FontWeight::Regular),
-            ("Downloads Lixeira", 13.0, FontWeight::Semibold),
-            ("há 2 min 0123456789", 11.5, FontWeight::Regular),
+            (format!("{} {} {} {}", tr!("Open"), tr!("Empty Trash…"), tr!("Remove from Dock"), mide::i18n::trc("Dock", "Quit")), 13.0, FontWeight::Regular),
+            (format!("{} {} {} {}", tr!("Keep in Dock"), tr!("Hide"), tr!("New Window"), tr!("Show in Enclosing Folder")), 13.0, FontWeight::Regular),
+            (format!("{} {}", tr!("Downloads"), tr!("Trash")), 13.0, FontWeight::Semibold),
+            ("2 min 0123456789".to_string(), 11.5, FontWeight::Regular),
         ] {
-            text.draw(&mut scratch, label, 0.0, 0.0, size, weight, [0, 0, 0, 255]);
+            text.draw(&mut scratch, &label, 0.0, 0.0, size, weight, [0, 0, 0, 255]);
         }
         tracing::debug!("fontes da dock prontas em {:.0} ms", start.elapsed().as_secs_f32() * 1000.0);
         let _ = tx.send(text);
@@ -2404,6 +2503,10 @@ impl OutputHandler for Dock {
 
 impl LayerShellHandler for Dock {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+            self.tip = None;
+            return;
+        }
         if self.zoom.as_ref().is_some_and(|z| &z.layer == layer) {
             self.zoom = None;
             return;
@@ -2427,6 +2530,10 @@ impl LayerShellHandler for Dock {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
+        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+            self.paint_tip();
+            return;
+        }
         if let Some(zoom) = self.zoom.as_mut().filter(|z| &z.layer == layer) {
             zoom.configured = true;
             self.paint_zoom();
@@ -2536,6 +2643,7 @@ impl PointerHandler for Dock {
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT || button == BTN_RIGHT => {
                     self.hide_previews();
+                    self.tip = None;
                     if button == BTN_RIGHT {
                         // Clique direito sempre abre o menu de contexto do ícone.
                         match self.icon_at(event.position.0) {
@@ -2586,6 +2694,7 @@ impl PointerHandler for Dock {
                     self.hover_index = None;
                     self.hover_gen += 1;
                     self.pointer_inside = false;
+                    self.tip = None;
                     if self.autohide && self.covered {
                         self.schedule_hide();
                     }

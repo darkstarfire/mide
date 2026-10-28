@@ -157,27 +157,48 @@ pub fn word_starts_with(name: &str, q: &str) -> bool {
     })
 }
 
-/// Seções das Configurações que o buscador encontra: nome, palavras-chave, seção e
-/// ícone do tema.
+/// Seções das Configurações que o buscador encontra: nome (em inglês, mostrado com
+/// [`setting_name`]), palavras-chave (português e inglês), seção e ícone do tema.
 pub const SETTINGS: &[(&str, &str, &str, &str)] = &[
-    ("Wi-Fi", "wifi rede internet wireless", "wifi", "network-wireless"),
-    ("Rede", "rede cabo cabeada ethernet internet endereco ip", "network", "network-wired"),
-    ("Bluetooth", "bluetooth fone mouse teclado sem fio", "bluetooth", "bluetooth"),
-    ("Som", "som volume audio alto-falante microfone", "sound", "audio-volume-high"),
-    ("Papel de parede", "papel de parede fundo wallpaper imagem", "wallpaper", "preferences-desktop-wallpaper"),
-    ("Dock", "dock icones tamanho barra de apps", "dock", "user-desktop"),
-    ("Efeitos", "efeitos animacoes sombras desfoque vidro transparencia", "effects", "preferences-desktop-theme"),
-    ("Atalhos de teclado", "atalhos teclado teclas combinacoes", "keyboard", "preferences-desktop-keyboard"),
-    ("Sobre este computador", "sobre sistema versao computador memoria", "about", "help-about"),
+    ("Wi-Fi", "wifi rede internet wireless network", "wifi", "network-wireless"),
+    ("Network", "rede cabo cabeada ethernet internet endereco ip network wired cable address", "network", "network-wired"),
+    ("Bluetooth", "bluetooth fone mouse teclado sem fio headphones keyboard wireless", "bluetooth", "bluetooth"),
+    ("Sound", "som volume audio alto-falante microfone sound speaker microphone", "sound", "audio-volume-high"),
+    ("Wallpaper", "papel de parede fundo wallpaper imagem background picture", "wallpaper", "preferences-desktop-wallpaper"),
+    ("Dock", "dock icones tamanho barra de apps icons size", "dock", "user-desktop"),
+    ("Effects", "efeitos animacoes sombras desfoque vidro transparencia effects animations shadows blur glass transparency", "effects", "preferences-desktop-theme"),
+    ("Keyboard Shortcuts", "atalhos teclado teclas combinacoes keyboard shortcuts keys", "keyboard", "preferences-desktop-keyboard"),
+    ("About This Computer", "sobre sistema versao computador memoria about system version computer memory", "about", "help-about"),
 ];
 
-/// Seções das Configurações que casam com a busca (pelo nome ou palavras-chave).
+/// Nome de uma seção de [`SETTINGS`] no idioma da interface.
+pub fn setting_name(name: &str) -> String {
+    use crate::tr;
+    match name {
+        "Network" => tr!("Network"),
+        "Sound" => tr!("Sound"),
+        "Wallpaper" => tr!("Wallpaper"),
+        "Effects" => tr!("Effects"),
+        "Keyboard Shortcuts" => tr!("Keyboard Shortcuts"),
+        "About This Computer" => tr!("About This Computer"),
+        other => std::borrow::Cow::Borrowed(other),
+    }
+    .into_owned()
+}
+
+/// Seções das Configurações que casam com a busca (pelo nome, no idioma da interface
+/// ou em inglês, ou pelas palavras-chave).
 pub fn match_settings(query: &str) -> Vec<&'static (&'static str, &'static str, &'static str, &'static str)> {
     let q = crate::apps::fold(query.trim());
     if q.is_empty() {
         return Vec::new();
     }
-    SETTINGS.iter().filter(|(name, keys, _, _)| crate::apps::fold(name).contains(&q) || keys.split(' ').any(|k| k.starts_with(&q))).collect()
+    SETTINGS
+        .iter()
+        .filter(|(name, keys, _, _)| {
+            crate::apps::fold(name).contains(&q) || crate::apps::fold(&setting_name(name)).contains(&q) || keys.split(' ').any(|k| k.starts_with(&q))
+        })
+        .collect()
 }
 
 /// Pasta que contém `path`, com `~` no lugar da pasta pessoal (detalhe dos resultados).
@@ -248,9 +269,9 @@ mod tests {
     #[test]
     fn secoes_das_configuracoes() {
         let names: Vec<&str> = match_settings("volume").iter().map(|s| s.0).collect();
-        assert_eq!(names, vec!["Som"]);
+        assert_eq!(names, vec!["Sound"]);
         assert_eq!(match_settings("wifi")[0].2, "wifi");
-        assert_eq!(match_settings("papel")[0].0, "Papel de parede");
+        assert_eq!(match_settings("papel")[0].0, "Wallpaper");
         assert!(match_settings("").is_empty());
     }
 

@@ -35,6 +35,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use mide::tr;
 use mide::{
     files::{self, Entry},
     kit::{run, App, Key, Theme, Tile, Ui, Window},
@@ -623,7 +624,7 @@ impl Desktop {
                 if let Some(dir) = dir {
                     for path in self.targets(&item) {
                         let stem = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        let name = files::numbered_name(&dir, &format!("{stem} atalho"), "");
+                        let name = files::numbered_name(&dir, &tr!("{name} alias", name = stem), "");
                         if let Err(err) = std::os::unix::fs::symlink(&path, dir.join(&name)) {
                             tracing::warn!("atalho não criado: {err}");
                         }
@@ -667,7 +668,7 @@ impl Desktop {
                 // Como no Finder: os escolhidos vão para uma pasta nova, no lugar deles.
                 if let Some(dir) = dir {
                     let targets = self.targets(&item);
-                    let name = files::numbered_name(&dir, "Nova pasta com itens", "");
+                    let name = files::numbered_name(&dir, &tr!("New Folder With Items"), "");
                     if let Ok(folder) = files::create_named(&dir, &name, true) {
                         let at = self.cells.get(&item.key).copied();
                         for path in &targets {
@@ -688,7 +689,7 @@ impl Desktop {
             // nome para editar.
             (Action::NewFolder, _) => {
                 if let Some(dir) = dir {
-                    let name = files::numbered_name(&dir, "Nova pasta", "");
+                    let name = files::numbered_name(&dir, &tr!("untitled folder"), "");
                     match files::create_named(&dir, &name, true) {
                         Ok(path) => {
                             tracing::info!("área de trabalho: {}", path.display());
@@ -932,16 +933,16 @@ impl Desktop {
     fn item_menu(m: &mut mide::kit::Menu, item: &Item, count: usize, apps: &[(String, String, String)], tags: &[usize]) -> Option<Action> {
         let mut chosen = None;
         let multi = count > 1;
-        if multi && m.item(&format!("Nova pasta com a seleção ({count} itens)")) {
+        if multi && m.item(&mide::i18n::trn("New Folder with Selection ({n} Item)", "New Folder with Selection ({n} Items)", count as u64)) {
             chosen = Some(Action::NewFolderWithSelection);
         }
-        if m.item(&if multi { format!("Abrir {count} itens") } else { "Abrir".into() }) {
+        if m.item(&if multi { mide::i18n::trn("Open {n} Item", "Open {n} Items", count as u64) } else { tr!("Open").into_owned() }) {
             chosen = Some(Action::Open);
         }
         if !item.is_dir && !apps.is_empty() {
-            m.submenu(None, "Abrir com", |m| {
+            m.submenu(None, &tr!("Open With"), |m| {
                 for (i, (id, name, icon)) in apps.iter().enumerate() {
-                    let label = if i == 0 { format!("{name} (padrão)") } else { name.clone() };
+                    let label = if i == 0 { tr!("{name} (default)", name = name) } else { name.clone() };
                     if m.item_icon(icon, &label, None) {
                         chosen = Some(Action::OpenWith(id.clone()));
                     }
@@ -953,39 +954,39 @@ impl Desktop {
         }
         m.separator();
         if can_move_to_trash(item.drive.as_ref()) {
-            if m.item(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
+            if m.item(&if multi { mide::i18n::trn("Move {n} Item to Trash", "Move {n} Items to Trash", count as u64) } else { tr!("Move to Trash").into_owned() }) {
                 chosen = Some(Action::Trash);
             }
         }
         m.separator();
-        if m.item("Obter informações") {
+        if m.item(&tr!("Get Info")) {
             chosen = Some(Action::Info);
         }
-        if !multi && m.item("Renomear…") {
+        if !multi && m.item(&tr!("Rename…")) {
             chosen = Some(Action::Rename);
         }
-        if m.item(&if multi { format!("Comprimir {count} itens") } else { format!("Comprimir \"{}\"", item.name) }) {
+        if m.item(&if multi { mide::i18n::trn("Compress {n} Item", "Compress {n} Items", count as u64) } else { tr!("Compress “{name}”", name = item.name) }) {
             chosen = Some(Action::Compress);
         }
-        if m.item("Duplicar") {
+        if m.item(&tr!("Duplicate")) {
             chosen = Some(Action::Duplicate);
         }
-        if m.item("Criar atalho") {
+        if m.item(&tr!("Make Alias")) {
             chosen = Some(Action::Alias);
         }
         m.separator();
-        if m.item("Copiar") {
+        if m.item(&tr!("Copy")) {
             chosen = Some(Action::Copy);
         }
-        if m.item("Recortar") {
+        if m.item(&tr!("Cut")) {
             chosen = Some(Action::Cut);
         }
-        if m.item("Copiar como caminho") {
+        if m.item(&tr!("Copy as Pathname")) {
             chosen = Some(Action::CopyPath);
         }
         m.separator();
         let marked: Vec<bool> = (0..files::TAGS.len()).map(|i| tags.contains(&i)).collect();
-        if let Some(i) = m.tags("Etiquetas…", &marked) {
+        if let Some(i) = m.tags(&tr!("Tags…"), &marked) {
             chosen = Some(Action::Tag(i));
         }
         chosen
@@ -1198,11 +1199,11 @@ impl App for Desktop {
                 let name = item.name.clone();
                 ui.context_menu(&r, |m| {
                     let mut chosen = None;
-                    if m.item("Abrir") {
+                    if m.item(&tr!("Open")) {
                         chosen = Some(Action::Open);
                     }
                     m.separator();
-                    if m.item(&format!("Ejetar \"{name}\"")) {
+                    if m.item(&tr!("Eject “{name}”", name = name)) {
                         chosen = Some(Action::Eject);
                     }
                     if let Some(chosen) = chosen {
@@ -1381,32 +1382,32 @@ impl App for Desktop {
         ui.context_menu(&bg, |m| {
             let mut chosen = None;
             if has_dir {
-                if m.item("Nova pasta") {
+                if m.item(&tr!("New Folder")) {
                     chosen = Some(Action::NewFolder);
                 }
-                m.submenu(None, "Novo arquivo", |m| {
-                    for (ext, label, _, icon) in mide::templates::KINDS {
-                        if m.item_icon(icon, label, None) {
+                m.submenu(None, &tr!("New File"), |m| {
+                    for (ext, icon) in mide::templates::KINDS {
+                        if m.item_icon(icon, &mide::templates::label(ext), None) {
                             chosen = Some(Action::NewFile(ext));
                         }
                     }
                 });
-                if m.item("Colar") {
+                if m.item(&tr!("Paste")) {
                     chosen = Some(Action::Paste);
                 }
                 m.separator();
-                if m.item("Abrir no Terminal") {
+                if m.item(&tr!("Open in Terminal")) {
                     chosen = Some(Action::Terminal);
                 }
-                if m.item("Mostrar no Arquivos") {
+                if m.item(&tr!("Show in Files")) {
                     chosen = Some(Action::ShowFolder);
                 }
                 m.separator();
-                if m.item("Organizar") {
+                if m.item(&tr!("Clean Up")) {
                     chosen = Some(Action::CleanUp);
                 }
             }
-            if m.item("Mudar papel de parede…") {
+            if m.item(&tr!("Change Wallpaper…")) {
                 chosen = Some(Action::Wallpaper);
             }
             if let Some(chosen) = chosen {
@@ -1439,7 +1440,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Nomes brancos (com sombra) sobre o papel de parede.
     let theme = Theme { tile_text: [255, 255, 255, 255], ..Theme::default() };
     warm_drag_text();
-    run(Window::new("Área de trabalho").app_id("mide-desktop").desktop("mide-desktop").accepts_files().theme(theme), Desktop::new())
+    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop("mide-desktop").accepts_files().theme(theme), Desktop::new())
 }
 
 #[cfg(test)]

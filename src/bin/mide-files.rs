@@ -33,10 +33,11 @@ use std::{
     time::SystemTime,
 };
 
+use mide::tr;
 use mide::{
     files::{self, Entry},
     files_view::{self, ViewMemory},
-    kit::{run, window_menu, App, Cursor, Key, MenuGroup, MenuItem, Tile, Ui, Window},
+    kit::{run, window_menu, App, Cursor, Key, MenuGroup, MenuItem, Tile, Tool, Ui, Window},
     places,
     programs::{self, Answer, Labels, Opened, Prompt},
 };
@@ -511,7 +512,7 @@ impl Files {
             Ok(list) => list,
             Err(err) if self.place == Place::Trash && err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(err) => {
-                self.message = Some(format!("Não foi possível abrir a pasta: {err}"));
+                self.message = Some(tr!("Couldn’t open the folder: {err}", err = err));
                 Vec::new()
             }
         };
@@ -621,7 +622,7 @@ impl Files {
                     self.inline = Some((path, name, true));
                 }
             }
-            Err(err) => self.message = Some(format!("Não foi possível criar: {err}")),
+            Err(err) => self.message = Some(tr!("Couldn’t create it: {err}", err = err)),
         }
     }
 
@@ -629,7 +630,7 @@ impl Files {
     /// "notas.md" já define a extensão).
     fn new_file(&mut self) {
         if let Some(dir) = self.target_dir() {
-            self.open_dialog(DialogKind::NewFile(dir), "Novo arquivo.txt".into());
+            self.open_dialog(DialogKind::NewFile(dir), format!("{}.txt", tr!("New File")));
         }
     }
 
@@ -641,7 +642,7 @@ impl Files {
                 self.reload();
                 self.select_one(copy);
             }
-            Err(err) => self.message = Some(format!("Não foi possível duplicar: {err}")),
+            Err(err) => self.message = Some(tr!("Couldn’t duplicate: {err}", err = err)),
         }
     }
 
@@ -676,7 +677,7 @@ impl Files {
             let result = mide::storage::transfer::paste(&clipboard, &dir);
             let made: Vec<PathBuf> = result.done.iter().map(|(_, dest)| dest.clone()).collect();
             for error in result.errors {
-                self.message = Some(format!("Não foi possível colar: {error}"));
+                self.message = Some(tr!("Couldn’t paste: {err}", err = error));
             }
             if !made.is_empty() {
                 if clipboard.cut {
@@ -711,7 +712,13 @@ impl Files {
                         pasted.push(copy);
                     }
                 }
-                Err(err) => self.message = Some(format!("Não foi possível {} \"{}\": {}", if moving { "mover" } else { "colar" }, item.display(), err)),
+                Err(err) => {
+                    self.message = Some(if moving {
+                        tr!("Couldn’t move “{name}”: {err}", name = item.display(), err = err)
+                    } else {
+                        tr!("Couldn’t paste “{name}”: {err}", name = item.display(), err = err)
+                    })
+                }
             }
         }
         let done = !pasted.is_empty();
@@ -786,7 +793,13 @@ impl Files {
                         moved.push((path.clone(), target));
                     }
                 }
-                Err(err) => self.message = Some(format!("Não foi possível {} \"{}\": {err}", if copy { "copiar" } else { "mover" }, path.display())),
+                Err(err) => {
+                    self.message = Some(if copy {
+                        tr!("Couldn’t copy “{name}”: {err}", name = path.display(), err = err)
+                    } else {
+                        tr!("Couldn’t move “{name}”: {err}", name = path.display(), err = err)
+                    })
+                }
             }
         }
         if !moved.is_empty() {
@@ -797,8 +810,11 @@ impl Files {
         }
         if done > 0 {
             let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string());
-            let what = if done == 1 { "1 item".to_string() } else { format!("{done} itens") };
-            self.message = Some(format!("{what} {} para \"{name}\".", if copy { "copiado(s)" } else { "movido(s)" }));
+            self.message = Some(if copy {
+                mide::i18n::trn("{n} item copied to “{name}”.", "{n} items copied to “{name}”.", done as u64).replace("{name}", &name)
+            } else {
+                mide::i18n::trn("{n} item moved to “{name}”.", "{n} items moved to “{name}”.", done as u64).replace("{name}", &name)
+            });
         }
         self.reload();
     }
@@ -807,7 +823,7 @@ impl Files {
     fn compress_job(&mut self, paths: Vec<PathBuf>) {
         let tx = self.jobs_tx.clone();
         self.busy += 1;
-        self.message = Some("Compactando…".into());
+        self.message = Some(tr!("Compressing…").into_owned());
         std::thread::spawn(move || {
             let _ = tx.send(files::compress_many(&paths).map_err(|e| e.to_string()));
         });
@@ -817,7 +833,7 @@ impl Files {
     fn run_job(&mut self, path: PathBuf, extract: bool) {
         let tx = self.jobs_tx.clone();
         self.busy += 1;
-        self.message = Some(if extract { "Extraindo…".into() } else { "Compactando…".into() });
+        self.message = Some(if extract { tr!("Extracting…").into_owned() } else { tr!("Compressing…").into_owned() });
         std::thread::spawn(move || {
             let result = if extract { files::extract(&path) } else { files::compress(&path) };
             let _ = tx.send(result.map_err(|e| e.to_string()));
@@ -919,7 +935,7 @@ impl Files {
 
     fn title(&self) -> String {
         match &self.place {
-            Place::Trash => "Lixeira".into(),
+            Place::Trash => tr!("Trash").into_owned(),
             Place::Dir(dir) => {
                 if let Some((name, _, _)) = self.favorites.iter().find(|(_, p, _)| p == dir) {
                     return name.clone();
@@ -937,7 +953,7 @@ impl Files {
     fn open(&mut self, entry: &Entry) {
         if self.place == Place::Trash {
             // Na Lixeira nada abre: primeiro restaura.
-            self.message = Some(format!("\"{}\" está na Lixeira. Restaure para abrir.", entry.name));
+            self.message = Some(tr!("“{name}” is in the Trash. Put it back to open it.", name = entry.name));
             return;
         }
         if entry.is_dir {
@@ -993,7 +1009,7 @@ impl Files {
                 tracing::info!("para a Lixeira: {}", path.display());
                 self.remember(Undo::Trash(vec![(name, path.to_path_buf())]));
             }
-            Err(err) => self.message = Some(format!("Não foi possível mover para a Lixeira: {err}")),
+            Err(err) => self.message = Some(tr!("Couldn’t move to the Trash: {err}", err = err)),
         }
         self.reload();
     }
@@ -1105,7 +1121,7 @@ impl Files {
             }
             Undo::Rename { from, to } => {
                 if from.exists() {
-                    errors.push(format!("já existe \"{}\"", from.display()));
+                    errors.push(tr!("“{name}” already exists", name = from.display()));
                 } else {
                     match std::fs::rename(&to, &from) {
                         Ok(()) => back.push(from),
@@ -1116,7 +1132,7 @@ impl Files {
             Undo::Move(pairs) => {
                 for (from, to) in pairs {
                     if from.exists() {
-                        errors.push(format!("já existe \"{}\"", from.display()));
+                        errors.push(tr!("“{name}” already exists", name = from.display()));
                         continue;
                     }
                     match std::fs::rename(&to, &from) {
@@ -1134,7 +1150,7 @@ impl Files {
             }
         }
         tracing::info!("desfeito: {} item(ns) de volta, {} erro(s)", back.len(), errors.len());
-        self.message = errors.first().map(|e| format!("Não foi possível desfazer tudo: {e}"));
+        self.message = errors.first().map(|e| tr!("Couldn’t undo everything: {err}", err = e));
         self.reload();
         if !back.is_empty() {
             self.selection = back;
@@ -1161,14 +1177,14 @@ impl Files {
                 self.reveal = Some(path);
             }
         } else if let Some(d) = self.dialog.as_mut() {
-            d.error = Some("Essa pasta não existe.".into());
+            d.error = Some(tr!("That folder doesn’t exist.").into_owned());
         }
     }
 
     /// Nova pasta: abre o diálogo com o nome sugerido (nada é criado ainda).
     fn new_folder(&mut self) {
         if let Some(dir) = self.target_dir() {
-            self.open_dialog(DialogKind::NewFolder(dir), "Nova pasta".into());
+            self.open_dialog(DialogKind::NewFolder(dir), tr!("New Folder").into_owned());
         }
     }
 
@@ -1205,7 +1221,7 @@ impl Files {
                 let dir = dir.clone();
                 let folder = matches!(dialog.kind, DialogKind::NewFolder(_));
                 let name = if dialog.name.trim() == dialog.suggestion {
-                    if folder { files::numbered_name(&dir, "Nova pasta", "") } else { files::numbered_name(&dir, "Novo arquivo", "txt") }
+                    if folder { files::numbered_name(&dir, &tr!("untitled folder"), "") } else { files::numbered_name(&dir, &tr!("New File"), "txt") }
                 } else {
                     dialog.name.trim().to_string()
                 };
@@ -1239,7 +1255,7 @@ impl Files {
     fn restore(&mut self, entry: &Entry) {
         match places::restore_from_trash(&Self::trash(), &entry.name) {
             Ok(to) => tracing::info!("restaurado: {}", to.display()),
-            Err(err) => self.message = Some(format!("Não foi possível restaurar: {err}")),
+            Err(err) => self.message = Some(tr!("Couldn’t put it back: {err}", err = err)),
         }
         self.reload();
     }
@@ -1247,7 +1263,7 @@ impl Files {
     fn delete_forever(&mut self, entry: &Entry) {
         match places::delete_from_trash(&Self::trash(), &entry.name) {
             Ok(()) => tracing::info!("apagado da Lixeira: {}", entry.name),
-            Err(err) => self.message = Some(format!("Não foi possível apagar: {err}")),
+            Err(err) => self.message = Some(tr!("Couldn’t delete: {err}", err = err)),
         }
         self.reload();
     }
@@ -1520,7 +1536,7 @@ impl Files {
         let mut search = std::mem::take(&mut self.search);
         ui.toolbar(|ui| {
             // Tahoe: ‹ › numa cápsula, título, visualizações e ações em grupos, busca.
-            match ui.toolbar_buttons(&[("go-previous-symbolic", "‹", false, can_back), ("go-next-symbolic", "›", false, can_forward)]) {
+            match ui.tool_group(&[Tool::new("go-previous-symbolic", &tr!("Back")).enabled(can_back), Tool::new("go-next-symbolic", &tr!("Forward")).enabled(can_forward)]) {
                 Some(0) => back = true,
                 Some(1) => forward = true,
                 _ => {}
@@ -1533,18 +1549,19 @@ impl Files {
             ui.toolbar_title(&title, title_room);
             ui.push_right(right);
             if in_trash {
-                preview = ui.toolbar_buttons(&[("view-dual-symbolic", "◨", preview_on, true)]).is_some();
-                ui.sized(110.0, |ui| empty_trash = has_items && ui.button("Esvaziar").clicked());
+                preview = ui.tool_group(&[Tool::new("view-dual-symbolic", &tr!("Show Preview")).on(preview_on)]).is_some();
+                ui.sized(110.0, |ui| empty_trash = has_items && ui.button(&tr!("Empty")).clicked());
             } else {
-                let views = [("view-grid-symbolic", "▦", current == 0, true), ("view-list-symbolic", "☰", current == 1, true), ("view-column-symbolic", "▥", current == 2, true)];
-                mode = ui.toolbar_buttons(&views);
-                match ui.toolbar_buttons(&[("view-dual-symbolic", "◨", preview_on, true), ("folder-new-symbolic", "+", false, true)]) {
+                let (as_icons, as_list, as_columns) = (tr!("as Icons"), tr!("as List"), tr!("as Columns"));
+                let views = [Tool::new("view-grid-symbolic", &as_icons).on(current == 0), Tool::new("view-list-symbolic", &as_list).on(current == 1), Tool::new("view-column-symbolic", &as_columns).on(current == 2)];
+                mode = ui.tool_group(&views);
+                match ui.tool_group(&[Tool::new("view-dual-symbolic", &tr!("Show Preview")).on(preview_on), Tool::new("folder-new-symbolic", &tr!("New Folder"))]) {
                     Some(0) => preview = true,
                     Some(1) => new_folder = true,
                     _ => {}
                 }
                 ui.sized(200.0, |ui| {
-                    ui.search_field(&mut search, "Buscar");
+                    ui.search_field(&mut search, &tr!("Search"));
                 });
             }
         });
@@ -1570,7 +1587,7 @@ impl Files {
         if empty_trash {
             match places::empty_trash(&Self::trash()) {
                 Ok(n) => tracing::info!("Lixeira esvaziada: {n} itens"),
-                Err(err) => self.message = Some(format!("Não foi possível esvaziar a Lixeira: {err}")),
+                Err(err) => self.message = Some(tr!("Couldn’t empty the Trash: {err}", err = err)),
             }
             self.reload();
         }
@@ -1642,17 +1659,17 @@ impl Files {
                 12.0,
                 |ui| ui.image_centered(None, &entry_icon, 48),
                 |ui| {
-                    ui.strong(&format!("Abrir \"{}\" com", short(&name)));
-                    ui.note("Escolha um app para abrir este arquivo.");
+                    ui.strong(&tr!("Open “{name}” With", name = short(&name)));
+                    ui.note(&tr!("Choose an app to open this file."));
                 },
             );
-            ui.search_field(&mut query, "Buscar apps");
+            ui.search_field(&mut query, &mide::i18n::trc("Files", "Search Apps"));
             let grid = |ui: &mut Ui, list: &[mide::apps::App], picked: &mut Option<String>, open_now: &mut Option<mide::apps::App>| {
                 ui.wrap(|ui| {
                     for app in list {
                         let icon = app.icon.clone().unwrap_or_else(|| "application-x-executable".into());
                         let is_default = default.as_deref() == Some(app.id.as_str());
-                        let label = if is_default { format!("{} (padrão)", app.name) } else { app.name.clone() };
+                        let label = if is_default { tr!("{name} (default)", name = app.name) } else { app.name.clone() };
                         let selected = picked.as_deref() == Some(app.id.as_str());
                         let r = ui.tile(Tile::Icon(&icon), &label, selected, 56);
                         if r.clicked {
@@ -1668,27 +1685,27 @@ impl Files {
             let grid_h = (ui.window_size().1 - 400.0).clamp(100.0, 320.0);
             ui.scroll_area(grid_h, |ui| {
                 if main.is_empty() && others.is_empty() {
-                    ui.note(if self.apps_rx.is_some() { "Procurando apps…" } else { "Nenhum app encontrado." });
+                    ui.note(&if self.apps_rx.is_some() { tr!("Looking for apps…") } else { tr!("No apps found.") });
                 }
                 if !main.is_empty() {
-                    ui.heading("Recomendados");
+                    ui.heading(&tr!("Recommended Apps"));
                     grid(ui, &main, &mut picked, &mut open_now);
                 }
                 if !others.is_empty() {
-                    ui.heading("Outros apps");
+                    ui.heading(&tr!("Other Apps"));
                     grid(ui, &others, &mut picked, &mut open_now);
                 }
             });
-            if q.is_empty() && !show_all && ui.button("Mostrar todos os apps").clicked() {
+            if q.is_empty() && !show_all && ui.button(&tr!("Show All Apps")).clicked() {
                 show_all = true;
             }
             if mime.is_some() {
-                ui.checkbox("Sempre abrir arquivos deste tipo com este app", &mut always);
+                ui.checkbox(&tr!("Always open files of this kind with this app"), &mut always);
             }
             ui.row(|ui| {
                 ui.push_right(2.0 * 120.0 + 8.0);
-                ui.sized(120.0, |ui| cancel |= ui.button("Cancelar").clicked());
-                ui.sized(120.0, |ui| confirm = ui.primary_button("Abrir").clicked() || ui.input().key(Key::Enter));
+                ui.sized(120.0, |ui| cancel |= ui.button(&tr!("Cancel")).clicked());
+                ui.sized(120.0, |ui| confirm = ui.primary_button(&tr!("Open")).clicked() || ui.input().key(Key::Enter));
             });
         });
         let all: Vec<&mide::apps::App> = self.apps.iter().collect();
@@ -1704,7 +1721,7 @@ impl Files {
                 }
             }
             if let Err(err) = mide::apps::open_with(&app, &path) {
-                self.message = Some(format!("Não foi possível abrir com {}: {err}", app.name));
+                self.message = Some(tr!("Couldn’t open with {app}: {err}", app = app.name, err = err));
             }
             self.open_with = None;
             self.open_with_pick = (None, String::new(), false, false);
@@ -1725,7 +1742,7 @@ impl Files {
         let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-files"));
         match std::process::Command::new(exe).arg("--info").arg(path).spawn() {
             Ok(_) => tracing::info!("informações de {}", path.display()),
-            Err(err) => self.message = Some(format!("Não foi possível abrir as informações de \"{}\": {err}", path.display())),
+            Err(err) => self.message = Some(tr!("Couldn’t open the info for “{name}”: {err}", name = path.display(), err = err)),
         }
     }
 
@@ -1737,7 +1754,7 @@ impl Files {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
         let mut close = ui.input().key(Key::Escape) || ui.input().key(Key::Enter);
         ui.modal(440.0, |ui| {
-            ui.strong(&format!("Informações de \"{}\"", short(&name)));
+            ui.strong(&tr!("“{name}” Info", name = short(&name)));
             ui.card(|ui| {
                 for (label, value) in lines {
                     ui.row(|ui| {
@@ -1748,7 +1765,7 @@ impl Files {
             });
             ui.row(|ui| {
                 ui.push_right(110.0);
-                ui.sized(110.0, |ui| close |= ui.primary_button("OK").clicked());
+                ui.sized(110.0, |ui| close |= ui.primary_button(&tr!("OK")).clicked());
             });
         });
         if close {
@@ -1762,30 +1779,30 @@ impl Files {
             return;
         };
         let (title, action) = match dialog.kind {
-            DialogKind::NewFolder(_) => ("Nova pasta", "Criar"),
-            DialogKind::NewFile(_) => ("Novo arquivo", "Criar"),
-            DialogKind::Rename(_) => ("Renomear", "Renomear"),
-            DialogKind::GoTo => ("Ir para a pasta", "Ir"),
+            DialogKind::NewFolder(_) => (tr!("New Folder"), tr!("Create")),
+            DialogKind::NewFile(_) => (tr!("New File"), tr!("Create")),
+            DialogKind::Rename(_) => (tr!("Rename"), tr!("Rename")),
+            DialogKind::GoTo => (tr!("Go to Folder"), tr!("Go")),
         };
-        let placeholder = if matches!(dialog.kind, DialogKind::GoTo) { "Caminho (como ~/Documentos)" } else { "Nome" };
+        let placeholder = if matches!(dialog.kind, DialogKind::GoTo) { tr!("Path (like ~/Documents)") } else { tr!("Name") };
         let focus = std::mem::take(&mut self.focus_rename);
         let mut done = false;
         let mut cancel = ui.input().key(Key::Escape);
         let error = dialog.error.clone();
         let mut name = dialog.name.clone();
         ui.modal(380.0, |ui| {
-            ui.strong(title);
+            ui.strong(&title);
             if focus {
                 ui.focus_next_input();
             }
-            done = ui.text_input(&mut name, placeholder).submitted();
+            done = ui.text_input(&mut name, &placeholder).submitted();
             if let Some(err) = &error {
                 ui.note(err);
             }
             ui.row(|ui| {
                 ui.push_right(2.0 * 110.0 + 8.0);
-                ui.sized(110.0, |ui| cancel |= ui.button("Cancelar").clicked());
-                ui.sized(110.0, |ui| done |= ui.primary_button(action).clicked());
+                ui.sized(110.0, |ui| cancel |= ui.button(&tr!("Cancel")).clicked());
+                ui.sized(110.0, |ui| done |= ui.primary_button(&action).clicked());
             });
         });
         if let Some(d) = self.dialog.as_mut() {
@@ -1820,7 +1837,7 @@ impl Files {
                     self.reload();
                     self.select_one(path);
                 }
-                Err(err) => self.message = Some(format!("Não deu certo: {err}")),
+                Err(err) => self.message = Some(tr!("That didn’t work: {err}", err = err)),
             }
             ui.request_repaint();
         }
@@ -1958,10 +1975,10 @@ impl Files {
                 ui.note(message);
             }
             if shown.is_empty() {
-                ui.note(match (in_trash, self.search.is_empty()) {
-                    (true, _) => "A Lixeira está vazia.",
-                    (_, false) => "Nada encontrado.",
-                    _ => "Esta pasta está vazia.",
+                ui.note(&match (in_trash, self.search.is_empty()) {
+                    (true, _) => tr!("The Trash is empty."),
+                    (_, false) => tr!("No results."),
+                    _ => tr!("This folder is empty."),
                 });
             }
             let selection = self.selection.clone();
@@ -2066,9 +2083,9 @@ impl Files {
                 let count = selection.len();
                 ui.context_menu(&r, |m| {
                     let chosen = if in_trash {
-                        if m.item("Restaurar") {
+                        if m.item(&tr!("Put Back")) {
                             Some(Action::Restore)
-                        } else if m.danger("Apagar para sempre") {
+                        } else if m.danger(&mide::i18n::trc("Files", "Delete Immediately")) {
                             Some(Action::Delete)
                         } else {
                             None
@@ -2160,9 +2177,10 @@ impl Files {
                 // agora: as colunas extras encolhem na mesma proporção até o Nome ter
                 // pelo menos 40% da lista (só na tela; o guardado só muda num arrasto).
                 let shown_widths = fit_list_widths(self.list_widths, ui.available_width());
-                let mut widths = [("Modificado", shown_widths[0]), ("Tamanho", shown_widths[1]), ("Tipo", shown_widths[2])];
+                let (modified, size, kind) = (tr!("Date Modified"), tr!("Size"), tr!("Kind"));
+                let mut widths = [(&*modified, shown_widths[0]), (&*size, shown_widths[1]), (&*kind, shown_widths[2])];
                 if !shown.is_empty() {
-                    sort_by = ui.list_header_resizable("Nome", &mut widths, self.sort, 60.0);
+                    sort_by = ui.list_header_resizable(&tr!("Name"), &mut widths, self.sort, 60.0);
                     header_rect = Some(ui.last_rect());
                     let after = [widths[0].1, widths[1].1, widths[2].1];
                     if after != shown_widths {
@@ -2345,31 +2363,31 @@ impl Files {
             }
             ui.context_menu(&bg, |m| {
                 if in_trash {
-                    if m.danger("Esvaziar a Lixeira") {
+                    if m.danger(&mide::i18n::trc("Files", "Empty Trash")) {
                         empty_action = Some(Action::EmptyTrash);
                     }
                 } else {
-                    if m.item("Nova pasta") {
+                    if m.item(&tr!("New Folder")) {
                         empty_action = Some(Action::NewFolder);
                     }
-                    m.submenu(None, "Novo arquivo", |m| {
-                        for (ext, label, _, icon) in mide::templates::KINDS {
-                            if m.item_icon(icon, label, None) {
+                    m.submenu(None, &tr!("New File"), |m| {
+                        for (ext, icon) in mide::templates::KINDS {
+                            if m.item_icon(icon, &mide::templates::label(ext), None) {
                                 empty_action = Some(Action::NewKind(ext));
                             }
                         }
                     });
-                    if clipboard && m.item("Colar") {
+                    if clipboard && m.item(&tr!("Paste")) {
                         empty_action = Some(Action::Paste);
                     }
                     m.separator();
-                    if m.item("Abrir no Terminal") {
+                    if m.item(&tr!("Open in Terminal")) {
                         empty_action = Some(Action::Terminal);
                     }
-                    if m.item(if self.hidden { "Esconder arquivos ocultos" } else { "Mostrar arquivos ocultos" }) {
+                    if m.item(&if self.hidden { tr!("Hide Hidden Files") } else { tr!("Show Hidden Files") }) {
                         empty_action = Some(Action::ToggleHidden);
                     }
-                    if m.item("Copiar caminho da pasta") {
+                    if m.item(&tr!("Copy Folder Path")) {
                         empty_action = Some(Action::CopyFolder);
                     }
                 }
@@ -2403,7 +2421,7 @@ impl Files {
                             self.reload();
                             self.select_one(new_path);
                         }
-                        Err(err) => self.message = Some(format!("Não foi possível renomear \"{current}\": {err}")),
+                        Err(err) => self.message = Some(tr!("Couldn’t rename “{name}”: {err}", name = current, err = err)),
                     }
                 }
                 ui.request_repaint();
@@ -2458,7 +2476,9 @@ impl Files {
             let mut value = self.icon_size as f32;
             let mut changed = false;
             ui.at(status.0 + status.2 - 140.0, status.1 + (status.3 - 18.0) / 2.0, 128.0, |ui| {
-                changed = ui.mini_slider(128.0, &mut value, files_view::ICON_MIN as f32, files_view::ICON_MAX as f32).changed();
+                let r = ui.mini_slider(128.0, &mut value, files_view::ICON_MIN as f32, files_view::ICON_MAX as f32);
+                changed = r.changed();
+                ui.tooltip(&r, &tr!("Icon Size"));
             });
             if changed {
                 let snapped = (((value / 16.0).round() * 16.0) as u32).clamp(files_view::ICON_MIN, files_view::ICON_MAX);
@@ -2542,7 +2562,7 @@ impl Files {
             match dir {
                 Some(dir) if own && paths.iter().all(|p| p.parent() == Some(dir.as_path())) => {}
                 Some(dir) => self.drop_into(&paths, &dir, !own || ctrl_now),
-                None => self.message = Some("Solte os arquivos numa pasta.".into()),
+                None => self.message = Some(tr!("Drop the files on a folder.").into_owned()),
             }
             ui.request_repaint();
         }
@@ -2599,7 +2619,7 @@ impl Files {
                 Action::Tag(i) => {
                     for path in self.targets(&entry) {
                         if let Err(err) = files::toggle_tag(&path, i) {
-                            self.message = Some(format!("Não foi possível marcar a etiqueta: {err}"));
+                            self.message = Some(tr!("Couldn’t apply the tag: {err}", err = err));
                         }
                         self.tags.remove(&path);
                     }
@@ -2611,7 +2631,7 @@ impl Files {
                         self.duplicate(&path);
                     }
                 }
-                Action::NewFolderIn => self.open_dialog(DialogKind::NewFolder(entry.path.clone()), "Nova pasta".into()),
+                Action::NewFolderIn => self.open_dialog(DialogKind::NewFolder(entry.path.clone()), tr!("New Folder").into_owned()),
                 Action::Compress => {
                     let targets = self.targets(&entry);
                     if targets.len() > 1 {
@@ -2644,7 +2664,7 @@ impl Files {
                 Action::OpenWithApp(id) => {
                     if let Some(app) = self.apps.iter().find(|a| a.id == id).cloned() {
                         if let Err(err) = mide::apps::open_with(&app, &entry.path) {
-                            self.message = Some(format!("Não foi possível abrir com {}: {err}", app.name));
+                            self.message = Some(tr!("Couldn’t open with {app}: {err}", app = app.name, err = err));
                         }
                     }
                 }
@@ -2657,14 +2677,14 @@ impl Files {
                     // Como no Finder: os escolhidos vão para uma pasta nova, ao lado deles.
                     let targets = self.targets(&entry);
                     if let Some(dir) = entry.path.parent().map(Path::to_path_buf) {
-                        let name = files::numbered_name(&dir, "Nova pasta com itens", "");
+                        let name = files::numbered_name(&dir, &tr!("New Folder With Items"), "");
                         match files::create_named(&dir, &name, true) {
                             Ok(folder) => {
                                 let mut moved = Vec::new();
                                 for path in &targets {
                                     match files::move_into(path, &folder) {
                                         Ok(to) => moved.push((path.clone(), to)),
-                                        Err(err) => self.message = Some(format!("Não foi possível mover: {err}")),
+                                        Err(err) => self.message = Some(tr!("Couldn’t move: {err}", err = err)),
                                     }
                                 }
                                 self.remember(Undo::Move(moved));
@@ -2681,10 +2701,10 @@ impl Files {
                     for path in self.targets(&entry) {
                         let Some(dir) = path.parent() else { continue };
                         let stem = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        let link = dir.join(files::numbered_name(dir, &format!("{stem} atalho"), ""));
+                        let link = dir.join(files::numbered_name(dir, &tr!("{name} alias", name = stem), ""));
                         match std::os::unix::fs::symlink(&path, &link) {
                             Ok(()) => made.push(link),
-                            Err(err) => self.message = Some(format!("Não foi possível criar o atalho: {err}")),
+                            Err(err) => self.message = Some(tr!("Couldn’t make the alias: {err}", err = err)),
                         }
                     }
                     if !made.is_empty() {
@@ -2695,7 +2715,7 @@ impl Files {
                 }
                 Action::QuickLook => self.quick_look = Some(entry.path.clone()),
                 Action::MoveTo(dir) | Action::CopyTo(dir) if !dir.is_dir() => {
-                    self.message = Some(format!("A pasta \"{}\" não existe.", dir.display()));
+                    self.message = Some(tr!("The folder “{name}” doesn’t exist.", name = dir.display()));
                 }
                 Action::MoveTo(dir) => {
                     let targets = self.targets(&entry);
@@ -2715,7 +2735,7 @@ impl Files {
                             self.thumbs.retain(|(p, _), _| *p != entry.path);
                             self.reload();
                         }
-                        Err(err) => self.message = Some(format!("Não foi possível girar: {err}")),
+                        Err(err) => self.message = Some(tr!("Couldn’t rotate: {err}", err = err)),
                     }
                 }
                 Action::Convert(ext) => {
@@ -2733,7 +2753,7 @@ impl Files {
                                 self.reload();
                                 self.select_one(target);
                             }
-                            Err(err) => self.message = Some(format!("Não foi possível converter: {err}")),
+                            Err(err) => self.message = Some(tr!("Couldn’t convert: {err}", err = err)),
                         }
                     }
                 }
@@ -2766,7 +2786,7 @@ impl Files {
                 }
                 Action::EmptyTrash => {
                     if let Err(err) = places::empty_trash(&Self::trash()) {
-                        self.message = Some(format!("Não foi possível esvaziar a Lixeira: {err}"));
+                        self.message = Some(tr!("Couldn’t empty the Trash: {err}", err = err));
                     }
                     self.reload();
                 }
@@ -2810,7 +2830,7 @@ impl Files {
     /// Finder). Cada pedaço: nome, ícone e para onde vai.
     fn path_parts(&self) -> Vec<(String, String, PathBuf)> {
         let dir = match &self.place {
-            Place::Trash => return vec![("Lixeira".into(), "user-trash".into(), Self::trash())],
+            Place::Trash => return vec![(tr!("Trash").into_owned(), "user-trash".into(), Self::trash())],
             Place::Dir(dir) => dir.clone(),
         };
         let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -2819,7 +2839,7 @@ impl Files {
         for comp in dir.components() {
             cur.push(comp);
             let (name, icon) = if cur == Path::new("/") {
-                ("Computador".to_string(), "drive-harddisk")
+                (tr!("Computer").into_owned(), "drive-harddisk")
             } else if Some(&cur) == home.as_ref() {
                 (cur.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), "user-home")
             } else {
@@ -2837,11 +2857,11 @@ impl Files {
 
     /// Texto da barra de status: itens, escolhidos e espaço livre.
     fn status_text(&self, count: usize) -> String {
-        let items = if count == 1 { "1 item".to_string() } else { format!("{count} itens") };
+        let items = mide::i18n::trn("{n} item", "{n} items", count as u64);
         let chosen = self.selection.len();
-        let mut text = if chosen > 0 { format!("{chosen} de {items} escolhido(s)") } else { items };
+        let mut text = if chosen > 0 { mide::i18n::trn("{n} of {items} selected", "{n} of {items} selected", chosen as u64).replace("{items}", &items) } else { items };
         if let Some(free) = self.free_space {
-            text.push_str(&format!(", {} disponíveis", files::size_text(free)));
+            text.push_str(&tr!(", {size} available", size = files::size_text(free)));
         }
         text
     }
@@ -2852,7 +2872,7 @@ impl Files {
         let Some(path) = self.primary().cloned() else {
             ui.scroll_area_padded(height, 16.0, |ui| {
                 ui.space(40.0);
-                ui.note("Nenhum item escolhido");
+                ui.note(&tr!("No Selection"));
             });
             return;
         };
@@ -2903,7 +2923,7 @@ impl Files {
             ui.strong(&name);
             ui.note(&if size.is_empty() { kind.clone() } else { format!("{kind} - {size}") });
             ui.separator();
-            ui.heading("Informações");
+            ui.heading(&tr!("Information"));
             for (label, value) in &lines {
                 ui.row(|ui| {
                     ui.sized(96.0, |ui| ui.note(label));
@@ -2911,7 +2931,7 @@ impl Files {
                 });
             }
             ui.space(8.0);
-            quick = ui.button("Visualização Rápida").clicked();
+            quick = ui.button(&tr!("Quick Look")).clicked();
         });
         if quick {
             self.quick_look = Some(path.clone());
@@ -2970,7 +2990,7 @@ impl Files {
             ui.row(|ui| {
                 ui.strong(&short(&name));
                 ui.push_right(110.0);
-                ui.sized(110.0, |ui| open = ui.button("Abrir").clicked());
+                ui.sized(110.0, |ui| open = ui.button(&tr!("Open")).clicked());
             });
             ui.image_centered(image.as_ref(), icon, side);
         });
@@ -3025,13 +3045,14 @@ enum Undo {
 
 impl Undo {
     /// Nome no menu Editar ("Desfazer Mover para a Lixeira").
-    fn label(&self) -> &'static str {
+    fn label(&self) -> String {
         match self {
-            Undo::Trash(_) => "Desfazer Mover para a Lixeira",
-            Undo::Rename { .. } => "Desfazer Renomear",
-            Undo::Move(_) => "Desfazer Mover",
-            Undo::Created(_) => "Desfazer Criar",
+            Undo::Trash(_) => tr!("Undo Move to Trash"),
+            Undo::Rename { .. } => tr!("Undo Rename"),
+            Undo::Move(_) => tr!("Undo Move"),
+            Undo::Created(_) => tr!("Undo Create"),
         }
+        .into_owned()
     }
 }
 
@@ -3104,24 +3125,24 @@ fn finder_menu(
     let ext = entry.path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     let is_zip = ext == "zip";
     let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg");
-    if multi && m.item(&format!("Nova pasta com a seleção ({count} itens)")) {
+    if multi && m.item(&mide::i18n::trn("New Folder with Selection ({n} Item)", "New Folder with Selection ({n} Items)", count as u64)) {
         chosen = Some(Action::NewFolderWithSelection);
     }
-    if m.item(&if multi { format!("Abrir {count} itens") } else { "Abrir".into() }) {
+    if m.item(&if multi { mide::i18n::trn("Open {n} Item", "Open {n} Items", count as u64) } else { tr!("Open").into_owned() }) {
         chosen = Some(Action::Open);
     }
     if !multi && entry.is_dir {
-        if m.item("Abrir em nova janela") {
+        if m.item(&tr!("Open in New Window")) {
             chosen = Some(Action::OpenNewWindow);
         }
-        if m.item("Abrir no Terminal") {
+        if m.item(&tr!("Open in Terminal")) {
             chosen = Some(Action::Terminal);
         }
     }
     if !multi && !entry.is_dir {
-        m.submenu(None, "Abrir com", |m| {
+        m.submenu(None, &tr!("Open With"), |m| {
             for (i, (id, name, icon)) in apps.iter().enumerate() {
-                let label = if i == 0 { format!("{name} (padrão)") } else { name.clone() };
+                let label = if i == 0 { tr!("{name} (default)", name = name) } else { name.clone() };
                 if m.item_icon(icon, &label, None) {
                     chosen = Some(Action::OpenWithApp(id.clone()));
                 }
@@ -3132,91 +3153,91 @@ fn finder_menu(
             if !apps.is_empty() {
                 m.separator();
             }
-            if m.item("Outro…") {
+            if m.item(&tr!("Other…")) {
                 chosen = Some(Action::OpenWith);
             }
         });
     }
     m.separator();
-    if m.item(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
+    if m.item(&if multi { mide::i18n::trn("Move {n} Item to Trash", "Move {n} Items to Trash", count as u64) } else { tr!("Move to Trash").into_owned() }) {
         chosen = Some(Action::Trash);
     }
     m.separator();
-    if m.item("Obter informações") {
+    if m.item(&tr!("Get Info")) {
         chosen = Some(Action::Info);
     }
-    if !multi && m.item("Renomear…") {
+    if !multi && m.item(&tr!("Rename…")) {
         chosen = Some(Action::Rename);
     }
     if !multi && is_zip {
-        if m.item("Extrair aqui") {
+        if m.item(&tr!("Extract Here")) {
             chosen = Some(Action::Extract);
         }
-    } else if m.item(&if multi { format!("Comprimir {count} itens") } else { format!("Comprimir \"{}\"", entry.name) }) {
+    } else if m.item(&if multi { mide::i18n::trn("Compress {n} Item", "Compress {n} Items", count as u64) } else { tr!("Compress “{name}”", name = entry.name) }) {
         chosen = Some(Action::Compress);
     }
-    if m.item("Duplicar") {
+    if m.item(&tr!("Duplicate")) {
         chosen = Some(Action::Duplicate);
     }
-    if m.item("Criar atalho") {
+    if m.item(&tr!("Make Alias")) {
         chosen = Some(Action::Alias);
     }
-    if !multi && m.item("Visualização Rápida") {
+    if !multi && m.item(&tr!("Quick Look")) {
         chosen = Some(Action::QuickLook);
     }
     m.separator();
-    if m.item("Copiar") {
+    if m.item(&tr!("Copy")) {
         chosen = Some(Action::Copy);
     }
-    if m.item("Recortar") {
+    if m.item(&tr!("Cut")) {
         chosen = Some(Action::Cut);
     }
-    if m.item("Copiar como caminho") {
+    if m.item(&tr!("Copy as Pathname")) {
         chosen = Some(Action::CopyPath);
     }
     m.separator();
     let marked: Vec<bool> = (0..files::TAGS.len()).map(|i| tags.contains(&i)).collect();
-    if let Some(i) = m.tags("Etiquetas…", &marked) {
+    if let Some(i) = m.tags(&tr!("Tags…"), &marked) {
         chosen = Some(Action::Tag(i));
     }
     m.separator();
     if !multi && is_image {
-        m.submenu(None, "Ações rápidas", |m| {
-            if m.item("Girar para a esquerda") {
+        m.submenu(None, &tr!("Quick Actions"), |m| {
+            if m.item(&tr!("Rotate Left")) {
                 chosen = Some(Action::Rotate(false));
             }
-            if m.item("Girar para a direita") {
+            if m.item(&tr!("Rotate Right")) {
                 chosen = Some(Action::Rotate(true));
             }
             m.separator();
-            if ext != "png" && m.item("Converter em PNG") {
+            if ext != "png" && m.item(&tr!("Convert to PNG")) {
                 chosen = Some(Action::Convert("png"));
             }
-            if ext == "png" && m.item("Converter em JPEG") {
+            if ext == "png" && m.item(&tr!("Convert to JPEG")) {
                 chosen = Some(Action::Convert("jpg"));
             }
         });
     }
     if !multi && entry.is_dir {
-        if m.item("Nova pasta aqui dentro") {
+        if m.item(&tr!("New Folder Inside")) {
             chosen = Some(Action::NewFolderIn);
         }
-        m.submenu(None, "Novo arquivo aqui dentro", |m| {
-            for (ext, label, _, icon) in mide::templates::KINDS {
-                if m.item_icon(icon, label, None) {
+        m.submenu(None, &tr!("New File Inside"), |m| {
+            for (ext, icon) in mide::templates::KINDS {
+                if m.item_icon(icon, &mide::templates::label(ext), None) {
                     chosen = Some(Action::NewKindIn(ext));
                 }
             }
         });
     }
-    m.submenu(None, "Mover para", |m| {
+    m.submenu(None, &tr!("Move To"), |m| {
         for (name, path, icon) in places_list {
             if m.item_icon(icon, name, None) {
                 chosen = Some(Action::MoveTo(path.clone()));
             }
         }
     });
-    m.submenu(None, "Copiar para", |m| {
+    m.submenu(None, &tr!("Copy To"), |m| {
         for (name, path, icon) in places_list {
             if m.item_icon(icon, name, None) {
                 chosen = Some(Action::CopyTo(path.clone()));
@@ -3236,58 +3257,58 @@ impl App for Files {
         let one = self.selection.len() == 1;
         let some = !self.selection.is_empty();
         let mode = self.mode();
-        let undo = self.undo.last().map(|(_, op)| op.label()).unwrap_or("Desfazer");
+        let undo = self.undo.last().map(|(_, op)| op.label()).unwrap_or_else(|| tr!("Undo").into_owned());
         vec![
             MenuGroup {
-                title: "Arquivo".into(),
+                title: tr!("File").into_owned(),
                 items: vec![
-                    MenuItem::action("new-folder", "Nova pasta").shortcut("Ctrl+N").enabled(!in_trash),
-                    MenuItem::action("new-file", "Novo arquivo").enabled(!in_trash),
+                    MenuItem::action("new-folder", &tr!("New Folder")).shortcut("Ctrl+N").enabled(!in_trash),
+                    MenuItem::action("new-file", &tr!("New File")).enabled(!in_trash),
                     MenuItem::Separator,
-                    MenuItem::action("open", "Abrir").shortcut("Ctrl+O").enabled(one),
-                    MenuItem::action("info", "Obter informações").shortcut("Ctrl+I").enabled(some),
-                    MenuItem::action("rename", "Renomear").enabled(one && !in_trash),
-                    MenuItem::action("duplicate", "Duplicar").shortcut("Ctrl+D").enabled(one && !in_trash),
+                    MenuItem::action("open", &tr!("Open")).shortcut("Ctrl+O").enabled(one),
+                    MenuItem::action("info", &tr!("Get Info")).shortcut("Ctrl+I").enabled(some),
+                    MenuItem::action("rename", &tr!("Rename")).enabled(one && !in_trash),
+                    MenuItem::action("duplicate", &tr!("Duplicate")).shortcut("Ctrl+D").enabled(one && !in_trash),
                     MenuItem::Separator,
-                    MenuItem::action("trash", "Mover para a Lixeira").enabled(some && !in_trash),
+                    MenuItem::action("trash", &tr!("Move to Trash")).enabled(some && !in_trash),
                 ],
             },
             MenuGroup {
-                title: "Editar".into(),
+                title: tr!("Edit").into_owned(),
                 items: vec![
-                    MenuItem::action("undo", undo).shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
+                    MenuItem::action("undo", &undo).shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
                     MenuItem::Separator,
-                    MenuItem::action("copy", "Copiar").shortcut("Ctrl+C").enabled(some && !in_trash),
-                    MenuItem::action("cut", "Recortar").shortcut("Ctrl+X").enabled(some && !in_trash),
-                    MenuItem::action("paste", "Colar").shortcut("Ctrl+V").enabled(!in_trash),
-                    MenuItem::action("select-all", "Selecionar tudo").shortcut("Ctrl+A"),
+                    MenuItem::action("copy", &tr!("Copy")).shortcut("Ctrl+C").enabled(some && !in_trash),
+                    MenuItem::action("cut", &tr!("Cut")).shortcut("Ctrl+X").enabled(some && !in_trash),
+                    MenuItem::action("paste", &tr!("Paste")).shortcut("Ctrl+V").enabled(!in_trash),
+                    MenuItem::action("select-all", &tr!("Select All")).shortcut("Ctrl+A"),
                 ],
             },
             MenuGroup {
-                title: "Visualizar".into(),
+                title: tr!("View").into_owned(),
                 items: vec![
-                    MenuItem::action("view-icons", "Como ícones").checked(mode == 0),
-                    MenuItem::action("view-list", "Como lista").checked(mode == 1),
-                    MenuItem::action("view-columns", "Como colunas").checked(mode == 2),
+                    MenuItem::action("view-icons", &tr!("as Icons")).checked(mode == 0),
+                    MenuItem::action("view-list", &tr!("as List")).checked(mode == 1),
+                    MenuItem::action("view-columns", &tr!("as Columns")).checked(mode == 2),
                     MenuItem::Separator,
-                    MenuItem::action("preview", "Mostrar pré-visualização").checked(self.preview_pane),
-                    MenuItem::action("hidden", "Mostrar arquivos ocultos").shortcut("Ctrl+H").checked(self.hidden),
+                    MenuItem::action("preview", &tr!("Show Preview")).checked(self.preview_pane),
+                    MenuItem::action("hidden", &tr!("Show Hidden Files")).shortcut("Ctrl+H").checked(self.hidden),
                 ],
             },
             MenuGroup {
-                title: "Ir".into(),
+                title: tr!("Go").into_owned(),
                 items: vec![
-                    MenuItem::action("back", "Voltar").enabled(!self.back.is_empty()),
-                    MenuItem::action("forward", "Avançar").enabled(!self.forward.is_empty()),
-                    MenuItem::action("up", "Pasta de cima").shortcut("Ctrl+Up"),
+                    MenuItem::action("back", &tr!("Back")).enabled(!self.back.is_empty()),
+                    MenuItem::action("forward", &tr!("Forward")).enabled(!self.forward.is_empty()),
+                    MenuItem::action("up", &tr!("Enclosing Folder")).shortcut("Ctrl+Up"),
                     MenuItem::Separator,
-                    MenuItem::action("go-home", "Pasta pessoal"),
-                    MenuItem::action("go-desktop", "Área de trabalho"),
-                    MenuItem::action("go-documents", "Documentos"),
-                    MenuItem::action("go-downloads", "Downloads"),
-                    MenuItem::action("go-trash", "Lixeira"),
+                    MenuItem::action("go-home", &tr!("Home")),
+                    MenuItem::action("go-desktop", &tr!("Desktop")),
+                    MenuItem::action("go-documents", &tr!("Documents")),
+                    MenuItem::action("go-downloads", &tr!("Downloads")),
+                    MenuItem::action("go-trash", &tr!("Trash")),
                     MenuItem::Separator,
-                    MenuItem::action("goto", "Ir para a pasta…").shortcut("Ctrl+Shift+G"),
+                    MenuItem::action("goto", &tr!("Go to Folder…")).shortcut("Ctrl+Shift+G"),
                 ],
             },
             window_menu(Vec::new()),
@@ -3301,11 +3322,11 @@ impl App for Files {
             self.menu_action(&action);
             ui.request_repaint();
         }
-        let mut items: Vec<(String, &str)> = vec![("Favoritos".into(), "")];
+        let mut items: Vec<(String, &str)> = vec![(tr!("Favorites").into_owned(), "")];
         items.extend(self.favorites.iter().map(|(name, _, icon)| (name.clone(), *icon)));
-        items.push(("Lugares".into(), ""));
-        items.push(("Computador".into(), "drive-harddisk-symbolic"));
-        items.push(("Lixeira".into(), "user-trash-symbolic"));
+        items.push((tr!("Locations").into_owned(), ""));
+        items.push((tr!("Computer").into_owned(), "drive-harddisk-symbolic"));
+        items.push((tr!("Trash").into_owned(), "user-trash-symbolic"));
         let favorites = self.favorites.len();
         let current = match &self.place {
             Place::Trash => favorites + 3,
@@ -3408,7 +3429,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.reveal = start.select.first().cloned();
         app.selection = start.select;
     }
-    let window = Window::new("Arquivos").app_id("mide-files").size(900, 520).min_size(560, 360).full_size_content().accepts_files();
+    let window = Window::new(&tr!("Files")).app_id("mide-files").size(900, 520).min_size(560, 360).full_size_content().accepts_files();
     run(window, app)
 }
 

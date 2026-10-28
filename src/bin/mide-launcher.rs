@@ -15,6 +15,7 @@
 //!   Clique do meio vai para a próxima página e, da última, volta para a primeira.
 //!   Page Up/Down, setas nas bordas e os pontos também trocam a página.
 
+use mide::tr;
 use std::{collections::HashMap, error::Error, num::NonZeroU32, time::Duration};
 
 use mide::{
@@ -584,7 +585,7 @@ impl Launcher {
         if self.combine_zone(&grid, slot, x, y) {
             let name = match (self.top_entries[drag.entry], self.top_entries[target]) {
                 (Entry::App(a), Entry::App(b)) => launcher_layout::folder_name_for(&self.apps[a], &self.apps[b]),
-                _ => "Pasta".to_string(),
+                _ => tr!("Folder").into_owned(),
             };
             if let Some(folder) = self.layout.drop_on(drag.entry, target, &name) {
                 if mide::settings_file::effect("transitions") {
@@ -1195,9 +1196,9 @@ impl Launcher {
         let pages = page_count(main_entries.len(), grid.per_page());
         self.page = self.page.min(pages - 1);
         if main_entries.is_empty() && self.open_folder.is_none() {
-            let msg = "Nenhum app encontrado";
-            let mw = self.text.measure(msg, 15.0, FontWeight::Regular);
-            self.text.draw(&mut pixmap, msg, (w as f32 - mw) / 2.0, h as f32 / 2.0 - 10.0, 15.0, FontWeight::Regular, [255, 255, 255, 190]);
+            let msg = tr!("No Apps Found");
+            let mw = self.text.measure(&msg, 15.0, FontWeight::Regular);
+            self.text.draw(&mut pixmap, &msg, (w as f32 - mw) / 2.0, h as f32 / 2.0 - 10.0, 15.0, FontWeight::Regular, [255, 255, 255, 190]);
         }
         if self.open_folder.is_none() && !self.background_only {
             let shown = page.unwrap_or(self.page).min(pages - 1);
@@ -1288,7 +1289,7 @@ impl Launcher {
         if menu.hover {
             fill_rounded(pixmap, ix, iy, iw, ih, 7.0, rgba(255, 255, 255, 34));
         }
-        self.text.draw(pixmap, "Mover para a Lixeira", ix + 10.0, iy + (ih - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, [255, 110, 100, 255]);
+        self.text.draw(pixmap, &tr!("Move to Trash"), ix + 10.0, iy + (ih - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, [255, 110, 100, 255]);
     }
 
     /// Desenha uma página de itens na grade. `interactive` liga o destaque de seleção
@@ -1432,7 +1433,7 @@ impl Launcher {
         let tx = x + 34.0;
         let ty = y + (SEARCH_H - 14.0 * 1.25) / 2.0;
         if self.query.is_empty() {
-            self.text.draw(pixmap, "Buscar Aplicativos", tx, ty, 14.0, FontWeight::Regular, [255, 255, 255, 150]);
+            self.text.draw(pixmap, &tr!("Search Apps"), tx, ty, 14.0, FontWeight::Regular, [255, 255, 255, 150]);
         } else {
             let query = self.query.clone();
             let tw = self.text.draw(pixmap, &query, tx, ty, 14.0, FontWeight::Regular, [255, 255, 255, 250]);

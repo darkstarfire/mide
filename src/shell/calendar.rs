@@ -1,17 +1,68 @@
 //! Calendário do mês para o painel do relógio da barra: semanas começando no
-//! domingo, como no Brasil, e nomes em português.
+//! domingo, como no Brasil, e nomes no idioma da interface.
 
 use chrono::{Datelike, NaiveDate};
 
-pub const MONTHS: [&str; 12] = [
-    "janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro",
-    "dezembro",
-];
+/// Nome do mês (1 a 12) no idioma da interface.
+pub fn month_name(month: u32) -> String {
+    let m = (month as usize).clamp(1, 12);
+    crate::i18n::trc(
+        "month",
+        ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m - 1],
+    )
+    .into_owned()
+}
 
-/// Iniciais dos dias da semana, de domingo a sábado.
-pub const WEEKDAYS: [&str; 7] = ["D", "S", "T", "Q", "Q", "S", "S"];
+/// Nome curto do mês (1 a 12): "Oct" / "out".
+pub fn month_short(month: u32) -> String {
+    use crate::i18n::trc;
+    let m = (month as usize).clamp(1, 12);
+    let name = match m {
+        1 => trc("short month", "Jan"),
+        2 => trc("short month", "Feb"),
+        3 => trc("short month", "Mar"),
+        4 => trc("short month", "Apr"),
+        5 => trc("short month", "May"),
+        6 => trc("short month", "Jun"),
+        7 => trc("short month", "Jul"),
+        8 => trc("short month", "Aug"),
+        9 => trc("short month", "Sep"),
+        10 => trc("short month", "Oct"),
+        11 => trc("short month", "Nov"),
+        _ => trc("short month", "Dec"),
+    };
+    name.into_owned()
+}
 
-const WEEKDAY_NAMES: [&str; 7] = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+/// Nome do dia da semana (0 = domingo).
+pub fn weekday_name(from_sunday: u32) -> String {
+    use crate::i18n::trc;
+    let name = match from_sunday % 7 {
+        0 => trc("weekday", "Sunday"),
+        1 => trc("weekday", "Monday"),
+        2 => trc("weekday", "Tuesday"),
+        3 => trc("weekday", "Wednesday"),
+        4 => trc("weekday", "Thursday"),
+        5 => trc("weekday", "Friday"),
+        _ => trc("weekday", "Saturday"),
+    };
+    name.into_owned()
+}
+
+/// Iniciais dos dias da semana, de domingo a sábado ("S M T W T F S" / "D S T Q Q S S").
+pub fn weekday_initials() -> [String; 7] {
+    use crate::i18n::trc;
+    [
+        trc("Sunday initial", "S"),
+        trc("Monday initial", "M"),
+        trc("Tuesday initial", "T"),
+        trc("Wednesday initial", "W"),
+        trc("Thursday initial", "T"),
+        trc("Friday initial", "F"),
+        trc("Saturday initial", "S"),
+    ]
+    .map(|s| s.into_owned())
+}
 
 /// Um dia da grade: data e se é do mês mostrado (os de fora aparecem apagados).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,18 +90,18 @@ pub fn shift_month(year: i32, month: u32, delta: i32) -> (i32, u32) {
     (index.div_euclid(12), (index.rem_euclid(12) + 1) as u32)
 }
 
-/// "outubro de 2026".
+/// "October 2026" / "outubro de 2026".
 pub fn month_title(year: i32, month: u32) -> String {
-    format!("{} de {year}", MONTHS[(month as usize).saturating_sub(1).min(11)])
+    crate::tr!("{month} {year}", month = month_name(month), year = year)
 }
 
-/// "sábado, 17 de outubro".
+/// "Saturday, October 17" / "sábado, 17 de outubro".
 pub fn long_date(date: NaiveDate) -> String {
-    format!(
-        "{}, {} de {}",
-        WEEKDAY_NAMES[date.weekday().num_days_from_sunday() as usize],
-        date.day(),
-        MONTHS[date.month0() as usize]
+    crate::tr!(
+        "{weekday}, {month} {day}",
+        weekday = weekday_name(date.weekday().num_days_from_sunday()),
+        month = month_name(date.month()),
+        day = date.day()
     )
 }
 
@@ -79,6 +130,7 @@ mod tests {
 
     #[test]
     fn textos_em_portugues() {
+        crate::i18n::set_language("pt_BR");
         assert_eq!(month_title(2026, 10), "outubro de 2026");
         assert_eq!(long_date(NaiveDate::from_ymd_opt(2026, 10, 17).unwrap()), "sábado, 17 de outubro");
     }

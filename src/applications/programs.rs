@@ -471,21 +471,21 @@ pub fn reason_to_ask(dirs: &Dirs, path: &Path, kind: &Kind) -> Option<String> {
         return None;
     }
     match internet_origin(dirs, path) {
-        Some(Origin::Site(host)) => return Some(format!("Este programa veio de {host}; abra só se confiar.")),
-        Some(Origin::Downloads) => return Some("Este programa veio da internet (está em Downloads); abra só se confiar.".into()),
+        Some(Origin::Site(host)) => return Some(crate::tr!("This program came from {host}. Open it only if you trust it.", host = host)),
+        Some(Origin::Downloads) => return Some(crate::tr!("This program came from the internet (it’s in Downloads). Open it only if you trust it.").into_owned()),
         None => {}
     }
     let dir = path.parent().map(home_short).unwrap_or_default();
     if on_other_disk(dirs, path) {
-        return Some(format!("Este programa está em {dir}, num pendrive ou em outro disco; abra só se confiar."));
+        return Some(crate::tr!("This program is in {dir}, on a USB drive or another disk. Open it only if you trust it.", dir = dir));
     }
     if !is_executable(path) {
-        return Some(format!("Este programa veio de {dir} e não está marcado como executável; abra só se confiar."));
+        return Some(crate::tr!("This program came from {dir} and isn’t marked as executable. Open it only if you trust it.", dir = dir));
     }
     // Atalho fora das pastas de apps: a permissão de execução não basta (num pendrive
     // ou num zip extraído todo arquivo tem); só roda depois de confiado.
     if *kind == Kind::Desktop {
-        return Some(format!("Este atalho está em {dir} e ainda não foi marcado como confiável; abra só se confiar."));
+        return Some(crate::tr!("This shortcut is in {dir} and hasn’t been marked as trusted yet. Open it only if you trust it.", dir = dir));
     }
     None
 }
@@ -535,7 +535,7 @@ pub fn launch_for(path: &Path, kind: &Kind) -> Result<Option<Launch>, String> {
         Kind::AppImage | Kind::Binary | Kind::Script { shebang: true } => own(path_text, Vec::new()),
         Kind::Script { shebang: false } => own("sh".into(), vec![path_text]),
         Kind::Desktop => {
-            let launcher = read_launcher(path).ok_or_else(|| format!("\"{file_name}\" não é um atalho de app válido."))?;
+            let launcher = read_launcher(path).ok_or_else(|| crate::tr!("“{name}” isn’t a valid app shortcut.", name = file_name))?;
             match launcher.target {
                 Target::Link(url) => {
                     places::open(&url);
@@ -543,7 +543,7 @@ pub fn launch_for(path: &Path, kind: &Kind) -> Result<Option<Launch>, String> {
                 }
                 Target::App { args, dir, terminal, try_exec } => {
                     if let Some(needed) = try_exec.filter(|t| !program_exists(t)) {
-                        return Err(format!("\"{}\" não está instalado ({needed} não foi encontrado).", launcher.name));
+                        return Err(crate::tr!("“{name}” isn’t installed ({program} wasn’t found).", name = launcher.name, program = needed));
                     }
                     let (program, args) = if terminal {
                         ("mide-terminal".to_string(), std::iter::once("-e".to_string()).chain(args).collect())
@@ -581,7 +581,7 @@ pub fn run(path: &Path, kind: &Kind) -> Result<(), String> {
             tracing::info!("executando {line} (pasta {})", launch.dir.display());
             Ok(())
         }
-        Err(err) => Err(format!("Não foi possível abrir \"{}\": {err}", launch.name)),
+        Err(err) => Err(crate::tr!("Couldn’t open “{name}”: {err}", name = launch.name, err = err)),
     }
 }
 
@@ -601,7 +601,7 @@ pub fn start_installer(path: &Path) -> Result<(), String> {
             tracing::info!("instalador aberto para {}", path.display());
             Ok(())
         }
-        Err(err) => Err(format!("Não foi possível abrir o instalador: {err}")),
+        Err(err) => Err(crate::tr!("Couldn’t open the installer: {err}", err = err)),
     }
 }
 
@@ -671,23 +671,25 @@ impl Prompt {
     pub fn view(&mut self, ui: &mut Ui) -> Option<Answer> {
         let name = self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let script = matches!(self.kind, Kind::Script { .. });
-        let (title, buttons): (String, &[&str]) = if script {
-            (format!("Executar \"{name}\" ou abrir no editor?"), &["Cancelar", "Abrir no editor", "Executar"])
+        use crate::tr;
+        let (title, buttons): (String, Vec<String>) = if script {
+            (tr!("Run “{name}” or open it in the editor?", name = name), vec![tr!("Cancel").into_owned(), tr!("Open in Editor").into_owned(), tr!("Run").into_owned()])
         } else if self.install {
-            (format!("Instalar ou abrir \"{name}\"?"), &["Cancelar", "Instalar", "Abrir"])
+            (tr!("Install or open “{name}”?", name = name), vec![tr!("Cancel").into_owned(), tr!("Install").into_owned(), tr!("Open").into_owned()])
         } else {
-            (format!("Abrir \"{name}\"?"), &["Cancelar", "Abrir"])
+            (tr!("Open “{name}”?", name = name), vec![tr!("Cancel").into_owned(), tr!("Open").into_owned()])
         };
+        let buttons: Vec<&str> = buttons.iter().map(String::as_str).collect();
         let folder = crate::appimage::apps_dir().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let message = match (&self.reason, self.install) {
-            (Some(reason), true) => format!("{reason} Instalar põe o app em {folder}, no launcher e na busca."),
-            (None, true) => format!("Instalar põe o app em {folder}, no launcher e na busca; Abrir só roda esta cópia."),
+            (Some(reason), true) => tr!("{reason} Install puts the app in {folder}, in the launcher and in search.", reason = reason, folder = folder),
+            (None, true) => tr!("Install puts the app in {folder}, in the launcher and in search. Open only runs this copy.", folder = folder),
             (Some(reason), false) => reason.clone(),
-            (None, false) => "É um script: executar roda os comandos dele.".into(),
+            (None, false) => tr!("This is a script: running it runs its commands.").into_owned(),
         };
         let enter = ui.input().key(crate::kit::Key::Enter);
         let repeat = ui.input().repeat;
-        let chosen = ui.alert(&title, &message, buttons);
+        let chosen = ui.alert(&title, &message, &buttons);
         if std::mem::take(&mut self.fresh) {
             ui.request_repaint();
             return None;
@@ -717,7 +719,7 @@ impl Prompt {
             if self.reason.is_some()
                 && let Err(err) = trust(&Dirs::current(), &self.path)
             {
-                return Some(Answer::Failed(format!("Não foi possível marcar \"{name}\" como executável: {err}")));
+                return Some(Answer::Failed(tr!("Couldn’t mark “{name}” as executable: {err}", name = name, err = err)));
             }
             return Some(match start_installer(&self.path) {
                 Ok(()) => Answer::Done,
@@ -733,7 +735,7 @@ impl Prompt {
         if self.reason.is_some()
             && let Err(err) = trust(&Dirs::current(), &self.path)
         {
-            return Some(Answer::Failed(format!("Não foi possível marcar \"{name}\" como executável: {err}")));
+            return Some(Answer::Failed(tr!("Couldn’t mark “{name}” as executable: {err}", name = name, err = err)));
         }
         Some(match run(&self.path, &self.kind) {
             Ok(()) => Answer::Done,
@@ -894,6 +896,7 @@ mod tests {
     /// Pergunta, confiança e registro, com pastas de teste.
     #[test]
     fn confianca_marca_executavel_e_lembra() {
+        crate::i18n::set_language("pt_BR");
         let base = temp_dir("confianca");
         fs::create_dir_all(base.join("dl")).unwrap();
         let d = Dirs { data: base.join("data"), downloads: base.join("dl"), home: base.clone() };

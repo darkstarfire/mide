@@ -8,20 +8,50 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Tipos que o "Novo arquivo" oferece: extensão, nome no menu, nome do arquivo novo e
-/// ícone do tema.
-pub const KINDS: &[(&str, &str, &str, &str)] = &[
-    ("txt", "Texto simples (.txt)", "Novo arquivo", "text-x-generic"),
-    ("md", "Markdown (.md)", "Novo documento", "text-x-generic"),
-    ("docx", "Documento do Word (.docx)", "Novo documento", "x-office-document"),
-    ("odt", "Documento do Writer (.odt)", "Novo documento", "x-office-document"),
-    ("rtf", "Texto formatado (.rtf)", "Novo documento", "x-office-document"),
-    ("xlsx", "Planilha do Excel (.xlsx)", "Nova planilha", "x-office-spreadsheet"),
-    ("ods", "Planilha do Calc (.ods)", "Nova planilha", "x-office-spreadsheet"),
-    ("csv", "Tabela CSV (.csv)", "Nova tabela", "x-office-spreadsheet"),
-    ("json", "JSON (.json)", "Novo arquivo", "text-x-script"),
-    ("html", "Página HTML (.html)", "Nova página", "text-html"),
+/// Tipos que o "Novo arquivo" oferece: extensão e ícone do tema. O nome no menu e o
+/// do arquivo novo, traduzidos, vêm de [`label`] e [`stem`].
+pub const KINDS: &[(&str, &str)] = &[
+    ("txt", "text-x-generic"),
+    ("md", "text-x-generic"),
+    ("docx", "x-office-document"),
+    ("odt", "x-office-document"),
+    ("rtf", "x-office-document"),
+    ("xlsx", "x-office-spreadsheet"),
+    ("ods", "x-office-spreadsheet"),
+    ("csv", "x-office-spreadsheet"),
+    ("json", "text-x-script"),
+    ("html", "text-html"),
 ];
+
+/// Nome do tipo no menu "Novo arquivo", no idioma da sessão.
+pub fn label(ext: &str) -> String {
+    match ext {
+        "txt" => crate::tr!("Plain Text (.txt)"),
+        "md" => crate::tr!("Markdown (.md)"),
+        "docx" => crate::tr!("Word Document (.docx)"),
+        "odt" => crate::tr!("Writer Document (.odt)"),
+        "rtf" => crate::tr!("Rich Text (.rtf)"),
+        "xlsx" => crate::tr!("Excel Spreadsheet (.xlsx)"),
+        "ods" => crate::tr!("Calc Spreadsheet (.ods)"),
+        "csv" => crate::tr!("CSV Table (.csv)"),
+        "json" => crate::tr!("JSON (.json)"),
+        "html" => crate::tr!("HTML Page (.html)"),
+        _ => return ext.to_string(),
+    }
+    .into_owned()
+}
+
+/// Nome (sem extensão) do arquivo novo do tipo, no idioma da sessão ("Novo documento").
+pub fn stem(ext: &str) -> String {
+    match ext {
+        "md" | "docx" | "odt" | "rtf" => crate::tr!("New Document"),
+        "xlsx" | "ods" => crate::tr!("New Spreadsheet"),
+        "csv" => crate::tr!("New Table"),
+        "html" => crate::tr!("New Page"),
+        _ => crate::tr!("New File"),
+    }
+    .into_owned()
+}
 
 /// Conteúdo do documento vazio de um tipo (pela extensão, sem o ponto).
 pub fn content(ext: &str) -> Option<Vec<u8>> {
@@ -42,9 +72,11 @@ pub fn content(ext: &str) -> Option<Vec<u8>> {
 
 /// Cria o documento vazio do tipo `ext` na pasta `dir`, com o primeiro nome livre.
 pub fn create(dir: &Path, ext: &str) -> std::io::Result<PathBuf> {
-    let (_, _, stem, _) = KINDS.iter().find(|(e, ..)| *e == ext).ok_or_else(|| std::io::Error::other("tipo desconhecido"))?;
+    if !KINDS.iter().any(|(e, _)| *e == ext) {
+        return Err(std::io::Error::other("tipo desconhecido"));
+    }
     let data = content(ext).ok_or_else(|| std::io::Error::other("tipo desconhecido"))?;
-    let name = crate::files::numbered_name(dir, stem, ext);
+    let name = crate::files::numbered_name(dir, &stem(ext), ext);
     let path = dir.join(name);
     // `create_new`: nunca escreve por cima de um arquivo que apareceu no meio tempo.
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
@@ -137,23 +169,26 @@ mod tests {
     fn documentos_novos_sao_validos() {
         let dir = std::env::temp_dir().join(format!("mide-modelos-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        for (ext, ..) in KINDS {
+        let mut made = std::collections::HashMap::new();
+        for (ext, _) in KINDS {
             let path = create(&dir, ext).unwrap();
             assert!(path.extension().is_some_and(|e| e == *ext), "{ext}");
+            made.insert(*ext, path);
         }
         // Os formatados voltam a ser lidos pelo próprio leitor do mide.
-        let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
-        assert!(crate::richtext::docx::read(&read("Novo documento.docx")).is_some());
-        assert!(crate::richtext::odt::read(&read("Novo documento.odt")).is_some());
-        assert!(crate::richtext::rtf::read(&read("Novo documento.rtf")).is_some());
+        let read = |ext: &str| std::fs::read(&made[ext]).unwrap();
+        assert!(crate::richtext::docx::read(&read("docx")).is_some());
+        assert!(crate::richtext::odt::read(&read("odt")).is_some());
+        assert!(crate::richtext::rtf::read(&read("rtf")).is_some());
         // Planilhas: zip com as partes certas.
-        let xlsx = zip::ZipArchive::new(std::io::Cursor::new(read("Nova planilha.xlsx"))).unwrap();
+        let xlsx = zip::ZipArchive::new(std::io::Cursor::new(read("xlsx"))).unwrap();
         assert!(xlsx.file_names().any(|n| n == "xl/workbook.xml"));
-        let mut ods = zip::ZipArchive::new(std::io::Cursor::new(read("Nova planilha.ods"))).unwrap();
+        let mut ods = zip::ZipArchive::new(std::io::Cursor::new(read("ods"))).unwrap();
         assert_eq!(ods.by_index(0).unwrap().name(), "mimetype");
         // Segundo do mesmo tipo: nome com número, sem apagar o primeiro.
         let again = create(&dir, "docx").unwrap();
-        assert_ne!(again, dir.join("Novo documento.docx"));
+        assert_ne!(again, made["docx"]);
+        assert!(made["docx"].exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

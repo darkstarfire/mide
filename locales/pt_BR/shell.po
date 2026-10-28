@@ -1,0 +1,678 @@
+# Tradução do mide para o português do Brasil: shell (barra superior, dock, launcher,
+# buscador, notificações, bloqueio de tela, Sobre este computador e src/shell).
+# Os textos em inglês (msgid) são os do código.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgctxt "month"
+msgid "January"
+msgstr "janeiro"
+
+msgctxt "month"
+msgid "February"
+msgstr "fevereiro"
+
+msgctxt "month"
+msgid "March"
+msgstr "março"
+
+msgctxt "month"
+msgid "April"
+msgstr "abril"
+
+msgctxt "month"
+msgid "May"
+msgstr "maio"
+
+msgctxt "month"
+msgid "June"
+msgstr "junho"
+
+msgctxt "month"
+msgid "July"
+msgstr "julho"
+
+msgctxt "month"
+msgid "August"
+msgstr "agosto"
+
+msgctxt "month"
+msgid "September"
+msgstr "setembro"
+
+msgctxt "month"
+msgid "October"
+msgstr "outubro"
+
+msgctxt "month"
+msgid "November"
+msgstr "novembro"
+
+msgctxt "month"
+msgid "December"
+msgstr "dezembro"
+
+msgctxt "short month"
+msgid "Jan"
+msgstr "jan"
+
+msgctxt "short month"
+msgid "Feb"
+msgstr "fev"
+
+msgctxt "short month"
+msgid "Mar"
+msgstr "mar"
+
+msgctxt "short month"
+msgid "Apr"
+msgstr "abr"
+
+msgctxt "short month"
+msgid "May"
+msgstr "mai"
+
+msgctxt "short month"
+msgid "Jun"
+msgstr "jun"
+
+msgctxt "short month"
+msgid "Jul"
+msgstr "jul"
+
+msgctxt "short month"
+msgid "Aug"
+msgstr "ago"
+
+msgctxt "short month"
+msgid "Sep"
+msgstr "set"
+
+msgctxt "short month"
+msgid "Oct"
+msgstr "out"
+
+msgctxt "short month"
+msgid "Nov"
+msgstr "nov"
+
+msgctxt "short month"
+msgid "Dec"
+msgstr "dez"
+
+msgctxt "weekday"
+msgid "Sunday"
+msgstr "domingo"
+
+msgctxt "weekday"
+msgid "Monday"
+msgstr "segunda-feira"
+
+msgctxt "weekday"
+msgid "Tuesday"
+msgstr "terça-feira"
+
+msgctxt "weekday"
+msgid "Wednesday"
+msgstr "quarta-feira"
+
+msgctxt "weekday"
+msgid "Thursday"
+msgstr "quinta-feira"
+
+msgctxt "weekday"
+msgid "Friday"
+msgstr "sexta-feira"
+
+msgctxt "weekday"
+msgid "Saturday"
+msgstr "sábado"
+
+msgctxt "Sunday initial"
+msgid "S"
+msgstr "D"
+
+msgctxt "Monday initial"
+msgid "M"
+msgstr "S"
+
+msgctxt "Tuesday initial"
+msgid "T"
+msgstr "T"
+
+msgctxt "Wednesday initial"
+msgid "W"
+msgstr "Q"
+
+msgctxt "Thursday initial"
+msgid "T"
+msgstr "Q"
+
+msgctxt "Friday initial"
+msgid "F"
+msgstr "S"
+
+msgctxt "Saturday initial"
+msgid "S"
+msgstr "S"
+
+msgid "{month} {year}"
+msgstr "{month} de {year}"
+
+msgid "{weekday}, {month} {day}"
+msgstr "{weekday}, {day} de {month}"
+
+msgid "Network"
+msgstr "Rede"
+
+msgid "Sound"
+msgstr "Som"
+
+msgid "Wallpaper"
+msgstr "Papel de parede"
+
+msgid "Effects"
+msgstr "Efeitos"
+
+msgid "Keyboard Shortcuts"
+msgstr "Atalhos de teclado"
+
+msgid "About This Computer"
+msgstr "Sobre este computador"
+
+msgid "Folder"
+msgstr "Pasta"
+
+msgid "Incorrect password"
+msgstr "Senha incorreta"
+
+msgid "Checking…"
+msgstr "Conferindo…"
+
+msgid "Enter Password"
+msgstr "Digite a senha"
+
+msgctxt "window title"
+msgid "Lock Screen"
+msgstr "Bloqueio"
+
+msgctxt "system menu"
+msgid "Lock Screen"
+msgstr "Bloquear tela"
+
+msgid "More Info…"
+msgstr "Mais informações…"
+
+msgid "mide is built from scratch, with no code, images or fonts from Apple."
+msgstr "O mide é criado do zero, sem código, imagens ou fontes da Apple."
+
+msgid "Press Enter to copy the result"
+msgstr "Enter copia o resultado"
+
+msgid "Application"
+msgstr "Aplicativo"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Search apps, settings, files and calculations"
+msgstr "Buscar apps, ajustes, arquivos e contas"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "now"
+msgstr "agora"
+
+msgid "No Apps Found"
+msgstr "Nenhum app encontrado"
+
+msgid "Move to Trash"
+msgstr "Mover para a Lixeira"
+
+msgid "Search Apps"
+msgstr "Buscar Aplicativos"
+
+msgid "File"
+msgstr "Arquivo"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Window"
+msgstr "Janela"
+
+msgid "System Settings…"
+msgstr "Configurações do Sistema…"
+
+msgid "Force Quit App"
+msgstr "Forçar encerrar o app"
+
+msgid "Sleep"
+msgstr "Repouso"
+
+msgid "Restart…"
+msgstr "Reiniciar…"
+
+msgid "Shut Down…"
+msgstr "Desligar…"
+
+msgid "Log Out…"
+msgstr "Encerrar sessão…"
+
+msgid "Hide {app}"
+msgstr "Ocultar {app}"
+
+msgid "Quit {app}"
+msgstr "Encerrar {app}"
+
+msgid "New Window"
+msgstr "Nova janela"
+
+msgid "Close Window"
+msgstr "Fechar janela"
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "Redo"
+msgstr "Refazer"
+
+msgid "Cut"
+msgstr "Recortar"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Paste"
+msgstr "Colar"
+
+msgid "Select All"
+msgstr "Selecionar tudo"
+
+msgid "Minimize"
+msgstr "Minimizar"
+
+msgid "Fill"
+msgstr "Preencher"
+
+msgid "Center"
+msgstr "Centralizar"
+
+msgid "Move & Resize"
+msgstr "Mover e redimensionar"
+
+msgid "Left Half"
+msgstr "Metade esquerda"
+
+msgid "Right Half"
+msgstr "Metade direita"
+
+msgid "Top Half"
+msgstr "Metade de cima"
+
+msgid "Bottom Half"
+msgstr "Metade de baixo"
+
+msgid "Top Left Quarter"
+msgstr "Canto superior esquerdo"
+
+msgid "Top Right Quarter"
+msgstr "Canto superior direito"
+
+msgid "Bottom Left Quarter"
+msgstr "Canto inferior esquerdo"
+
+msgid "Bottom Right Quarter"
+msgstr "Canto inferior direito"
+
+msgid "Return to Previous Size"
+msgstr "Voltar ao tamanho anterior"
+
+msgid "Full Screen Tile"
+msgstr "Lado a lado na tela"
+
+msgid "Left of Screen"
+msgstr "À esquerda da tela"
+
+msgid "Right of Screen"
+msgstr "À direita da tela"
+
+msgid "Minimize All"
+msgstr "Minimizar todas"
+
+msgid "Bring All to Front"
+msgstr "Trazer todas para a frente"
+
+msgid "Battery Settings…"
+msgstr "Configurações de bateria…"
+
+msgid "Move to {screen}"
+msgstr "Mover para {screen}"
+
+msgid "Keyboard Settings…"
+msgstr "Configurações de teclado…"
+
+msgid "Battery"
+msgstr "Bateria"
+
+msgid "Low Battery"
+msgstr "Bateria fraca"
+
+msgid "{percent}% remaining. Plug in the charger."
+msgstr "{percent}% restantes. Ligue o carregador."
+
+msgid "charging"
+msgstr "carregando"
+
+msgid "on battery"
+msgstr "na bateria"
+
+msgid "Battery: {level}% ({state})"
+msgstr "Bateria: {level}% ({state})"
+
+msgid "Day of the Week"
+msgstr "Dia da semana"
+
+msgid "Date"
+msgstr "Dia e mês"
+
+msgid "Year"
+msgstr "Ano"
+
+msgid "Seconds"
+msgstr "Segundos"
+
+msgctxt "short weekday"
+msgid "Sun"
+msgstr "dom"
+
+msgctxt "short weekday"
+msgid "Mon"
+msgstr "seg"
+
+msgctxt "short weekday"
+msgid "Tue"
+msgstr "ter"
+
+msgctxt "short weekday"
+msgid "Wed"
+msgstr "qua"
+
+msgctxt "short weekday"
+msgid "Thu"
+msgstr "qui"
+
+msgctxt "short weekday"
+msgid "Fri"
+msgstr "sex"
+
+msgctxt "short weekday"
+msgid "Sat"
+msgstr "sáb"
+
+msgid "{month} {day}"
+msgstr "{day} {month}"
+
+msgid "Today"
+msgstr "Hoje"
+
+msgid "Clock Format…"
+msgstr "Formato da hora…"
+
+msgid "Notifications"
+msgstr "Notificações"
+
+msgid "Clear"
+msgstr "Limpar"
+
+msgid "No Notifications"
+msgstr "Nenhuma notificação"
+
+msgid "and {count} more"
+msgstr "e mais {count}"
+
+msgid "Clock Format"
+msgstr "Formato da hora"
+
+msgid "Calendar"
+msgstr "Calendário"
+
+msgid "Mute"
+msgstr "Sem som"
+
+msgid "Output"
+msgstr "Saída"
+
+msgid "Input"
+msgstr "Entrada"
+
+msgid "Sound Settings…"
+msgstr "Configurações de som…"
+
+msgid "Now Playing"
+msgstr "Reprodução"
+
+msgid "Untitled"
+msgstr "Sem título"
+
+msgid "Playing"
+msgstr "Reproduzindo"
+
+msgid "Paused"
+msgstr "Pausado"
+
+msgid "Stopped"
+msgstr "Parado"
+
+msgid "Repeat Track"
+msgstr "Repetir faixa"
+
+msgid "Repeat List"
+msgstr "Repetir lista"
+
+msgid "Repeat"
+msgstr "Repetir"
+
+msgid "Shuffle"
+msgstr "Aleatório"
+
+msgid "Up Next"
+msgstr "Fila"
+
+msgid "Playlists"
+msgstr "Playlists"
+
+msgid "This player doesn't share its queue or playlists."
+msgstr "Este player não compartilha a fila ou as playlists."
+
+msgid "Looking for networks…"
+msgstr "Procurando redes…"
+
+msgid "Wi-Fi is off"
+msgstr "Wi-Fi desligado"
+
+msgid "Wired Network"
+msgstr "Rede cabeada"
+
+msgid "Connected · {ip}"
+msgstr "Conectado · {ip}"
+
+msgid "Connected"
+msgstr "Conectado"
+
+msgid "Connecting…"
+msgstr "Conectando…"
+
+msgid "Cable plugged in, not connected"
+msgstr "Cabo ligado, sem conexão"
+
+msgid "Network Settings…"
+msgstr "Configurações de rede…"
+
+msgid "Bluetooth is off"
+msgstr "Bluetooth desligado"
+
+msgid "No paired devices"
+msgstr "Nenhum aparelho pareado"
+
+msgid "Bluetooth Settings…"
+msgstr "Configurações de Bluetooth…"
+
+msgid "Off"
+msgstr "Desligado"
+
+msgid "On"
+msgstr "Ligado"
+
+msgid "Not connected"
+msgstr "Sem rede"
+
+msgctxt "Do Not Disturb, first line"
+msgid "Do Not"
+msgstr "Não"
+
+msgctxt "Do Not Disturb, second line"
+msgid "Disturb"
+msgstr "perturbe"
+
+msgid "Display"
+msgstr "Tela"
+
+msgid "Restart your computer now?"
+msgstr "Reiniciar o computador agora?"
+
+msgid "Restart"
+msgstr "Reiniciar"
+
+msgid "Shut down your computer now?"
+msgstr "Desligar o computador agora?"
+
+msgid "Shut Down"
+msgstr "Desligar"
+
+msgid "Log out now?"
+msgstr "Encerrar a sessão agora?"
+
+msgid "Log Out"
+msgstr "Encerrar sessão"
+
+msgid "Open apps will be closed."
+msgstr "Os apps abertos serão fechados."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Downloads"
+msgstr "Downloads"
+
+msgid "No Items"
+msgstr "Nenhum item"
+
+msgid "Open in Files"
+msgstr "Abrir no Gerenciador de Arquivos"
+
+msgid "Trash"
+msgstr "Lixeira"
+
+msgid "The Trash is empty"
+msgstr "A Lixeira está vazia"
+
+msgid "Empty Trash…"
+msgstr "Esvaziar Lixeira…"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Remove from Dock"
+msgstr "Remover da Dock"
+
+msgid "Keep in Dock"
+msgstr "Manter na Dock"
+
+msgid "Hide"
+msgstr "Ocultar"
+
+msgctxt "Dock"
+msgid "Quit"
+msgstr "Encerrar"
+
+msgid "Show in Enclosing Folder"
+msgstr "Mostrar na pasta"
+
+msgid "Copy Path"
+msgstr "Copiar caminho"
+
+msgid "Put Back"
+msgstr "Restaurar"
+
+msgid "Delete Immediately"
+msgstr "Apagar permanentemente"
+
+msgid "Open Launchpad"
+msgstr "Abrir o Launchpad"
+
+msgid "Dock Settings…"
+msgstr "Ajustes da Dock…"
+
+msgid "Open Downloads Folder"
+msgstr "Abrir pasta Downloads"
+
+msgid "{n} item will be deleted forever."
+msgid_plural "{n} items will be deleted forever."
+msgstr[0] "{n} item será apagado para sempre."
+msgstr[1] "{n} itens serão apagados para sempre."
+
+msgid "Empty the Trash?"
+msgstr "Esvaziar a Lixeira?"
+
+msgid "You can't undo this action."
+msgstr "Não dá para desfazer."
+
+msgid "Empty Trash"
+msgstr "Esvaziar Lixeira"
+
+msgid "Control Center"
+msgstr "Central de controle"
+
+msgid "System Settings"
+msgstr "Configurações do Sistema"
+
+msgid "Stop Recording"
+msgstr "Parar a gravação"
+
+msgid "Input Source: {name}"
+msgstr "Layout do teclado: {name}"
+
+msgid "Bluetooth: {state}"
+msgstr "Bluetooth: {state}"
+
+msgid "Ethernet: {state}"
+msgstr "Ethernet: {state}"
+
+msgid "Wi-Fi: {network}"
+msgstr "Wi-Fi: {network}"
+
+msgid "Wi-Fi: {state}"
+msgstr "Wi-Fi: {state}"
+
+msgid "Sound: {state}"
+msgstr "Som: {state}"
+
+msgid "Muted"
+msgstr "Sem som"
+
+msgid "Previous"
+msgstr "Anterior"
+
+msgid "Pause"
+msgstr "Pausar"
+
+msgid "Play"
+msgstr "Tocar"
+
+msgid "Next"
+msgstr "Próxima"

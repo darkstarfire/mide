@@ -11,6 +11,7 @@
 //! Se outro programa já for o servidor de notificações (por exemplo, o GNOME do
 //! desktop onde o mide roda em janela), este sai sem fazer nada.
 
+use mide::tr;
 use std::{
     collections::HashMap,
     error::Error,
@@ -521,8 +522,9 @@ impl Banners {
         // Título, "agora" à direita e o corpo em até duas linhas.
         let tx = ix + ICON as f32 + 12.0;
         let max_w = x + BANNER_W - 18.0 - tx;
-        let now_w = self.text.measure("agora", 11.5, FontWeight::Regular);
-        self.text.draw(pixmap, "agora", x + BANNER_W - 18.0 - now_w, y + 12.0, 11.5, FontWeight::Regular, theme.text_secondary);
+        let now = tr!("now");
+        let now_w = self.text.measure(&now, 11.5, FontWeight::Regular);
+        self.text.draw(pixmap, &now, x + BANNER_W - 18.0 - now_w, y + 12.0, 11.5, FontWeight::Regular, theme.text_secondary);
         let title = if summary.is_empty() { app.clone() } else { summary };
         let title = fit(&mut self.text, &title, 13.5, FontWeight::Semibold, max_w - now_w - 8.0);
         self.text.draw(pixmap, &title, tx, y + 11.0, 13.5, FontWeight::Semibold, theme.text);

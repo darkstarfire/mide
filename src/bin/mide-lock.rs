@@ -12,7 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{Datelike, Local, Timelike};
+use chrono::{Local, Timelike};
+use mide::tr;
 use mide::{
     kit::{run, App, Ui, Waker, Window},
     ui::{
@@ -137,8 +138,7 @@ fn test_password() -> Option<String> {
     if cfg!(debug_assertions) { std::env::var("MIDE_LOCK_TEST_PASSWORD").ok() } else { None }
 }
 
-const WEEKDAYS: [&str; 7] = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"];
-const MONTHS: [&str; 12] = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
 
 struct Lock {
     login: String,
@@ -192,7 +192,7 @@ impl App for Lock {
                     return;
                 }
                 tracing::info!("senha recusada");
-                self.message = Some("Senha incorreta".into());
+                self.message = Some(tr!("Incorrect password").into_owned());
                 self.shake = Some(Instant::now());
             }
         }
@@ -209,7 +209,7 @@ impl App for Lock {
 
         let now = Local::now();
         let time = format!("{:02}:{:02}", now.hour(), now.minute());
-        let date = format!("{}, {} de {}", WEEKDAYS[now.weekday().num_days_from_monday() as usize], now.day(), MONTHS[now.month0() as usize]);
+        let date = mide::calendar::long_date(now.date_naive());
         let initial = self.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
         let name = self.name.clone();
         let (cx, top) = (w / 2.0, h * 0.18);
@@ -233,12 +233,12 @@ impl App for Lock {
         let mut submitted = false;
         let checking = self.checking.is_some();
         ui.at(cx - field_w / 2.0 + dx, h * 0.58, field_w, |ui| {
-            let placeholder = if checking { "Conferindo…" } else { "Digite a senha" };
+            let placeholder = if checking { tr!("Checking…") } else { tr!("Enter Password") };
             if !checking {
-                submitted = ui.password_input(&mut self.password, placeholder).submitted();
+                submitted = ui.password_input(&mut self.password, &placeholder).submitted();
             } else {
                 let mut empty = String::new();
-                let _ = ui.password_input(&mut empty, placeholder);
+                let _ = ui.password_input(&mut empty, &placeholder);
             }
         });
         if let Some(message) = self.message.clone() {
@@ -257,7 +257,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_lock=info".into()))
         .init();
-    run(Window::new("Bloqueio").app_id("mide-lock").lock(), Lock::new())
+    run(Window::new(&mide::i18n::trc("window title", "Lock Screen")).app_id("mide-lock").lock(), Lock::new())
 }
 
 #[cfg(test)]
