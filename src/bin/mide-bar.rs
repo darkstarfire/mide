@@ -1637,6 +1637,10 @@ impl Bar {
                 (1, if playing { MediaGlyph::Pause } else { MediaGlyph::Play }, session.can_play || session.can_pause),
                 (0, MediaGlyph::Previous, session.can_go_previous),
             ];
+            // Cápsula em volta da nota e dos três controles, para parecerem um grupo só.
+            if let Some(path) = rounded_rect(x - 110.0, 4.0, 108.0, fh - 8.0, (fh - 8.0) / 2.0) {
+                group_capsule(&mut pixmap, &path, fg);
+            }
             for (id, glyph, enabled) in quick {
                 let (x0, x1) = (x - 26.0, x - 4.0);
                 if enabled {
@@ -1648,7 +1652,10 @@ impl Bar {
                 x = x0;
             }
             let (x0, x1) = (x - 30.0, x - 6.0);
-            highlight(&mut pixmap, MenuId::Media, x0, x1);
+            // Painel aberto: pílula dentro da cápsula (o destaque comum passaria da borda).
+            if open == Some(MenuId::Media) {
+                fill_rounded(&mut pixmap, x0 - 1.0, 6.0, x1 - x0 + 3.0, fh - 12.0, (fh - 12.0) / 2.0, cap);
+            }
             draw_media_glyph(&mut pixmap, MediaGlyph::Note, (x0 + x1) / 2.0, cy, 15.0, fg);
             self.titles.push((MenuId::Media, x0, x1));
         }
@@ -2963,6 +2970,13 @@ fn draw_switch(p: &mut Pixmap, x: f32, y: f32, on: bool) {
         paint.set_color(rgba(255, 255, 255, 255));
         p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
     }
+}
+
+/// Cápsula de grupo na barra: fundo bem leve e contorno fino, na cor do texto.
+fn group_capsule(p: &mut Pixmap, path: &tiny_skia::Path, fg: [u8; 4]) {
+    p.fill_path(path, &stroke_color(fg, 22), FillRule::Winding, Transform::identity(), None);
+    let stroke = Stroke { width: 1.0, ..Default::default() };
+    p.stroke_path(path, &stroke_color(fg, 70), &stroke, Transform::identity(), None);
 }
 
 fn stroke_color(fg: [u8; 4], alpha: u8) -> Paint<'static> {
