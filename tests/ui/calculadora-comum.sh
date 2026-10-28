@@ -3,14 +3,17 @@
 # configuração própria (um modo lembrado mudaria o tamanho dela nos outros testes) e o
 # log dela (RUST_LOG=mide_calculator=debug, no stdout) registra a tela ("calculadora:
 # tela 14"). Janela em (48, 76).
-# - Básica (250x380): coluna c em x = 84 + 59,5c, linha r em y = 187 + 58,4r
-#   (linha 1: 7 8 9 ×; linha 4: 0 , =).
-# - Científica (620x380): coluna c em x = 84 + 60,8c, linhas como na Básica
-#   (linha 0: ( ) mc m+ m− mr; linha 3: x! sen cos tg e EE).
-# - Programador (520x560): bases HEX/DEC/OCT/BIN em y=95, x = 84 + 58i; bits em
-#   y=189 (63–32) e y=233 (31–0), bit n de 31 a 0 em x = 50 + 15,6(31 − n) + 8.
+# Teclas redondas do visual do Tahoe (24/10), com a coluna c e a linha r a partir de 0:
+# - Básica (300x490): x = 92 + 70,5c, y = 240 + 70,5r (linha 0: ⌫ AC % ÷; linha 1:
+#   7 8 9 ×; linha 4: ± 0 , =). Com RPN (300x548), a fileira da pilha (x↔y R↓ R↑ LASTx)
+#   vem antes e as linhas ficam em y = 237 + 68,7r.
+# - Científica (680x470): x = 90 + 66,2c, y = 239 + 66,2r (linha 0: ( ) mc m+ m− mr;
+#   linha 1: 2nd x² x³ xʸ eˣ 10ˣ; linha 3: x! sen cos tg e EE; o teclado da Básica nas
+#   colunas 6 a 9).
+# - Programador (520x600): bases HEX/DEC/OCT/BIN em y=131, x = 88 + 58i; bits em
+#   y=271 (63–32) e y=315 (31–0), bit n de 31 a 0 em x = 62 + 15,375(31 − n) + 7,7.
 # - Barra: "Visualizar" em x=232; no menu, Básica y=55, Científica 79, Programador 103,
-#   Notas matemáticas 127.
+#   Notas matemáticas 127, Conversor de unidades 208.
 # - Notas (720x480): a nota começa em x=276, y=145 (linhas de 23 pt); botão da Lixeira
 #   em (738, 102).
 CDIR="$(mktemp -d)"
@@ -29,7 +32,11 @@ calc_run() {
     [ -n "$saved" ] && printf '[calculator]\n%b\n' "$saved" > "$CDIR/cfg/mide/config.toml"
     local curl="MIDE_CURL='$PWD/tests/data/bcb/curl'"
     [ -n "${CALC_NO_CURL:-}" ] && curl=""
-    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "RUST_LOG=mide_calculator=debug XDG_DATA_HOME='$CDIR/data' XDG_CACHE_HOME='$CDIR/data/cache' MIDE_CURL_DIR='$CDIR/data/curl' MIDE_RATES_NOW=2026-10-21T15:00:00-03:00 $curl $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
+    # A Calculadora só abre depois da barra: aberta antes, a janela nasce em (48, 48), sem
+    # a faixa da barra, e os cliques caem 28 pt abaixo das teclas (acontece com a bateria
+    # em paralelo, com a máquina carregada). Espera no máximo 15 s.
+    local bar="for i in \$(seq 150); do grep -aqs \"camada .mide-bar. criada\" \"\${SCENARIO_OUT:-/tmp/mide-scenario}/mide.log\" && break; sleep 0.1; done;"
+    XDG_CONFIG_HOME="$CDIR/cfg" timeout 150 "${CALC_SCEN:-$SCEN}" "$script" -- "$bar RUST_LOG=mide_calculator=debug XDG_DATA_HOME='$CDIR/data' XDG_CACHE_HOME='$CDIR/data/cache' MIDE_CURL_DIR='$CDIR/data/curl' MIDE_RATES_NOW=2026-10-21T15:00:00-03:00 $curl $CALCULATOR >'$CDIR/calc.log' 2>&1" > "$CDIR/scen.log" 2>&1
 }
 # calc_calls "nome" N: o curl falso recebeu N pedidos na última execução.
 calc_calls() {
@@ -59,7 +66,7 @@ calc_window() {
     fi
 }
 # Conversor de unidades (E3b, etapa 2): o visor ganha 64 pt e as teclas descem; o ⇅
-# fica em (73, 159). O log registra "calculadora: conversão 100 °F = 37,7777777778 °C".
+# fica em (77, 187). O log registra "calculadora: conversão 100 °F = 37,7777777778 °C".
 # calc_convert "nome" "conversão esperada" "roteiro" [opções]: a última conversão.
 calc_convert() {
     calc_run "$3" "${4:-}"

@@ -20,5 +20,5 @@ calc_calls "Moeda: busca desligada não pede nada" 0
 CALC_NO_CURL=1 calc_run "400 list" 'convert = true\nconvert_pairs = "moeda=USD>BRL"\ncurrency_online = true'
 calc_log "Moeda: na bateria, sem o curl falso, nada é buscado" "cotações \(teste\): sem MIDE_CURL, nada buscado"
 # Menus da Calculadora na barra (num barramento D-Bus de teste, como os do Terminal).
-CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Científica pela barra" 'janela "Calculadora" .*visível=620x380' "500 click 232 14; 540 click 250 79; 580 list"
-CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Conversor de unidades pela barra" 'janela "Calculadora" .*visível=250x444' "500 click 232 14; 540 click 250 208; 580 list"
+CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Científica pela barra" 'janela "Calculadora" .*visível=680x470' "500 click 232 14; 540 click 250 79; 580 list"
+CALC_SCEN=tests/scenario-dbus.sh calc_window "Calculadora: Visualizar > Conversor de unidades pela barra" 'janela "Calculadora" .*visível=300x554' "500 click 232 14; 540 click 250 208; 580 list"
