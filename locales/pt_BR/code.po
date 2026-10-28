@@ -151,7 +151,7 @@ msgid "Edit Language Servers…"
 msgstr "Editar servidores de linguagem…"
 
 msgid "Save the changes to “{name}”?"
-msgstr "Salvar as alterações de \"{name}\"?"
+msgstr "Salvar as alterações em \"{name}\"?"
 
 msgid "Without saving, the changes are lost."
 msgstr "Sem salvar, as alterações se perdem."

@@ -28,7 +28,7 @@ msgid "Microphone On"
 msgstr "Microfone ligado"
 
 msgid "Muted"
-msgstr "Mudo"
+msgstr "Sem som"
 
 # Gravação de tela
 msgid "Already recording"

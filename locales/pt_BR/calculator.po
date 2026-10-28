@@ -59,7 +59,7 @@ msgid "Paste"
 msgstr "Colar"
 
 msgid "Cut"
-msgstr "Cortar"
+msgstr "Recortar"
 
 msgid "Select All"
 msgstr "Selecionar tudo"

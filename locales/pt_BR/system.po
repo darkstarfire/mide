@@ -165,7 +165,7 @@ msgid "Pause"
 msgstr "Pausar"
 
 msgid "Play"
-msgstr "Reproduzir"
+msgstr "Tocar"
 
 msgid "Skip Back 15 Seconds"
 msgstr "Voltar 15 segundos"

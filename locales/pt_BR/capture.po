@@ -266,10 +266,10 @@ msgid "View"
 msgstr "Visualizar"
 
 msgid "Zoom In"
-msgstr "Ampliar"
+msgstr "Aumentar zoom"
 
 msgid "Zoom Out"
-msgstr "Reduzir"
+msgstr "Diminuir zoom"
 
 msgid "Actual Size"
 msgstr "Tamanho real"
