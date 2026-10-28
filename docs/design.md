@@ -1,5 +1,7 @@
 # Identidade visual do mide
 
+**Mídia sem abrir o player:** a barra mostra um controle enquanto houver sessão MPRIS ativa. O popover apresenta capa e metadados, transporte, posição, shuffle e repetição; fila e playlists aparecem quando o player oferece esses recursos. A preferência fica em Ajustes da barra e vem ligada.
+
 Este guia reúne as regras de aparência e de comportamento que já valem no mide. Ele
 serve para três coisas:
 

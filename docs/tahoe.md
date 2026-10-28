@@ -274,6 +274,7 @@ para outros apps usarem). Situação de 2026-10-24.
 | Parte | Tahoe |
 |---|---|
 | Barra superior | sem faixa de fundo; texto e ícones direto sobre o papel de parede (com sombra suave para ler); item aberto em cápsula de vidro |
+| Popover de reprodução | ícone musical centralizado e à esquerda da bandeja; capa quadrada, faixa/artista/álbum, progresso, transporte e opções de shuffle/repetição; fila e playlists quando suportadas pelo player |
 | Dock | vidro líquido, cantos maiores, indicador de app aberto em ponto |
 | Central de controle | módulos em cartões de vidro com cantos grandes, personalizáveis |
 | Notificações | cartões de vidro raio 24, agrupadas |

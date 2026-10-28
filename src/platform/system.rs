@@ -591,50 +591,22 @@ pub fn media_player(method: &'static str) {
         tracing::info!("sistema (teste): mpris {method}");
         return;
     }
+    let action = match method {
+        "PlayPause" => crate::platform::media::MediaAction::PlayPause,
+        "Next" => crate::platform::media::MediaAction::Next,
+        "Previous" => crate::platform::media::MediaAction::Previous,
+        "Stop" => crate::platform::media::MediaAction::Stop,
+        _ => { tracing::warn!("sistema: ação MPRIS desconhecida: {method}"); return; }
+    };
     std::thread::spawn(move || {
-        let called = (|| -> zbus::Result<Option<String>> {
-            let conn = zbus::blocking::Connection::session()?;
-            let dbus = zbus::blocking::fdo::DBusProxy::new(&conn)?;
-            let players: Vec<String> = dbus.list_names()?.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")).collect();
-            let proxy = |name: &str| zbus::blocking::Proxy::new(&conn, name.to_string(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player");
-            let playing = players.iter().find(|n| proxy(n).and_then(|p| p.get_property::<String>("PlaybackStatus")).is_ok_and(|s| s == "Playing"));
-            let Some(name) = playing.or(players.first()).cloned() else {
-                return Ok(None);
-            };
-            proxy(&name)?.call::<_, _, ()>(method, &())?;
-            Ok(Some(name))
-        })();
-        match called {
-            Ok(Some(name)) => tracing::info!("sistema: mpris {method} em {name}"),
-            Ok(None) => tracing::info!("sistema: mpris {method}: nenhum player aberto"),
-            Err(err) => tracing::warn!("sistema: mpris {method} falhou: {err}"),
+        let Some(session) = crate::platform::media::active_with_details(false) else {
+            tracing::info!("sistema: mpris {method}: nenhum player aberto");
+            return;
+        };
+        if let Err(err) = crate::platform::media::command(&session, action) {
+            tracing::warn!("sistema: mpris {method} falhou: {err}");
         }
     });
-}
-
-/// Player MPRIS ativo, priorizando o que está tocando. Mantém nomes comuns legíveis.
-pub fn active_media_player() -> Option<String> {
-    let conn = zbus::blocking::Connection::session().ok()?;
-    let dbus = zbus::blocking::fdo::DBusProxy::new(&conn).ok()?;
-    let players: Vec<String> = dbus.list_names().ok()?.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")).collect();
-    let proxy = |name: &str| zbus::blocking::Proxy::new(&conn, name.to_string(), "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player");
-    let name = players.iter().find(|n| proxy(n).and_then(|p| p.get_property::<String>("PlaybackStatus")).is_ok_and(|s| s == "Playing")).or(players.first())?;
-    let id = name.trim_start_matches("org.mpris.MediaPlayer2.");
-    Some(if id == "firefox" || id.starts_with("firefox.") {
-        "Firefox".into()
-    } else if id == "chromium" || id.starts_with("chromium.") {
-        "Chromium".into()
-    } else if id == "google chrome" || id.starts_with("chrome.") {
-        "Google Chrome".into()
-    } else if id == "spotify" || id.starts_with("spotify.") {
-        "Spotify".into()
-    } else if id == "vlc" || id.starts_with("vlc.") {
-        "VLC".into()
-    } else if id == "mpv" || id.starts_with("mpv.") {
-        "mpv".into()
-    } else {
-        id.replace(['_', '-'], " ")
-    })
 }
 
 pub fn set_brightness(value: f32) {

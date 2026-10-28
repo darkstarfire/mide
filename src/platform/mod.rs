@@ -12,4 +12,4 @@ pub mod elevate;
 pub mod portal;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
-pub use mide_ui::platform::{control_client, settings_file, sounds};
+pub use mide_ui::platform::{control_client, media, settings_file, sounds};

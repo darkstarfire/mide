@@ -777,6 +777,7 @@ Medido em 1920x1080: cada quadro do launcher levava de 70 a 240 ms (4 a 14 quadr
 - Nova seção **Barra superior** nas Configurações (também pela busca: "barra", "ícones", "bateria"...): interruptores para Configurações (engrenagem), Som, Wi-Fi, Bluetooth, Bateria e Central de controle. O relógio fica sempre.
 - Grava em `[bar]` no `config.toml` (só o que está escondido, como `gear = false`); a barra relê a cada meio segundo (o arquivo só é lido de novo quando muda) e redesenha; se o painel de um item escondido estiver aberto, ele fecha.
 - `mide::settings_file`: `BAR_ITEMS`, `bar_item` e `flag` (opção ligada/desligada com padrão e cache pela data do arquivo; `effect` passou a usar ela).
+- O `mide-ui` oferece `platform::media` (MPRIS, metadados, controles, capa, seek, fila e playlists opcionais) e o cartão reutilizável `kit::Ui::media_controls`; a barra usa a mesma camada de sessão/ações e oferece capa, metadados, progresso e controles em seu popover. As listas são consultadas só quando o popover abre.
 
 ## Compositor parado não desenha
 

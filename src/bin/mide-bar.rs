@@ -236,6 +236,7 @@ impl MenuId {
     fn custom_width(self) -> f32 {
         match self {
             MenuId::Wifi | MenuId::ConfirmRestart | MenuId::ConfirmShutdown | MenuId::ConfirmLogout => 300.0,
+            MenuId::Media => 360.0,
             MenuId::Control => 320.0,
             _ => 280.0,
         }
@@ -270,7 +271,8 @@ enum PanelAction {
     /// Painel de som: tocar por esta saída / gravar por esta entrada (índice na lista).
     AudioOutput(usize),
     AudioInput(usize),
-    Media(&'static str),
+    Media(mide::platform::media::MediaAction),
+    MediaSeek,
     /// Central de notificações: aviso clicado (índice no histórico).
     Notification(usize),
 }
@@ -378,6 +380,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     layer.commit();
 
     let pool = SlotPool::new(1920 * BAR_HEIGHT as usize * 4, &shm)?;
+    let (media_tx, media_rx) = std::sync::mpsc::channel();
+    let (media_art_tx, media_art_rx) = std::sync::mpsc::channel();
+    let media_details = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut bar = Bar {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
@@ -412,7 +417,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         native_gtk: None,
         layout_active: None,
         recording: None,
-        media_player: None,
+        media_session: None,
+        media_rx,
+        media_details: media_details.clone(),
+        media_art_tx,
+        media_art_rx,
+        media_art_url: None,
+        media_artwork: None,
         native_failed: None,
         native_failed_at: std::time::Instant::now(),
         titles_read_at: std::time::Instant::now(),
@@ -433,6 +444,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         glass_menu: Default::default(),
         qh: qh.clone(),
     };
+    std::thread::spawn(move || loop {
+        let session = mide::settings_file::bar_item("media").then(|| mide::platform::media::active_with_details(media_details.load(std::sync::atomic::Ordering::Relaxed))).flatten();
+        if media_tx.send(session).is_err() { break; }
+        std::thread::sleep(Duration::from_millis(650));
+    });
 
     let mut event_loop: EventLoop<Bar> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
@@ -903,7 +919,13 @@ struct Bar {
     layout_active: Option<u32>,
     /// Gravação de tela em andamento: segundos desde o começo.
     recording: Option<u64>,
-    media_player: Option<String>,
+    media_session: Option<mide::platform::media::MediaSession>,
+    media_rx: std::sync::mpsc::Receiver<Option<mide::platform::media::MediaSession>>,
+    media_details: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    media_art_tx: std::sync::mpsc::Sender<(String, Pixmap)>,
+    media_art_rx: std::sync::mpsc::Receiver<(String, Pixmap)>,
+    media_art_url: Option<String>,
+    media_artwork: Option<Pixmap>,
     /// O menu em foco é de um app GTK (`org.gtk.Menus`, avisado ao compositor pelo
     /// `gtk_shell1`): onde ele está e as ações dos itens (o `id` de cada item é o
     /// número da ação). Sem isso, o `native` é um `dbusmenu`.
@@ -1226,10 +1248,38 @@ impl Bar {
         }
         let clock = clock_text();
         let battery = battery();
-        let media_player = system::active_media_player();
-        if media_player != self.media_player {
-            self.media_player = media_player;
+        let mut media_changed = false;
+        if let Some(session) = self.media_rx.try_iter().last()
+            && session != self.media_session
+        {
+            let artwork_url = session.as_ref().and_then(|s| s.art_url.clone());
+            if artwork_url != self.media_art_url {
+                self.media_art_url = artwork_url.clone();
+                self.media_artwork = None;
+                if let Some(url) = artwork_url {
+                    let tx = self.media_art_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Some(image) = mide::platform::media::load_artwork(&url, 96) {
+                            let _ = tx.send((url, image));
+                        }
+                    });
+                }
+            }
+            self.media_session = session;
+            if self.media_session.is_none() && self.menu.as_ref().is_some_and(|m| m.id == MenuId::Media) {
+                self.close_menu();
+            }
+            media_changed = true;
+        }
+        for (url, artwork) in self.media_art_rx.try_iter() {
+            if self.media_art_url.as_deref() == Some(url.as_str()) {
+                self.media_artwork = Some(artwork);
+                media_changed = true;
+            }
+        }
+        if media_changed {
             self.draw_bar();
+            if self.menu.as_ref().is_some_and(|m| m.id == MenuId::Media) { self.draw_menu(); }
         }
         let (focused_id, focused, focused_pid) = ask_compositor("list")
             .and_then(|lines| {
@@ -1521,7 +1571,6 @@ impl Bar {
             }
         }
         let icons: Vec<MenuId> = [
-            (self.media_player.is_some(), MenuId::Media),
             (self.status.bluetooth.is_some() && shown("bluetooth"), MenuId::Bluetooth),
             ((self.status.wifi.is_some() || self.status.wired_connected().is_some()) && shown("wifi"), MenuId::Wifi),
             (self.status.volume.is_some() && shown("sound"), MenuId::Sound),
@@ -1535,7 +1584,6 @@ impl Bar {
             let cx = (x0 + x1) / 2.0;
             match id {
                 MenuId::Bluetooth => draw_bluetooth_icon(&mut pixmap, cx, cy, self.status.bluetooth.as_ref().is_some_and(|(on, _)| *on), fg),
-                MenuId::Media => { self.text.draw(&mut pixmap, "♫", cx - 7.0, text_y, 17.0, FontWeight::Semibold, fg); }
                 MenuId::Wifi if self.status.wired_primary() => draw_ethernet_icon(&mut pixmap, cx, cy, fg),
                 MenuId::Wifi => {
                     let level = match (&self.status.wifi, self.status.active_network()) {
@@ -1575,6 +1623,15 @@ impl Bar {
             }
             self.titles.push((MenuId::Tray(i as u8), x0, x1));
             x = x0;
+        }
+        // Reprodução fica à esquerda do tray, seguindo a ordem visual da barra.
+        if shown("media") && self.media_session.is_some() {
+            let (x0, x1) = (x - 36.0, x - 8.0);
+            highlight(&mut pixmap, MenuId::Media, x0, x1);
+            let glyph = "♫";
+            let width = self.text.measure(glyph, 17.0, FontWeight::Semibold);
+            self.text.draw(&mut pixmap, glyph, (x0 + x1 - width) / 2.0, text_y, 17.0, FontWeight::Semibold, fg);
+            self.titles.push((MenuId::Media, x0, x1));
         }
 
         if no_bg {
@@ -1702,6 +1759,7 @@ impl Bar {
     /// Abre o menu `id`, ou troca o menu aberto por ele (passar o mouse pelos títulos
     /// com um menu aberto troca de menu, como no macOS).
     fn open_menu(&mut self, id: MenuId) {
+        self.media_details.store(id == MenuId::Media, std::sync::atomic::Ordering::Relaxed);
         // A engrenagem não é menu: abre as Configurações.
         if id == MenuId::Gear {
             self.close_menu();
@@ -1823,6 +1881,7 @@ impl Bar {
     }
 
     fn close_menu(&mut self) {
+        self.media_details.store(false, std::sync::atomic::Ordering::Relaxed);
         if self.menu.take().is_some() {
             tracing::info!("menu fechado");
             self.draw_bar();
@@ -2168,14 +2227,102 @@ impl Bar {
         y + 26.0 + 8.0
     }
 
+    fn media_button(&mut self, p: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, glyph: &str, enabled: bool, prominent: bool, action: mide::platform::media::MediaAction, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) {
+        let index = regions.len();
+        let background = if hover == Some(index) { pal().accent_color() } else if prominent { pal().accent_color() } else { pal().ink(22) };
+        fill_rounded(p, x, y, w, h, h / 2.0, if enabled { background } else { pal().ink(12) });
+        let color = if !enabled { pal().secondary } else if prominent { [255, 255, 255, 255] } else { pal().text };
+        let width = self.text.measure(glyph, 16.0, FontWeight::Semibold);
+        self.text.draw(p, glyph, x + (w - width) / 2.0, y + (h - FONT * 1.25) / 2.0, 16.0, FontWeight::Semibold, color);
+        if enabled {
+            regions.push(((x, y, w, h), PanelAction::Media(action)));
+        }
+    }
+
     fn panel_media(&mut self, p: &mut Pixmap, pw: f32, regions: &mut Vec<((f32, f32, f32, f32), PanelAction)>, hover: Option<usize>) -> f32 {
-        self.text.draw(p, "Reprodução", 16.0, 14.0, 14.0, FontWeight::Bold, pal().text);
-        let player = self.media_player.as_deref().unwrap_or("Player de mídia");
-        self.text.draw(p, player, 16.0, 42.0, FONT, FontWeight::Regular, pal().secondary);
-        self.panel_row(p, pw, 66.0, 32.0, "Anterior", regions, hover, PanelAction::Media("Previous"));
-        self.panel_row(p, pw, 102.0, 32.0, "Reproduzir / pausar", regions, hover, PanelAction::Media("PlayPause"));
-        self.panel_row(p, pw, 138.0, 32.0, "Próxima", regions, hover, PanelAction::Media("Next"));
-        180.0
+        let Some(session) = self.media_session.clone() else { return 0.0 };
+        self.text.draw(p, "Reprodução", 16.0, 12.0, 14.0, FontWeight::Bold, pal().text);
+        let identity = fit_label(&mut self.text, &session.identity, 11.5, pw - 32.0);
+        self.text.draw(p, &identity, 16.0, 32.0, 11.5, FontWeight::Regular, pal().secondary);
+        let art = self.media_artwork.clone();
+        if let Some(art) = art.as_ref() {
+            fill_rounded(p, 16.0, 50.0, 88.0, 88.0, 8.0, pal().ink(18));
+            p.draw_pixmap(16, 50, art.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() }, Transform::identity(), None);
+        } else {
+            fill_rounded(p, 16.0, 50.0, 88.0, 88.0, 8.0, pal().ink(22));
+            let fallback = self.text.measure("♫", 36.0, FontWeight::Semibold);
+            self.text.draw(p, "♫", 60.0 - fallback / 2.0, 87.0, 36.0, FontWeight::Semibold, pal().secondary);
+        }
+        let text_x = 118.0;
+        let max_text = pw - text_x - 16.0;
+        let title = fit_label(&mut self.text, if session.title.is_empty() { "Sem título" } else { &session.title }, 14.0, max_text);
+        self.text.draw(p, &title, text_x, 62.0, 14.0, FontWeight::Semibold, pal().text);
+        let artist_text = if session.artists.is_empty() { session.identity.clone() } else { session.artists.join(", ") };
+        let artist = fit_label(&mut self.text, &artist_text, FONT, max_text);
+        self.text.draw(p, &artist, text_x, 86.0, FONT, FontWeight::Regular, pal().text);
+        let album = fit_label(&mut self.text, &session.album, 11.5, max_text);
+        self.text.draw(p, &album, text_x, 107.0, 11.5, FontWeight::Regular, pal().secondary);
+        let status = match session.playback_status.as_str() { "Playing" => "Reproduzindo", "Paused" => "Pausado", _ => "Parado" };
+        self.text.draw(p, status, text_x, 127.0, 11.0, FontWeight::Regular, pal().secondary);
+
+        let y = 150.0;
+        let (tx, tw) = (18.0, pw - 36.0);
+        fill_rounded(p, tx, y, tw, 4.0, 2.0, pal().ink(28));
+        if session.duration_us > 0 {
+            fill_rounded(p, tx, y, tw * (session.position_us as f32 / session.duration_us as f32).clamp(0.0, 1.0), 4.0, 2.0, pal().accent_color());
+            let fmt = |us: i64| format!("{:02}:{:02}", us.max(0) / 60_000_000, (us.max(0) / 1_000_000) % 60);
+            self.text.draw(p, &fmt(session.position_us), tx, y + 10.0, 10.5, FontWeight::Regular, pal().secondary);
+            let duration = fmt(session.duration_us);
+            let width = self.text.measure(&duration, 10.5, FontWeight::Regular);
+            self.text.draw(p, &duration, tx + tw - width, y + 10.0, 10.5, FontWeight::Regular, pal().secondary);
+            regions.push(((tx - 4.0, y - 5.0, tw + 8.0, 24.0), PanelAction::MediaSeek));
+        }
+
+        let by = 181.0;
+        let bw = 48.0;
+        let gap = 14.0;
+        let start = (pw - (bw * 4.0 + gap * 3.0)) / 2.0;
+        let playing = session.playback_status == "Playing";
+        self.media_button(p, start, by, bw, 34.0, "|◀", session.can_go_previous, false, mide::platform::media::MediaAction::Previous, regions, hover);
+        self.media_button(p, start + bw + gap, by, bw, 34.0, if playing { "Ⅱ" } else { "▶" }, session.can_play || session.can_pause, true, mide::platform::media::MediaAction::PlayPause, regions, hover);
+        self.media_button(p, start + (bw + gap) * 2.0, by, bw, 34.0, "■", session.can_control, false, mide::platform::media::MediaAction::Stop, regions, hover);
+        self.media_button(p, start + (bw + gap) * 3.0, by, bw, 34.0, "▶|", session.can_go_next, false, mide::platform::media::MediaAction::Next, regions, hover);
+
+        let shuffle = if session.shuffle { "Aleatório: ligado" } else { "Aleatório: desligado" };
+        let repeat = match session.loop_status.as_str() { "Playlist" => "Repetição: lista", "Track" => "Repetição: faixa", _ => "Repetição: desligada" };
+        let half = (pw - 36.0) / 2.0;
+        self.panel_row(p, pw, 224.0, 28.0, shuffle, regions, hover, PanelAction::Media(mide::platform::media::MediaAction::ToggleShuffle));
+        regions.last_mut().unwrap().0 = (18.0, 224.0, half, 28.0);
+        self.panel_row(p, pw, 224.0, 28.0, repeat, regions, hover, PanelAction::Media(mide::platform::media::MediaAction::CycleRepeat));
+        regions.last_mut().unwrap().0 = (18.0 + half, 224.0, half, 28.0);
+        let mut y = 264.0;
+        if !session.tracks.is_empty() {
+            self.text.draw(p, "Fila", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            y += 20.0;
+            for track in session.tracks.iter().take(4) {
+                let artist = track.artists.first().map(String::as_str).unwrap_or("");
+                let label = fit_label(&mut self.text, &format!("{}   {}", track.title, artist), 11.5, pw - 34.0);
+                self.panel_row(p, pw, y, 25.0, &label, regions, hover, PanelAction::Media(mide::platform::media::MediaAction::PlayTrack(track.id.clone())));
+                y += 26.0;
+            }
+        }
+        if !session.playlists.is_empty() {
+            Self::panel_separator(p, pw, y);
+            y += 8.0;
+            self.text.draw(p, "Playlists", 16.0, y, 12.0, FontWeight::Semibold, pal().secondary);
+            y += 20.0;
+            for playlist in session.playlists.iter().take(4) {
+                let label = fit_label(&mut self.text, &playlist.name, 11.5, pw - 34.0);
+                self.panel_row(p, pw, y, 25.0, &label, regions, hover, PanelAction::Media(mide::platform::media::MediaAction::ActivatePlaylist(playlist.id.clone())));
+                y += 26.0;
+            }
+        }
+        if session.tracks.is_empty() && session.playlists.is_empty() {
+            Self::panel_separator(p, pw, y);
+            self.text.draw(p, "Este player não compartilha a fila ou as playlists.", 16.0, y + 12.0, 11.0, FontWeight::Regular, pal().secondary);
+            y += 32.0;
+        }
+        y + 8.0
     }
 
     /// Uma saída ou entrada no painel de som: ícone do tipo num círculo (azul na
@@ -2533,7 +2680,27 @@ impl Bar {
                     system::select_audio(&device, false);
                 }
             }
-            PanelAction::Media(method) => system::media_player(method),
+            PanelAction::Media(action) => {
+                if let Some(session) = self.media_session.clone() {
+                    std::thread::spawn(move || {
+                        if let Err(err) = mide::platform::media::command(&session, action) {
+                            tracing::warn!("controle de mídia falhou: {err}");
+                        }
+                    });
+                }
+            }
+            PanelAction::MediaSeek => {
+                if let (Some(session), Some(menu)) = (self.media_session.clone(), self.menu.as_ref()) {
+                    if let Some(((rx, _, rw, _), _)) = menu.regions.iter().find(|(_, action)| *action == PanelAction::MediaSeek) {
+                        let position = (session.duration_us as f64 * ((x - *rx as f64) / *rw as f64).clamp(0.0, 1.0)) as i64;
+                        std::thread::spawn(move || {
+                            if let Err(err) = mide::platform::media::seek(&session, position) {
+                                tracing::warn!("busca na faixa falhou: {err}");
+                            }
+                        });
+                    }
+                }
+            }
             PanelAction::ToggleMute => {
                 if let Some((v, m)) = self.status.volume {
                     self.status.volume = Some((v, !m));
