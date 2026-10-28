@@ -224,7 +224,7 @@ impl Layout {
 /// (traduzido; o nome é gravado como o usuário o viu).
 pub fn folder_name_for(a: &App, b: &App) -> String {
     if a.group == b.group && a.group != "Outros" {
-        a.group.to_string()
+        crate::apps::group_label(a.group).into_owned()
     } else {
         crate::tr!("Folder").into_owned()
     }
