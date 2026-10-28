@@ -50,12 +50,13 @@ const MARGIN: f32 = 14.0;
 /// Tempo segurando um arrasto em cima de uma pasta até ela abrir (pasta de mola).
 const SPRING: Duration = Duration::from_millis(1100);
 
-/// Disco montado (pendrive, HD externo, CD/DVD).
+/// Volume removível montado ou detectado ainda desmontado (pendrive, HD, CD/DVD).
 #[derive(Clone, Debug, PartialEq)]
 struct Drive {
     device: String,
-    mount: PathBuf,
+    mount: Option<PathBuf>,
     fstype: String,
+    label: Option<String>,
 }
 
 /// Um ícone da área de trabalho: um arquivo ou pasta, ou um disco.
@@ -218,11 +219,19 @@ fn nearest_free(want: (usize, usize), taken: &HashSet<(usize, usize)>, cols: usi
     best.map(|(_, cell)| cell).unwrap_or(want)
 }
 
-/// Discos montados para o usuário, lidos do `mountinfo`: tudo em `/media`, `/run/media`
-/// e `/mnt` (pendrives, HDs externos, CDs/DVDs, partições montadas à mão).
+/// Volumes montados nos lugares usuais e partições removíveis ainda desmontadas.
 fn read_drives() -> Vec<Drive> {
     let path = std::env::var_os("MIDE_DESKTOP_MOUNTINFO").map(PathBuf::from).unwrap_or_else(|| "/proc/self/mountinfo".into());
-    std::fs::read_to_string(path).map(|t| parse_mountinfo(&t)).unwrap_or_default()
+    let mut drives = std::fs::read_to_string(path).map(|t| parse_mountinfo(&t)).unwrap_or_default();
+    if let Ok(output) = std::process::Command::new("lsblk")
+        .args(["--json", "--paths", "--output", "PATH,TYPE,RM,TRAN,FSTYPE,LABEL,MOUNTPOINTS"])
+        .output()
+        && output.status.success()
+        && let Ok(text) = std::str::from_utf8(&output.stdout)
+    {
+        parse_unmounted_removable(text, &mut drives);
+    }
+    drives
 }
 
 fn parse_mountinfo(text: &str) -> Vec<Drive> {
@@ -245,12 +254,43 @@ fn parse_mountinfo(text: &str) -> Vec<Drive> {
         if !user_mount || mount.trim_end_matches('/').matches('/').count() < 2 || matches!(*fstype, "tmpfs" | "autofs") {
             continue;
         }
-        if out.iter().any(|d| d.mount == Path::new(&mount)) {
+        if out.iter().any(|d| d.mount.as_deref() == Some(Path::new(&mount))) {
             continue;
         }
-        out.push(Drive { device: device.to_string(), mount: PathBuf::from(mount), fstype: fstype.to_string() });
+        let mount = PathBuf::from(mount);
+        out.push(Drive { device: device.to_string(), label: mount.file_name().map(|n| n.to_string_lossy().into_owned()), mount: Some(mount), fstype: fstype.to_string() });
     }
     out
+}
+
+/// Volumes removíveis ainda desmontados também aparecem na Mesa: clicar neles pede
+/// ao UDisks que monte o volume, como os ambientes gráficos comuns.
+fn parse_unmounted_removable(text: &str, drives: &mut Vec<Drive>) {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(text) else { return };
+    fn visit(node: &serde_json::Value, inherited_removable: bool, drives: &mut Vec<Drive>) {
+        let removable = node.get("rm").and_then(|v| v.as_bool().or_else(|| v.as_u64().map(|n| n != 0))).unwrap_or(false)
+            || node.get("tran").and_then(|v| v.as_str()) == Some("usb")
+            || inherited_removable;
+        let path = node.get("path").and_then(|v| v.as_str());
+        let kind = node.get("type").and_then(|v| v.as_str());
+        let fstype = node.get("fstype").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+        let mounted = node.get("mountpoints").and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|p| p.as_str().is_some_and(|s| !s.is_empty())));
+        if removable && matches!(kind, Some("part" | "disk")) && fstype.is_some() && !mounted
+            && let Some(device) = path
+            && !drives.iter().any(|d| d.device == device)
+        {
+            drives.push(Drive {
+                device: device.to_string(), mount: None, fstype: fstype.unwrap().to_string(),
+                label: node.get("label").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string),
+            });
+        }
+        if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
+            for child in children { visit(child, removable, drives); }
+        }
+    }
+    if let Some(devices) = root.get("blockdevices").and_then(|v| v.as_array()) {
+        for device in devices { visit(device, false, drives); }
+    }
 }
 
 /// Ícone do tema para um disco: CD/DVD ou removível.
@@ -259,6 +299,38 @@ fn drive_icon(d: &Drive) -> &'static str {
         "iso9660" | "udf" => "media-optical",
         _ => "drive-removable-media",
     }
+}
+
+fn drive_path(drive: &Drive) -> PathBuf {
+    drive.mount.clone().unwrap_or_else(|| PathBuf::from(&drive.device))
+}
+
+fn can_move_to_trash(drive: Option<&Drive>) -> bool {
+    drive.is_none()
+}
+
+fn open_drive(drive: &Drive) {
+    if let Some(mount) = &drive.mount {
+        places::open(&mount.to_string_lossy());
+        return;
+    }
+    let device = drive.device.clone();
+    std::thread::spawn(move || {
+        let result = std::process::Command::new("udisksctl").args(["mount", "-b", &device]).output();
+        match result {
+            Ok(output) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if let Some(mount) = text.lines().find_map(|line| line.split_once(" at ").map(|(_, path)| path.trim_end_matches('.').trim())) {
+                    places::open(mount);
+                    tracing::info!("montado: {device} em {mount}");
+                } else {
+                    tracing::info!("montado: {device}");
+                }
+            }
+            Ok(output) => tracing::warn!("não foi possível montar {device}: {}", String::from_utf8_lossy(&output.stderr).trim()),
+            Err(err) => tracing::warn!("não foi possível montar {device}: {err}"),
+        }
+    });
 }
 
 /// Miniatura para a área de trabalho: fotos, PDFs e vídeos com a borda branca (como
@@ -294,6 +366,7 @@ enum Action {
     Compress,
     Alias,
     Copy,
+    Cut,
     CopyPath,
     Info,
     Tag(usize),
@@ -372,9 +445,9 @@ impl Desktop {
             .drives
             .iter()
             .map(|d| Item {
-                path: d.mount.clone(),
-                key: format!("disco:{}", d.mount.display()),
-                name: d.mount.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| d.device.clone()),
+                path: d.mount.clone().unwrap_or_else(|| PathBuf::from(&d.device)),
+                key: format!("disco:{}", d.device),
+                name: d.mount.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).or_else(|| d.label.clone()).unwrap_or_else(|| d.device.clone()),
                 icon: drive_icon(d).into(),
                 is_dir: true,
                 modified: SystemTime::UNIX_EPOCH,
@@ -482,7 +555,7 @@ impl Desktop {
     /// Caminhos da ação: os escolhidos, se o item clicado está entre eles; senão, só ele.
     fn targets(&self, item: &Item) -> Vec<PathBuf> {
         if self.selected.contains(&item.path) && self.selected.len() > 1 {
-            self.selected.iter().filter(|p| !self.drives.iter().any(|d| &d.mount == *p)).cloned().collect()
+            self.selected.iter().filter(|p| !self.drives.iter().any(|d| d.mount.as_ref() == Some(*p) || (d.mount.is_none() && p.as_path() == Path::new(&d.device)))).cloned().collect()
         } else {
             vec![item.path.clone()]
         }
@@ -492,6 +565,7 @@ impl Desktop {
         let dir = self.dir.clone();
         let point = self.menu_point.take();
         match (action, item) {
+            (Action::Open, Some(item)) if item.drive.is_some() => open_drive(item.drive.as_ref().unwrap()),
             (Action::Open, Some(item)) => {
                 for path in self.targets(&item) {
                     if path.is_dir() {
@@ -552,6 +626,7 @@ impl Desktop {
                 }
             }
             (Action::Copy, Some(item)) => copy_files(&self.targets(&item)),
+            (Action::Cut, Some(item)) => cut_files(&self.targets(&item)),
             (Action::CopyPath, Some(item)) => places::copy_text(&self.targets(&item).iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n")),
             (Action::Info, Some(item)) => {
                 let exe = sibling("mide-files");
@@ -567,13 +642,15 @@ impl Desktop {
                 }
             }
             (Action::Trash, Some(item)) => {
-                for path in self.targets(&item) {
-                    match places::move_to_trash(&path, &places::trash_dir()) {
-                        Ok(_) => tracing::info!("para a Lixeira: {}", path.display()),
-                        Err(err) => tracing::warn!("não foi para a Lixeira: {err}"),
+                if can_move_to_trash(item.drive.as_ref()) {
+                    for path in self.targets(&item) {
+                        match places::move_to_trash(&path, &places::trash_dir()) {
+                            Ok(_) => tracing::info!("para a Lixeira: {}", path.display()),
+                            Err(err) => tracing::warn!("não foi para a Lixeira: {err}"),
+                        }
                     }
+                    self.reload();
                 }
-                self.reload();
             }
             (Action::Eject, Some(item)) => {
                 if let Some(drive) = item.drive.clone() {
@@ -660,6 +737,20 @@ impl Desktop {
         let Some(dir) = self.dir.clone() else {
             return;
         };
+        if let Some(clipboard) = mide::storage::transfer::current() {
+            let result = mide::storage::transfer::paste(&clipboard, &dir);
+            let made: Vec<PathBuf> = result.done.iter().map(|(_, dest)| dest.clone()).collect();
+            for error in result.errors {
+                tracing::warn!("não foi colado: {error}");
+            }
+            if !made.is_empty() {
+                tracing::info!("área de trabalho: {} item(ns) colado(s)", made.len());
+                self.place_new(&made, point, area);
+                self.reload();
+                self.selected = made;
+            }
+            return;
+        }
         let mut paths = mide::kit::parse_uri_list(text);
         if paths.is_empty() {
             paths = text.lines().map(str::trim).filter(|l| l.starts_with('/')).map(PathBuf::from).collect();
@@ -804,7 +895,7 @@ impl Desktop {
         // Como no Finder: Enter renomeia; abrir é ⌘O ou ⌘↓ (Ctrl+O, Ctrl+↓).
         let ctrl_down = input.key_events().iter().any(|(k, ctrl, _)| *k == Key::Down && *ctrl);
         let (enter, delete, rename) = (input.key(Key::Enter), input.key(Key::Delete), input.shortcut("r"));
-        let (open, all, copy, paste) = (input.shortcut("o") || ctrl_down, input.shortcut("a"), input.shortcut("c"), input.shortcut("v"));
+        let (open, all, copy, cut, paste) = (input.shortcut("o") || ctrl_down, input.shortcut("a"), input.shortcut("c"), input.shortcut("x"), input.shortcut("v"));
         let items = self.items();
         if all {
             self.selected = items.iter().map(|i| i.path.clone()).collect();
@@ -818,8 +909,10 @@ impl Desktop {
         if let Some(item) = chosen {
             if open {
                 self.act(Action::Open, Some(item), area, ui);
-            } else if copy {
+            } else if copy && item.drive.is_none() {
                 self.act(Action::Copy, Some(item), area, ui);
+            } else if cut && item.drive.is_none() {
+                self.act(Action::Cut, Some(item), area, ui);
             } else if (enter || rename) && self.selected.len() == 1 && item.drive.is_none() {
                 self.act(Action::Rename, Some(item), area, ui);
             } else if delete && item.drive.is_none() {
@@ -853,8 +946,10 @@ impl Desktop {
             });
         }
         m.separator();
-        if m.item(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
-            chosen = Some(Action::Trash);
+        if can_move_to_trash(item.drive.as_ref()) {
+            if m.item(&if multi { format!("Mover {count} itens para a Lixeira") } else { "Mover para a Lixeira".into() }) {
+                chosen = Some(Action::Trash);
+            }
         }
         m.separator();
         if m.item("Obter informações") {
@@ -876,6 +971,9 @@ impl Desktop {
         if m.item(&if multi { format!("Copiar {count} itens") } else { format!("Copiar \"{}\"", item.name) }) {
             chosen = Some(Action::Copy);
         }
+        if m.item(&if multi { format!("Recortar {count} itens") } else { format!("Recortar \"{}\"", item.name) }) {
+            chosen = Some(Action::Cut);
+        }
         if m.item("Copiar como caminho") {
             chosen = Some(Action::CopyPath);
         }
@@ -893,18 +991,38 @@ impl Desktop {
 fn copy_files(paths: &[PathBuf]) {
     let text: Vec<String> = paths.iter().map(|p| mide::thumbnails::file_uri(p)).collect();
     tracing::info!("copiado(s): {} item(ns)", paths.len());
-    places::copy_text(&text.join("\n"));
+    if !mide::storage::transfer::publish(paths, false) {
+        places::copy_text(&text.join("\n"));
+    }
+}
+
+fn cut_files(paths: &[PathBuf]) {
+    let text: Vec<String> = paths.iter().map(|p| mide::thumbnails::file_uri(p)).collect();
+    tracing::info!("recortado(s): {} item(ns)", paths.len());
+    if !mide::storage::transfer::publish(paths, true) {
+        places::copy_text(&text.join("\n"));
+    }
 }
 
 /// Desmonta o disco (e desliga, se puder) numa thread: o desenho não espera.
 fn eject(drive: Drive) {
     std::thread::spawn(move || {
-        let ok = std::process::Command::new("udisksctl").args(["unmount", "-b", &drive.device]).status().is_ok_and(|s| s.success());
-        if ok {
-            let _ = std::process::Command::new("udisksctl").args(["power-off", "-b", &drive.device]).status();
-            tracing::info!("ejetado: {}", drive.mount.display());
-        } else if !std::process::Command::new("gio").arg("mount").arg("-u").arg(&drive.mount).status().is_ok_and(|s| s.success()) {
-            tracing::warn!("não foi possível ejetar {}", drive.mount.display());
+        let unmounted = if drive.mount.is_some() {
+            std::process::Command::new("udisksctl").args(["unmount", "-b", &drive.device]).status().is_ok_and(|s| s.success())
+        } else {
+            true
+        };
+        if unmounted {
+            let powered_off = std::process::Command::new("udisksctl").args(["power-off", "-b", &drive.device]).status().is_ok_and(|s| s.success());
+            if powered_off {
+                tracing::info!("ejetado: {}", drive.mount.as_deref().unwrap_or(Path::new(&drive.device)).display());
+            } else {
+                tracing::warn!("desmontado, mas não foi possível ejetar fisicamente: {}", drive.device);
+            }
+        } else if let Some(mount) = drive.mount.as_ref()
+            && !std::process::Command::new("gio").arg("mount").arg("-u").arg(mount).status().is_ok_and(|s| s.success())
+        {
+            tracing::warn!("não foi possível ejetar {}", mount.display());
         }
     });
 }
@@ -964,7 +1082,7 @@ impl App for Desktop {
             && down
             && ((p.0 - start.0).powi(2) + (p.1 - start.1).powi(2)).sqrt() > 5.0
         {
-            let drives: Vec<PathBuf> = self.drives.iter().map(|d| d.mount.clone()).collect();
+            let drives: Vec<PathBuf> = self.drives.iter().map(drive_path).collect();
             let mut paths: Vec<PathBuf> = if self.selected.contains(&path) { self.selected.clone() } else { vec![path.clone()] };
             paths.retain(|p| !drives.contains(p));
             if !paths.is_empty() {
@@ -1052,7 +1170,7 @@ impl App for Desktop {
                 && let Some(p) = pointer
             {
                 self.press = Some((item.path.clone(), p, (p.0 - x, p.1 - y)));
-                let count = if self.selected.contains(&item.path) { self.selected.iter().filter(|s| !self.drives.iter().any(|d| &d.mount == *s)).count().max(1) } else { 1 };
+                let count = if self.selected.contains(&item.path) { self.selected.iter().filter(|s| !self.drives.iter().any(|d| drive_path(d) == **s)).count().max(1) } else { 1 };
                 self.press_icon = Self::drag_icon(&item.icon, &item.name, count, (p.0 - x, p.1 - y));
             }
             if r.clicked() {
@@ -1371,8 +1489,24 @@ mod tests {
 ";
         let d = parse_mountinfo(text);
         assert_eq!(d.len(), 3);
-        assert_eq!(d[0].mount, PathBuf::from("/media/fabio/PEN DRIVE"));
+        assert_eq!(d[0].mount, Some(PathBuf::from("/media/fabio/PEN DRIVE")));
         assert_eq!(drive_icon(&d[1]), "media-optical");
         assert_eq!(d[2].device, "/dev/sdc1");
+    }
+
+    #[test]
+    fn discos_usb_desmontados_e_exclusao_protegida() {
+        let text = r#"{"blockdevices":[
+          {"path":"/dev/sda","type":"disk","rm":false,"tran":"sata","fstype":null,"children":[{"path":"/dev/sda1","type":"part","rm":false,"tran":null,"fstype":"ext4","label":"Sistema","mountpoints":["/"]}]},
+          {"path":"/dev/sdb","type":"disk","rm":false,"tran":"usb","fstype":null,"children":[{"path":"/dev/sdb1","type":"part","rm":false,"tran":null,"fstype":"exfat","label":"Backup","mountpoints":[null]}]}
+        ]}"#;
+        let mut drives = Vec::new();
+        parse_unmounted_removable(text, &mut drives);
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].device, "/dev/sdb1");
+        assert_eq!(drives[0].label.as_deref(), Some("Backup"));
+        assert!(drives[0].mount.is_none());
+        assert!(can_move_to_trash(None));
+        assert!(!can_move_to_trash(Some(&drives[0])));
     }
 }

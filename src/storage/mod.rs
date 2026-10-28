@@ -3,6 +3,7 @@
 pub mod files_info;
 pub mod files_view;
 pub mod templates;
+pub mod transfer;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::storage::{files, places, thumbnails};

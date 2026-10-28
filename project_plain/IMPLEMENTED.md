@@ -1996,3 +1996,10 @@ Pedido do usuário (foto das Configurações): a pílula azul da barra lateral e
 - `snap.snapd-desktop-integration` (reiniciava sem parar porque o `xwayland-satellite` não está instalado) desativado no serviço do usuário (`systemctl --user mask`).
 - Vigia do laço do compositor (`src/compositor/watchdog.rs`): registra no log `laço do compositor parado há X s (fase: …)` quando o laço fica mais de 1,5 s sem voltar, para localizar o próximo travamento.
 - Ainda não resolvido: travamento intermitente (relatado após troca de papel de parede por outro testador também). Aguardando o log do vigia na próxima ocorrência.
+# Área de transferência de arquivos entre Arquivos e Mesa (2026-10-28)
+
+Arquivos e Mesa publicam a seleção de arquivos no compositor, que oferece `text/uri-list`, `text/plain`, `x-special/gnome-copied-files` e `application/x-kde-cutselection`. Assim, outros aplicativos Wayland recebem endereços de arquivos e os que entendem os formatos GNOME/KDE também recebem a intenção de recorte. Colar entre Arquivos e Mesa copia ou move conforme a seleção; movimentos concluídos saem da área de transferência e o Arquivos pode desfazê-los. A Mesa ganhou Recortar e Ctrl+X. Se o canal de controle não estiver disponível, cópia e recorte ainda publicam a lista simples de endereços.
+
+# Unidades removíveis na Mesa e proteção contra exclusão (2026-10-28, versão 0.10.1)
+
+A Mesa agora detecta partições removíveis desmontadas pelo `lsblk` (incluindo volumes USB), mostra o rótulo do volume e tenta montá-lo com UDisks quando aberto. Unidades mantêm o menu próprio de abrir/ejetar; não aparecem as ações Copiar, Recortar ou Mover para a Lixeira, e o teclado também bloqueia essas operações. Confirmei no ambiente de desenvolvimento um disco USB `/dev/sdb` com partição exFAT `/dev/sdb1` sem montagem: essa era a razão para não aparecer com a leitura anterior, restrita a pontos de montagem. A consulta ao daemon UDisks não está disponível neste ambiente isolado, então o ato de montar depende de validação numa sessão do mide.

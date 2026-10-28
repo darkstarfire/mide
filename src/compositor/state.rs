@@ -214,6 +214,8 @@ pub struct State {
     /// Teclas no estilo Mac: Ctrl e ⌘ de verdade apertados e a troca feita em cada
     /// tecla apertada (o soltar usa a mesma).
     pub mac_keys: MacKeys,
+    pub file_clipboard: Option<mide::storage::transfer::Clipboard>,
+    pub clipboard_serial: u64,
     /// Janelas que o app escondeu sem fechar (buffer nulo; o Chromium faz isso ao
     /// continuar em segundo plano), com a posição onde estavam. Voltam quando o app
     /// desenhar de novo.
@@ -453,6 +455,8 @@ impl State {
             snap: None,
             hidden: Vec::new(),
             mac_keys: MacKeys::default(),
+            file_clipboard: None,
+            clipboard_serial: 0,
             shown: Default::default(),
             dock_icons: Vec::new(),
             preview: None,
@@ -996,18 +1000,24 @@ impl SelectionHandler for State {
     /// controle): "Copiar caminho" da dock, do Arquivos e da área de trabalho, e o
     /// resultado da busca. Fica com o compositor, então continua lá mesmo que o app
     /// que copiou feche.
-    type SelectionUserData = std::sync::Arc<Vec<u8>>;
+    type SelectionUserData = std::sync::Arc<std::collections::HashMap<String, Vec<u8>>>;
+
+    fn new_selection(&mut self, ty: smithay::wayland::selection::SelectionTarget, _source: Option<smithay::wayland::selection::SelectionSource>, _seat: Seat<Self>) {
+        if ty == smithay::wayland::selection::SelectionTarget::Clipboard {
+            self.file_clipboard = None;
+        }
+    }
 
     fn send_selection(
         &mut self,
         _ty: smithay::wayland::selection::SelectionTarget,
-        _mime_type: String,
+        mime_type: String,
         fd: std::os::fd::OwnedFd,
         _seat: Seat<Self>,
         bytes: &Self::SelectionUserData,
     ) {
         // Numa thread: quem cola pode demorar a ler, e o compositor não espera.
-        let bytes = bytes.clone();
+        let Some(bytes) = bytes.get(&mime_type).cloned() else { return };
         std::thread::spawn(move || {
             use std::io::Write;
             let _ = std::fs::File::from(fd).write_all(&bytes);
@@ -1018,15 +1028,17 @@ impl SelectionHandler for State {
 impl State {
     /// Põe `text` na área de transferência, oferecido pelo próprio compositor.
     pub fn copy_text(&mut self, text: &str) {
+        self.file_clipboard = None;
         let mimes = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING"]
             .iter()
             .map(|m| m.to_string())
-            .collect();
+            .collect::<Vec<_>>();
+        let data = mimes.iter().map(|m| (m.clone(), text.as_bytes().to_vec())).collect();
         smithay::wayland::selection::data_device::set_data_device_selection(
             &self.display_handle,
             &self.seat,
             mimes,
-            std::sync::Arc::new(text.as_bytes().to_vec()),
+            std::sync::Arc::new(data),
         );
         tracing::info!("área de transferência: {} caractere(s) copiado(s)", text.chars().count());
     }
@@ -1034,14 +1046,37 @@ impl State {
     /// Põe na área de transferência o conteúdo de um arquivo com o tipo `mime` (uma
     /// imagem da captura de tela, `image/png`).
     pub fn copy_bytes(&mut self, mime: &str, bytes: Vec<u8>) {
+        self.file_clipboard = None;
         let n = bytes.len();
         smithay::wayland::selection::data_device::set_data_device_selection(
             &self.display_handle,
             &self.seat,
             vec![mime.to_string()],
-            std::sync::Arc::new(bytes),
+            std::sync::Arc::new([(mime.to_string(), bytes)].into_iter().collect()),
         );
         tracing::info!("área de transferência: {n} bytes de {mime} copiados");
+    }
+
+    /// Tipos interoperáveis: endereços para todos, intenção de recortar para gerenciadores.
+    pub fn copy_files(&mut self, mut clipboard: mide::storage::transfer::Clipboard) {
+        self.clipboard_serial += 1;
+        clipboard.id = self.clipboard_serial;
+        self.offer_files(&clipboard);
+        self.file_clipboard = Some(clipboard);
+    }
+
+    pub fn offer_files(&mut self, clipboard: &mide::storage::transfer::Clipboard) {
+        let uris = clipboard.uris();
+        let data: std::collections::HashMap<String, Vec<u8>> = [
+            ("text/uri-list", uris.clone()),
+            ("text/plain;charset=utf-8", uris.clone()),
+            ("text/plain", uris.clone()),
+            ("x-special/gnome-copied-files", format!("{}\n{}", if clipboard.cut { "cut" } else { "copy" }, uris)),
+            ("application/x-kde-cutselection", if clipboard.cut { "1" } else { "0" }.into()),
+        ].into_iter().map(|(m, s)| (m.to_string(), s.into_bytes())).collect();
+        smithay::wayland::selection::data_device::set_data_device_selection(
+            &self.display_handle, &self.seat, data.keys().cloned().collect(), std::sync::Arc::new(data),
+        );
     }
 }
 
@@ -1552,4 +1587,3 @@ impl State {
         self.reveal_homes.iter().find(|(w, _)| w == window).map(|(_, name)| name.as_str())
     }
 }
-

@@ -177,6 +177,26 @@ pub fn handle(state: &mut State, command: &str) -> String {
             state.copy_text(text);
             "ok\n".into()
         }
+        Some("files-copy") => {
+            match serde_json::from_str::<mide::storage::transfer::Clipboard>(command.trim_start().strip_prefix("files-copy ").unwrap_or("")) {
+                Ok(clipboard) => {
+                    state.copy_files(clipboard);
+                    "ok\n".into()
+                }
+                Err(err) => format!("erro: {err}\n"),
+            }
+        }
+        Some("files-paste") => format!("{}\n", serde_json::to_string(&state.file_clipboard).unwrap_or_default()),
+        Some("files-pasted") => {
+            if let Ok(done) = serde_json::from_str::<mide::storage::transfer::Clipboard>(command.trim_start().strip_prefix("files-pasted ").unwrap_or("")) {
+                if let Some(clipboard) = state.file_clipboard.as_mut() {
+                    clipboard.complete(done.id, &done.paths);
+                    let clipboard = clipboard.clone();
+                    state.offer_files(&clipboard);
+                }
+            }
+            "ok\n".into()
+        }
         // Telas: `outputs` lista (uma por linha, para as Configurações); `outputs apply`
         // relê a configuração e refaz as telas (resolução, posição, principal...).
         Some("outputs") => match words.next() {

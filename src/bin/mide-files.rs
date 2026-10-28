@@ -144,6 +144,10 @@ struct Files {
     from_sizer: Receiver<(PathBuf, Option<u64>)>,
     /// Itens copiados (Copiar / Ctrl+C), para Colar em outra pasta.
     clipboard: Vec<PathBuf>,
+    /// A seleção foi publicada no compositor; se ele a limpa, não reutilizar estado velho.
+    clipboard_shared: bool,
+    /// Itens recortados (Recortar / Ctrl+X): como Copiar, mas o Colar move para a pasta de destino, em vez de copiar.
+    cut: Vec<PathBuf>,
     /// Apps instalados (para "Abrir com"), carregados numa thread ao abrir.
     apps: Vec<mide::apps::App>,
     apps_rx: Option<Receiver<Vec<mide::apps::App>>>,
@@ -226,6 +230,8 @@ impl Files {
             to_sizer,
             from_sizer,
             clipboard: Vec::new(),
+            clipboard_shared: false,
+            cut: Vec::new(),
             apps: Vec::new(),
             apps_rx: Some({
                 let (tx, rx) = channel();
@@ -635,25 +641,75 @@ impl Files {
         }
     }
 
+    /// Recortar: puxa os itens para a área de transferência como para mover (no Colar, a
+    /// ação é mover; sem isso, colar copiaria). Como o Ctrl+X.
+    fn cut(&mut self, paths: &[PathBuf]) {
+        self.cut = paths.to_vec();
+        self.clipboard = self.cut.clone();
+        self.clipboard_shared = mide::storage::transfer::publish(&self.cut, true);
+        if !self.clipboard_shared {
+            copy_to_system(&self.cut);
+        }
+        tracing::info!("recortou(s): {} item(ns)", self.cut.len());
+    }
+
     fn paste(&mut self) {
         let Some(dir) = self.target_dir() else {
             return;
         };
-        let mut pasted = Vec::new();
-        for item in self.clipboard.clone() {
-            match files::copy_into(&item, &dir) {
-                Ok(copy) => {
-                    tracing::info!("colado: {}", copy.display());
-                    pasted.push(copy);
+        if let Some(clipboard) = mide::storage::transfer::current() {
+            let result = mide::storage::transfer::paste(&clipboard, &dir);
+            let made: Vec<PathBuf> = result.done.iter().map(|(_, dest)| dest.clone()).collect();
+            for error in result.errors {
+                self.message = Some(format!("Não foi possível colar: {error}"));
+            }
+            if !made.is_empty() {
+                if clipboard.cut {
+                    self.remember(Undo::Move(result.done));
+                } else {
+                    self.remember(Undo::Created(made.clone()));
                 }
-                Err(err) => self.message = Some(format!("Não foi possível colar \"{}\": {err}", item.display())),
+                self.selection = made;
+            }
+            self.reload();
+            return;
+        }
+        if self.clipboard_shared {
+            self.clipboard.clear();
+            self.cut.clear();
+            self.clipboard_shared = false;
+            return;
+        }
+        let mut pasted = Vec::new();
+        let mut moved = Vec::new();
+        let moving = !self.cut.is_empty();
+        let items: Vec<PathBuf> = if moving { std::mem::take(&mut self.cut) } else { self.clipboard.clone() };
+        for item in items {
+            let result = if moving { files::move_into(&item, &dir) } else { files::copy_into(&item, &dir) };
+            match result {
+                Ok(copy) => {
+                    tracing::info!("{}: {} -> {}", if moving { "movido" } else { "colado" }, item.display(), copy.display());
+                    if moving {
+                        moved.push((item, copy.clone()));
+                    } else {
+                        pasted.push(copy);
+                    }
+                }
+                Err(err) => self.message = Some(format!("Não foi possível {} \"{}\": {}", if moving { "mover" } else { "colar" }, item.display(), err)),
             }
         }
-        self.reload();
-        if !pasted.is_empty() {
+        let done = !pasted.is_empty();
+        if moving {
+            if !moved.is_empty() {
+                let copies: Vec<PathBuf> = moved.iter().map(|(_, copy)| copy.clone()).collect();
+                self.remember(Undo::Move(moved));
+                self.selection = copies;
+            }
+        } else if done {
             self.remember(Undo::Created(pasted.clone()));
             self.selection = pasted;
         }
+        self.reload();
     }
 
     /// O item principal da seleção (o último escolhido).
@@ -964,7 +1020,15 @@ impl Files {
                 }
             }
             "undo" => self.undo_last(),
-            "copy" => self.clipboard = self.selection.clone(),
+            "copy" => {
+                self.cut.clear();
+                self.clipboard = self.selection.clone();
+                self.clipboard_shared = mide::storage::transfer::publish(&self.clipboard, false);
+                if !self.clipboard_shared {
+                    copy_to_system(&self.clipboard);
+                }
+            }
+            "cut" => self.cut(&self.selection.clone()),
             "paste" => self.paste(),
             "select-all" => self.selection = self.entries.iter().map(|e| e.path.clone()).collect(),
             "view-icons" => self.set_mode(0),
@@ -1256,7 +1320,7 @@ impl Files {
         let open_key = input.shortcut("o") || ctrl_down;
         let step: isize = if ctrl_down || ctrl_up { 0 } else { moves.iter().filter(|(k, _)| input.key(*k)).map(|(_, d)| *d).sum() };
         let (new, hidden, find, rename) = (input.shortcut("n"), input.shortcut("h"), input.shortcut("f"), input.shortcut("r"));
-        let (copy, paste, dup, select_all) = (input.shortcut("c"), input.shortcut("v"), input.shortcut("d"), input.shortcut("a"));
+        let (copy, cut, paste, dup, select_all) = (input.shortcut("c"), input.shortcut("x"), input.shortcut("v"), input.shortcut("d"), input.shortcut("a"));
         let info = input.shortcut("i");
         // Ctrl+Z desfaz; Ctrl+Shift+G vai para uma pasta digitada (como no Finder).
         let undo = input.shortcut_shift("z") == Some(false);
@@ -1334,9 +1398,16 @@ impl Files {
         }
         if self.place != Place::Trash {
             if copy && !self.selection.is_empty() {
+                self.cut.clear();
                 self.clipboard = self.selection.clone();
                 tracing::info!("copiado(s): {} item(ns)", self.clipboard.len());
-                copy_to_system(&self.clipboard);
+                self.clipboard_shared = mide::storage::transfer::publish(&self.clipboard, false);
+                if !self.clipboard_shared {
+                    copy_to_system(&self.clipboard);
+                }
+            }
+            if cut && !self.selection.is_empty() {
+                self.cut(&self.selection.clone());
             }
             if paste {
                 self.paste();
@@ -2523,9 +2594,16 @@ impl Files {
                 }
                 Action::Extract => self.run_job(entry.path.clone(), true),
                 Action::Copy => {
+                    self.cut.clear();
                     self.clipboard = self.targets(&entry);
                     tracing::info!("copiado(s): {} item(ns)", self.clipboard.len());
-                    copy_to_system(&self.clipboard);
+                    self.clipboard_shared = mide::storage::transfer::publish(&self.clipboard, false);
+                    if !self.clipboard_shared {
+                        copy_to_system(&self.clipboard);
+                    }
+                }
+                Action::Cut => {
+                    self.cut(&self.targets(&entry));
                 }
                 Action::Trash => {
                     for path in self.targets(&entry) {
@@ -2940,6 +3018,8 @@ enum Action {
     Compress,
     Extract,
     Copy,
+    /// Recortar (como o Ctrl+X): guarda na área de transferência para mover no Colar, em vez de copiar.
+    Cut,
     Paste,
     CopyPath,
     /// Obter informações (Ctrl+I).
@@ -3059,6 +3139,9 @@ fn finder_menu(
     if m.item(&if multi { format!("Copiar {count} itens") } else { format!("Copiar \"{}\"", entry.name) }) {
         chosen = Some(Action::Copy);
     }
+    if m.item(&if multi { format!("Recortar {count} itens") } else { format!("Recortar \"{}\"", entry.name) }) {
+        chosen = Some(Action::Cut);
+    }
     if m.item("Copiar como caminho") {
         chosen = Some(Action::CopyPath);
     }
@@ -3146,7 +3229,8 @@ impl App for Files {
                     MenuItem::action("undo", undo).shortcut("Ctrl+Z").enabled(!self.undo.is_empty()),
                     MenuItem::Separator,
                     MenuItem::action("copy", "Copiar").shortcut("Ctrl+C").enabled(some && !in_trash),
-                    MenuItem::action("paste", "Colar").shortcut("Ctrl+V").enabled(!self.clipboard.is_empty() && !in_trash),
+                    MenuItem::action("cut", "Recortar").shortcut("Ctrl+X").enabled(some && !in_trash),
+                    MenuItem::action("paste", "Colar").shortcut("Ctrl+V").enabled(!in_trash),
                     MenuItem::action("select-all", "Selecionar tudo").shortcut("Ctrl+A"),
                 ],
             },
