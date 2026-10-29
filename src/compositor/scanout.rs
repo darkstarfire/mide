@@ -103,6 +103,7 @@ pub fn candidate(state: &State, output: &Output, mode: (i32, i32)) -> Result<Can
     }
     // Só a superfície principal com imagem (subsuperfícies com buffer precisam da cena).
     let mut with_buffer = 0;
+    let mut total = 0;
     with_surface_tree_downward(
         &surface,
         (),
@@ -115,14 +116,20 @@ pub fn candidate(state: &State, output: &Output, mode: (i32, i32)) -> Result<Can
                 .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
                 .and_then(|d| d.lock().ok().map(|r| r.buffer().is_some()))
                 .unwrap_or(false);
+            total += 1;
             if has {
                 with_buffer += 1;
             }
         },
         |_, _, _| true,
     );
-    if with_buffer != 1 {
-        return Err(format!("{with_buffer} superfície(s) com imagem"));
+    if with_buffer == 0 {
+        // Comum por um quadro ao entrar em tela cheia (o app ainda não mandou o buffer
+        // no tamanho novo).
+        return Err(format!("a janela ainda sem imagem ({total} superfície(s), nenhuma com buffer)"));
+    }
+    if with_buffer > 1 {
+        return Err(format!("subsuperfícies com imagem ({with_buffer} de {total} superfícies): precisa compor"));
     }
     let scale = output.current_scale().fractional_scale();
     let checked = with_renderer_surface_state(&surface, |r| -> Result<Candidate, String> {

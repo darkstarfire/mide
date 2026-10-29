@@ -87,6 +87,20 @@ struct Head {
     lock_shown: u64,
     /// Scanout direto do modo de jogo (A18): o buffer do app na placa.
     scanout: ScanoutHead,
+    /// Feedback de scanout do linux-dmabuf mandado à janela em tela cheia desta tela.
+    /// Fica fora do `ScanoutHead`, que é zerado a cada troca de modo: a superfície
+    /// que recebeu o feedback de scanout precisa receber o padrão de volta.
+    feedback: ScanoutFeedback,
+}
+
+/// Feedback do linux-dmabuf de uma tela no modo de jogo (A18).
+#[derive(Default)]
+struct ScanoutFeedback {
+    /// Feedback com a tranche de scanout do plano principal desta tela (`Some(None)`:
+    /// já calculado, sem formato em comum entre o plano e o renderizador).
+    built: Option<Option<smithay::wayland::dmabuf::DmabufFeedback>>,
+    /// Superfície que está com o feedback de scanout.
+    surface: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
 }
 
 /// Buffer de um app mandado direto ao plano principal (scanout direto, A18). Enquanto
@@ -144,6 +158,8 @@ struct Gpu {
     scanout_notes: crate::scanout::Notes,
     /// `MIDE_NO_SCANOUT=1`: nunca manda o buffer do app direto à placa (diagnóstico).
     scanout_off: bool,
+    /// Nó primário da placa (`/dev/dri/cardN`): o alvo da tranche de scanout.
+    primary_dev: Option<libc::dev_t>,
 }
 
 /// Abre a sessão, a placa de vídeo, as telas e a entrada, e agenda o desenho.
@@ -182,10 +198,11 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     let scene = Scene::new(&mut renderer, state)?.with_cursor();
     // Modo de jogo em tela cheia (A18): o scanout direto vale aqui?
     state.game.scanout_note = Some("conforme o buffer do app (ver \"scanout direto:\" a seguir)");
-    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64), scanout_notes: Default::default(), scanout_off: std::env::var_os("MIDE_NO_SCANOUT").is_some() }));
+    let primary_dev = primary_node(&fd);
+    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64), scanout_notes: Default::default(), scanout_off: std::env::var_os("MIDE_NO_SCANOUT").is_some(), primary_dev }));
     state.session = Some(session.clone());
-    // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador. Só a
-    // tranche principal; a de scanout por superfície fica para o scanout direto (A18).
+    // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador. A janela em
+    // tela cheia no modo de jogo recebe, só ela, a tranche de scanout (A18, `update_feedback`).
     {
         let node = node.or_else(|| crate::dmabuf::render_node_of_egl(gpu.borrow().renderer.egl_context().display()));
         let importer = gpu.clone();
@@ -721,7 +738,7 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
     let damage_tracker = OutputDamageTracker::from_output(&output);
     // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
     let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
-    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None, lock_queued: 0, lock_shown: 0, scanout: ScanoutHead::default() })
+    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None, lock_queued: 0, lock_shown: 0, scanout: ScanoutHead::default(), feedback: ScanoutFeedback::default() })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).
@@ -1138,7 +1155,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     state.redraw = false;
     let mut again = false;
     let mut plane_ok = true;
-    let Gpu { renderer, heads, scene, drm, gbm, cursor_size, fd, scanout_notes, scanout_off, .. } = gpu;
+    let Gpu { renderer, heads, scene, drm, gbm, cursor_size, fd, scanout_notes, scanout_off, primary_dev, .. } = gpu;
     for head in heads.iter_mut() {
         // Monitor sumido (na folga antes de a tela sair): nada a entregar ao conector.
         if head.missing.is_some() {
@@ -1165,6 +1182,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         // tem imagem (o vblank dele libera a suspensão).
         let lock_frame = if state.sleep.preparing() && lock_drawn(state, &head.output) { state.sleep.generation() } else { 0 };
         // Modo de jogo (A18): o buffer do app direto à placa, sem compor, quando dá.
+        update_feedback(head, state, *primary_dev, *scanout_off);
         if try_scanout(head, fd, gbm, state, scanout_notes, *scanout_off, scene.draw_cursor) {
             head.pending = true;
             head.queued_at = Instant::now();
@@ -1279,7 +1297,33 @@ fn try_scanout(head: &mut Head, fd: &DrmDeviceFd, gbm: &GbmDevice<DrmDeviceFd>, 
     }
     let fb = match head.scanout.fbs.iter().find(|(b, _)| b == wl_buffer) {
         Some((_, fb)) => fb.clone(),
-        None => match smithay::backend::drm::gbm::framebuffer_from_wayland_buffer(fd, gbm, wl_buffer, true) {
+        None => {
+        // O plano principal aceita o formato e o modificador do buffer? (`IN_FORMATS`
+        // da placa). Com alfa (ARGB), vale a versão opaca (XRGB) do mesmo modificador:
+        // a janela cobre a tela e o fundo do modo de jogo é preto, então ignorar o alfa
+        // dá a mesma imagem da composição. Sem a opaca no plano, vai o formato com alfa
+        // (o plano mistura com o preto do CRTC, também igual à composição).
+        let plane_formats = &drm_surface.plane_info().formats;
+        let format = smithay::wayland::dmabuf::get_dmabuf(wl_buffer).map(smithay::backend::allocator::Buffer::format).ok();
+        let use_opaque = match format {
+            Some(format) => {
+                let opaque = smithay::backend::allocator::format::get_opaque(format.code)
+                    .map(|code| smithay::backend::allocator::Format { code, modifier: format.modifier })
+                    .filter(|f| plane_formats.contains(f));
+                if opaque.is_none() && !plane_formats.contains(&format) {
+                    notes.note(&name, Some(&format!(
+                        "o plano principal não aceita o buffer: {} ({} formato(s) no plano); o app deveria realocar pelo feedback de scanout",
+                        describe_format(&format),
+                        plane_formats.iter().count()
+                    )));
+                    head.scanout.refused.push(wl_buffer.clone());
+                    return false;
+                }
+                opaque.is_some()
+            }
+            None => true,
+        };
+        match smithay::backend::drm::gbm::framebuffer_from_wayland_buffer(fd, gbm, wl_buffer, use_opaque) {
             Ok(Some(fb)) => {
                 let fb = Rc::new(fb);
                 head.scanout.fbs.push((wl_buffer.clone(), fb.clone()));
@@ -1294,11 +1338,17 @@ fn try_scanout(head: &mut Head, fd: &DrmDeviceFd, gbm: &GbmDevice<DrmDeviceFd>, 
                 return false;
             }
             Err(err) => {
-                notes.note(&name, Some(&format!("a placa não importou o buffer: {err}")));
+                let what = format.map(|f| describe_format(&f)).unwrap_or_else(|| "buffer EGL".into());
+                notes.note(&name, Some(&format!(
+                    "a placa não importou o buffer {what}: {} ({} formato(s) no plano)",
+                    error_chain(&err),
+                    plane_formats.iter().count()
+                )));
                 head.scanout.refused.push(wl_buffer.clone());
                 return false;
             }
-        },
+        }
+        }
     };
     let (w, h) = candidate.size;
     let plane = PlaneState {
@@ -1314,7 +1364,8 @@ fn try_scanout(head: &mut Head, fd: &DrmDeviceFd, gbm: &GbmDevice<DrmDeviceFd>, 
         }),
     };
     if let Err(err) = drm_surface.test_state([plane.clone()], false) {
-        notes.note(&name, Some(&format!("a placa recusou o buffer no plano principal ({err})")));
+        let what = smithay::wayland::dmabuf::get_dmabuf(wl_buffer).map(|d| describe_format(&smithay::backend::allocator::Buffer::format(d))).unwrap_or_default();
+        notes.note(&name, Some(&format!("a placa recusou o buffer {what} no plano principal ({})", error_chain(&err))));
         head.scanout.refused.push(wl_buffer.clone());
         if head.scanout.refused.len() > 8 {
             head.scanout.refused.remove(0);
@@ -1330,6 +1381,75 @@ fn try_scanout(head: &mut Head, fd: &DrmDeviceFd, gbm: &GbmDevice<DrmDeviceFd>, 
     head.scanout.active = true;
     notes.note(&name, None);
     true
+}
+
+/// Feedback do linux-dmabuf da janela em tela cheia (A18): com o modo de jogo na tela,
+/// a superfície dela recebe a tranche de scanout do plano principal (o app realoca os
+/// buffers num formato que a placa mostra direto); ao sair do modo, volta ao padrão.
+/// Superfícies que não pediram feedback próprio não recebem nada (o Smithay ignora).
+fn update_feedback(head: &mut Head, state: &State, primary_dev: Option<libc::dev_t>, off: bool) {
+    let drm_surface = head.surface.surface();
+    let want = if off || drm_surface.is_legacy() || primary_dev.is_none() {
+        None
+    } else {
+        state.game_window(&head.output).and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
+    };
+    if head.feedback.surface != want
+        && let Some(old) = head.feedback.surface.take()
+        && smithay::reexports::wayland_server::Resource::is_alive(&old)
+    {
+        state.dmabuf.set_surface_feedback(&old, None);
+    }
+    let (Some(surface), Some(target)) = (want, primary_dev) else {
+        return;
+    };
+    if head.feedback.built.is_none() {
+        let plane = &drm_surface.plane_info().formats;
+        let built = state.dmabuf.scanout_feedback(target, plane);
+        let name = head.output.name();
+        match &built {
+            Some((_, n)) => tracing::info!(
+                "scanout direto: tela {name}: feedback de scanout com {n} formato(s) (de {} no plano principal)",
+                plane.iter().count()
+            ),
+            None => tracing::info!(
+                "scanout direto: tela {name}: sem feedback de scanout (nenhum dos {} formato(s) do plano principal é importado pelo renderizador, ou sem linux-dmabuf)",
+                plane.iter().count()
+            ),
+        }
+        head.feedback.built = Some(built.map(|(f, _)| f));
+    }
+    if let Some(Some(feedback)) = &head.feedback.built {
+        state.dmabuf.set_surface_feedback(&surface, Some(feedback));
+    }
+    head.feedback.surface = Some(surface);
+}
+
+/// Nó primário (`cardN`) da placa aberta em `fd`.
+fn primary_node(fd: &DrmDeviceFd) -> Option<libc::dev_t> {
+    use smithay::backend::drm::{DrmNode, NodeType};
+    let node = DrmNode::from_file(fd).ok()?;
+    if node.ty() == NodeType::Primary {
+        return Some(node.dev_id());
+    }
+    node.node_with_type(NodeType::Primary).and_then(Result::ok).map(|n| n.dev_id())
+}
+
+/// Formato de um buffer para o log: fourcc e modificador (nome e número).
+fn describe_format(format: &smithay::backend::allocator::Format) -> String {
+    format!("{:?} modificador {:?} (0x{:016x})", format.code, format.modifier, u64::from(format.modifier))
+}
+
+/// Mensagem de erro com as causas (o Smithay põe o erro do kernel na `source`).
+fn error_chain(err: &dyn Error) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 /// Avisa no log, ao sair de `render`, se o quadro passou de 12 ms.
