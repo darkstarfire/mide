@@ -245,9 +245,7 @@ impl FileChooser {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_portal=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-portal", "mide_portal=info");
     let portal_only = std::env::args().any(|a| a == "--portal-only");
     let conn = match zbus::blocking::Connection::session() {
         Ok(conn) => conn,

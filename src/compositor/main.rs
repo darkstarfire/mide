@@ -64,12 +64,7 @@ pub fn socket_name() -> &'static str {
 
 fn main() -> Result<(), Box<dyn Error>> {
     session::capture();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mide=info".into()),
-        )
-        .init();
+    let _logging = mide::logging::init("mide", "mide=info");
 
     tracing::info!(
         "mide {} iniciando no socket {}",
@@ -114,6 +109,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = config::Config::load()?;
     tracing::info!("{} atalho(s) configurado(s)", config.bindings.len());
+    tracing::info!(effects = ?config.effects, "configuração de efeitos visuais carregada");
     let mut state = State::new(display_handle, config, loop_handle.clone())?;
     // Aviso de quando cada quadro apareceu na tela (o Chrome alinha a rolagem por ele).
     presentation::init(&state.display_handle);

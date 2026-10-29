@@ -2146,9 +2146,7 @@ fn default_dir(root: Option<&Path>) -> PathBuf {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_code=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-code", "mide_code=info");
     let args: Vec<PathBuf> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).map(PathBuf::from).collect();
     let window = Window::new("Code").app_id("mide-code").size(1040, 640).min_size(560, 360).full_size_content().accepts_files();
     run(window, Code::new(args))

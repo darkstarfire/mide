@@ -2306,9 +2306,7 @@ fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_settings=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-settings", "mide_settings=info");
     let section = match std::env::args().nth(1).as_deref() {
         Some("bluetooth") => Section::Bluetooth,
         Some("appearance") => Section::Appearance,

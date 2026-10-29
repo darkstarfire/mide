@@ -567,9 +567,7 @@ impl App for Remove {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_install=info,mide=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-install", "mide_install=info,mide=info");
     mide::i18n::init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.as_slice() {

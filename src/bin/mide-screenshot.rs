@@ -1287,9 +1287,7 @@ fn window_rects() -> Vec<(f32, f32, f32, f32)> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_screenshot=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-screenshot", "mide_screenshot=info");
     // `--full` (⌘⇧3): a tela inteira, salva e copiada, sem janela. `--area` (⌘⇧4):
     // escolher uma área, salva e copiada ao soltar o mouse.
     let mode = std::env::args().nth(1).unwrap_or_default();

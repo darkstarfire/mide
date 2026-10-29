@@ -505,9 +505,7 @@ fn main() {
     // Sem dump de memória (a senha passa por aqui) e ninguém do mesmo usuário lê a
     // memória pelo ptrace sem ser root.
     let _ = rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_polkit_agent=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-polkit-agent", "mide_polkit_agent=info");
     let (conn, test_bus) = match connect() {
         Ok(c) => c,
         Err(err) => {

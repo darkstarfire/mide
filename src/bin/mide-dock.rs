@@ -267,12 +267,7 @@ struct Press {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mide_dock=info".into()),
-        )
-        .init();
+    let _logging = mide::logging::init("mide-dock", "mide_dock=info");
 
     let conn = Connection::connect_to_env()?;
     let (globals, event_queue) = registry_queue_init(&conn)?;

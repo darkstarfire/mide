@@ -509,3 +509,10 @@
 - **Alternador no estilo Mac:** o ⌘ vira Ctrl para os apps (`mac_map`), então `mods.alt`/`mods.logo` não dizem se ele está apertado. Para saber do ⌘ de verdade, use `state.mac_keys.command` (atualizado antes do `keyboard.input`). Teste de atalho com modificador segurado: `keydown alt; key tab; key tab; keyup alt` (o `combo` aperta e solta tudo de uma vez e não pega esse tipo de erro).
 - **O botão vai para o foco do último movimento** (`PointerHandle::button` do Smithay não recalcula o que está sob o ponteiro). Tudo que muda o que está sob um ponteiro parado (subir janela, tela cheia, camada sumindo) deixa o foco velho até o próximo movimento. `input::refresh_pointer_focus` refaz o foco e roda antes de cada clique (sem grab ativo). O `click x y` do autoteste move antes de apertar e esconde esse erro: use o passo `tap` (clique sem mover) para testar.
 - **Ao olhar a geometria de saída da tela cheia no log, veja se a janela tem a barra do mide:** maximizada com barra fica em y = área + 30 (e 30 px mais baixa), sem barra fica em y = área. Entrar pelo verde da barra do mide indica janela com barra; entrar sem "botão verde" no log é pedido do app (F11).
+
+## Diagnóstico por logs (2026-10-29)
+
+- Consultar o histórico combinado dos processos: `mide-logs`; falhas: `mide-logs --errors`; texto: `mide-logs --search watchdog`; histórico completo incluindo rotações: `mide-logs --all`. O journal do usuário também recebe os eventos.
+- Cada registro recebe pid e nome do processo no writer para distinguir eventos concorrentes. Ao alterar filtros, conservar os padrões anteriores de cada binário e respeitar `RUST_LOG`.
+- Pânicos: não chamar o hook padrão, pois ele imprime o payload e pode vazar texto privado. Registrar local e backtrace sem o conteúdo. Nunca adicionar senhas ou conteúdo de documento aos campos de tracing.
+- O congelamento de um processo impede o próprio processo de registrar a retomada. Correlacionar horário com `journalctl -k`/`coredumpctl` e, ao testar efeitos no Chromebook, anotar as configurações por etapa e recolher os logs antes de alterar o próximo efeito.

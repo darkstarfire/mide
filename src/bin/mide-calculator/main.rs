@@ -1485,9 +1485,7 @@ fn fit_terms(text: &mut Text, s: &str, size: f32, width: f32) -> String {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_calculator=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-calculator", "mide_calculator=info");
     // A janela já nasce no tamanho do modo lembrado.
     mide::i18n::init();
     let calculator = Calculator::new();

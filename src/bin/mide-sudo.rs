@@ -332,10 +332,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_sudo=info,mide::shell::notify=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-sudo", "mide_sudo=info,mide::shell::notify=info");
     let req = match parse_args(std::env::args_os().skip(1).collect()) {
         Ok(req) => req,
         Err(msg) => {

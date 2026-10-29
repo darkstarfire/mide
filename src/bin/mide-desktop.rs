@@ -1434,9 +1434,7 @@ impl App for Desktop {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_desktop=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-desktop", "mide_desktop=info");
     // Nomes brancos (com sombra) sobre o papel de parede.
     let theme = Theme { tile_text: [255, 255, 255, 255], ..Theme::default() };
     warm_drag_text();

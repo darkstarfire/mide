@@ -514,9 +514,7 @@ impl VideoApp {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_player=info,mide=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-player", "mide_player=info,mide=info");
     let path = std::env::args().nth(1).map(|a| PathBuf::from(a.strip_prefix("file://").unwrap_or(&a)));
     // Janela no tamanho do vídeo (até 960x540), no escuro como o QuickTime.
     let size = path

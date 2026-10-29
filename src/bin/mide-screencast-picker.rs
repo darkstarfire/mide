@@ -59,10 +59,7 @@ impl App for Picker {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_screencast_picker=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-screencast-picker", "mide_screencast_picker=info");
     let displays: Vec<Display> = ask_compositor("outputs")
         .unwrap_or_default()
         .iter()

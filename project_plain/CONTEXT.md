@@ -248,3 +248,5 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - deve ser capaz de reconhecer toque na tela touchscreen se a tela for touch
 - deve abrir teclado virtual se o notebook for conversivel e estiver no modo tablet
 ---
+
+- **Diagnóstico de congelamentos e efeitos (2026-10-29):** todos os executáveis iniciam o logger compartilhado (`mide::logging`), preservando filtros por processo e `RUST_LOG`; o mesmo registro vai ao journal e a `~/.local/state/mide/logs/mide.log`, com rotação, pid e origem. Consulte `docs/logs-e-diagnostico.md` e `mide-logs [--errors|--search TEXTO|--all]`. Depois de concluir esse recurso, a próxima etapa solicitada é rodar a bateria de efeitos visuais individualmente, buscar regressões, escrever relatório reproduzível e enviar ao GitHub. Testes automatizados/headless não substituem a validação no Chromebook físico com a GPU que congela; registrar explicitamente essa limitação.

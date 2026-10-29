@@ -3406,9 +3406,7 @@ fn short(name: &str) -> String {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_files=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-files", "mide_files=info");
     // `args_os`: nomes que não são UTF-8 (ex.: Latin-1 vindo do "Mostrar na pasta") chegam
     // com os bytes originais; `args()` entraria em pânico com eles.
     let start = parse_args(std::env::args_os().skip(1).collect());

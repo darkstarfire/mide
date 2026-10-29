@@ -696,9 +696,7 @@ fn default_dir() -> PathBuf {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_text=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-writer", "mide_text=info");
     let path = std::env::args().nth(1).map(PathBuf::from);
     let editor = Editor::open(path);
     let window = Window::new("Writer").app_id("mide-writer").size(1040, 660).min_size(560, 360).full_size_content().accepts_files();

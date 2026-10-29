@@ -254,9 +254,7 @@ impl App for Lock {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_lock=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-lock", "mide_lock=info");
     run(Window::new(&mide::i18n::trc("window title", "Lock Screen")).app_id("mide-lock").lock(), Lock::new())
 }
 

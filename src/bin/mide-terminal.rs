@@ -2810,9 +2810,7 @@ fn group(n: usize) -> String {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_terminal=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-terminal", "mide_terminal=info");
     let options = Options::parse(std::env::args().skip(1));
     if options.preferences {
         let window = Window::new(&tr!("Terminal Settings")).app_id("mide-terminal-preferences").size(720, 560).min_size(560, 420).full_size_content();

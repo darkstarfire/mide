@@ -48,10 +48,7 @@ impl App for Chooser {
 
 fn main() {
     // O log vai para o stderr: o stdout é a resposta para o mide-portal.
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_chooser=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-chooser", "mide_chooser=info");
     let req = match portal::parse_chooser_args(std::env::args_os().skip(1).collect()) {
         Ok(req) => req,
         Err(err) => {

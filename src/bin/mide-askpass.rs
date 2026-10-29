@@ -289,10 +289,7 @@ impl App for Ask {
 
 fn main() {
     // O log vai para o stderr: o stdout é a senha (para o sudo) ou o protocolo do agente.
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_askpass=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-askpass", "mide_askpass=info");
     // Sem dump de memória (a senha estaria nele) e ninguém do mesmo usuário lê a memória
     // pelo ptrace sem ser root.
     let _ = rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);

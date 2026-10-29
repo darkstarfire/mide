@@ -141,9 +141,7 @@ fn draw_computer(canvas: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, laptop: bo
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_about=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-about", "mide_about=info");
     let machine = mide::sysinfo::machine();
     tracing::info!("sobre este computador: {} ({})", machine.name, machine.subtitle);
     let window = Window::new(&tr!("About This Computer")).app_id("mide-about").size(W as u32, H as u32).fixed_size().full_size_content();

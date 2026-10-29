@@ -367,12 +367,7 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mide_bar=info".into()),
-        )
-        .init();
+    let _logging = mide::logging::init("mide-bar", "mide_bar=info");
 
     let conn = Connection::connect_to_env()?;
     let (globals, event_queue) = registry_queue_init(&conn)?;

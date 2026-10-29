@@ -245,9 +245,7 @@ impl App for Search {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_search=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-search", "mide_search=info");
     let mut theme = Theme::default();
     // Campo de busca mais alto e letra maior, como o Spotlight.
     theme.row = 44.0;

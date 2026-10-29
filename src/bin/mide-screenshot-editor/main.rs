@@ -1580,9 +1580,7 @@ fn default_dir() -> PathBuf {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mide_screenshot_editor=info".into()))
-        .init();
+    let _logging = mide::logging::init("mide-screenshot-editor", "mide_screenshot_editor=info");
     // `args_os`: nomes que não são UTF-8 também abrem.
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     if args.first().is_some_and(|a| a == "--miniatura") {
