@@ -433,6 +433,14 @@ pub fn handle(state: &mut State, command: &str) -> String {
                         }
                     }
                 }
+                // Repetição de tecla segurada: os apps recebem a nova espera e taxa.
+                let repeat = config.keyboard.repeat();
+                if repeat != state.config.keyboard.repeat()
+                    && let Some(keyboard) = state.seat.get_keyboard()
+                {
+                    keyboard.change_repeat_info(repeat.1, repeat.0);
+                    tracing::info!("teclado: repetição depois de {} ms, {} por segundo", repeat.0, repeat.1);
+                }
                 state.config = config;
                 // Mouse e trackpad (Configurações → Mouse e trackpad) valem na hora.
                 if let Some(waker) = &state.input_waker {

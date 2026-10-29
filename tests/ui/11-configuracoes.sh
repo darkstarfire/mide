@@ -77,8 +77,8 @@ else
     echo "FALHA barra: seletor de layout troca o layout ($(cat "$SCFG/layout.txt"))"; FAIL=$((FAIL + 1))
 fi
 sed -i '/^layouts = "br,us"/d' "$SCFG/mide/config.toml"
-# Grupos de atalhos recolhem (B19): o título "Janelas" em (330, 347); fica gravado.
-timeout 150 "$SCEN" "300 click 330 347; 360 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+# Grupos de atalhos recolhem (B19): o título "Janelas" em (330, 443), abaixo do cartão da repetição de teclas; fica gravado.
+timeout 150 "$SCEN" "300 click 330 443; 360 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if grep -q 'shortcuts_closed = "Janelas"' "$SCFG/mide/config.toml"; then
     echo "ok    Teclado: grupo de atalhos recolhe (e fica lembrado)"; PASS=$((PASS + 1))
 else
@@ -191,10 +191,10 @@ else
     echo "FALHA busca nas Configurações leva à opção (teclas no estilo Mac gravado)"; FAIL=$((FAIL + 1))
 fi
 sed -i '/mac_style = true/d' "$SCFG/mide/config.toml"
-# Teclado → Atalhos (A9): busca em (600, 224); buscando "fechar", "Fechar a janela"
+# Teclado → Atalhos (A9): busca em (600, 403); buscando "fechar", "Fechar a janela"
 # (Ctrl ⇧ Q) fica em (500, 340) e "Fechar a janela" (Alt F4) em (500, 298); no
 # diálogo, "Gravar…" em (525, 315). O compositor grava a combinação apertada.
-timeout 150 "$SCEN" "400 click 600 307; 410 type fechar; 440 click 500 434; 470 click 525 315; 500 combo ctrl+alt+k; 560 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 600 403; 410 type fechar; 440 click 500 530; 470 click 525 315; 500 combo ctrl+alt+k; 560 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if grep -q '"ctrl+alt+k" = "close_window"' "$SCFG/mide/config.toml" && grep -q '"ctrl+shift+q" = "none"' "$SCFG/mide/config.toml"; then
     echo "ok    gravar atalho nas Configurações troca a combinação"; PASS=$((PASS + 1))
 else
@@ -203,7 +203,7 @@ fi
 check "atalho gravado vale no compositor" "fechar janela pedido pelo atalho" "400 combo ctrl+alt+k; 460 list" "$SETTINGS keyboard"
 check_count "combinação antiga desligada (a janela continua aberta)" 'janela "Configurações do Sistema"' 1 "400 combo ctrl+shift+q; 460 list" "$SETTINGS keyboard"
 # Combinação já usada (Ctrl+Espaço é do buscador): pede confirmação, não grava nem abre o buscador.
-check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 600 307; 410 type fechar; 440 click 500 392; 470 click 525 315; 500 combo ctrl+space; 560 list" "$SETTINGS keyboard"
+check_count "gravando, o atalho não dispara" 'camada "mide-search"' 0 "400 click 600 403; 410 type fechar; 440 click 500 488; 470 click 525 315; 500 combo ctrl+space; 560 list" "$SETTINGS keyboard"
 if ! grep -q '"ctrl+space" = "close_window"' "$SCFG/mide/config.toml"; then
     echo "ok    combinação de outra ação pede confirmação"; PASS=$((PASS + 1))
 else
@@ -211,7 +211,7 @@ else
 fi
 # "Restaurar os padrões" (buscando algo sem resultado, a lista some) em (510, 292): a
 # seção de atalhos sai do arquivo.
-timeout 150 "$SCEN" "400 click 600 307; 410 type zzz; 440 click 510 375; 500 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
+timeout 150 "$SCEN" "400 click 600 403; 410 type zzz; 440 click 510 471; 500 list" -- "$SETTINGS keyboard" >/dev/null 2>&1
 if ! grep -q "keybindings" "$SCFG/mide/config.toml"; then
     echo "ok    restaurar os atalhos padrão"; PASS=$((PASS + 1))
 else

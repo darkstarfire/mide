@@ -1156,3 +1156,9 @@ msgstr "Computador de mesa"
 
 msgid "mide {version} on {os}"
 msgstr "mide {version} sobre {os}"
+
+msgid "Repeat delay (ms)"
+msgstr "Espera para repetir (ms)"
+
+msgid "Repeat rate (per second)"
+msgstr "Repetições por segundo"
