@@ -1070,3 +1070,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 
 - Automático: `tests/ui.sh menu-libreoffice` (Writer no Wayland e no X11 pelo satellite, com o menu Arquivo cheio; a opção desligada mantém o menu no app) e `tests/ui.sh configuracoes` (o interruptor). Pula sem o LibreOffice.
 - Na sessão de verdade (PC do amigo, Slackware): abrir o Writer e o Calc, conferir os menus na barra e os submenus (Arquivo › Novo, Documentos recentes). Se algum app ficar sem menu, procurar no `~/.local/state/mide/session.log` por "menu de … não lido" e desligar Configurações → Barra superior → "Mostrar os menus dos apps na barra superior" (reabrir os apps).
+
+## Tela cheia (B31, 2026-10-28, v0.10.16)
+
+- Automático: `tests/ui.sh tela-cheia` (seção `44-tela-cheia`, 21 ok) com o `examples/mide-janela-teste cheia` (o clique no conteúdo pede a tela cheia como o F11; `cheia ja` pede antes do primeiro quadro) e o Terminal. Bateria inteira antes de juntar ao master: 662 ok, 0 falhas; depois do rebase sobre a v0.10.15, as seções afetadas (01, 04, 05, 06, 07, 12, 37, 41, 42, 43, 44): 127 ok, 0 falhas.
+- Na sessão de verdade: F11 no Firefox/Chrome e no VLC, um jogo; verde de uma janela com a barra do mide e de um app do mide-ui; ⌃⌘F; menu Janela → Entrar em tela cheia; levar o ponteiro ao topo e usar os menus da barra e as luzes da faixa; Alt+Tab para outra janela e de volta; com dois monitores, a outra tela continua com barra e dock; em 2K com escala 1,5, nitidez da faixa revelada.

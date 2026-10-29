@@ -2025,6 +2025,14 @@ impl Bar {
             MenuId::Layout => self.layout_items(),
             _ => menu_items(id, &app),
         };
+        // Tela cheia (como no Mac), logo depois de "Centralizar": o texto segue o estado
+        // da janela em foco.
+        if id == MenuId::Window {
+            let on = ask_compositor("fullscreen").and_then(|l| l.into_iter().next()).is_some_and(|l| l.trim() == "on");
+            let label = if on { tr!("Exit Full Screen") } else { tr!("Enter Full Screen") };
+            let at = items.len().min(3);
+            items.insert(at, entry(label, "Ctrl+Super+F", Some(MenuAction::Compositor("window fullscreen".into()))));
+        }
         if window_menu {
             items.extend(self.window_extras());
         }

@@ -149,8 +149,8 @@ fi
 check "Configurações → Dock: tamanho dos ícones muda a dock" 'camada "mide-dock" em \([0-9]+, [0-9]+\) [0-9]+x81' "400 list; 420 press 500 161; 425 move 600 161; 430 move 700 161; 435 move 790 161; 440 release 790 161; 520 list" "$SETTINGS dock"
 # Dock: "Ocultar e mostrar a Dock automaticamente" em (807, 212); a dock desce e esconde.
 # Ocultar é inteligente: só esconde com janela sobre a dock (aqui, maximizando a janela
-# pelo botão verde, que no Tahoe fica dentro da barra lateral, em (115, 102)).
-check "Configurações → Dock: ocultar automaticamente esconde a dock sob uma janela" "dock escondida" "400 click 807 212; 500 click 115 102; 800 list" "$SETTINGS dock"
+# pelo botão verde com ⌥, que no Tahoe fica dentro da barra lateral, em (115, 102)).
+check "Configurações → Dock: ocultar automaticamente esconde a dock sob uma janela" "dock escondida" "400 click 807 212; 498 keydown alt; 500 click 115 102; 502 keyup alt; 800 list" "$SETTINGS dock"
 if grep -q "autohide = true" "$SCFG/mide/config.toml"; then
     echo "ok    ocultar a dock grava no config.toml"; PASS=$((PASS + 1))
 else

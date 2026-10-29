@@ -183,6 +183,10 @@ pub struct State {
     pub restore_sizes: Vec<(WlSurface, Size<i32, Logical>)>,
     /// Janelas numa metade da tela (Super+← e Super+→).
     pub tiled: Vec<WlSurface>,
+    /// Janelas em tela cheia e como estavam antes (`crate::fullscreen`).
+    pub fullscreen: Vec<crate::fullscreen::Entry>,
+    /// Barra superior revelada no topo de uma tela em tela cheia.
+    pub fs_reveal: crate::fullscreen::Reveal,
     /// Forma do ponteiro (redimensionar, padrão); o backend a mostra.
     pub cursor: crate::input::CursorShape,
     /// Redimensionamento pela borda em andamento.
@@ -453,6 +457,8 @@ impl State {
             restore_positions: Vec::new(),
             restore_sizes: Vec::new(),
             tiled: Vec::new(),
+            fullscreen: Vec::new(),
+            fs_reveal: Default::default(),
             cursor: Default::default(),
             animations: Vec::new(),
             close_requests: Vec::new(),
@@ -893,6 +899,16 @@ impl XdgShellHandler for State {
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
         self.unmaximize(&surface);
+    }
+
+    // Tela cheia pedida pelo app (F11, jogos; apps X11 pelo `xwayland-satellite`).
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, output: Option<WlOutput>) {
+        let output = output.as_ref().and_then(Output::from_resource);
+        self.enter_fullscreen(&surface, output);
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        self.exit_fullscreen(&surface);
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {
@@ -1347,7 +1363,8 @@ pub fn bar_height_for(window: &Window) -> i32 {
     let ssd = with_states(toplevel.wl_surface(), |states| {
         states.data_map.get::<SsdMarker>().is_some()
     });
-    if ssd { BAR_HEIGHT } else { 0 }
+    // Em tela cheia a janela fica sem a barra do mide (ela volta na faixa revelada).
+    if ssd && !crate::fullscreen::is_fullscreen(window) { BAR_HEIGHT } else { 0 }
 }
 
 delegate_xdg_decoration!(State);

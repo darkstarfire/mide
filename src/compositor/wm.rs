@@ -87,6 +87,7 @@ impl State {
                 }
             }
             self.close_requests.retain(|(w, _)| *w != id);
+            self.forget_fullscreen(&window);
             self.commits.remove(&id);
             self.shown.remove(&id);
             self.space.unmap_elem(&window);
@@ -111,8 +112,8 @@ impl State {
             return;
         };
         // Pedido atrasado (o botão já foi solto): sem arrasto, senão a janela seguiria
-        // o ponteiro sem botão nenhum apertado.
-        if !self.left_button_held() {
+        // o ponteiro sem botão nenhum apertado. Em tela cheia a janela não sai do lugar.
+        if !self.left_button_held() || self.fullscreen_entry(&window).is_some() {
             return;
         }
         // O app só pede para mover depois de o ponteiro andar alguns pixels. O arrasto
@@ -133,7 +134,7 @@ impl State {
         let Some(loc) = self.space.element_location(&window) else {
             return;
         };
-        if !self.left_button_held() || self.is_snapped(surface) || crate::state::fixed_size(&window) {
+        if !self.left_button_held() || self.is_snapped(surface) || crate::state::fixed_size(&window) || self.fullscreen_entry(&window).is_some() {
             return;
         }
         let edges = crate::decorations::Edges {
@@ -180,8 +181,9 @@ impl State {
             surface.send_configure();
             return;
         };
-        // Janela de tamanho fixo (Sobre este computador): não maximiza.
-        if crate::state::fixed_size(&window) {
+        // Janela de tamanho fixo (Sobre este computador): não maximiza. Em tela cheia,
+        // o pedido fica para depois (o app sai da tela cheia antes).
+        if crate::state::fixed_size(&window) || self.fullscreen_entry(&window).is_some() {
             surface.send_configure();
             return;
         }
@@ -194,7 +196,7 @@ impl State {
 
     /// Maximiza na área útil dada (encaixe pelo topo: a tela sob o ponteiro).
     pub fn maximize_in(&mut self, surface: &ToplevelSurface, area: smithay::utils::Rectangle<i32, Logical>) {
-        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w)) else {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w) && self.fullscreen_entry(w).is_none()) else {
             return;
         };
         self.fill_area(surface, &window, area, None);
@@ -203,7 +205,7 @@ impl State {
     /// Põe a janela em `rect` (metade, terço ou quarto escolhido no encaixe pelo topo);
     /// `left` diz se ela encosta na borda esquerda.
     pub fn snap_to(&mut self, surface: &ToplevelSurface, rect: smithay::utils::Rectangle<i32, Logical>, left: bool) {
-        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w)) else {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w) && self.fullscreen_entry(w).is_none()) else {
             return;
         };
         self.fill_area(surface, &window, rect, Some(left));
@@ -212,7 +214,7 @@ impl State {
     /// Metade esquerda (`left`) ou direita da área útil da tela da janela (Super+← e
     /// Super+→, como no GNOME). Super+↓ volta ao tamanho de antes.
     pub fn tile(&mut self, surface: &ToplevelSurface, left: bool) {
-        let Some(window) = self.window_for(surface.wl_surface()) else {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| self.fullscreen_entry(w).is_none()) else {
             return;
         };
         let Some(area) = self.area_for(&window) else {
@@ -232,7 +234,7 @@ impl State {
     /// largura, altura), como as metades e os quartos do menu Janela → Mover e
     /// redimensionar.
     pub fn place_part(&mut self, surface: &ToplevelSurface, part: (f32, f32, f32, f32)) {
-        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w)) else {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| !crate::state::fixed_size(w) && self.fullscreen_entry(w).is_none()) else {
             return;
         };
         let Some(area) = self.area_for(&window) else {
@@ -255,7 +257,7 @@ impl State {
     /// Centraliza a janela na tela dela, sem mudar o tamanho (como o "Centralizar" do
     /// menu Janela do Mac).
     pub fn center_window(&mut self, surface: &ToplevelSurface) {
-        let Some(window) = self.window_for(surface.wl_surface()) else {
+        let Some(window) = self.window_for(surface.wl_surface()).filter(|w| self.fullscreen_entry(w).is_none()) else {
             return;
         };
         let Some(area) = self.area_for(&window) else {
@@ -278,6 +280,13 @@ impl State {
         };
         // Levada de propósito: não volta sozinha à tela de onde saiu.
         self.displaced.retain(|d| d.window != window);
+        // Em tela cheia: continua em tela cheia, na outra tela.
+        if let Some(entry) = self.fullscreen.iter_mut().find(|e| e.window == window) {
+            entry.output = name.to_string();
+            self.fit_fullscreen(&window);
+            tracing::info!("janela em tela cheia levada para a tela {name}");
+            return true;
+        }
         let (Some(from), Some(to)) = (self.area_for(&window), self.usable_area_of(&target)) else {
             return false;
         };
@@ -468,6 +477,10 @@ impl State {
             surface.send_configure();
             return;
         };
+        if self.fullscreen_entry(&window).is_some() {
+            surface.send_configure();
+            return;
+        }
         // Apps GTK pedem "desmaximizar" ao abrir, sem estarem maximizados. Nesse caso
         // não há o que restaurar, e a janela não pode sair do lugar.
         let tiled = self.tiled.contains(surface.wl_surface());
@@ -563,6 +576,10 @@ impl State {
     pub fn fit_windows_to_area(&mut self) {
         let windows: Vec<Window> = self.space.elements().cloned().collect();
         for window in windows {
+            // Tela cheia: a tela dela inteira, sem a área útil.
+            if self.fit_fullscreen(&window) {
+                continue;
+            }
             let Some(loc) = self.space.element_location(&window) else {
                 continue;
             };
@@ -604,6 +621,11 @@ impl State {
         // cliques no botão): uma entrada só. Duas deixavam a janela restaurada ainda na
         // lista, e o mide ignorava os cliques e as teclas dela (parecia congelada).
         if self.minimized.iter().any(|m| m.window == window) {
+            return;
+        }
+        // Como no Mac, minimizar não vale em tela cheia (o amarelo da faixa fica cinza).
+        if self.fullscreen_entry(&window).is_some() {
+            tracing::info!("minimizar ignorado: janela em tela cheia");
             return;
         }
         let Some(loc) = self.space.element_location(&window) else {

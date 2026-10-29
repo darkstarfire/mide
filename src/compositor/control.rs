@@ -331,7 +331,14 @@ pub fn handle(state: &mut State, command: &str) -> String {
             let n = app_windows(state, &ids, cmd);
             format!("{n}\n")
         }
-        // Janela em foco: `window close|minimize|zoom`.
+        // A janela em foco está em tela cheia? (o menu Janela da barra: "Entrar/Sair da
+        // tela cheia").
+        Some("fullscreen") => {
+            let focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
+            let on = focus.and_then(|f| state.window_for(&f)).is_some_and(|w| state.fullscreen_entry(&w).is_some());
+            if on { "on\n".into() } else { "off\n".into() }
+        }
+        // Janela em foco: `window close|minimize|zoom|fullscreen`.
         Some("window") => {
             let ok = focused_window_action(state, words.next().unwrap_or(""));
             if ok { "ok\n".into() } else { "none\n".into() }
@@ -708,6 +715,8 @@ fn focused_window_action(state: &mut State, action: &str) -> bool {
         "close" => state.request_close(&window),
         "minimize" => state.minimize(toplevel.wl_surface()),
         "zoom" => crate::input::toggle_maximize(state, toplevel),
+        // Tela cheia (menu Janela → Entrar/Sair da tela cheia).
+        "fullscreen" => state.toggle_fullscreen(&toplevel),
         // Menu Janela (como o do Mac): preencher a tela, centralizar, metades e quartos,
         // voltar ao tamanho anterior, outra tela, e todas as janelas do app.
         "fill" => {

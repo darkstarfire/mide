@@ -302,6 +302,12 @@ msgstr "Preencher"
 msgid "Center"
 msgstr "Centralizar"
 
+msgid "Enter Full Screen"
+msgstr "Entrar em tela cheia"
+
+msgid "Exit Full Screen"
+msgstr "Sair da tela cheia"
+
 msgid "Move & Resize"
 msgstr "Mover e redimensionar"
 

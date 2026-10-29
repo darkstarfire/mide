@@ -904,6 +904,9 @@ msgstr "Restaurar o tamanho da janela"
 msgid "Maximize or restore window"
 msgstr "Maximizar ou restaurar a janela"
 
+msgid "Enter or exit full screen"
+msgstr "Entrar ou sair da tela cheia"
+
 msgid "Minimize window"
 msgstr "Minimizar a janela"
 

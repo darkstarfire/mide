@@ -14,7 +14,11 @@
 //!   `xwayland-satellite`); `propria` ignora o tamanho pedido ao sair de maximizada e
 //!   volta ao tamanho dela;
 //! - `mide-janela-teste ssd-max`: janela "SSD" 500x300 com a barra do mide, maximizada
-//!   antes do primeiro quadro.
+//!   antes do primeiro quadro;
+//! - `mide-janela-teste cheia [ja]`: janela "Cheia" 500x300 com a barra do mide; um
+//!   clique no conteúdo pede para entrar ou sair da tela cheia
+//!   (`xdg_toplevel.set_fullscreen`, como o F11 dos navegadores); `ja` pede tela cheia
+//!   antes do primeiro quadro (como um jogo).
 //!
 //! Cada janela é pintada de uma cor só; o programa sai sozinho em 20 s.
 
@@ -54,6 +58,10 @@ struct Teste {
     slow: bool,
     /// Fora de maximizada, ignora o tamanho pedido e volta ao seu (`propria`).
     own_size: bool,
+    /// Modo `cheia`: o clique no conteúdo pede a tela cheia (ou sai dela).
+    fullscreen_toggle: bool,
+    /// Último configure disse que a janela está em tela cheia.
+    fullscreen: bool,
     shm: Shm,
     pool: SlotPool,
     compositor: CompositorState,
@@ -122,6 +130,10 @@ impl WindowHandler for Teste {
         // O tamanho pedido pelo compositor vale; sem ele (ou com `propria` fora de
         // maximizada), o tamanho natural da janela.
         let (mut w, mut h) = (self.windows[i].1, self.windows[i].2);
+        if configure.is_fullscreen() != self.fullscreen {
+            self.fullscreen = configure.is_fullscreen();
+            println!("tela cheia: {}", self.fullscreen);
+        }
         if let (Some(cw), Some(ch)) = configure.new_size
             && (configure.is_maximized() || !self.own_size)
         {
@@ -162,6 +174,15 @@ impl PointerHandler for Teste {
                 let Some((window, _, _)) = self.windows.iter().find(|(w, _, _)| w.wl_surface() == &event.surface) else {
                     continue;
                 };
+                if self.fullscreen_toggle {
+                    if self.fullscreen {
+                        window.unset_fullscreen();
+                    } else {
+                        window.set_fullscreen(None);
+                    }
+                    println!("tela cheia pedida: {}", !self.fullscreen);
+                    continue;
+                }
                 if event.position.1 < 40.0
                     && let Some(seat) = &self.seat
                 {
@@ -214,7 +235,7 @@ fn main() {
     let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor");
     let xdg = XdgShell::bind(&globals, &qh).expect("xdg-shell");
     let shm = Shm::bind(&globals, &qh).expect("wl_shm");
-    let pool = SlotPool::new(600 * 400 * 4 * 4, &shm).expect("memória");
+    let pool = SlotPool::new(1920 * 1080 * 4 * 2, &shm).expect("memória");
     let mut app = Teste {
         registry: RegistryState::new(&globals),
         output: OutputState::new(&globals, &qh),
@@ -223,6 +244,8 @@ fn main() {
         pointer: None,
         slow: std::env::args().any(|a| a == "lento"),
         own_size: std::env::args().any(|a| a == "propria"),
+        fullscreen_toggle: mode == "cheia",
+        fullscreen: false,
         shm,
         pool,
         compositor,
@@ -241,6 +264,13 @@ fn main() {
         "csd" => {
             let max = std::env::args().any(|a| a == "max");
             app.open_with(&qh, "CSD", 500, 300, WindowDecorations::ClientOnly, false, None, max);
+        }
+        "cheia" => {
+            app.open(&qh, "Cheia", 500, 300, WindowDecorations::RequestServer, false, None);
+            if std::env::args().any(|a| a == "ja") {
+                app.windows[0].0.set_fullscreen(None);
+                app.windows[0].0.commit();
+            }
         }
         "ssd-max" => app.open_with(&qh, "SSD", 500, 300, WindowDecorations::RequestServer, false, None, true),
         _ => app.open(&qh, "Comum", 400, 300, WindowDecorations::RequestServer, false, None),

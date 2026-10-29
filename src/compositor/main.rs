@@ -15,6 +15,7 @@ mod config;
 mod control;
 mod cursor;
 mod decorations;
+mod fullscreen;
 mod dmabuf;
 mod genie;
 mod input;

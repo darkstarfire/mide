@@ -517,6 +517,12 @@ fn run_action(state: &mut State, action: Action) {
             }
             tracing::debug!("terminal no estilo Mac: ⌘{c} → Ctrl+Shift+{c}");
         }
+        // ⌃⌘F: entra ou sai da tela cheia (como no Mac).
+        Action::ToggleFullscreen => {
+            if let Some(toplevel) = focused_toplevel(state) {
+                state.toggle_fullscreen(&toplevel);
+            }
+        }
         Action::SwitchWindows => switch_windows(state, true),
         Action::SwitchWindowsBack => switch_windows(state, false),
         Action::Maximize | Action::Unmaximize | Action::ToggleMaximize | Action::Minimize | Action::TileLeft | Action::TileRight => {
@@ -649,6 +655,11 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         pointer.motion(state, under, &MotionEvent { location: pos, serial: SERIAL_COUNTER.next_serial(), time });
         pointer.frame(state);
         return;
+    }
+
+    // Tela cheia: a borda de cima revela a barra superior e a barra de título.
+    if state.move_grab.is_none() && state.resize_grab.is_none() {
+        state.fullscreen_pointer(pos);
     }
 
     update_title_tip(state, pos);
@@ -986,7 +997,11 @@ fn top_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface
         let Some(geo) = map.layer_geometry(layer) else {
             continue;
         };
-        let loc = geo.loc + screen;
+        // Tela cheia: barra e dock escondidas (a barra revelada desce de cima).
+        let Some(dy) = state.layer_offset(&output, layer) else {
+            continue;
+        };
+        let loc = geo.loc + screen + Point::from((0, dy));
         if let Some((surface, p)) = layer.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL) {
             return Some((surface, (p + loc).to_f64()));
         }
@@ -1154,6 +1169,10 @@ fn set_activated(toplevel: &ToplevelSurface, activated: bool) {
 
 /// Janela e retângulo da barra de título sob `pos`, se houver.
 fn title_bar_under(state: &State, pos: Point<f64, Logical>) -> Option<(Window, decorations::Rect)> {
+    // Faixa revelada de uma janela em tela cheia: a barra de título dela.
+    if let Some(found) = state.reveal_strip_at(pos) {
+        return Some(found);
+    }
     let window = window_on_top_at(state, pos)?;
     let loc = state.visible_origin(&window)?;
     let width = window.geometry().size.w;
@@ -1209,17 +1228,30 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
     state.title_press = true;
     state.space.raise_element(&window, true);
     focus_window(state, &window, serial);
+    let fullscreen = state.fullscreen_entry(&window).is_some();
 
     match decorations::button_at(bar, pos) {
         Some(Button::Close) => {
             state.request_close(&window);
             tracing::info!("fechar janela pedido pela barra de título");
         }
+        // Em tela cheia o amarelo fica cinza e sem ação, como no Mac.
+        Some(Button::Minimize) if fullscreen => {}
         Some(Button::Minimize) => {
             let surface = toplevel.wl_surface().clone();
             state.minimize(&surface);
         }
-        Some(Button::Maximize) => toggle_maximize(state, toplevel),
+        // Verde: tela cheia, como no Mac; com ⌥ (Alt), maximiza como antes.
+        Some(Button::Maximize) if !fullscreen && alt_held(state) => {
+            tracing::info!("botão verde com ⌥: maximizar");
+            toggle_maximize(state, toplevel);
+        }
+        Some(Button::Maximize) => {
+            tracing::info!("botão verde: tela cheia");
+            state.toggle_fullscreen(&toplevel);
+        }
+        // Faixa da tela cheia: sem arrastar nem maximizar pelo duplo clique.
+        None if fullscreen => {}
         None => {
             let now = Instant::now();
             let double = matches!(
@@ -1242,6 +1274,11 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
         }
     }
     true
+}
+
+/// O ⌥ (Alt) está apertado? No estilo Mac também, é a tecla na posição do ⌥.
+pub fn alt_held(state: &State) -> bool {
+    state.seat.get_keyboard().is_some_and(|k| k.modifier_state().alt)
 }
 
 /// Maximiza ou restaura a janela, conforme o estado atual.
@@ -1267,7 +1304,7 @@ fn resize_target(
     let toplevel = window.toplevel()?;
     let loc = state.space.element_location(&window)?;
     let flags = toplevel.current_state().states;
-    if flags.contains(XdgState::Maximized) || crate::state::fixed_size(&window) {
+    if flags.contains(XdgState::Maximized) || crate::state::fixed_size(&window) || state.fullscreen_entry(&window).is_some() {
         return None;
     }
     let size = window.geometry().size;

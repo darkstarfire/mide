@@ -283,8 +283,9 @@ void main() {
 "#;
 
 
-/// Símbolo dos botões quando o ponteiro está sobre eles: × (fechar), − (minimizar)
-/// e + (maximizar). `kind` é 0, 1 ou 2.
+/// Símbolo dos botões quando o ponteiro está sobre eles: × (fechar), − (minimizar),
+/// + (maximizar), as setas de entrar na tela cheia (dois triângulos para fora) e as de
+/// sair (dois triângulos para dentro). `kind` é 0, 1, 2, 3 ou 4.
 const GLYPH_SRC: &str = r#"
 precision highp float;
 uniform float alpha;
@@ -296,7 +297,21 @@ void main() {
     vec2 p = (v_coords - 0.5) * 2.0;
     float box = max(abs(p.x), abs(p.y));
     float dist;
-    if (kind < 0.5) {
+    if (kind > 2.5) {
+        // Dois triângulos cheios nos cantos de cima à esquerda e de baixo à direita: o
+        // ângulo reto fica para fora (entrar) ou para o meio (sair). `q` dobra os dois
+        // cantos num só (simetria pelo centro).
+        vec2 q = (p.x + p.y < 0.0) ? p : -p;
+        float edge;
+        if (kind < 3.5) {
+            edge = max(max(-0.5 - q.x, -0.5 - q.y), (q.x + q.y + 0.3) / 1.41421);
+        } else {
+            edge = max(max(q.x + 0.12, q.y + 0.12), (-0.86 - q.x - q.y) / 1.41421);
+        }
+        float a = fill.a * (1.0 - smoothstep(-0.04, 0.06, edge)) * alpha;
+        gl_FragColor = vec4(fill.rgb * a, a);
+        return;
+    } else if (kind < 0.5) {
         dist = min(abs(p.x - p.y), abs(p.x + p.y)) / 1.41421;
     } else if (kind < 1.5) {
         dist = abs(p.y);
@@ -490,6 +505,14 @@ pub fn button_at(bar: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Opti
         .map(|(button, _)| button)
 }
 
+/// Como o botão verde e o amarelo aparecem: na tela cheia (faixa revelada), o verde
+/// sai da tela cheia e o amarelo fica cinza; com ⌥ apertado, o verde maximiza (+).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BarLook {
+    pub fullscreen: bool,
+    pub alt: bool,
+}
+
 /// Elementos da barra: fundo quadrado e três botões circulares.
 /// Cada elemento é um retângulo arredondado. A lista vai da frente para trás,
 /// então os botões vêm antes do fundo.
@@ -499,10 +522,12 @@ pub fn bar_elements(
     focused: bool,
     hovered: Option<Button>,
     clip: &[Uniform<'static>],
+    look: BarLook,
 ) -> Vec<PixelShaderElement> {
     let mut elements = Vec::with_capacity(12);
     for (button, rect) in button_rects(bar) {
-        let color = match (focused, button) {
+        let disabled = look.fullscreen && button == Button::Minimize;
+        let color = match (focused && !disabled, button) {
             (false, _) if dark() => DARK_INACTIVE_BUTTON,
             (false, _) => INACTIVE_BUTTON,
             (true, Button::Close) => CLOSE_COLOR,
@@ -510,8 +535,8 @@ pub fn bar_elements(
             (true, Button::Maximize) => MAXIMIZE_COLOR,
         };
         // Ordem de frente para trás: símbolo, anel e depois o círculo.
-        if focused && hovered == Some(button) {
-            elements.push(glyph(shaders, rect, button));
+        if focused && !disabled && hovered == Some(button) {
+            elements.push(glyph(shaders, rect, button, look));
         }
         elements.push(ring(shaders, rect));
         elements.push(rounded(shaders, rect, color, BUTTON_SIZE / 2, clip));
@@ -536,11 +561,13 @@ pub fn bar_elements(
 }
 
 /// Símbolo de um botão, desenhado quando o ponteiro está sobre o grupo de botões.
-fn glyph(shaders: &Shaders, rect: Rect, button: Button) -> PixelShaderElement {
+fn glyph(shaders: &Shaders, rect: Rect, button: Button, look: BarLook) -> PixelShaderElement {
     let kind = match button {
         Button::Close => 0.0f32,
         Button::Minimize => 1.0,
-        Button::Maximize => 2.0,
+        Button::Maximize if look.fullscreen => 4.0,
+        Button::Maximize if look.alt => 2.0,
+        Button::Maximize => 3.0,
     };
     pixel(&shaders.glyph, 0, rect, vec![
             Uniform::new("kind", kind),

@@ -36,6 +36,8 @@ pub enum Action {
     Minimize,
     TileLeft,
     TileRight,
+    /// Janela em foco: entra ou sai da tela cheia (⌃⌘F, como no Mac).
+    ToggleFullscreen,
     /// Alternar janelas (Alt+Tab): para a próxima, ou para a anterior.
     SwitchWindows,
     SwitchWindowsBack,
@@ -478,6 +480,8 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("super+h", "minimize"),
     ("super+left", "tile_left"),
     ("super+right", "tile_right"),
+    // Tela cheia como no Mac (⌃⌘F; no estilo Mac, o ⌘ é o Alt).
+    ("ctrl+super+f", "toggle_fullscreen"),
     ("alt+f4", "close_window"),
     ("super+d", "show_desktop"),
     ("super+a", "toggle_launcher"),
@@ -705,6 +709,7 @@ fn parse_action(action: &str) -> Result<Action, Box<dyn Error>> {
         ("minimize", Action::Minimize),
         ("tile_left", Action::TileLeft),
         ("tile_right", Action::TileRight),
+        ("toggle_fullscreen", Action::ToggleFullscreen),
         ("switch_windows", Action::SwitchWindows),
         ("switch_windows_back", Action::SwitchWindowsBack),
         ("show_desktop", Action::ShowDesktop),
@@ -738,6 +743,7 @@ impl fmt::Display for Action {
             Action::Minimize => write!(f, "minimize"),
             Action::TileLeft => write!(f, "tile_left"),
             Action::TileRight => write!(f, "tile_right"),
+            Action::ToggleFullscreen => write!(f, "toggle_fullscreen"),
             Action::SwitchWindows => write!(f, "switch_windows"),
             Action::SwitchWindowsBack => write!(f, "switch_windows_back"),
             Action::ShowDesktop => write!(f, "show_desktop"),

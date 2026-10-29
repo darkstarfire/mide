@@ -111,6 +111,8 @@ impl Scene {
             || state.preview.as_ref().is_some_and(|p| p.appearing())
             || self.genie.glass_since.borrow().values().any(|t| t.elapsed() < crate::genie::GLASS_FADE)
             || state.osd.as_ref().is_some_and(|o| o.moving(state.config.effects.transitions))
+            // Barra revelada na tela cheia descendo ou subindo.
+            || state.fs_reveal.animating(std::time::Instant::now())
             // Medida do tom atrás da barra adiada (intervalo mínimo): mais um quadro.
             || self.tone.values().any(|p| p.pending)
     }
@@ -224,6 +226,9 @@ impl Scene {
         }
         custom.extend(layers);
         custom.extend(snap_back);
+        // Tela cheia com a barra revelada: a barra de título da janela, logo abaixo da
+        // barra superior, na frente da janela.
+        custom.extend(reveal_strip_elements(renderer, state, output, origin, shaders, titles));
         let before_windows = custom.len();
         let (windows, window_glass) = window_elements(renderer, state, output, origin, shaders, genie, wallpaper, titles);
         custom.extend(windows);
@@ -406,7 +411,8 @@ fn window_elements(
         // confirmou: apps parados (VS Code, Electron) demoram a responder ao configure
         // e a barra ficava cinza com a janela em foco. A decoração é do compositor.
         let focused = toplevel.with_pending_state(|s| s.states.contains(XdgState::Activated));
-        let maximized = state_flags.contains(XdgState::Maximized);
+        // Em tela cheia, como maximizada: sem cantos, contorno nem sombra.
+        let maximized = state_flags.contains(XdgState::Maximized) || state.fullscreen_entry(window).is_some();
         let geo = window.geometry();
 
         // Posição, tamanho e zoom do conteúdo, interpolados se houver animação.
@@ -553,7 +559,8 @@ fn window_elements(
                 .filter(|t| t.window == p.window && !t.dismissed && t.since.elapsed() >= crate::title::TIP_DELAY)
                 .map(|t| t.button);
             if let Some(button) = tip {
-                elements.extend(title_tip_elements(renderer, titles, shaders, decorations::button_rect(bar, button), button));
+                let look = decorations::BarLook { fullscreen: false, alt: crate::input::alt_held(state) };
+                elements.extend(title_tip_elements(renderer, titles, shaders, decorations::button_rect(bar, button), button, look));
             }
             let title = toplevel_title_of(&p.window);
             if let Some(text) = crate::title::element(renderer, titles, &title, p.focused, bar, p.opacity) {
@@ -566,6 +573,7 @@ fn window_elements(
                     p.focused,
                     decorations::button_at(bar, state.pointer_location - origin.to_f64()),
                     &clip_uniforms,
+                    decorations::BarLook { fullscreen: false, alt: crate::input::alt_held(state) },
                 )
                 .into_iter()
                 .map(MideRenderElement::from),
@@ -586,7 +594,7 @@ fn window_elements(
             let local_bar = Rectangle::new((0, 0).into(), (content_rect.size.w, bar_h).into());
             let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
             let bar_parts = if bar_h > 0 {
-                decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip)
+                decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip, Default::default())
             } else {
                 Vec::new()
             };
@@ -635,7 +643,7 @@ fn window_elements(
             genie.photo_taken.borrow_mut().insert(id, std::time::Instant::now());
             let local_bar = Rectangle::new((0, 0).into(), (p.frame.size.w, bar_h).into());
             let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
-            let bar_parts = if bar_h > 0 { decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip) } else { Vec::new() };
+            let bar_parts = if bar_h > 0 { decorations::bar_elements(shaders, local_bar, p.focused, None, &no_clip, Default::default()) } else { Vec::new() };
             let title = if bar_h > 0 { crate::title::element(renderer, titles, &toplevel_title_of(&p.window), p.focused, local_bar, 1.0) } else { None };
             let mut overlays: Vec<&dyn smithay::backend::renderer::element::RenderElement<GlesRenderer>> = Vec::new();
             if let Some(t) = title.as_ref() {
@@ -820,9 +828,14 @@ fn layer_elements(
     let mut bar = None;
     // Do topo para o fundo, como a lista de render.
     for layer in crate::state::front_layers(&map).iter() {
-        let Some(geo) = map.layer_geometry(layer) else {
+        let Some(mut geo) = map.layer_geometry(layer) else {
             continue;
         };
+        // Tela cheia: a barra e a dock somem desta tela; a barra revelada desce de cima.
+        let Some(shift) = state.layer_offset(output, layer) else {
+            continue;
+        };
+        geo.loc.y += shift;
         // Menus da barra e da dock que acabaram de abrir: entram esmaecendo.
         let (appear, dy) = state.appear(layer.wl_surface());
         let location: Point<i32, Physical> = crate::clip::phys(geo.loc + Point::from((0, dy)));
@@ -1129,9 +1142,10 @@ fn title_tip_elements(
     shaders: &decorations::Shaders,
     anchor: Rectangle<i32, Logical>,
     button: decorations::Button,
+    look: decorations::BarLook,
 ) -> Vec<MideRenderElement> {
     use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
-    let text = crate::title::tip_text(button);
+    let text = crate::title::tip_text(button, look);
     let Some(image) = titles.tip_image(&text) else {
         return Vec::new();
     };
@@ -1152,6 +1166,49 @@ fn title_tip_elements(
     out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, capsule, menu, h / 2)));
     let shadow = Rectangle::new((x - 1, y + 1).into(), (w + 2, h + 2).into());
     out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, shadow, [0.0, 0.0, 0.0, 30.0 / 255.0], h / 2 + 1)));
+    out
+}
+
+/// Faixa revelada no topo de uma tela em tela cheia: a barra de título da janela
+/// (luzes, com o verde saindo da tela cheia e o amarelo cinza, e o título), com a dica
+/// do botão sob o ponteiro e uma sombra leve embaixo.
+fn reveal_strip_elements(
+    renderer: &mut GlesRenderer,
+    state: &State,
+    output: &Output,
+    origin: Point<i32, Logical>,
+    shaders: &decorations::Shaders,
+    titles: &mut crate::title::TitleRenderer,
+) -> Vec<MideRenderElement> {
+    let Some((window, strip)) = state.reveal_strip(output) else {
+        return Vec::new();
+    };
+    let bar = Rectangle::new(strip.loc - origin, strip.size);
+    let focused = window.toplevel().is_some_and(|t| t.with_pending_state(|s| s.states.contains(XdgState::Activated)));
+    let look = decorations::BarLook { fullscreen: true, alt: false };
+    let mut out = Vec::new();
+    let tip = state
+        .title_tip
+        .as_ref()
+        .filter(|t| t.window == window && !t.dismissed && t.since.elapsed() >= crate::title::TIP_DELAY)
+        .map(|t| t.button);
+    if let Some(button) = tip {
+        out.extend(title_tip_elements(renderer, titles, shaders, decorations::button_rect(bar, button), button, look));
+    }
+    if let Some(text) = crate::title::element(renderer, titles, &toplevel_title_of(&window), focused, bar, 1.0) {
+        out.push(MideRenderElement::Title(text));
+    }
+    let no_clip = crate::clip::uniforms(Rectangle::default(), 0.0, 0.0);
+    let hovered = decorations::button_at(bar, state.pointer_location - origin.to_f64());
+    out.extend(decorations::bar_elements(shaders, bar, focused, hovered, &no_clip, look).into_iter().map(MideRenderElement::from));
+    if state.config.effects.shadows {
+        out.push(MideRenderElement::from(decorations::window_shadow_element(shaders, bar, 1.0, decorations::shadow_strength(true) * 0.6)));
+    }
+    // Fundo da barra superior revelada (a barra é transparente e ficaria sobre o
+    // conteúdo do app): a cor das barras de menu, logo atrás dela.
+    let top = Rectangle::new((0, bar.loc.y - state.fs_reveal_bar_height()).into(), (state.space.output_geometry(output).map_or(bar.size.w, |g| g.size.w), state.fs_reveal_bar_height()).into());
+    let fill = if decorations::dark() { [0.16, 0.16, 0.17, 1.0] } else { [0.95, 0.95, 0.96, 1.0] };
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, top, fill, 0)));
     out
 }
 

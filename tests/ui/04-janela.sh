@@ -2,8 +2,9 @@
 # Terminal de conteúdo inteiro (Tahoe): a barra e as luzes são do app, desenhadas pelo
 # mide-ui; luzes em (69, 95), (89, 95) e (109, 95) com a janela em (48, 76).
 echo "== janela de conteúdo inteiro (Terminal)"
-check "maximizar pelo verde (abaixo da barra)" "$FOOT posição=\(0, 28\) visível=1366x673" "400 click 109 95; 450 list" "$TERMINAL"
-check "restaurar pelo verde" "$FOOT posição=\(48, 76\) visível=700x500" "400 click 109 95; 450 click 61 47; 500 list" "$TERMINAL"
+# O verde entra em tela cheia (seção 44); com ⌥ (Alt), maximiza como antes.
+check "maximizar pelo verde com ⌥ (abaixo da barra)" "$FOOT posição=\(0, 28\) visível=1366x673" "398 keydown alt; 400 click 109 95; 402 keyup alt; 450 list" "$TERMINAL"
+check "restaurar pelo verde com ⌥" "$FOOT posição=\(48, 76\) visível=700x500" "398 keydown alt; 400 click 109 95; 450 click 61 47; 452 keyup alt; 500 list" "$TERMINAL"
 check "duplo clique maximiza" "$FOOT posição=\(0, 28\)" "400 click 400 95; 404 click 400 95; 450 list" "$TERMINAL"
 check "arrastar pela barra" "$FOOT posição=\(148, 176\)" "400 press 400 95; 405 move 450 145; 410 move 500 195; 415 release 500 195; 430 list" "$TERMINAL"
 check "redimensionar pelo canto" "$FOOT posição=\(48, 76\) visível=650x450" "400 press 745 573; 405 move 720 548; 410 move 695 523; 415 release 695 523; 450 list" "$TERMINAL"

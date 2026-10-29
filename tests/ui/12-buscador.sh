@@ -37,7 +37,7 @@ else
 fi
 # Em 1366x768 a janela nova não chega na dock: maximizada, ela cobre a dock. O Terminal
 # é de conteúdo inteiro: o botão verde fica dentro dela, em (109, 95) (seção janela).
-if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "400 click 109 95; 700 list" -- "$TERMINAL" 2>&1 | grep -q "dock escondida"; then
+if XDG_CONFIG_HOME="$HCFG" timeout 150 "$SCEN" "398 keydown alt; 400 click 109 95; 402 keyup alt; 700 list" -- "$TERMINAL" 2>&1 | grep -q "dock escondida"; then
     echo "ok    ocultar inteligente: janela sobre a dock a esconde"; PASS=$((PASS + 1))
 else
     echo "FALHA ocultar inteligente: janela sobre a dock a esconde"; FAIL=$((FAIL + 1))

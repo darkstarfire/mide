@@ -53,14 +53,17 @@ pub struct Tip {
 /// Espera antes de a dica aparecer (a mesma do `ui.tooltip` do kit).
 pub const TIP_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
 
-/// Texto da dica de cada botão, no idioma da sessão. O botão verde do mide
-/// maximiza (como o "Zoom" do Mac com ⌥), não entra em tela cheia.
-pub fn tip_text(button: crate::decorations::Button) -> String {
+/// Texto da dica de cada botão, no idioma da sessão. O botão verde entra na tela
+/// cheia (ou sai, na faixa revelada da tela cheia), como no Mac; com ⌥ (Alt)
+/// apertado, maximiza ("Zoom"), e a dica diz isso.
+pub fn tip_text(button: crate::decorations::Button, look: crate::decorations::BarLook) -> String {
     use crate::decorations::Button;
     match button {
         Button::Close => mide::i18n::trc("title bar", "Close").into_owned(),
         Button::Minimize => mide::i18n::trc("title bar", "Minimize").into_owned(),
-        Button::Maximize => mide::i18n::trc("title bar", "Zoom").into_owned(),
+        Button::Maximize if look.fullscreen => mide::i18n::trc("title bar", "Exit Full Screen").into_owned(),
+        Button::Maximize if look.alt => mide::i18n::trc("title bar", "Zoom").into_owned(),
+        Button::Maximize => mide::i18n::trc("title bar", "Enter Full Screen").into_owned(),
     }
 }
 

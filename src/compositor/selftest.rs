@@ -279,6 +279,9 @@ fn list(state: &State) {
             geo.size.w,
             geo.size.h + bar_h,
         );
+        if let Some(entry) = state.fullscreen_entry(window) {
+            tracing::info!("autoteste: janela {title:?} em tela cheia na tela {}", entry.output);
+        }
     }
     // Telas e camadas de cada uma, em coordenadas globais.
     for output in state.space.outputs() {
@@ -293,8 +296,15 @@ fn list(state: &State) {
             screen.size.w,
             screen.size.h
         );
+        if state.fullscreen_on(output).is_some() {
+            tracing::info!("autoteste: tela {} em tela cheia", output.name());
+        }
         let map = layer_map_for_output(output);
         for layer in map.layers() {
+            if state.layer_offset(output, layer).is_none() {
+                tracing::info!("autoteste: camada {:?} escondida pela tela cheia", layer.namespace());
+                continue;
+            }
             if let Some(g) = map.layer_geometry(layer) {
                 tracing::info!(
                     "autoteste: camada {:?} em ({}, {}) {}x{}",

@@ -20,6 +20,14 @@ msgctxt "title bar"
 msgid "Zoom"
 msgstr "Maximizar"
 
+msgctxt "title bar"
+msgid "Enter Full Screen"
+msgstr "Entrar em tela cheia"
+
+msgctxt "title bar"
+msgid "Exit Full Screen"
+msgstr "Sair da tela cheia"
+
 # Aviso de volume, brilho e microfone
 msgid "Microphone Off"
 msgstr "Microfone desligado"
