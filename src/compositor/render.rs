@@ -536,7 +536,7 @@ fn window_elements(
                 1,
                 Transform::Normal,
                 Some(1.0 - ease),
-                Some(Rectangle::from_size((size.w as f64, size.h as f64).into())),
+                Some(Rectangle::from_size(crate::genie::texture_size(texture))),
                 Some((w, h).into()),
                 None,
                 Kind::Unspecified,
@@ -1193,7 +1193,6 @@ fn title_tip_elements(
     button: decorations::Button,
     look: decorations::BarLook,
 ) -> Vec<MideRenderElement> {
-    use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
     let text = crate::title::tip_text(button, look);
     let Some(image) = titles.tip_image(&text) else {
         return Vec::new();
@@ -1205,8 +1204,7 @@ fn title_tip_elements(
     let capsule = Rectangle::new((x, y).into(), (w, h).into());
     let dark = decorations::dark();
     let mut out = Vec::new();
-    let location = crate::clip::phys((x + 8, y + (h - image.height) / 2).into()).to_f64();
-    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, None, None, smithay::backend::renderer::element::Kind::Unspecified) {
+    if let Some(el) = image.render_element(renderer, (x + 8, y + (h - image.height) / 2).into(), 1.0) {
         out.push(MideRenderElement::Title(el));
     }
     let stroke = if dark { [1.0, 1.0, 1.0, 30.0 / 255.0] } else { [0.0, 0.0, 0.0, 18.0 / 255.0] };

@@ -21,9 +21,10 @@ use std::{collections::HashMap, error::Error, num::NonZeroU32, time::Duration};
 use mide::{
     apps::{self, App},
     launcher_layout::{self, Layout, Slot},
+    shell::scale::{ScaleHandler, SurfaceScale},
     icons::load_icon,
     ui::{
-        draw::{fill_rounded, rgba, rounded_rect, to_argb8888},
+        draw::{fill_rounded, px, rgba, rounded_rect, tf, to_argb8888},
         text::{FontWeight, Text},
     },
 };
@@ -250,7 +251,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-launcher", "mide_launcher=info");
 
     let conn = Connection::connect_to_env()?;
-    let (globals, event_queue) = registry_queue_init(&conn)?;
+    let (globals, mut event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();
 
     let compositor = CompositorState::bind(&globals, &qh)?;
@@ -258,6 +259,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let shm = Shm::bind(&globals, &qh)?;
 
     let surface = compositor.create_surface(&qh);
+    // Escala da tela: em 125%/150%/200% o launcher desenha na resolução real.
+    let surface_scale = SurfaceScale::new(&globals, &qh, &surface);
     let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some("mide-launcher"), None);
     layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
     layer.set_exclusive_zone(-1);
@@ -279,6 +282,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         pool: SlotPool::new(800 * 600 * 4, &shm)?,
         shm,
         layer,
+        surface_scale,
+        scale: 1.0,
         width: 0,
         height: 0,
         exit: false,
@@ -333,6 +338,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         launcher.folders.len()
     );
 
+    // Uma volta ao compositor antes de carregar os ícones: chega a escala da tela, e
+    // eles já vêm no tamanho em pixels (em 150%, ampliar os de 96 borrava).
+    event_queue.roundtrip(&mut launcher)?;
+    let icon_load = (ICON_LOAD as f32 * launcher.surface_scale.scale()).ceil() as u32;
+
     let mut event_loop: EventLoop<Launcher> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
@@ -372,7 +382,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let Some((id, name)) = next else {
                 break;
             };
-            let icon = name.as_deref().and_then(|n| load_icon(n, ICON_LOAD));
+            let icon = name.as_deref().and_then(|n| load_icon(n, icon_load));
             if sender.send((id, icon)).is_err() {
                 break;
             }
@@ -386,12 +396,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // Já deixa o ícone reduzido no tamanho da grade: trocar de página não
                 // precisa reduzir nada na hora.
                 if let (Some(pix), true) = (icon.as_ref(), launcher.width > 0) {
-                    let size = launcher.grid().icon as f32;
-                    let key = (id.clone(), (size * 4.0).round() as u32);
-                    let px = size.ceil().max(1.0) as u32;
-                    let mut out = Pixmap::new(px, px).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
-                    draw_scaled(&mut out, pix, 0.0, 0.0, size);
-                    launcher.scaled.insert(key, out);
+                    let size = launcher.grid().icon as f32 * launcher.scale;
+                    launcher.scaled.insert((id.clone(), (size * 4.0).round() as u32), icon_in_pixels(pix, size));
                 }
                 launcher.icons.insert(id, icon);
                 if launcher.icons.len() == launcher.apps.len() {
@@ -435,6 +441,10 @@ struct Launcher {
     shm: Shm,
     pool: SlotPool,
     layer: LayerSurface,
+    /// Escala da tela (`wp_fractional_scale`) e a usada nos caches (ícones, nomes).
+    surface_scale: SurfaceScale,
+    scale: f32,
+    /// Tamanho em pontos (a imagem tem tamanho × escala pixels).
     width: u32,
     height: u32,
     exit: bool,
@@ -490,7 +500,7 @@ struct Launcher {
     glass_rects: Vec<GlassRect>,
     shown_glass: Vec<GlassRect>,
     liquid: bool,
-    /// Ícones já reduzidos, por (app, tamanho×4).
+    /// Ícones já reduzidos, por (app, tamanho em pixels×4).
     scaled: HashMap<(String, u32), Pixmap>,
     /// As outras páginas já foram desenhadas uma vez (caches prontos).
     warmed: bool,
@@ -615,6 +625,12 @@ impl Launcher {
         tracing::info!("pasta renomeada para {name}");
         self.layout.rename(slot, &name);
         self.layout_changed();
+    }
+
+    /// Bytes de um quadro inteiro (em pixels, no formato da tela).
+    fn pixel_len(&self) -> usize {
+        let (w, h) = self.surface_scale.pixels(self.width, self.height);
+        (w * h * 4) as usize
     }
 
     fn grid(&self) -> Grid {
@@ -911,6 +927,18 @@ impl Launcher {
         if self.width == 0 || self.height == 0 {
             return;
         }
+        // Escala nova: ícones, nomes e o quadro guardado eram de outra resolução.
+        let k = self.surface_scale.scale();
+        if k != self.scale {
+            self.scale = k;
+            self.scaled.clear();
+            self.labels.clear();
+            self.last_frame = None;
+            self.page_anim = None;
+            self.folder_anim = None;
+            self.warmed = false;
+        }
+        mide::ui::draw::set_scale(k);
         // Pasta abrindo ou fechando.
         if let Some(t) = self.folder_anim.as_ref().map(|a| Self::elapsed_ms(a.start) / FOLDER_MS) {
             if t < 1.0 {
@@ -933,7 +961,7 @@ impl Launcher {
                         out
                     };
                     let (old, old_glass) = match self.last_frame.take() {
-                        Some(frame) if frame.len() == (self.width * self.height * 4) as usize => (frame, self.shown_glass.clone()),
+                        Some(frame) if frame.len() == self.pixel_len() => (frame, self.shown_glass.clone()),
                         _ => (bytes(&self.paint_scene(Some(from), false)), self.glass_rects.clone()),
                     };
                     let new = self.paint_scene(Some(to), false);
@@ -1018,11 +1046,14 @@ impl Launcher {
         let (cx0, cy0) = (ox + ow / 2.0, oy + oh / 2.0);
         let (cx1, cy1) = (px + pw / 2.0, py + ph / 2.0);
         let (cx, cy) = (cx0 + (cx1 - cx0) * e, cy0 + (cy1 - cy0) * e);
-        if let Some(crop) = tiny_skia::IntRect::from_xywh(px.max(0.0) as i32, py.max(0.0) as i32, pw as u32, ph as u32).and_then(|r| open.clone_rect(r)) {
+        // A imagem é em pixels: o painel e o centro, em pontos, vezes a escala.
+        let k = self.scale;
+        let crop_rect = tiny_skia::IntRect::from_xywh((px.max(0.0) * k) as i32, (py.max(0.0) * k) as i32, (pw * k) as u32, (ph * k) as u32);
+        if let Some(crop) = crop_rect.and_then(|r| open.clone_rect(r)) {
             // Quase no tamanho final, sem filtro (mais barato e já nítido).
             let quality = if s > 0.97 { tiny_skia::FilterQuality::Nearest } else { tiny_skia::FilterQuality::Bilinear };
             let paint = tiny_skia::PixmapPaint { opacity: e.clamp(0.0, 1.0), quality, ..Default::default() };
-            let transform = Transform::from_row(s, 0.0, 0.0, s, cx - pw * s / 2.0, cy - ph * s / 2.0);
+            let transform = Transform::from_row(s, 0.0, 0.0, s, (cx - pw * s / 2.0) * k, (cy - ph * s / 2.0) * k);
             out.draw_pixmap(0, 0, crop.as_ref(), &paint, transform, None);
         }
         // O vidro acompanha: o das pastas da grade some com ela; o do painel cresce
@@ -1075,11 +1106,16 @@ impl Launcher {
     /// Um quadro do carrossel: copia as linhas da página antiga deslocadas e a parte
     /// da página nova que já entrou, só dentro da faixa; fora dela, a página nova.
     fn present_slide(&mut self, t: f32, dir: i32) {
-        let (w, h) = (self.width as usize, self.height as usize);
+        let (pw, ph) = self.surface_scale.pixels(self.width, self.height);
+        let (w, h) = (pw as usize, ph as usize);
         let stride = w * 4;
-        let Some((old, new, (bx0, by0, bx1, by1))) = self.page_anim.as_ref().and_then(|a| a.frames.clone()) else {
+        let Some((old, new, band)) = self.page_anim.as_ref().and_then(|a| a.frames.clone()) else {
             return;
         };
+        // A faixa é em pontos; a cópia das linhas, em pixels.
+        let k = self.scale;
+        let to_px = |v: usize| (v as f32 * k).round() as usize;
+        let (bx0, by0, bx1, by1) = (to_px(band.0), to_px(band.1).min(h), to_px(band.2).min(w), to_px(band.3).min(h));
         let bw = bx1.saturating_sub(bx0);
         let shift = ((ease_out(t) * bw as f32) as usize).min(bw);
         let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888) else {
@@ -1090,9 +1126,9 @@ impl Launcher {
         // (já mostrando a página de destino).
         let dots_y = match self.open_folder.and(self.folder_rect) {
             Some((_, py, _, ph)) => py + ph - 16.0,
-            None => h as f32 - DOTS_FROM_BOTTOM,
+            None => self.height as f32 - DOTS_FROM_BOTTOM,
         };
-        let dots = ((dots_y - 8.0).max(0.0) as usize, (dots_y + 8.0).max(0.0) as usize);
+        let dots = (((dots_y - 8.0) * k).max(0.0) as usize, ((dots_y + 8.0) * k).max(0.0) as usize);
         for y in by0..by1 {
             if y >= dots.0 && y < dots.1 {
                 continue;
@@ -1110,13 +1146,15 @@ impl Launcher {
         }
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, w as i32, h as i32);
+        self.surface_scale.set_destination(self.width, self.height);
         if buffer.attach_to(surface).is_ok() {
             self.layer.commit();
         }
-        // O vidro das pastas desliza com as páginas (recortado na faixa).
+        // O vidro das pastas desliza com as páginas (recortado na faixa), em pontos.
         let (old_glass, new_glass) = self.page_anim.as_ref().map(|a| a.glass.clone()).unwrap_or_default();
-        let (b0, b1) = (bx0 as f32, bx1 as f32);
-        let inside = |r: &GlassRect| r.1 >= by0 as f32 && r.1 + r.3 <= by1 as f32;
+        let (b0, b1) = (band.0 as f32, band.2 as f32);
+        let (bw, shift) = (bw as f32 / k, shift as f32 / k);
+        let inside = |r: &GlassRect| r.1 >= band.1 as f32 && r.1 + r.3 <= band.3 as f32;
         let mut rects: Vec<GlassRect> = Vec::new();
         let mut push = |r: &GlassRect, dx: f32| {
             let (x0, x1) = ((r.0 + dx).max(b0), (r.0 + dx + r.2).min(b1));
@@ -1127,11 +1165,11 @@ impl Launcher {
         let d = dir as f32;
         let mut still: Vec<GlassRect> = Vec::new();
         for r in old_glass.iter().filter(|r| inside(r)) {
-            push(r, -d * shift as f32);
+            push(r, -d * shift);
         }
         for r in &new_glass {
             if inside(r) {
-                push(r, d * (bw - shift) as f32);
+                push(r, d * (bw - shift));
             } else {
                 // Fora da faixa (o painel da pasta, que fica parado): inteiro. Recortado
                 // na faixa, o compositor desenhava a borda e os cantos do vidro nos
@@ -1150,7 +1188,7 @@ impl Launcher {
     }
 
     fn present(&mut self, pixmap: &Pixmap) {
-        let (w, h) = (self.width, self.height);
+        let (w, h) = (pixmap.width(), pixmap.height());
         let stride = w as i32 * 4;
         let (buffer, canvas) = match self.pool.create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888) {
             Ok(b) => b,
@@ -1167,6 +1205,7 @@ impl Launcher {
         self.last_frame = Some(kept);
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, w as i32, h as i32);
+        self.surface_scale.set_destination(self.width, self.height);
         if buffer.attach_to(surface).is_ok() {
             self.layer.commit();
         }
@@ -1176,7 +1215,8 @@ impl Launcher {
     /// arrastado. `page` troca a página mostrada (da grade, ou da pasta aberta).
     fn paint_scene(&mut self, page: Option<usize>, interactive: bool) -> Pixmap {
         let (w, h) = (self.width, self.height);
-        let mut pixmap = Pixmap::new(w, h).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        let (pw, ph) = self.surface_scale.pixels(w, h);
+        let mut pixmap = Pixmap::new(pw, ph).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         self.glass_rects.clear();
         // Véu leve: o papel de parede (desfocado pelo compositor) continua aparecendo.
         if !self.panel_only {
@@ -1209,7 +1249,7 @@ impl Launcher {
                 let mut dim = Paint::default();
                 dim.set_color(rgba(0, 0, 0, 60));
                 if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, w as f32, h as f32) {
-                    pixmap.fill_rect(rect, &dim, Transform::identity(), None);
+                    pixmap.fill_rect(rect, &dim, tf(), None);
                 }
             }
             let fg = self.folder_grid();
@@ -1228,7 +1268,7 @@ impl Launcher {
                 let mut border = Paint::default();
                 border.set_color(rgba(255, 255, 255, edge));
                 border.anti_alias = true;
-                pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+                pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
             }
             self.folder_rect = Some((px, py, pw, ph));
             // Nome da pasta; clicando nele, vira um campo para renomear.
@@ -1278,7 +1318,7 @@ impl Launcher {
             let mut border = Paint::default();
             border.set_color(rgba(255, 255, 255, 46));
             border.anti_alias = true;
-            pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         let (ix, iy, iw, ih) = Self::menu_item_rect(menu);
         if menu.hover {
@@ -1339,7 +1379,7 @@ impl Launcher {
                 }
             };
             let label = self.label(&label, grid.cell_w, bold);
-            pixmap.draw_pixmap(cx as i32, (iy + grid.icon + 7) as i32, label.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+            pixmap.draw_pixmap(px(cx as f32), px((iy + grid.icon + 7) as f32), label.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
         }
     }
 
@@ -1348,15 +1388,11 @@ impl Launcher {
         match self.icons.get(&app.id).cloned() {
             None => fill_rounded(pixmap, x + size * 0.1, y + size * 0.1, size * 0.8, size * 0.8, size * 0.22, rgba(255, 255, 255, 20)),
             Some(Some(icon)) => {
-                // Ícone já reduzido para este tamanho (reduzir a cada quadro é caro).
-                let key = (app.id.clone(), (size * 4.0).round() as u32);
-                let scaled = self.scaled.entry(key).or_insert_with(|| {
-                    let px = size.ceil().max(1.0) as u32;
-                    let mut out = Pixmap::new(px, px).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
-                    draw_scaled(&mut out, &icon, 0.0, 0.0, size);
-                    out
-                });
-                pixmap.draw_pixmap(x.round() as i32, y.round() as i32, scaled.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                // Ícone já reduzido para este tamanho em pixels (reduzir a cada quadro é caro).
+                let k = self.scale;
+                let key = (app.id.clone(), (size * k * 4.0).round() as u32);
+                let scaled = self.scaled.entry(key).or_insert_with(|| icon_in_pixels(&icon, size * k));
+                pixmap.draw_pixmap((x * k).round() as i32, (y * k).round() as i32, scaled.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
             }
             Some(None) => {
                 // Sem ícone no tema: um bloco com a inicial do app.
@@ -1384,7 +1420,7 @@ impl Launcher {
             let mut border = Paint::default();
             border.set_color(rgba(255, 255, 255, edge));
             border.anti_alias = true;
-            pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         let mini = bs * 0.22;
         let gap = bs * 0.07;
@@ -1407,7 +1443,7 @@ impl Launcher {
             let mut paint = Paint::default();
             paint.set_color(rgba(255, 255, 255, 70));
             paint.anti_alias = true;
-            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         // Lupa: círculo e cabo.
         let (lx, ly) = (x + 19.0, y + SEARCH_H / 2.0 - 1.5);
@@ -1416,13 +1452,13 @@ impl Launcher {
         paint.anti_alias = true;
         let stroke = Stroke { width: 1.7, ..Default::default() };
         if let Some(circle) = PathBuilder::from_circle(lx, ly, 5.5) {
-            pixmap.stroke_path(&circle, &paint, &stroke, Transform::identity(), None);
+            pixmap.stroke_path(&circle, &paint, &stroke, tf(), None);
         }
         let mut pb = PathBuilder::new();
         pb.move_to(lx + 4.0, ly + 4.0);
         pb.line_to(lx + 8.0, ly + 8.0);
         if let Some(handle) = pb.finish() {
-            pixmap.stroke_path(&handle, &paint, &stroke, Transform::identity(), None);
+            pixmap.stroke_path(&handle, &paint, &stroke, tf(), None);
         }
 
         let tx = x + 34.0;
@@ -1452,7 +1488,7 @@ impl Launcher {
                 let mut paint = Paint::default();
                 paint.set_color(rgba(255, 255, 255, alpha));
                 paint.anti_alias = true;
-                pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&dot, &paint, FillRule::Winding, tf(), None);
             }
             if record {
                 self.dots.push(x);
@@ -1482,7 +1518,9 @@ impl Launcher {
                 }
             }
         }
-        let mut pixmap = Pixmap::new(width, 20).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        // Em pixels (largura e altura em pontos × escala); o texto converte sozinho.
+        let k = self.scale;
+        let mut pixmap = Pixmap::new(((width as f32) * k).round() as u32, (20.0 * k).round() as u32).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         let tw = self.text.measure(&text, size, weight);
         let x = (width as f32 - tw) / 2.0;
         // Sombra leve para ler sobre qualquer papel de parede.
@@ -1504,6 +1542,22 @@ fn draw_scaled(pixmap: &mut Pixmap, icon: &Pixmap, x: f32, y: f32, size: f32) {
     pixmap.draw_pixmap(0, 0, icon.as_ref(), &paint, transform, None);
     mide::ui::draw::fix_premultiplied(pixmap);
 }
+
+/// Ícone reduzido para um quadrado de `size` pixels.
+fn icon_in_pixels(icon: &Pixmap, size: f32) -> Pixmap {
+    let px = size.ceil().max(1.0) as u32;
+    let mut out = Pixmap::new(px, px).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+    draw_scaled(&mut out, icon, 0.0, 0.0, size);
+    out
+}
+
+impl ScaleHandler for Launcher {
+    fn surface_scale_changed(&mut self, _: &QueueHandle<Self>, _: &wl_surface::WlSurface) {
+        self.redraw();
+    }
+}
+
+mide::delegate_surface_scale!(Launcher);
 
 impl CompositorHandler for Launcher {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}

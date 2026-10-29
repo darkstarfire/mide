@@ -25,8 +25,9 @@ use std::{
 use mide::{
     icons::{load_icon, load_icon_file, load_themed_icon},
     notify::{self, reason},
+    shell::scale::{ScaleHandler, SurfaceScale},
     ui::{
-        draw::{fill_rounded, rgba, rounded_rect, to_argb8888},
+        draw::{fill_rounded, rgba, rounded_rect, tf, to_argb8888},
         text::{FontWeight, Text},
     },
 };
@@ -42,7 +43,7 @@ use smithay_client_toolkit::{
         },
         calloop_wayland_source::WaylandSource,
         client::{
-            globals::registry_queue_init,
+            globals::{registry_queue_init, GlobalList},
             protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
             Connection, QueueHandle,
         },
@@ -248,6 +249,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         icons: HashMap::new(),
         bus,
         dirty: false,
+        scale: None,
+        globals,
     };
 
     let mut event_loop: EventLoop<Banners> = EventLoop::try_new()?;
@@ -315,6 +318,10 @@ struct Banners {
     icons: HashMap<String, Option<Pixmap>>,
     bus: zbus::blocking::Connection,
     dirty: bool,
+    /// Escala da camada (`wp_fractional_scale`): em 125%/150%/200% os banners são
+    /// desenhados na resolução real da tela.
+    scale: Option<SurfaceScale>,
+    globals: GlobalList,
 }
 
 impl Banners {
@@ -407,6 +414,7 @@ impl Banners {
             if self.layer.take().is_some() {
                 self.configured = false;
                 self.pool = None;
+                self.scale = None;
             }
             return;
         }
@@ -414,6 +422,7 @@ impl Banners {
         match &self.layer {
             None => {
                 let surface = self.compositor.create_surface(&self.qh);
+                self.scale = Some(SurfaceScale::new(&self.globals, &self.qh, &surface));
                 let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Top, Some("mide-notifications"), None);
                 layer.set_anchor(Anchor::TOP | Anchor::RIGHT);
                 layer.set_margin(0, 0, 0, 0);
@@ -434,19 +443,25 @@ impl Banners {
         }
     }
 
+    /// Ícone do app no tamanho em pixels da tela (`ICON` pontos × escala).
     fn icon_for(&mut self, note_icon: Option<String>, app_name: &str) -> Option<Pixmap> {
-        let key = note_icon.clone().unwrap_or_else(|| app_name.to_lowercase());
+        let size = (ICON as f32 * self.current_scale()).round() as u32;
+        let key = format!("{}@{size}", note_icon.clone().unwrap_or_else(|| app_name.to_lowercase()));
         if let Some(icon) = self.icons.get(&key) {
             return icon.clone();
         }
         let icon = match note_icon.as_deref() {
-            Some(path) if path.starts_with('/') || path.starts_with("file://") => load_icon_file(path, ICON),
-            Some(name) => load_icon(name, ICON).or_else(|| load_themed_icon(&[name], ICON)),
-            None => load_icon(&app_name.to_lowercase(), ICON),
+            Some(path) if path.starts_with('/') || path.starts_with("file://") => load_icon_file(path, size),
+            Some(name) => load_icon(name, size).or_else(|| load_themed_icon(&[name], size)),
+            None => load_icon(&app_name.to_lowercase(), size),
         }
-        .or_else(|| load_themed_icon(&["dialog-information", "preferences-system-notifications"], ICON));
+        .or_else(|| load_themed_icon(&["dialog-information", "preferences-system-notifications"], size));
         self.icons.insert(key, icon.clone());
         icon
+    }
+
+    fn current_scale(&self) -> f32 {
+        self.scale.as_ref().map_or(1.0, SurfaceScale::scale)
     }
 
     fn draw(&mut self) {
@@ -456,7 +471,10 @@ impl Banners {
         if !self.configured {
             return;
         }
-        let (w, h) = self.size;
+        // A imagem é em pixels (tamanho em pontos × escala); o desenho, em pontos.
+        let (points_w, points_h) = self.size;
+        let (w, h) = self.scale.as_ref().map_or(self.size, |s| s.pixels(points_w, points_h));
+        mide::ui::draw::set_scale(self.current_scale());
         let Some(mut pixmap) = Pixmap::new(w, h) else {
             return;
         };
@@ -483,6 +501,9 @@ impl Banners {
         to_argb8888(&pixmap, canvas);
         let surface = layer.wl_surface();
         surface.damage_buffer(0, 0, w as i32, h as i32);
+        if let Some(scale) = &self.scale {
+            scale.set_destination(points_w, points_h);
+        }
         if buffer.attach_to(surface).is_ok() {
             layer.commit();
         }
@@ -514,14 +535,17 @@ impl Banners {
             let mut paint = Paint::default();
             paint.set_color(ink(34));
             paint.anti_alias = true;
-            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
 
         // Ícone do app à esquerda.
         let ix = x + 16.0;
         let iy = y + (BANNER_H - ICON as f32) / 2.0;
         match icon {
-            Some(icon) => pixmap.draw_pixmap(ix as i32, iy as i32, icon.as_ref(), &PixmapPaint::default(), Transform::identity(), None),
+            Some(icon) => {
+                let k = mide::ui::draw::scale();
+                pixmap.draw_pixmap((ix * k).round() as i32, (iy * k).round() as i32, icon.as_ref(), &PixmapPaint::default(), Transform::identity(), None)
+            }
             None => fill_rounded(pixmap, ix, iy, ICON as f32, ICON as f32, 10.0, rgba(140, 140, 150, 255)),
         }
 
@@ -561,9 +585,9 @@ impl Banners {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(rgba(250, 250, 252, 255));
-                pixmap.fill_path(&circle, &paint, tiny_skia::FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&circle, &paint, tiny_skia::FillRule::Winding, tf(), None);
                 paint.set_color(rgba(0, 0, 0, 60));
-                pixmap.stroke_path(&circle, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+                pixmap.stroke_path(&circle, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
             }
             let mut pb = PathBuilder::new();
             pb.move_to(cx - 3.0, cy - 3.0);
@@ -574,7 +598,7 @@ impl Banners {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(rgba(60, 60, 66, 255));
-                pixmap.stroke_path(&path, &paint, &Stroke { width: 1.6, ..Default::default() }, Transform::identity(), None);
+                pixmap.stroke_path(&path, &paint, &Stroke { width: 1.6, ..Default::default() }, tf(), None);
             }
         }
     }
@@ -657,6 +681,14 @@ fn wrap(text: &mut Text, value: &str, size: f32, max: f32, max_lines: usize) -> 
     }
     lines
 }
+
+impl ScaleHandler for Banners {
+    fn surface_scale_changed(&mut self, _: &QueueHandle<Self>, _: &wl_surface::WlSurface) {
+        self.draw();
+    }
+}
+
+mide::delegate_surface_scale!(Banners);
 
 impl CompositorHandler for Banners {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}

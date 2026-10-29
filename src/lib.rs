@@ -30,6 +30,6 @@ pub use mide_ui::{kit, ui};
 
 pub use applications::{appimage, apps, default_apps, icons, programs, xpm};
 pub use documents::{annotate, markup, richtext, spell};
-pub use platform::{logging, appearance, audio, network, control_client, displays, elevate, keyboard_layouts, login_items, portal, settings_file, sounds, sysinfo, system};
+pub use platform::{battery, logging, appearance, audio, network, control_client, displays, elevate, keyboard_layouts, login_items, portal, settings_file, sounds, sysinfo, system};
 pub use shell::{appmenu, backdrop, calendar, gmenu, launcher_layout, motion, notify, search, tray, xmenu};
 pub use storage::{files, files_info, files_view, places, templates, thumbnails};

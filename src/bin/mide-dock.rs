@@ -31,6 +31,8 @@ use mide::{
     control_client::ask_compositor,
     icons::{load_icon, load_themed_icon},
     places,
+    shell::scale::{ScaleHandler, SurfaceScale},
+    ui::draw::{px, tf},
     ui::text::{FontWeight, Text},
 };
 use serde::Deserialize;
@@ -63,7 +65,7 @@ use smithay_client_toolkit::{
 };
 use tiny_skia::{Color, FillRule, GradientStop, LinearGradient, Paint, PathBuilder, Pixmap, Point as SkPoint, SpreadMode, Stroke, Transform};
 use smithay_client_toolkit::reexports::client::{
-    globals::registry_queue_init,
+    globals::{registry_queue_init, GlobalList},
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
@@ -76,6 +78,31 @@ static ICON_SIZE_NOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU3
 /// Tamanho atual dos ícones da dock.
 fn icon_size() -> u32 {
     ICON_SIZE_NOW.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Escala da tela da dock (pixels por ponto, em milésimos): 1 nas telas comuns,
+/// 1,25/1,5/2 em telas com escala. As imagens são desenhadas nesse tamanho (nítidas)
+/// e o viewport diz ao compositor o tamanho delas em pontos.
+static SCALE_NOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+fn ui_scale() -> f32 {
+    SCALE_NOW.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
+}
+
+/// `points` pontos em pixels da tela da dock (ícones carregados nesse tamanho).
+fn to_px(points: u32) -> u32 {
+    ((points as f32) * ui_scale()).round().max(1.0) as u32
+}
+
+/// Tamanho dos ícones em pixels.
+fn icon_px() -> u32 {
+    to_px(icon_size())
+}
+
+/// Imagem para `w` × `h` pontos, em pixels, com as funções de desenho na escala.
+fn canvas(w: u32, h: u32) -> Option<Pixmap> {
+    mide::ui::draw::set_scale(ui_scale());
+    Pixmap::new(to_px(w), to_px(h))
 }
 
 /// Tamanho dos ícones gravado nas Configurações (ou o padrão).
@@ -206,7 +233,7 @@ impl Catalog {
         let icon = self
             .icons
             .entry(id.clone())
-            .or_insert_with(|| entry.icon().and_then(|name| load_icon(name, icon_size())))
+            .or_insert_with(|| entry.icon().and_then(|name| load_icon(name, icon_px())))
             .clone();
         Some(DockApp {
             name: entry
@@ -232,7 +259,7 @@ impl Catalog {
         } else {
             &["application-x-executable", "applications-other"]
         };
-        let icon = self.icons.entry(format!("fallback:{app_id}")).or_insert_with(|| load_themed_icon(names, icon_size())).clone();
+        let icon = self.icons.entry(format!("fallback:{app_id}")).or_insert_with(|| load_themed_icon(names, icon_px())).clone();
         DockApp {
             id: app_id.to_string(),
             name: if title.is_empty() { app_id.to_string() } else { title.to_string() },
@@ -278,6 +305,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let shm = Shm::bind(&globals, &qh)?;
 
     let surface = compositor.create_surface(&qh);
+    let scale = SurfaceScale::new(&globals, &qh, &surface);
     let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-dock"), None);
     let trash_items = places::trash_count(&places::trash_dir());
     layer.set_anchor(Anchor::BOTTOM);
@@ -308,6 +336,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         shm,
         pool,
         layer,
+        scale,
         width,
         height: dock_height(),
         first_configure: true,
@@ -323,9 +352,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         last_report: String::new(),
         compositor,
         layer_shell,
-        downloads_icon: load_themed_icon(&["folder-download", "folder-downloads", "folder"], icon_size()),
-        trash_empty_icon: load_themed_icon(&["user-trash", "user-trash-empty"], icon_size()),
-        trash_full_icon: load_themed_icon(&["user-trash-full", "user-trash"], icon_size()),
+        downloads_icon: load_themed_icon(&["folder-download", "folder-downloads", "folder"], icon_px()),
+        trash_empty_icon: load_themed_icon(&["user-trash", "user-trash-empty"], icon_px()),
+        trash_full_icon: load_themed_icon(&["user-trash-full", "user-trash"], icon_px()),
         trash_items,
         menu: None,
         bounce: None,
@@ -355,6 +384,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         zoom_extra: 0,
         zoom_slots: Vec::new(),
         zoom_icons: HashMap::new(),
+        globals,
     };
 
     tracing::info!("dock pronta com {} app(s) fixado(s)", dock.items.len());
@@ -495,11 +525,11 @@ fn draw_launchpad_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
             Transform::identity(),
         )
         .unwrap_or(tiny_skia::Shader::SolidColor(Color::WHITE));
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
         let mut border = Paint::default();
         border.anti_alias = true;
         border.set_color(Color::from_rgba8(0, 0, 0, 40));
-        pixmap.stroke_path(&path, &border, &Stroke { width: 0.8, ..Default::default() }, Transform::identity(), None);
+        pixmap.stroke_path(&path, &border, &Stroke { width: 0.8, ..Default::default() }, tf(), None);
     }
     const COLORS: [(u8, u8, u8); 9] = [
         (255, 69, 58),
@@ -523,7 +553,7 @@ fn draw_launchpad_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(Color::from_rgba8(*r, *g, *b, 255));
-            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
         }
     }
 }
@@ -552,6 +582,8 @@ struct Dock {
     shm: Shm,
     pool: SlotPool,
     layer: LayerSurface,
+    /// Escala e viewport da superfície da dock.
+    scale: SurfaceScale,
     width: u32,
     height: u32,
     first_configure: bool,
@@ -628,12 +660,15 @@ struct Dock {
     zoom_slots: Vec<(usize, f32, f32)>,
     /// Ícones carregados no tamanho da ampliação (nítidos), pelo id do app ou pilha.
     zoom_icons: HashMap<String, Option<Pixmap>>,
+    /// Para pedir a escala das camadas criadas depois (ampliação, pulo, menu, dica).
+    globals: GlobalList,
 }
 
 /// Camada transparente acima da dock com os ícones ampliados (como a Ampliação do
 /// Mac): não recebe cliques; `amount` vai de 0 a 1 (entrando e saindo animada).
 struct Zoom {
     layer: LayerSurface,
+    scale: SurfaceScale,
     pool: SlotPool,
     size: (u32, u32),
     amount: f32,
@@ -646,7 +681,7 @@ impl Dock {
     fn draw(&mut self, qh: &QueueHandle<Self>) {
         let start = std::time::Instant::now();
         let (w, h) = (self.width, self.height);
-        let Some(mut pixmap) = Pixmap::new(w, h) else {
+        let Some(mut pixmap) = canvas(w, h) else {
             return;
         };
         // Escondida: nada desenhado (só a faixa invisível que recebe o ponteiro).
@@ -669,7 +704,7 @@ impl Dock {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(Color::from_rgba8(28, 28, 32, if self.liquid { 120 } else { 150 }));
-                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
             }
         }
         // Com a ampliação aberta, os ícones (e o que anda com eles) estão na camada dela.
@@ -687,13 +722,13 @@ impl Dock {
             if let Some(line) = rounded_rect(x - 0.5, PADDING as f32 + 6.0, 1.0, icon_size() as f32 - 12.0, 0.5) {
                 let mut paint = Paint::default();
                 paint.set_color(line_color);
-                pixmap.fill_path(&line, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&line, &paint, FillRule::Winding, tf(), None);
             }
         }
 
         draw_launchpad_icon(&mut pixmap, PADDING as f32, PADDING as f32, icon_size() as f32);
         if pressed == Some(LAUNCHER) {
-            darken(&mut pixmap, PADDING as i32, PADDING as i32, icon_size());
+            darken(&mut pixmap, px(PADDING as f32), px(PADDING as f32), icon_px());
         }
 
         // Separador antes de Downloads e Lixeira.
@@ -702,7 +737,7 @@ impl Dock {
             if let Some(line) = rounded_rect(x - 0.5, PADDING as f32 + 6.0, 1.0, icon_size() as f32 - 12.0, 0.5) {
                 let mut paint = Paint::default();
                 paint.set_color(line_color);
-                pixmap.fill_path(&line, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&line, &paint, FillRule::Winding, tf(), None);
             }
         }
         for stack in 0..STACKS {
@@ -713,15 +748,15 @@ impl Dock {
                 _ => self.trash_empty_icon.as_ref(),
             };
             if let Some(icon) = icon {
-                pixmap.draw_pixmap(x, PADDING as i32, icon.as_ref(), &Default::default(), Transform::identity(), None);
+                pixmap.draw_pixmap(px(x as f32), px(PADDING as f32), icon.as_ref(), &Default::default(), Transform::identity(), None);
                 if pressed == Some(self.items.len() + stack) {
-                    darken(&mut pixmap, x, PADDING as i32, icon_size());
+                    darken(&mut pixmap, px(x as f32), px(PADDING as f32), icon_px());
                 }
             } else if let Some(path) = rounded_rect(x as f32, PADDING as f32, icon_size() as f32, icon_size() as f32, 10.0) {
                 let mut paint = Paint::default();
                 paint.set_color(Color::from_rgba8(120, 120, 128, 255));
                 paint.anti_alias = true;
-                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
             }
         }
 
@@ -736,8 +771,8 @@ impl Dock {
             }
             if let Some(icon) = &app.icon {
                 pixmap.draw_pixmap(
-                    x as i32,
-                    y as i32,
+                    px(x),
+                    px(y),
                     icon.as_ref(),
                     &Default::default(),
                     Transform::identity(),
@@ -745,14 +780,14 @@ impl Dock {
                 );
                 // Apertado: o ícone escurece até soltar (o "clique" visível do Mac).
                 if pressed == Some(i) {
-                    darken(&mut pixmap, x as i32, y as i32, icon_size());
+                    darken(&mut pixmap, px(x), px(y), icon_px());
                 }
             } else if let Some(path) = rounded_rect(x, y, icon_size() as f32, icon_size() as f32, 10.0) {
                 // Sem ícone: um bloco neutro no lugar.
                 let mut paint = Paint::default();
                 paint.set_color(Color::from_rgba8(120, 120, 128, 255));
                 paint.anti_alias = true;
-                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
             }
             // Ponto embaixo do ícone quando o app tem janela aberta, como no macOS.
             if app.match_ids.iter().any(|id| self.running.contains(id)) {
@@ -762,7 +797,7 @@ impl Dock {
                     let mut paint = Paint::default();
                     paint.set_color(if self.dark { Color::from_rgba8(235, 235, 240, 230) } else { Color::from_rgba8(40, 40, 46, 230) });
                     paint.anti_alias = true;
-                    pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+                    pixmap.fill_path(&dot, &paint, FillRule::Winding, tf(), None);
                 }
             }
         }
@@ -783,6 +818,7 @@ impl Dock {
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, w as i32, h as i32);
         if buffer.attach_to(surface).is_ok() {
+            self.scale.set_destination(self.width, self.height);
             self.layer.commit();
         }
     }
@@ -1107,6 +1143,7 @@ const BOUNCE_MAX: Duration = Duration::from_secs(10);
 /// pela dock) coincidia com os congelamentos da tela (2026-10-28).
 struct Tip {
     layer: LayerSurface,
+    scale: SurfaceScale,
     pool: SlotPool,
     size: (u32, u32),
     /// Onde fica o centro do nome, na camada.
@@ -1121,6 +1158,7 @@ struct Tip {
 
 struct Bounce {
     layer: LayerSurface,
+    scale: SurfaceScale,
     pool: SlotPool,
     app: String,
     start: std::time::Instant,
@@ -1212,6 +1250,7 @@ impl Dock {
             // Em cima, espaço para o ícone ampliado pular (app abrindo).
             let size = (self.width + 4 * extra, dock_height() + extra + BOUNCE_ROOM);
             let surface = self.compositor.create_surface(&self.qh);
+            let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
             let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-zoom"), None);
             layer.set_anchor(Anchor::BOTTOM);
             layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
@@ -1225,7 +1264,7 @@ impl Dock {
             let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
                 return;
             };
-            self.zoom = Some(Zoom { layer, pool, size, amount: 0.0, target: 1.0, configured: false });
+            self.zoom = Some(Zoom { layer, scale, pool, size, amount: 0.0, target: 1.0, configured: false });
             // A dock passa a desenhar só a faixa.
             let qh = self.qh.clone();
             self.draw(&qh);
@@ -1283,7 +1322,7 @@ impl Dock {
         }
         let base = icon_size() as f32;
         let (zw, zh) = (size.0 as f32, size.1 as f32);
-        let Some(mut pixmap) = Pixmap::new(size.0, size.1) else {
+        let Some(mut pixmap) = canvas(size.0, size.1) else {
             return;
         };
         let bottom = zh - (PADDING + BOTTOM_EXTRA) as f32;
@@ -1321,12 +1360,12 @@ impl Dock {
         for (index, left, w) in placed {
             let lift = bouncing.filter(|(i, _)| *i == index).map_or(0.0, |(_, h)| h * w / base);
             let (x, y) = (dx + left, bottom - w - lift);
-            let px = w.round().max(1.0) as u32;
+            let side = w.round().max(1.0) as u32;
             if index == LAUNCHER {
                 draw_launchpad_icon(&mut pixmap, x, y, w);
             } else {
                 // Perto do tamanho normal, o ícone de sempre; maior, o carregado grande.
-                let icon = if px <= icon_size() + 2 { None } else { self.zoom_icon(index, max) };
+                let icon = if side <= icon_size() + 2 { None } else { self.zoom_icon(index, to_px(max)) };
                 let fallback = if index >= self.items.len() {
                     match index - self.items.len() {
                         STACK_DOWNLOADS => self.downloads_icon.clone(),
@@ -1337,19 +1376,23 @@ impl Dock {
                     self.items[index].icon.clone()
                 };
                 if let Some(src) = icon.or(fallback) {
-                    let k = w / src.width().max(1) as f32;
+                    // Em pixels: o ícone (carregado em pixels) no tamanho ampliado.
+                    let s = ui_scale();
+                    let k = w * s / src.width().max(1) as f32;
                     let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-                    pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, Transform::from_scale(k, k).post_translate(x, y), None);
+                    pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, Transform::from_scale(k, k).post_translate(x * s, y * s), None);
                 } else if let Some(path) = rounded_rect(x, y, w, w, w * 0.22) {
                     // Sem ícone: o mesmo bloco neutro da dock.
                     let mut paint = Paint::default();
                     paint.anti_alias = true;
                     paint.set_color(Color::from_rgba8(120, 120, 128, 255));
-                    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                    pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
                 }
             }
             if pressed == Some(index) {
-                darken(&mut pixmap, x as i32, y as i32, px);
+                // Truncado como antes (em escala 1, o mesmo pixel de sempre).
+                let s = ui_scale();
+                darken(&mut pixmap, (x * s) as i32, (y * s) as i32, to_px(side));
             }
             // Ponto de app aberto, embaixo do ícone.
             if index < self.items.len() && self.items[index].match_ids.iter().any(|id| self.running.contains(id)) {
@@ -1357,20 +1400,22 @@ impl Dock {
                     let mut paint = Paint::default();
                     paint.anti_alias = true;
                     paint.set_color(if self.dark { Color::from_rgba8(235, 235, 240, 230) } else { Color::from_rgba8(40, 40, 46, 230) });
-                    pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+                    pixmap.fill_path(&dot, &paint, FillRule::Winding, tf(), None);
                 }
             }
         }
         let Some(zoom) = self.zoom.as_mut() else {
             return;
         };
-        let Ok((buffer, canvas)) = zoom.pool.create_buffer(size.0 as i32, size.1 as i32, size.0 as i32 * 4, wl_shm::Format::Argb8888) else {
+        let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+        let Ok((buffer, canvas)) = zoom.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
             return;
         };
         mide::ui::draw::to_argb8888(&pixmap, canvas);
         let surface = zoom.layer.wl_surface();
-        surface.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
+        surface.damage_buffer(0, 0, pw, ph);
         if buffer.attach_to(surface).is_ok() {
+            zoom.scale.set_destination(size.0, size.1);
             zoom.layer.commit();
         }
     }
@@ -1385,6 +1430,7 @@ impl Dock {
             return;
         }
         let surface = self.compositor.create_surface(&self.qh);
+        let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
         let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-pulo"), None);
         // Mesma âncora, largura e margem de baixo da dock: as posições dos ícones são
         // as mesmas; não recebe cliques (passam para a dock embaixo).
@@ -1402,7 +1448,7 @@ impl Dock {
         };
         let now = std::time::Instant::now();
         tracing::info!("dock: {} pulando até abrir", app.name);
-        self.bounce = Some(Bounce { layer, pool, app: app.id.clone(), start: now, last_check: now });
+        self.bounce = Some(Bounce { layer, scale, pool, app: app.id.clone(), start: now, last_check: now });
         if let Some(handle) = self.loop_handle.clone() {
             let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
                 if dock.step_bounce() { TimeoutAction::ToDuration(Duration::from_millis(16)) } else { TimeoutAction::Drop }
@@ -1453,22 +1499,24 @@ impl Dock {
             return;
         };
         let (w, h) = (self.width, dock_height() + BOUNCE_ROOM);
-        let Some(mut pixmap) = Pixmap::new(w, h) else {
+        let Some(mut pixmap) = canvas(w, h) else {
             return;
         };
         let lift = bounce_height(bounce.start.elapsed().as_secs_f32());
-        let x = icon_x(&self.items, index) as i32;
-        let y = (BOUNCE_ROOM as f32 + PADDING as f32 - lift).round() as i32;
+        let x = icon_x(&self.items, index) as f32;
+        let y = BOUNCE_ROOM as f32 + PADDING as f32 - lift;
         if let (false, Some(icon)) = (zooming, &self.items[index].icon) {
-            pixmap.draw_pixmap(x, y, icon.as_ref(), &Default::default(), Transform::identity(), None);
+            pixmap.draw_pixmap(px(x), px(y), icon.as_ref(), &Default::default(), Transform::identity(), None);
         }
-        let Ok((buffer, canvas)) = bounce.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+        let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+        let Ok((buffer, canvas)) = bounce.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
             return;
         };
         mide::ui::draw::to_argb8888(&pixmap, canvas);
         let surface = bounce.layer.wl_surface();
-        surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.damage_buffer(0, 0, pw, ph);
         if buffer.attach_to(surface).is_ok() {
+            bounce.scale.set_destination(w, h);
             bounce.layer.commit();
         }
     }
@@ -1600,6 +1648,7 @@ impl Panel {
 /// da lista) abre no ponto do clique, por cima da lista, sem fechá-la.
 struct Menu {
     layer: LayerSurface,
+    scale: SurfaceScale,
     pool: SlotPool,
     main: Panel,
     context: Option<Panel>,
@@ -1645,7 +1694,7 @@ impl Dock {
     fn file_icon(&mut self, name: &'static str) -> Option<Pixmap> {
         self.file_icons
             .entry(name)
-            .or_insert_with(|| load_themed_icon(&[name, "text-x-generic"], 24))
+            .or_insert_with(|| load_themed_icon(&[name, "text-x-generic"], to_px(24)))
             .clone()
     }
 
@@ -1857,6 +1906,7 @@ impl Dock {
             return;
         }
         let surface = self.compositor.create_surface(&self.qh);
+        let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
         let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-menu"), None);
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
         layer.set_exclusive_zone(-1);
@@ -1866,7 +1916,7 @@ impl Dock {
         let Ok(pool) = SlotPool::new(256 * 256 * 4, &self.shm) else {
             return;
         };
-        self.menu = Some(Menu { layer, pool, main, context: None, anchor_x, width, last_box: None, glass: Default::default() });
+        self.menu = Some(Menu { layer, scale, pool, main, context: None, anchor_x, width, last_box: None, glass: Default::default() });
     }
 
     /// Abre o menu de contexto de um item da lista no ponto (x, y), por cima dela.
@@ -1924,7 +1974,7 @@ impl Dock {
         let bw = (((bounds.2 + SHADOW).ceil() as i32).min(sw as i32) - bx).max(1);
         // A ponta do menu desce até perto do ícone (cabe no espaço acima da dock).
         let bh = (((bounds.3 + SHADOW + ARROW_H).ceil() as i32).min(sh as i32) - by).max(1);
-        let Some(mut pixmap) = Pixmap::new(bw as u32, bh as u32) else {
+        let Some(mut pixmap) = canvas(bw as u32, bh as u32) else {
             return;
         };
         // Desenha com os painéis deslocados para a caixa e devolve as posições de tela
@@ -1958,23 +2008,28 @@ impl Dock {
             shift(context, fx, fy);
         }
 
-        let stride = sw as i32 * 4;
-        let Ok((buffer, canvas)) = menu.pool.create_buffer(sw as i32, sh as i32, stride, wl_shm::Format::Argb8888) else {
+        // O buffer e a caixa em pixels (a camada cobre a tela, em pontos).
+        let (bsw, bsh) = (to_px(sw) as i32, to_px(sh) as i32);
+        let (pbx, pby) = (mide::ui::draw::px(bx as f32).clamp(0, bsw - 1), mide::ui::draw::px(by as f32).clamp(0, bsh - 1));
+        let (pbw, pbh) = ((pixmap.width() as i32).min(bsw - pbx), (pixmap.height() as i32).min(bsh - pby));
+        let Ok((buffer, canvas)) = menu.pool.create_buffer(bsw, bsh, bsw * 4, wl_shm::Format::Argb8888) else {
             return;
         };
         canvas.fill(0);
-        let row = bw as usize * 4;
-        for (r, src) in pixmap.data().chunks_exact(row).enumerate() {
-            let at = ((by as usize + r) * sw as usize + bx as usize) * 4;
-            mide::ui::draw::argb_row(src, &mut canvas[at..at + row]);
+        let src_row = pixmap.width() as usize * 4;
+        let row = pbw as usize * 4;
+        for (r, src) in pixmap.data().chunks_exact(src_row).take(pbh as usize).enumerate() {
+            let at = ((pby as usize + r) * bsw as usize + pbx as usize) * 4;
+            mide::ui::draw::argb_row(&src[..row], &mut canvas[at..at + row]);
         }
         let surface = menu.layer.wl_surface();
         // Só mudou a caixa nova e a do quadro anterior (que agora fica vazia).
-        for (x, y, w, h) in [Some((bx, by, bw, bh)), menu.last_box].into_iter().flatten() {
+        for (x, y, w, h) in [Some((pbx, pby, pbw, pbh)), menu.last_box].into_iter().flatten() {
             surface.damage_buffer(x, y, w, h);
         }
-        menu.last_box = Some((bx, by, bw, bh));
+        menu.last_box = Some((pbx, pby, pbw, pbh));
         if buffer.attach_to(surface).is_ok() {
+            menu.scale.set_destination(sw, sh);
             menu.layer.commit();
         }
         tracing::debug!("menu da dock desenhado: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
@@ -2200,7 +2255,16 @@ impl Dock {
         }
         tracing::info!("tamanho dos ícones da dock: {size} px");
         ICON_SIZE_NOW.store(size, std::sync::atomic::Ordering::Relaxed);
+        self.reload_icons();
+    }
+
+    /// Carrega de novo os ícones no tamanho em pixels de agora (tamanho dos ícones ou
+    /// escala da tela mudou) e refaz a dock.
+    fn reload_icons(&mut self) {
+        let size = icon_px();
         self.catalog.icons.clear();
+        self.zoom_icons.clear();
+        self.file_icons.clear();
         let items = std::mem::take(&mut self.items);
         self.items = items
             .into_iter()
@@ -2307,6 +2371,7 @@ impl Dock {
             return;
         }
         let surface = self.compositor.create_surface(&self.qh);
+        let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
         let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-tip"), None);
         layer.set_anchor(Anchor::BOTTOM);
         layer.set_margin(0, 0, margin, 0);
@@ -2320,7 +2385,7 @@ impl Dock {
         let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
             return;
         };
-        self.tip = Some(Tip { layer, pool, size, center, text: name, configured: false, margin });
+        self.tip = Some(Tip { layer, scale, pool, size, center, text: name, configured: false, margin });
     }
 
     /// Esconde a dica sem destruir a camada (fica transparente até o próximo nome).
@@ -2338,16 +2403,18 @@ impl Dock {
         let Some(tip) = self.tip.as_mut().filter(|t| t.configured) else { return };
         let Some(text) = self.text.as_mut() else { return };
         let (w, h) = tip.size;
-        let Some(mut pixmap) = Pixmap::new(w, h) else { return };
+        let Some(mut pixmap) = canvas(w, h) else { return };
+        let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
         // Escondida: um quadro transparente (a camada continua, sem nada à vista).
         if tip.text.is_empty() {
-            let Ok((buffer, canvas)) = tip.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+            let Ok((buffer, canvas)) = tip.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
                 return;
             };
             canvas.fill(0);
             let surface = tip.layer.wl_surface();
-            surface.damage_buffer(0, 0, w as i32, h as i32);
+            surface.damage_buffer(0, 0, pw, ph);
             if buffer.attach_to(surface).is_ok() {
+                tip.scale.set_destination(w, h);
                 tip.layer.commit();
             }
             return;
@@ -2361,16 +2428,17 @@ impl Dock {
         if let Some(path) = mide::ui::draw::rounded_rect(x + 0.5, y + 0.5, tw - 1.0, bh - 1.0, 11.5) {
             let mut paint = Paint { anti_alias: true, ..Default::default() };
             paint.set_color(if theme.dark { Color::from_rgba8(255, 255, 255, 30) } else { Color::from_rgba8(0, 0, 0, 18) });
-            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         text.draw(&mut pixmap, &tip.text, x + 10.0, y + (bh - 13.0 * 1.25) / 2.0, 13.0, FontWeight::Regular, theme.text);
-        let Ok((buffer, canvas)) = tip.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+        let Ok((buffer, canvas)) = tip.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
             return;
         };
         mide::ui::draw::to_argb8888(&pixmap, canvas);
         let surface = tip.layer.wl_surface();
-        surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.damage_buffer(0, 0, pw, ph);
         if buffer.attach_to(surface).is_ok() {
+            tip.scale.set_destination(w, h);
             tip.layer.commit();
         }
     }
@@ -2483,7 +2551,7 @@ fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bo
         let [ir, ig, ib, ia] = ink(46);
         paint.set_color(Color::from_rgba8(ir, ig, ib, ia));
         paint.anti_alias = true;
-        pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+        pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
     }
 
     panel.spans.clear();
@@ -2512,7 +2580,8 @@ fn draw_panel(pixmap: &mut Pixmap, text: &mut Text, panel: &mut Panel, glass: bo
             _ => {
                 let mut tx = px + 14.0;
                 if let Some(icon) = &row.icon {
-                    pixmap.draw_pixmap((px + 12.0) as i32, (y + (h - 24.0) / 2.0) as i32, icon.as_ref(), &Default::default(), Transform::identity(), None);
+                    let at = (px + 12.0, (y + (h - 24.0) / 2.0).floor());
+                    pixmap.draw_pixmap(mide::ui::draw::px(at.0), mide::ui::draw::px(at.1), icon.as_ref(), &Default::default(), Transform::identity(), None);
                     tx = px + 44.0;
                 }
                 let detail_w = if row.detail.is_empty() { 0.0 } else { text.measure(&row.detail, 11.5, FontWeight::Regular) + 10.0 };
@@ -2544,6 +2613,29 @@ fn fit_text(text: &mut Text, label: &str, size: f32, weight: FontWeight, max: f3
         }
     }
     "…".into()
+}
+
+impl ScaleHandler for Dock {
+    /// A escala da tela mudou (ou chegou a primeira): ícones no tamanho novo em pixels
+    /// e tudo desenhado de novo.
+    fn surface_scale_changed(&mut self, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface) {
+        let scale = (self.scale.scale() * 1000.0).round() as u32;
+        if scale == SCALE_NOW.swap(scale, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        tracing::info!("dock: escala da tela {}", scale as f32 / 1000.0);
+        // Os menus abertos fecham (as linhas guardam ícones no tamanho antigo).
+        self.reload_icons();
+        if !self.first_configure {
+            self.draw(qh);
+        }
+        if self.zoom.is_some() {
+            self.paint_zoom();
+        }
+        if self.tip.is_some() {
+            self.paint_tip();
+        }
+    }
 }
 
 impl CompositorHandler for Dock {
@@ -2783,6 +2875,7 @@ impl ShmHandler for Dock {
 
 delegate_registry!(Dock);
 smithay_client_toolkit::delegate_dispatch2!(Dock);
+mide::delegate_surface_scale!(Dock);
 
 impl ProvidesRegistryState for Dock {
     fn registry(&mut self) -> &mut RegistryState {

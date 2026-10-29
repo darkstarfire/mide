@@ -173,6 +173,7 @@ impl Genie {
         }
 
         let texture = snapshot(renderer, window, size, bar_height, overlays)?;
+        let tex = texture_size(&texture);
 
         // Área que contém a janela e o alvo: é onde o funil é desenhado.
         let area = window_rect.merge(target);
@@ -194,7 +195,7 @@ impl Genie {
             Some(alpha),
             // A textura inteira é a origem; o destino é a área do funil. Sem `src`
             // explícito, o Smithay usaria o tamanho do destino como origem e distorceria.
-            Some(Rectangle::from_size((size.w as f64, size.h as f64).into())),
+            Some(Rectangle::from_size(tex)),
             Some(area.size),
             None,
             Kind::Unspecified,
@@ -208,11 +209,20 @@ impl Genie {
                 Uniform::new("target", local(target)),
                 Uniform::new("progress", progress),
                 Uniform::new("flip_y", genie_flip()),
-                Uniform::new("tex_size", (size.w as f32, size.h as f32)),
+                // Tamanho e raio na mesma medida: os pixels da foto (o raio vinha em
+                // pixels e o tamanho em pontos, e os cantos cresciam na animação).
+                Uniform::new("tex_size", (tex.w as f32, tex.h as f32)),
                 Uniform::new("corner", corner * crate::clip::scale() as f32),
             ],
         ))
     }
+}
+
+/// Tamanho da foto em pixels, como origem de um elemento de textura (escala 1).
+pub fn texture_size(texture: &smithay::backend::renderer::gles::GlesTexture) -> smithay::utils::Size<f64, Logical> {
+    use smithay::backend::renderer::Texture as _;
+    let size = texture.size();
+    (size.w as f64, size.h as f64).into()
 }
 
 /// Orientação da textura fora da tela. Pode ser ajustada por `MIDE_GENIE_FLIP` (0 ou 1)
@@ -241,29 +251,35 @@ pub fn snapshot(
             bar_height - window.geometry().loc.y,
         )
             .into();
+        // Na resolução da tela (pontos × escala), como o resto da cena: em escala 1, a
+        // foto ficava borrada e a barra e o título (feitos na escala da tela) saíam
+        // maiores e fora do lugar nela.
+        let k = crate::clip::scale();
+        let scale = Scale::from(k);
+        let px = size.to_f64().to_physical(k).to_i32_round::<i32>();
         let content: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            window.render_elements(renderer, origin.to_physical(1), Scale::from(1.0), 1.0);
+            window.render_elements(renderer, origin.to_f64().to_physical(k).to_i32_round(), scale, 1.0);
         let mut texture: smithay::backend::renderer::gles::GlesTexture = renderer
-            .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
+            .create_buffer(Fourcc::Abgr8888, (px.w, px.h).into())
             .ok()?;
         {
             let mut target_fb = renderer.bind(&mut texture).ok()?;
             let mut frame = renderer
-                .render(&mut target_fb, (size.w, size.h).into(), Transform::Normal)
+                .render(&mut target_fb, (px.w, px.h).into(), Transform::Normal)
                 .ok()?;
-            let full = Rectangle::from_size((size.w, size.h).into());
+            let full = Rectangle::from_size((px.w, px.h).into());
             frame.clear(Color32F::new(0.0, 0.0, 0.0, 0.0), &[full]).ok()?;
             // A lista vai da frente para trás; o desenho vai de trás para a frente.
             for element in content.iter().rev() {
                 let src = element.src();
-                let dst = element.geometry(Scale::from(1.0));
+                let dst = element.geometry(scale);
                 let damage = [Rectangle::from_size(dst.size)];
                 let _ = element.draw(&mut frame, src, dst, &damage, &[]);
             }
             // Barra e título por cima, também de trás para a frente.
             for element in overlays.iter().rev() {
                 let src = element.src();
-                let dst = element.geometry(Scale::from(1.0));
+                let dst = element.geometry(scale);
                 let damage = [Rectangle::from_size(dst.size)];
                 let _ = element.draw(&mut frame, src, dst, &damage, &[]);
             }

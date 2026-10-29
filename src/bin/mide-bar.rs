@@ -12,7 +12,6 @@
 use std::{
     collections::HashMap,
     error::Error,
-    fs,
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
@@ -22,11 +21,12 @@ use std::{
 
 use chrono::{Datelike, Local, Timelike};
 use mide::tr;
+use mide::shell::scale::{ScaleHandler, SurfaceScale};
 use mide::{
     calendar,
     system::{self, Status},
     ui::{
-        draw::{fill_rounded, rgba, rounded_rect, to_argb8888, vertical_gradient},
+        draw::{fill_rounded, px, rgba, rounded_rect, set_scale, tf, to_argb8888, vertical_gradient},
         text::{FontWeight, Text},
     },
 };
@@ -42,7 +42,7 @@ use smithay_client_toolkit::{
         },
         calloop_wayland_source::WaylandSource,
         client::{
-            globals::registry_queue_init,
+            globals::{registry_queue_init, GlobalList},
             protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
             Connection, QueueHandle,
         },
@@ -385,6 +385,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     layer.commit();
 
+    let bar_scale = SurfaceScale::new(&globals, &qh, layer.wl_surface());
     let pool = SlotPool::new(1920 * BAR_HEIGHT as usize * 4, &shm)?;
     let (media_tx, media_rx) = std::sync::mpsc::channel();
     let (media_art_tx, media_art_rx) = std::sync::mpsc::channel();
@@ -398,6 +399,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         shm,
         pool,
         layer,
+        bar_scale,
         width: 0,
         configured: false,
         exit: false,
@@ -459,6 +461,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         glass_bar: Default::default(),
         glass_menu: Default::default(),
         qh: qh.clone(),
+        // Por último: os campos de cima ainda leem os globais.
+        globals,
     };
     std::thread::spawn(move || loop {
         let session = mide::settings_file::bar_item("media")
@@ -733,28 +737,18 @@ fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: b
     }
 }
 
-/// Carga da bateria (0 a 100) e se está carregando, se o computador tiver bateria.
-/// `MIDE_POWER_SUPPLY_DIR` troca a pasta do sistema (os testes usam uma vazia: a barra
-/// fica igual com ou sem bateria na máquina que roda os testes).
+/// Carga da bateria (0 a 100) e se está carregando, se o computador tiver bateria:
+/// pelo kernel ou, sem ele, pelo EC do Chromebook (`mide::battery`).
 fn battery() -> Option<(u8, bool)> {
-    let root = std::env::var_os("MIDE_POWER_SUPPLY_DIR").unwrap_or_else(|| "/sys/class/power_supply".into());
-    let dir = fs::read_dir(root).ok()?;
-    for entry in dir.flatten() {
-        let path = entry.path();
-        if !path.file_name()?.to_string_lossy().starts_with("BAT") {
-            continue;
-        }
-        let capacity = fs::read_to_string(path.join("capacity")).ok()?.trim().parse().ok()?;
-        let status = fs::read_to_string(path.join("status")).unwrap_or_default();
-        return Some((capacity, status.trim() == "Charging"));
-    }
-    None
+    mide::battery::read().map(|b| (b.percent, b.charging))
 }
 
 /// Menu aberto: a camada em tela cheia (clique fora fecha), o menu mostrado, onde
 /// fica o painel e o item sob o ponteiro.
 struct Menu {
     layer: LayerSurface,
+    /// Escala da tela para a camada do menu (desenho nítido em 125%/150%/200%).
+    scale: SurfaceScale,
     width: u32,
     height: u32,
     id: MenuId,
@@ -928,7 +922,16 @@ fn wallpaper_top_dark() -> bool {
     dark
 }
 
-/// O desenho com uma sombra de 1 pixel embaixo (cor `shade`, pela transparência dele).
+/// Imagem para `w` × `h` pontos na escala da superfície. Daí em diante, as funções de
+/// desenho e o texto convertem pontos em pixels: nítido em 125%/150%/200% (sem isto o
+/// compositor esticava a imagem em escala 1).
+fn canvas(scale: &SurfaceScale, w: u32, h: u32) -> Option<Pixmap> {
+    set_scale(scale.scale());
+    let (pw, ph) = scale.pixels(w, h);
+    Pixmap::new(pw, ph)
+}
+
+/// O desenho com uma sombra de 1 ponto embaixo (cor `shade`, pela transparência dele).
 fn with_shadow(src: &Pixmap, shade: [u8; 4]) -> Pixmap {
     let mut out = Pixmap::new(src.width(), src.height()).expect("tamanho");
     let mut shadow = src.clone();
@@ -937,7 +940,7 @@ fn with_shadow(src: &Pixmap, shade: [u8; 4]) -> Pixmap {
         let pm = |c: u8| (c as u32 * a as u32 / 255) as u8;
         *p = tiny_skia::PremultipliedColorU8::from_rgba(pm(shade[0]), pm(shade[1]), pm(shade[2]), a).unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
     }
-    out.draw_pixmap(0, 1, shadow.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+    out.draw_pixmap(0, px(1.0), shadow.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
     out.draw_pixmap(0, 0, src.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
     out
 }
@@ -965,6 +968,11 @@ struct Bar {
     shm: Shm,
     pool: SlotPool,
     layer: LayerSurface,
+    /// Escala da tela para a barra: a imagem é desenhada em pixels reais (pontos ×
+    /// escala) e o compositor não estica (letras e ícones nítidos).
+    bar_scale: SurfaceScale,
+    /// Globais do Wayland, para pedir a escala das camadas novas (menus e dicas).
+    globals: GlobalList,
     width: u32,
     configured: bool,
     exit: bool,
@@ -1071,6 +1079,7 @@ struct Bar {
 /// `ui.tooltip` do mide-ui, sem receber cliques (eles passam para o que está atrás).
 struct Tip {
     layer: LayerSurface,
+    scale: SurfaceScale,
     pool: SlotPool,
     size: (u32, u32),
     text: String,
@@ -1423,7 +1432,8 @@ impl Bar {
         self.tray_version = version;
         self.tray_items = tray.items();
         let keys: Vec<String> = self.tray_items.iter().map(tray_key).collect();
-        self.tray_icons.retain(|k, _| keys.contains(k));
+        // As chaves do cache levam o tamanho em pixels no fim (`chave@tamanho`).
+        self.tray_icons.retain(|k, _| k.rsplit_once('@').is_some_and(|(base, _)| keys.iter().any(|key| key == base)));
         self.draw_bar();
     }
 
@@ -1460,8 +1470,10 @@ impl Bar {
                 self.media_artwork = None;
                 if let Some(url) = artwork_url {
                     let tx = self.media_art_tx.clone();
+                    // Capa no tamanho em pixels da tela (96 pontos).
+                    let art_size = (96.0 * self.bar_scale.scale()).round() as u32;
                     std::thread::spawn(move || {
-                        if let Some(image) = mide::platform::media::load_artwork(&url, 96) {
+                        if let Some(image) = mide::platform::media::load_artwork(&url, art_size) {
                             let _ = tx.send((url, image));
                         }
                     });
@@ -1610,7 +1622,7 @@ impl Bar {
             return;
         }
         let (w, h) = (self.width, BAR_HEIGHT);
-        let Some(mut pixmap) = Pixmap::new(w, h) else {
+        let Some(mut pixmap) = canvas(&self.bar_scale, w, h) else {
             return;
         };
         let (fw, fh) = (w as f32, h as f32);
@@ -1653,12 +1665,12 @@ impl Bar {
             let mut paint = Paint::default();
             paint.shader = vertical_gradient(0.0, fh, pal().bar_top(top_a), pal().bar_bottom(bottom_a));
             if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, fw, fh) {
-                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                pixmap.fill_rect(rect, &paint, tf(), None);
             }
             if let Some(line) = tiny_skia::Rect::from_xywh(0.0, fh - 1.0, fw, 1.0) {
                 let mut border = Paint::default();
                 border.set_color(rgba(0, 0, 0, (34.0 * fade) as u8));
-                pixmap.fill_rect(line, &border, Transform::identity(), None);
+                pixmap.fill_rect(line, &border, tf(), None);
             }
         }
 
@@ -1676,13 +1688,13 @@ impl Bar {
                 width: 2.2,
                 ..Default::default()
             };
-            pixmap.stroke_path(&ring, &stroke_paint, &stroke, Transform::identity(), None);
+            pixmap.stroke_path(&ring, &stroke_paint, &stroke, tf(), None);
         }
         if let Some(dot) = PathBuilder::from_circle(lx + 2.0, cy - 2.0, 2.2) {
             let mut dot_paint = Paint::default();
             dot_paint.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
             dot_paint.anti_alias = true;
-            pixmap.fill_path(&dot, &dot_paint, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(&dot, &dot_paint, FillRule::Winding, tf(), None);
         }
 
         // Nome do app em foco, em negrito, e os menus dele. O título do menu aberto
@@ -1760,7 +1772,7 @@ impl Bar {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
-                pixmap.stroke_path(&ring, &paint, &Stroke { width: 1.4, ..Default::default() }, Transform::identity(), None);
+                pixmap.stroke_path(&ring, &paint, &Stroke { width: 1.4, ..Default::default() }, tf(), None);
             }
             fill_rounded(&mut pixmap, cx - 3.0, cyy - 3.0, 6.0, 6.0, 1.0, rgba(fg[0], fg[1], fg[2], fg[3]));
             self.text.draw(&mut pixmap, &label, left + 27.0, text_y, FONT, FontWeight::Regular, fg);
@@ -1781,7 +1793,7 @@ impl Bar {
                     let mut stroke = Paint::default();
                     stroke.anti_alias = true;
                     stroke.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
-                    pixmap.stroke_path(&path, &stroke, &Stroke { width: 1.2, ..Default::default() }, Transform::identity(), None);
+                    pixmap.stroke_path(&path, &stroke, &Stroke { width: 1.2, ..Default::default() }, tf(), None);
                 }
                 self.text.draw(&mut pixmap, &label, left + 11.0, text_y + 0.5, FONT - 1.5, FontWeight::Semibold, fg);
                 self.titles.push((MenuId::Layout, left, right));
@@ -1829,10 +1841,15 @@ impl Bar {
         for (i, item) in tray_items.iter().enumerate().take(12) {
             let (x0, x1) = (x - 32.0, x - 8.0);
             highlight(&mut pixmap, MenuId::Tray(i as u8), x0, x1);
-            let key = tray_key(item);
-            let icon = self.tray_icons.entry(key).or_insert_with(|| tray_icon(item, 18)).clone();
+            // Ícone no tamanho em pixels da tela (18 pontos), guardado por tamanho.
+            let size = px(18.0).max(1) as u32;
+            let key = format!("{}@{size}", tray_key(item));
+            let icon = self.tray_icons.entry(key).or_insert_with(|| tray_icon(item, size)).clone();
             match icon {
-                Some(icon) => pixmap.draw_pixmap(((x0 + x1) / 2.0 - 9.0) as i32, (cy - 9.0) as i32, icon.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None),
+                Some(icon) => {
+                    let (ix, iy) = (px(((x0 + x1) / 2.0 - 9.0).trunc()), px((cy - 9.0).trunc()));
+                    pixmap.draw_pixmap(ix, iy, icon.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+                }
                 // Sem imagem: a inicial do app.
                 None => {
                     let letter: String = item.id.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());
@@ -1909,7 +1926,7 @@ impl Bar {
         if w == 0 || h == 0 {
             return;
         }
-        let Some(mut pixmap) = Pixmap::new(w, h) else {
+        let Some(mut pixmap) = canvas(&menu.scale, w, h) else {
             return;
         };
         let (mx, mw, items, menu_id) = (menu.x, menu.panel_w, menu.items.clone(), menu.id);
@@ -1935,7 +1952,7 @@ impl Bar {
             let mut border = Paint::default();
             border.set_color(pal().ink(40));
             border.anti_alias = true;
-            pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
+            pixmap.stroke_path(&path, &border, &Stroke::default(), tf(), None);
         }
         // Ponta apontando para o título (ou a marca do mide) de onde o menu veio.
         if let Some(cx) = self.anchor_of(menu_id) {
@@ -1949,7 +1966,7 @@ impl Bar {
                     if let Some(line) = tiny_skia::Rect::from_xywh(mx + 10.0, y + SEPARATOR_H / 2.0, mw - 20.0, 1.0) {
                         let mut paint = Paint::default();
                         paint.set_color(pal().ink(30));
-                        pixmap.fill_rect(line, &paint, Transform::identity(), None);
+                        pixmap.fill_rect(line, &paint, tf(), None);
                     }
                     y += SEPARATOR_H;
                 }
@@ -1992,6 +2009,16 @@ impl Bar {
                 None => return,
             }
         };
+        // Tamanho em pontos: a imagem pode ter mais pixels (escala da tela).
+        let (scale, size) = if bar {
+            (&self.bar_scale, (self.width, BAR_HEIGHT))
+        } else {
+            match self.menu.as_ref() {
+                Some(menu) => (&menu.scale, (menu.width, menu.height)),
+                None => return,
+            }
+        };
+        scale.set_destination(size.0, size.1);
         let surface = layer.wl_surface();
         surface.damage_buffer(0, 0, w, h);
         if buffer.attach_to(surface).is_ok() {
@@ -2132,8 +2159,10 @@ impl Bar {
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.commit();
+        let scale = SurfaceScale::new(&self.globals, &self.qh, layer.wl_surface());
         self.menu = Some(Menu {
             layer,
+            scale,
             width: 0,
             height: 0,
             id,
@@ -2250,7 +2279,8 @@ impl Bar {
             return;
         };
         tracing::debug!("dica da barra: {text}");
-        self.tip = Some(Tip { layer, pool, size, text });
+        let scale = SurfaceScale::new(&self.globals, &self.qh, layer.wl_surface());
+        self.tip = Some(Tip { layer, scale, pool, size, text });
     }
 
     /// Desenha a dica: cápsula com a cor dos menus, cantos de 11, sombra leve e o texto
@@ -2258,7 +2288,7 @@ impl Bar {
     fn paint_tip(&mut self) {
         let Some(tip) = self.tip.as_mut() else { return };
         let (w, h) = tip.size;
-        let Some(mut pixmap) = Pixmap::new(w, h) else { return };
+        let Some(mut pixmap) = canvas(&tip.scale, w, h) else { return };
         let theme = mide::kit::Theme::system();
         let (bw, bh) = (w as f32 - 2.0, 22.0);
         fill_rounded(&mut pixmap, 0.0, 2.0, bw + 2.0, bh + 1.0, 12.0, rgba(0, 0, 0, 30));
@@ -2267,17 +2297,19 @@ impl Bar {
         if let Some(path) = rounded_rect(1.5, 1.5, bw - 1.0, bh - 1.0, 10.5) {
             let mut paint = Paint { anti_alias: true, ..Default::default() };
             paint.set_color(if theme.dark { rgba(255, 255, 255, 30) } else { rgba(0, 0, 0, 18) });
-            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         let text = tip.text.clone();
         self.text.draw(&mut pixmap, &text, 9.0, 1.0 + (bh - theme.font_small * 1.25) / 2.0, theme.font_small, FontWeight::Regular, theme.text);
         let Some(tip) = self.tip.as_mut() else { return };
-        let Ok((buffer, canvas)) = tip.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+        let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+        let Ok((buffer, canvas)) = tip.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
             return;
         };
         to_argb8888(&pixmap, canvas);
+        tip.scale.set_destination(w, h);
         let surface = tip.layer.wl_surface();
-        surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.damage_buffer(0, 0, pw, ph);
         if buffer.attach_to(surface).is_ok() {
             tip.layer.commit();
         }
@@ -2374,12 +2406,14 @@ impl Bar {
         if w == 0 || h == 0 {
             return;
         }
-        let Some(mut pixmap) = Pixmap::new(w, h) else {
+        let Some(mut pixmap) = canvas(&menu.scale, w, h) else {
             return;
         };
         let top = PANEL_TOP;
-        // Conteúdo primeiro num pixmap à parte, para saber a altura do painel.
-        let mut content = Pixmap::new(pw as u32, 900).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+        // Conteúdo primeiro num pixmap à parte (em pixels da tela), para saber a altura
+        // do painel.
+        let pixels = |v: f32| mide::ui::draw::px(v.trunc()).max(1) as u32;
+        let mut content = Pixmap::new(pixels(pw), pixels(900.0)).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         // Altura que o painel pode usar (para a central de notificações caber na tela).
         self.panel_room = h as f32 - PANEL_TOP - 12.0;
         let mut regions = Vec::new();
@@ -2415,7 +2449,7 @@ impl Bar {
             let mut border = Paint::default();
             border.set_color(pal().ink(40));
             border.anti_alias = true;
-            pixmap.stroke_path(&path, &border, &Stroke::default(), Transform::identity(), None);
+            pixmap.stroke_path(&path, &border, &Stroke::default(), tf(), None);
         }
         // Ponta para o ícone de onde o painel veio (confirmações ficam no meio, sem).
         if !id.confirm() {
@@ -2423,7 +2457,8 @@ impl Bar {
                 mide::ui::draw::menu_arrow(&mut pixmap, cx.clamp(px + 20.0, px + pw - 20.0), top, false, fill);
             }
         }
-        pixmap.draw_pixmap(px as i32, top as i32, content.as_ref(), &Default::default(), Transform::identity(), None);
+        let (cx, cy) = (mide::ui::draw::px(px.trunc()), mide::ui::draw::px(top.trunc()));
+        pixmap.draw_pixmap(cx, cy, content.as_ref(), &Default::default(), Transform::identity(), None);
         if let Some(menu) = self.menu.as_mut() {
             menu.panel_h = ph;
             menu.regions = regions
@@ -2498,7 +2533,7 @@ impl Bar {
                     let mut paint = Paint::default();
                     paint.set_color(pal().accent_color());
                     paint.anti_alias = true;
-                    p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+                    p.fill_path(&c, &paint, FillRule::Winding, tf(), None);
                 }
                 color = [255, 255, 255, 255];
             }
@@ -2596,9 +2631,9 @@ impl Bar {
             let mut paint = Paint::default();
             paint.anti_alias = true;
             paint.set_color(rgba(255, 255, 255, 255));
-            p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+            p.fill_path(&knob, &paint, FillRule::Winding, tf(), None);
             paint.set_color(rgba(0, 0, 0, 60));
-            p.stroke_path(&knob, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+            p.stroke_path(&knob, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         regions.push(((tx - 8.0, 44.0, tw + 16.0, 28.0), PanelAction::VolumeTrack));
         // "Sem som" com interruptor.
@@ -2656,7 +2691,7 @@ impl Bar {
         let art = self.media_artwork.clone();
         if let Some(art) = art.as_ref() {
             fill_rounded(p, 16.0, 50.0, 88.0, 88.0, 8.0, pal().ink(18));
-            p.draw_pixmap(16, 50, art.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() }, Transform::identity(), None);
+            p.draw_pixmap(px(16.0), px(50.0), art.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() }, Transform::identity(), None);
         } else {
             fill_rounded(p, 16.0, 50.0, 88.0, 88.0, 8.0, pal().ink(22));
             let fallback = self.text.measure("♫", 36.0, FontWeight::Semibold);
@@ -2890,7 +2925,7 @@ impl Bar {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(if on { pal().accent_color() } else { pal().ink(28) });
-                p.fill_path(&c, &paint, FillRule::Winding, Transform::identity(), None);
+                p.fill_path(&c, &paint, FillRule::Winding, tf(), None);
             }
         };
         let (half, gap) = ((pw - 36.0) / 2.0, 12.0);
@@ -2939,7 +2974,7 @@ impl Bar {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.set_color(pal().ink(22));
-                p.stroke_path(&edge, &paint, &Stroke::default(), Transform::identity(), None);
+                p.stroke_path(&edge, &paint, &Stroke::default(), tf(), None);
             }
             // Com 8 de folga dos lados (`track_from_x` conta com ela).
             regions.push(((tx - 8.0, ty - 3.0, tw + 16.0, th + 6.0), action));
@@ -3255,10 +3290,10 @@ fn draw_control_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
     // Em cima: contorno e bolinha encostada na ponta esquerda.
     let top = cy - 4.3;
     if let Some(pill) = rounded_rect(left, top - r, w, h, r) {
-        p.stroke_path(&pill, &stroke_color(fg, 255), &Stroke { width: 1.3, ..Default::default() }, Transform::identity(), None);
+        p.stroke_path(&pill, &stroke_color(fg, 255), &Stroke { width: 1.3, ..Default::default() }, tf(), None);
     }
     if let Some(dot) = PathBuilder::from_circle(left + r, top, r - 0.6) {
-        p.fill_path(&dot, &fill, FillRule::Winding, Transform::identity(), None);
+        p.fill_path(&dot, &fill, FillRule::Winding, tf(), None);
     }
     // Embaixo: pílula cheia com um furo redondo na ponta direita.
     let bottom = cy + 4.3;
@@ -3275,7 +3310,7 @@ fn draw_control_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
     pb.close();
     pb.push_circle(x1 - r, bottom, r - 1.4);
     if let Some(path) = pb.finish() {
-        p.fill_path(&path, &fill, FillRule::EvenOdd, Transform::identity(), None);
+        p.fill_path(&path, &fill, FillRule::EvenOdd, tf(), None);
     }
 }
 
@@ -3296,11 +3331,11 @@ fn draw_gear_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
         pb.line_to(cx + c * r0 - px * half, cy + s * r0 - py * half);
         pb.close();
         if let Some(path) = pb.finish() {
-            p.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+            p.fill_path(&path, &fill, FillRule::Winding, tf(), None);
         }
     }
     if let Some(ring) = PathBuilder::from_circle(cx, cy, 5.2) {
-        p.stroke_path(&ring, &stroke_color(fg, 255), &Stroke { width: 2.4, ..Default::default() }, Transform::identity(), None);
+        p.stroke_path(&ring, &stroke_color(fg, 255), &Stroke { width: 2.4, ..Default::default() }, tf(), None);
     }
 }
 
@@ -3314,14 +3349,14 @@ fn draw_moon_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
     let mut fill = Paint::default();
     fill.anti_alias = true;
     fill.set_color(rgba(fg[0], fg[1], fg[2], fg[3]));
-    p.fill_path(&outer, &fill, FillRule::Winding, Transform::identity(), None);
+    p.fill_path(&outer, &fill, FillRule::Winding, tf(), None);
     // O recorte da lua: um círculo apagado deslocado.
     if let Some(cut) = PathBuilder::from_circle(cx + 4.0, cy - 3.0, 6.0) {
         let mut clear = Paint::default();
         clear.anti_alias = true;
         clear.blend_mode = tiny_skia::BlendMode::DestinationOut;
         clear.set_color(rgba(0, 0, 0, 255));
-        p.fill_path(&cut, &clear, FillRule::Winding, Transform::identity(), None);
+        p.fill_path(&cut, &clear, FillRule::Winding, tf(), None);
     }
 }
 
@@ -3334,15 +3369,15 @@ fn draw_switch(p: &mut Pixmap, x: f32, y: f32, on: bool) {
         let mut paint = Paint::default();
         paint.anti_alias = true;
         paint.set_color(rgba(255, 255, 255, 255));
-        p.fill_path(&knob, &paint, FillRule::Winding, Transform::identity(), None);
+        p.fill_path(&knob, &paint, FillRule::Winding, tf(), None);
     }
 }
 
 /// Cápsula de grupo na barra: fundo bem leve e contorno fino, na cor do texto.
 fn group_capsule(p: &mut Pixmap, path: &tiny_skia::Path, fg: [u8; 4]) {
-    p.fill_path(path, &stroke_color(fg, 22), FillRule::Winding, Transform::identity(), None);
+    p.fill_path(path, &stroke_color(fg, 22), FillRule::Winding, tf(), None);
     let stroke = Stroke { width: 1.0, ..Default::default() };
-    p.stroke_path(path, &stroke_color(fg, 70), &stroke, Transform::identity(), None);
+    p.stroke_path(path, &stroke_color(fg, 70), &stroke, tf(), None);
 }
 
 fn stroke_color(fg: [u8; 4], alpha: u8) -> Paint<'static> {
@@ -3374,7 +3409,7 @@ fn draw_media_glyph(p: &mut Pixmap, glyph: MediaGlyph, cx: f32, cy: f32, size: f
     let h = size;
     let fill = |p: &mut Pixmap, pb: PathBuilder| {
         if let Some(path) = pb.finish() {
-            p.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            p.fill_path(&path, &paint, FillRule::Winding, tf(), None);
         }
     };
     let triangle = |pb: &mut PathBuilder, x0: f32, x1: f32| {
@@ -3438,7 +3473,7 @@ fn draw_media_glyph(p: &mut Pixmap, glyph: MediaGlyph, cx: f32, cy: f32, size: f
             }
             if let Some(path) = pb.finish() {
                 let stroke = Stroke { width: (h * 0.13).max(1.4), line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
-                p.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                p.stroke_path(&path, &paint, &stroke, tf(), None);
             }
         }
         MediaGlyph::Repeat | MediaGlyph::RepeatOne => {
@@ -3459,7 +3494,7 @@ fn draw_media_glyph(p: &mut Pixmap, glyph: MediaGlyph, cx: f32, cy: f32, size: f
             pb.line_to(cx + w - h * 0.24, cy - hh + h * 0.18);
             if let Some(path) = pb.finish() {
                 let stroke = Stroke { width: (h * 0.13).max(1.4), line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
-                p.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                p.stroke_path(&path, &paint, &stroke, tf(), None);
             }
             if glyph == MediaGlyph::RepeatOne {
                 // Um "1" pequeno no meio do laço: repetir só a faixa.
@@ -3490,7 +3525,7 @@ fn draw_media_glyph(p: &mut Pixmap, glyph: MediaGlyph, cx: f32, cy: f32, size: f
             fill(p, pb);
             for (hx, hy) in [(cx - dx - h * 0.1, bottom), (cx + dx - h * 0.1 - stem, bottom - h * 0.08)] {
                 if let Some(head) = tiny_skia::Rect::from_xywh(hx - h * 0.04, hy - h * 0.12, h * 0.3, h * 0.24).and_then(PathBuilder::from_oval) {
-                    p.fill_path(&head, &paint, FillRule::Winding, Transform::identity(), None);
+                    p.fill_path(&head, &paint, FillRule::Winding, tf(), None);
                 }
             }
         }
@@ -3517,19 +3552,19 @@ fn draw_wifi_icon(p: &mut Pixmap, cx: f32, cy: f32, level: Option<u8>, fg: [u8; 
         }
         if let Some(path) = pb.finish() {
             let stroke = Stroke { width: 1.9, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
-            p.stroke_path(&path, &stroke_color(fg, alpha), &stroke, Transform::identity(), None);
+            p.stroke_path(&path, &stroke_color(fg, alpha), &stroke, tf(), None);
         }
     }
     if let Some(dot) = PathBuilder::from_circle(cx, base - 0.5, 1.6) {
         let alpha = if level.is_some() { 255 } else { 70 };
-        p.fill_path(&dot, &stroke_color(fg, alpha), FillRule::Winding, Transform::identity(), None);
+        p.fill_path(&dot, &stroke_color(fg, alpha), FillRule::Winding, tf(), None);
     }
     if level.is_none() {
         let mut pb = PathBuilder::new();
         pb.move_to(cx - 7.0, cy - 7.0);
         pb.line_to(cx + 7.0, cy + 7.0);
         if let Some(path) = pb.finish() {
-            p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.6, ..Default::default() }, Transform::identity(), None);
+            p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.6, ..Default::default() }, tf(), None);
         }
     }
 }
@@ -3546,7 +3581,7 @@ fn draw_bluetooth_icon(p: &mut Pixmap, cx: f32, cy: f32, on: bool, fg: [u8; 4]) 
     pb.line_to(cx - w, cy + h * 0.45);
     if let Some(path) = pb.finish() {
         let stroke = Stroke { width: 1.6, line_join: tiny_skia::LineJoin::Round, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
-        p.stroke_path(&path, &stroke_color(fg, if on { 255 } else { 90 }), &stroke, Transform::identity(), None);
+        p.stroke_path(&path, &stroke_color(fg, if on { 255 } else { 90 }), &stroke, tf(), None);
     }
 }
 
@@ -3562,7 +3597,7 @@ fn draw_speaker_icon(p: &mut Pixmap, cx: f32, cy: f32, volume: Option<(f32, bool
     pb.line_to(x, cy + 2.5);
     pb.close();
     if let Some(path) = pb.finish() {
-        p.fill_path(&path, &stroke_color(fg, 255), FillRule::Winding, Transform::identity(), None);
+        p.fill_path(&path, &stroke_color(fg, 255), FillRule::Winding, tf(), None);
     }
     let (level, muted) = volume.unwrap_or((0.0, true));
     if muted {
@@ -3572,7 +3607,7 @@ fn draw_speaker_icon(p: &mut Pixmap, cx: f32, cy: f32, volume: Option<(f32, bool
         pb.move_to(x + 16.0, cy - 3.0);
         pb.line_to(x + 10.0, cy + 3.0);
         if let Some(path) = pb.finish() {
-            p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, Transform::identity(), None);
+            p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, tf(), None);
         }
         return;
     }
@@ -3592,7 +3627,7 @@ fn draw_speaker_icon(p: &mut Pixmap, cx: f32, cy: f32, volume: Option<(f32, bool
             }
         }
         if let Some(path) = pb.finish() {
-            p.stroke_path(&path, &stroke_color(fg, alpha), &Stroke { width: 1.5, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, Transform::identity(), None);
+            p.stroke_path(&path, &stroke_color(fg, alpha), &Stroke { width: 1.5, line_cap: tiny_skia::LineCap::Round, ..Default::default() }, tf(), None);
         }
     }
 }
@@ -3608,11 +3643,11 @@ fn draw_ethernet_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
     pb.line_to(cx + 5.0, cy + 5.5);
     if let Some(path) = pb.finish() {
         let stroke = Stroke { width: 1.7, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
-        p.stroke_path(&path, &stroke_color(fg, 255), &stroke, Transform::identity(), None);
+        p.stroke_path(&path, &stroke_color(fg, 255), &stroke, tf(), None);
     }
     for dx in [-2.6, 0.0, 2.6] {
         if let Some(dot) = PathBuilder::from_circle(cx + dx, cy, 1.05) {
-            p.fill_path(&dot, &stroke_color(fg, 255), FillRule::Winding, Transform::identity(), None);
+            p.fill_path(&dot, &stroke_color(fg, 255), FillRule::Winding, tf(), None);
         }
     }
 }
@@ -3630,7 +3665,7 @@ fn draw_audio_kind_icon(p: &mut Pixmap, cx: f32, cy: f32, kind: system::AudioKin
             pb.cubic_to(cx - 6.0, cy - 8.5, cx + 6.0, cy - 8.5, cx + 6.0, cy - 0.5);
             pb.line_to(cx + 6.0, cy + 2.0);
             if let Some(path) = pb.finish() {
-                p.stroke_path(&path, &stroke_color(fg, 255), &line, Transform::identity(), None);
+                p.stroke_path(&path, &stroke_color(fg, 255), &line, tf(), None);
             }
             fill_rounded(p, cx - 7.5, cy + 0.5, 4.0, 6.5, 1.6, rgba(fg[0], fg[1], fg[2], 255));
             fill_rounded(p, cx + 3.5, cy + 0.5, 4.0, 6.5, 1.6, rgba(fg[0], fg[1], fg[2], 255));
@@ -3639,14 +3674,14 @@ fn draw_audio_kind_icon(p: &mut Pixmap, cx: f32, cy: f32, kind: system::AudioKin
                 pb.move_to(cx - 5.5, cy + 6.5);
                 pb.quad_to(cx - 4.0, cy + 8.0, cx - 1.0, cy + 7.5);
                 if let Some(path) = pb.finish() {
-                    p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.2, ..line }, Transform::identity(), None);
+                    p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.2, ..line }, tf(), None);
                 }
             }
         }
         system::AudioKind::Hdmi => {
             // Monitor com pé.
             if let Some(path) = rounded_rect(cx - 7.0, cy - 6.0, 14.0, 9.5, 1.5) {
-                p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.5, ..Default::default() }, Transform::identity(), None);
+                p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.5, ..Default::default() }, tf(), None);
             }
             fill_rounded(p, cx - 0.75, cy + 3.5, 1.5, 2.5, 0.5, rgba(fg[0], fg[1], fg[2], 255));
             fill_rounded(p, cx - 3.5, cy + 5.5, 7.0, 1.5, 0.75, rgba(fg[0], fg[1], fg[2], 255));
@@ -3659,7 +3694,7 @@ fn draw_audio_kind_icon(p: &mut Pixmap, cx: f32, cy: f32, kind: system::AudioKin
             pb.move_to(cx, cy + 3.5);
             pb.line_to(cx, cy + 6.5);
             if let Some(path) = pb.finish() {
-                p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.4, ..line }, Transform::identity(), None);
+                p.stroke_path(&path, &stroke_color(fg, 255), &Stroke { width: 1.4, ..line }, tf(), None);
             }
         }
         system::AudioKind::Bluetooth => draw_bluetooth_icon(p, cx, cy, true, fg),
@@ -3677,7 +3712,7 @@ fn draw_lock(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
     pb.quad_to(cx + 2.8, cy - 6.8, cx + 2.8, cy - 4.0);
     pb.line_to(cx + 2.8, cy - 1.5);
     if let Some(path) = pb.finish() {
-        p.stroke_path(&path, &stroke_color(fg, 200), &Stroke { width: 1.4, ..Default::default() }, Transform::identity(), None);
+        p.stroke_path(&path, &stroke_color(fg, 200), &Stroke { width: 1.4, ..Default::default() }, tf(), None);
     }
 }
 
@@ -3689,7 +3724,7 @@ fn draw_battery(pixmap: &mut Pixmap, x: f32, cy: f32, level: u8, charging: bool,
         let mut paint = Paint::default();
         paint.set_color(rgba(fg[0], fg[1], fg[2], 200));
         paint.anti_alias = true;
-        pixmap.stroke_path(&path, &paint, &Stroke::default(), Transform::identity(), None);
+        pixmap.stroke_path(&path, &paint, &Stroke::default(), tf(), None);
     }
     fill_rounded(pixmap, x + w + 1.5, cy - 2.0, 2.0, 4.0, 1.0, rgba(fg[0], fg[1], fg[2], 200));
     let fill_w = (w - 3.0) * (level.min(100) as f32 / 100.0);
@@ -3720,6 +3755,20 @@ fn spawn_sibling(name: &str) {
         Err(err) => tracing::warn!("falha ao abrir {name}: {err}"),
     }
 }
+
+impl ScaleHandler for Bar {
+    fn surface_scale_changed(&mut self, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
+        if surface == self.layer.wl_surface() {
+            self.draw_bar();
+        } else if self.tip.as_ref().is_some_and(|t| t.layer.wl_surface() == surface) {
+            self.paint_tip();
+        } else if self.menu.as_ref().is_some_and(|m| m.layer.wl_surface() == surface) {
+            self.draw_menu();
+        }
+    }
+}
+
+mide::delegate_surface_scale!(Bar);
 
 impl CompositorHandler for Bar {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}

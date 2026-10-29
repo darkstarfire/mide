@@ -11,7 +11,7 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            element::{memory::MemoryRenderBuffer, Kind},
+            element::memory::MemoryRenderBuffer,
             gles::GlesRenderer,
         },
     },
@@ -29,15 +29,47 @@ pub const TITLE_SIDE_MARGIN: i32 = 70;
 /// Texto já rasterizado, pronto para ser desenhado.
 pub struct TitleImage {
     pub buffer: MemoryRenderBuffer,
+    /// Tamanho em pontos. A imagem tem os pixels da tela (pontos × escala): desenhada
+    /// na escala 1 e esticada pela GPU, ficava borrada e com as letras espaçadas.
     pub width: i32,
     pub height: i32,
+    /// Tamanho da imagem em pixels.
+    pub pixels: (i32, i32),
 }
+
+impl TitleImage {
+    /// Elemento de desenho com o canto em `loc` (pontos, relativo à tela).
+    pub fn render_element(
+        &self,
+        renderer: &mut GlesRenderer,
+        loc: Point<i32, Logical>,
+        alpha: f32,
+    ) -> Option<smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<GlesRenderer>> {
+        use smithay::backend::renderer::element::{memory::MemoryRenderBufferRenderElement, Kind};
+        let location: Point<f64, smithay::utils::Physical> = crate::clip::phys(loc).to_f64();
+        MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            location,
+            &self.buffer,
+            (alpha < 1.0).then_some(alpha),
+            // A imagem inteira (sem isto, o recorte seria o tamanho em pontos: só o
+            // começo da imagem, esticado).
+            Some(smithay::utils::Rectangle::from_size((self.pixels.0 as f64, self.pixels.1 as f64).into())),
+            Some((self.width, self.height).into()),
+            Kind::Unspecified,
+        )
+        .ok()
+    }
+}
+
+/// Chave do cache: texto, com foco, largura máxima, tema escuro, dica e escala (milésimos).
+type TitleKey = (String, bool, i32, bool, bool, u32);
 
 /// Compõe e guarda em cache os títulos das janelas.
 pub struct TitleRenderer {
     fonts: FontSystem,
     swash: SwashCache,
-    images: HashMap<(String, bool, i32, bool, bool), Option<TitleImage>>,
+    images: HashMap<TitleKey, Option<TitleImage>>,
 }
 
 /// Dica de um botão da barra de título (I2): qual botão de qual janela está sob o
@@ -91,7 +123,8 @@ impl TitleRenderer {
     }
 
     fn image_styled(&mut self, title: &str, focused: bool, max_width: i32, tip: bool) -> Option<&TitleImage> {
-        let key = (title.to_string(), focused, max_width, crate::decorations::dark(), tip);
+        let scale = (crate::clip::scale() * 1000.0).round() as u32;
+        let key = (title.to_string(), focused, max_width, crate::decorations::dark(), tip, scale);
         if !self.images.contains_key(&key) {
             let image = self.render(title, focused, max_width, tip);
             self.images.insert(key.clone(), image);
@@ -105,11 +138,13 @@ impl TitleRenderer {
             .weight(if tip { Weight::NORMAL } else { Weight::SEMIBOLD })
     }
 
+    /// Tamanho da letra em pixels da tela atual (pontos × escala).
     fn metrics(tip: bool) -> Metrics {
+        let k = crate::clip::scale() as f32;
         if tip {
-            Metrics::new(TIP_FONT_SIZE, TIP_LINE_HEIGHT)
+            Metrics::new(TIP_FONT_SIZE * k, TIP_LINE_HEIGHT * k)
         } else {
-            Metrics::new(FONT_SIZE, LINE_HEIGHT)
+            Metrics::new(FONT_SIZE * k, LINE_HEIGHT * k)
         }
     }
 
@@ -147,7 +182,9 @@ impl TitleRenderer {
         if title.trim().is_empty() {
             return None;
         }
-        let fitted = self.fit(title.trim(), max_width.max(1), tip);
+        let k = crate::clip::scale();
+        // Daqui em diante, em pixels da tela.
+        let fitted = self.fit(title.trim(), ((max_width.max(1) as f64) * k).floor() as i32, tip);
         if fitted.is_empty() {
             return None;
         }
@@ -160,8 +197,11 @@ impl TitleRenderer {
             return None;
         }
         let mut buffer = Buffer::new(&mut self.fonts, metrics);
-        let width = text_width.max(1);
-        let height = metrics.line_height.ceil() as i32;
+        // Tamanho em pontos inteiros e a imagem com exatamente esses pontos × escala:
+        // um pixel da imagem para um da tela.
+        let points = (((text_width.max(1) as f64) / k).ceil() as i32, ((metrics.line_height as f64) / k).ceil() as i32);
+        let width = ((points.0 as f64) * k).round() as i32;
+        let height = ((points.1 as f64) * k).round() as i32;
         buffer.set_size(Some(width as f32), Some(height as f32));
         buffer.set_text(&fitted, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.fonts, false);
@@ -203,8 +243,9 @@ impl TitleRenderer {
         let buffer = MemoryRenderBuffer::from_slice(&pixels, Fourcc::Abgr8888, (width, height), 1, Transform::Normal, None);
         Some(TitleImage {
             buffer,
-            width,
-            height,
+            width: points.0,
+            height: points.1,
+            pixels: (width, height),
         })
     }
 }
@@ -218,20 +259,9 @@ pub fn element(
     bar: Rectangle<i32, Logical>,
     alpha: f32,
 ) -> Option<smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<GlesRenderer>> {
-    use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
     let max_width = bar.size.w - 2 * TITLE_SIDE_MARGIN;
     let image = titles.image(title, focused, max_width)?;
     let x = bar.loc.x + (bar.size.w - image.width) / 2;
     let y = bar.loc.y + (bar.size.h - image.height) / 2;
-    let location: Point<f64, smithay::utils::Physical> = crate::clip::phys((x as i32, y as i32).into()).to_f64();
-    MemoryRenderBufferRenderElement::from_buffer(
-        renderer,
-        location,
-        &image.buffer,
-        (alpha < 1.0).then_some(alpha),
-        None,
-        None,
-        Kind::Unspecified,
-    )
-    .ok()
+    image.render_element(renderer, (x, y).into(), alpha)
 }

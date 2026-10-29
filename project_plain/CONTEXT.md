@@ -269,3 +269,8 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 
 - Três dedos no touchpad: para cima abre o launcher acompanhando os dedos, para baixo fecha, para os lados passa entre a mesa e as janelas em tela cheia (jogos de fora). Falta o usuário conferir no touchpad de verdade (só o DRM/libinput manda os gestos).
 - Teclas de brilho corrigidas (`brightnessctl --min-value=1%`); falta conferir no Acer e no Chromebook.
+
+## Nitidez em escala fracionária e bateria do Chromebook (v0.10.29, 2026-10-29)
+
+- Barra, dock, launcher, notificações, títulos das janelas, dicas, lâmpada mágica e tela de bloqueio nítidos em 125/150/200% (`mide::shell::scale`); faltam o Terminal e a Captura (`fixed_scale`). Falta o usuário conferir no Chromebook 2K.
+- Bateria do Chromebook pelo EC quando o firmware a dá como ausente (`mide::battery`); falta conferir no Chromebook.

@@ -11,7 +11,7 @@ check "Super+H minimiza" "janela minimizada" "500 combo super+h; 560 list" "$TER
 # só vão para o log).
 check "tecla de volume aumenta 5%" "sistema \\(teste\\): wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%\\+" "500 key volumeup; 540 list" "$TERMINAL"
 check "tecla de mudo" "sistema \\(teste\\): wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" "500 key mute; 540 list" "$TERMINAL"
-check "tecla de brilho" "sistema \\(teste\\): brightnessctl -c backlight -n 1% set 5%-" "500 key brightnessdown; 540 list" "$TERMINAL"
+check "tecla de brilho" "sistema \\(teste\\): brightnessctl -c backlight --min-value=1% set 5%-" "500 key brightnessdown; 540 list" "$TERMINAL"
 check "tecla tocar/pausar vai ao player (MPRIS)" "sistema \\(teste\\): mpris PlayPause" "500 key playpause; 540 list" "$TERMINAL"
 check "Alt+F4 fecha a janela" "fechar janela pedido pelo atalho" "500 combo alt+f4; 560 list" "$TERMINAL"
 # Repetição de tecla segurada: 600 ms de espera por padrão (pedido do usuário); a
