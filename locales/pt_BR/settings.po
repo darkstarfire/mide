@@ -668,6 +668,12 @@ msgstr "Sem uso: o computador não suspende enquanto um app pede para a tela fic
 msgid "Show menu bar background"
 msgstr "Mostrar o fundo da barra"
 
+msgid "Show app menus in the menu bar"
+msgstr "Mostrar os menus dos apps na barra superior"
+
+msgid "The menus of the app in focus appear in the menu bar, as on the Mac. Turn off if an app loses its menus: apps keep the menu bar in their own window. Apps already open may need to be reopened."
+msgstr "Os menus do app em foco aparecem na barra superior, como no Mac. Desligue se algum app perder os menus: os apps mantêm a barra de menus dentro da própria janela. Apps já abertos podem precisar ser abertos de novo."
+
 msgid "A translucent strip behind the menu bar; when off, the text sits right on the wallpaper, as in macOS Tahoe"
 msgstr "Faixa translúcida atrás da barra; desligado, o texto fica direto sobre o papel de parede, como no macOS Tahoe"
 

@@ -1,6 +1,6 @@
 [package]
 name = "mide"
-version = "0.10.14"
+version = "0.10.15"
 edition = "2024"
 default-run = "mide"
 
@@ -39,6 +39,9 @@ usvg = { version = "0.45", default-features = false }
 # Tema de cursores do sistema, desenhado pelo próprio mide no backend DRM.
 xcursor = "0.3"
 xkbcommon = "0.8"
+# Ler as propriedades de menu das janelas X11 (menu global dos apps pelo XWayland);
+# já vem com o winit, sem código C.
+x11rb = "0.13"
 zbus = "5"
 # Compactar e extrair .zip no Arquivos, sem programa externo.
 zip = { version = "2", default-features = false, features = ["deflate"] }

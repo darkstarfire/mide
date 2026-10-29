@@ -442,6 +442,9 @@ pub fn handle(state: &mut State, command: &str) -> String {
                     tracing::info!("teclado: repetição depois de {} ms, {} por segundo", repeat.0, repeat.1);
                 }
                 state.config = config;
+                // Menus dos apps na barra superior ligados ou desligados: os apps GTK abertos
+                // ficam sabendo (mostram ou escondem a barra de menus deles).
+                crate::app_menus::refresh_capabilities();
                 // Mouse e trackpad (Configurações → Mouse e trackpad) valem na hora.
                 if let Some(waker) = &state.input_waker {
                     waker.ping();

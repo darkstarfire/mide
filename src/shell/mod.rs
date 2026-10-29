@@ -3,6 +3,7 @@
 pub mod notify;
 pub mod tray;
 pub mod gmenu;
+pub mod xmenu;
 pub mod calendar;
 pub mod backdrop;
 pub mod launcher_layout;

@@ -1012,6 +1012,19 @@ impl Settings {
                     Err(err) => tracing::warn!("fundo da barra não gravado: {err}"),
                 }
             }
+            // Menu global: os menus do app em foco na barra superior, como no Mac. Saída de
+            // segurança para apps que perdem o menu: desligado, os apps mantêm a barra de
+            // menus deles dentro da janela.
+            let mut menus = settings_file::flag("bar", "app_menus", true);
+            if ui.switch_detail(&tr!("Show app menus in the menu bar"), &tr!("The menus of the app in focus appear in the menu bar, as on the Mac. Turn off if an app loses its menus: apps keep the menu bar in their own window. Apps already open may need to be reopened."), &mut menus).changed() {
+                match settings_file::set("bar", "app_menus", (!menus).then_some(Value::Bool(false))) {
+                    Ok(()) => {
+                        tracing::info!("barra superior: menus dos apps {}", if menus { "ligados" } else { "desligados" });
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("menus dos apps não gravados: {err}"),
+                }
+            }
         });
         ui.card(|ui| {
             for (key, label, detail) in settings_file::BAR_ITEMS {

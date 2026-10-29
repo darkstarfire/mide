@@ -8,6 +8,11 @@
 //!   `com.canonical.dbusmenu` (o mesmo formato do menu global do X11).
 //!
 //! A barra pergunta pelo canal de controle (`appmenu`) qual é o menu da janela em foco.
+//!
+//! Saída de segurança: com "Mostrar os menus dos apps na barra superior" desligado
+//! (`[bar] app_menus = false`), o mide não anuncia o menu global (capacidades 0 no
+//! `gtk_shell1`, inclusive para os apps já abertos, ao recarregar a configuração) e
+//! não passa o menu à barra: os apps mantêm a barra de menus dentro da janela.
 
 use std::sync::Mutex;
 
@@ -71,7 +76,35 @@ fn store(surface: &WlSurface, menu: Option<AppMenu>) {
 
 /// Menu da janela desta superfície, se o app disse onde está.
 pub fn menu_of(surface: &WlSurface) -> Option<AppMenu> {
+    if !enabled() {
+        return None;
+    }
     with_states(surface, |states| states.data_map.get::<SurfaceMenu>().and_then(|m| m.0.lock().ok()?.clone()))
+}
+
+/// `gtk_shell1` de cada app ligado, para avisar quando a opção muda.
+static SHELLS: Mutex<Vec<GtkShell1>> = Mutex::new(Vec::new());
+
+/// Menus dos apps na barra superior ligados (`[bar] app_menus`, ligado por padrão).
+pub fn enabled() -> bool {
+    mide::settings_file::flag("bar", "app_menus", true)
+}
+
+/// Capacidades anunciadas aos apps GTK: o menu do app e a barra de menus ficam na
+/// barra superior (o GTK lê como bits) ou nada (o app mostra a barra de menus dele).
+fn capabilities() -> u32 {
+    if enabled() { 1 | 2 } else { 0 }
+}
+
+/// Avisa os apps GTK abertos da opção atual (depois do `reload`). O GTK 3 mostra ou
+/// esconde a barra de menus da janela na hora (`gtk-shell-shows-menubar`).
+pub fn refresh_capabilities() {
+    let caps = capabilities();
+    let mut shells = SHELLS.lock().unwrap_or_else(|e| e.into_inner());
+    shells.retain(|s| s.is_alive());
+    for shell in shells.iter() {
+        shell.capabilities(caps);
+    }
 }
 
 pub fn init(display: &DisplayHandle) {
@@ -82,8 +115,12 @@ pub fn init(display: &DisplayHandle) {
 impl GlobalDispatch<GtkShell1, ()> for State {
     fn bind(_: &mut State, _: &DisplayHandle, _: &Client, resource: New<GtkShell1>, _: &(), data_init: &mut DataInit<'_, State>) {
         let shell = data_init.init(resource, ());
-        // O mide mostra o menu do app e a barra de menus na barra superior.
-        shell.capabilities(1 | 2);
+        // O mide mostra o menu do app e a barra de menus na barra superior (se a opção
+        // estiver ligada).
+        shell.capabilities(capabilities());
+        let mut shells = SHELLS.lock().unwrap_or_else(|e| e.into_inner());
+        shells.retain(|s| s.is_alive());
+        shells.push(shell);
     }
 }
 

@@ -1065,3 +1065,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `tests/ui.sh configuracoes`: "Som: escolher o monitor HDMI como saída" (log do app num arquivo, com `RUST_LOG=mide=info`); coordenadas corrigidas do "Som de alerta" (agora rolando até o fim), do papel de parede "Beach" (548, 250) e da engrenagem em Barra superior (808, 237), que estavam velhas desde o interruptor "Clicar no papel de parede mostra a mesa" e o "Mostrar o fundo da barra".
 - Conferido por quadro também em escala 1,5 (2048x1152 com `[monitors.outputs."HEADLESS-1"] scale = 1.5`): painel de som nítido, com os ícones novos.
 - Na sessão de verdade: abrir o painel de som (deve mostrar "Alto-falantes" e o monitor pelo nome, sem as entradas "Alder Lake…"); ligar um fone no conector (a saída passa aos fones) e tirar (volta aos alto-falantes); com o cabo ligado, o ícone da barra é o de rede cabeada e o painel mostra "Rede cabeada" com o endereço.
+
+## Menu global com o LibreOffice (v0.10.15)
+
+- Automático: `tests/ui.sh menu-libreoffice` (Writer no Wayland e no X11 pelo satellite, com o menu Arquivo cheio; a opção desligada mantém o menu no app) e `tests/ui.sh configuracoes` (o interruptor). Pula sem o LibreOffice.
+- Na sessão de verdade (PC do amigo, Slackware): abrir o Writer e o Calc, conferir os menus na barra e os submenus (Arquivo › Novo, Documentos recentes). Se algum app ficar sem menu, procurar no `~/.local/state/mide/session.log` por "menu de … não lido" e desligar Configurações → Barra superior → "Mostrar os menus dos apps na barra superior" (reabrir os apps).

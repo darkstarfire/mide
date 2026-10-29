@@ -411,6 +411,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         focused_name: String::new(),
         focused_id: String::new(),
         focused_pid: 0,
+        focused_title: String::new(),
         dark_seen: mide::kit::system_dark(),
         titles: Vec::new(),
         over_launcher: false,
@@ -419,13 +420,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         tone_k: if wallpaper_top_dark() { 1.0 } else { 0.0 },
         clock: String::new(),
         items: Vec::new(),
-        appmenu: mide::appmenu::start_registrar(),
+        // Com "Mostrar os menus dos apps na barra superior" desligado, a barra nem toma o
+        // nome do registrar: os apps mantêm a barra de menus deles.
+        appmenu: if app_menus_on() { mide::appmenu::start_registrar() } else { None },
         tray: mide::tray::start(),
         tray_items: Vec::new(),
         tray_version: u64::MAX,
         tray_icons: HashMap::new(),
         native: None,
         native_gtk: None,
+        native_submenus: Vec::new(),
+        native_open: Vec::new(),
         layout_active: None,
         recording: None,
         media_session: None,
@@ -437,6 +442,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         media_artwork: None,
         native_failed: None,
         native_failed_at: std::time::Instant::now(),
+        native_failed_warned: false,
         titles_read_at: std::time::Instant::now(),
         registrar_checked_at: std::time::Instant::now(),
         battery: None,
@@ -598,6 +604,39 @@ impl AppNames {
 
     fn name_for(&self, app_id: &str) -> Option<String> {
         self.by_id.get(&app_id.to_lowercase()).map(|(name, _)| name.clone())
+    }
+
+    /// Outros nomes do programa do app, para achar o menu registrado quando o nome do
+    /// processo não bate com o `app_id`: o programa do `Exec` do `.desktop` (achado pelo
+    /// id ou pelo `StartupWMClass`), o arquivo de verdade por trás dele (links:
+    /// `libreoffice` → `soffice`, cujo processo é `soffice.bin`) e o começo do `app_id`
+    /// antes do primeiro "-" (`libreoffice-writer` → `libreoffice`).
+    fn program_names(&self, app_id: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut push = |name: String| {
+            let name = name.to_lowercase();
+            if !name.is_empty() && name != app_id.to_lowercase() && !out.contains(&name) {
+                out.push(name);
+            }
+        };
+        if let Some(program) = self.exec_for(app_id).and_then(|e| e.split_whitespace().next().map(str::to_string)) {
+            let path = std::path::Path::new(&program);
+            let full = if path.is_absolute() {
+                Some(path.to_path_buf())
+            } else {
+                std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(&program)).find(|f| f.is_file()))
+            };
+            if let Some(name) = path.file_name() {
+                push(name.to_string_lossy().into_owned());
+            }
+            if let Some(name) = full.and_then(|f| std::fs::canonicalize(f).ok()).and_then(|f| f.file_name().map(|n| n.to_string_lossy().into_owned())) {
+                push(name);
+            }
+        }
+        if let Some((stem, _)) = app_id.split_once('-') {
+            push(stem.to_string());
+        }
+        out
     }
 
     fn exec_for(&self, app_id: &str) -> Option<String> {
@@ -925,6 +964,9 @@ struct Bar {
     focused_id: String,
     /// Processo da janela em foco (dos menus registrados, vale o dele).
     focused_pid: u32,
+    /// Título da janela em foco: acha a janela X11 do app (menu global pelo XWayland) e
+    /// separa duas janelas do mesmo app e processo.
+    focused_title: String,
     /// Tema escuro da última conferência (a troca nas Configurações redesenha sozinha).
     dark_seen: bool,
     /// Títulos desenhados na barra: menu e faixa x (início, fim), para o clique.
@@ -968,10 +1010,17 @@ struct Bar {
     /// `gtk_shell1`): onde ele está e as ações dos itens (o `id` de cada item é o
     /// número da ação). Sem isso, o `native` é um `dbusmenu`.
     native_gtk: Option<(mide::gmenu::GtkMenu, Vec<mide::gmenu::Action>)>,
+    /// GTK: ações de abrir submenu (`submenu-action`) de cada menu de cima, e as que
+    /// estão abertas agora (voltam a fechado quando o menu fecha).
+    native_submenus: Vec<Vec<String>>,
+    native_open: Vec<String>,
     /// Menu que não pôde ser lido (não tenta de novo a cada meio segundo).
     /// Menu que não deu para ler, e quando: tenta de novo depois de alguns segundos.
     native_failed: Option<(String, String)>,
     native_failed_at: std::time::Instant,
+    /// A falha do `native_failed` já foi avisada no log como erro (a primeira é só
+    /// informação: o app pode publicar o menu antes de preenchê-lo).
+    native_failed_warned: bool,
     /// Última releitura dos títulos do menu do app em foco.
     titles_read_at: std::time::Instant,
     /// Última conferência de que o registrar dos menus ainda é da barra.
@@ -1074,13 +1123,33 @@ impl Bar {
     /// Menu do próprio app em foco, se ele registrou um (menu global). Lido quando o app
     /// em foco muda ou quando o registro aparece depois.
     fn refresh_native(&mut self) {
-        let Some((registry, conn)) = &self.appmenu else {
+        let Some((registry, _)) = &self.appmenu else {
             return;
         };
+        // App X11 (a janela é do xwayland-satellite): o menu está ligado à janela X, pelo
+        // número dela no registrar ou nas propriedades `_GTK_*`/`_KDE_*` (`mide::xmenu`).
+        let x11 = if mide::xmenu::is_xwayland_pid(self.focused_pid) { mide::xmenu::find(&self.focused_title, &self.focused_id) } else { None };
+        let mut gtk = None;
+        let from_x11 = x11.as_ref().and_then(|x| {
+            registry
+                .menu_for_window(x.window)
+                .or_else(|| {
+                    let menu = x.gtk.clone()?;
+                    let found = (menu.bus.clone(), menu.menubar.clone());
+                    gtk = Some(menu);
+                    Some(found)
+                })
+                .or_else(|| x.kde.clone())
+                .or_else(|| (x.pid > 0).then(|| registry.menu_for_app(&self.focused_id, x.pid)).flatten())
+        });
         // Pelo registrar (Qt no X11, apps com dbusmenu); senão, o que o app disse ao
         // compositor pelo Wayland (GTK pelo `gtk_shell1`, Qt pelo menu do KDE).
-        let mut gtk = None;
-        let wanted = registry.menu_for_app(&self.focused_id, self.focused_pid).or_else(|| {
+        let wanted = from_x11
+            .or_else(|| registry.menu_for_app(&self.focused_id, self.focused_pid))
+            // Sem registro pelo processo nem pelo nome do app: pelos outros nomes do
+            // programa (o do `.desktop` e o arquivo por trás dele).
+            .or_else(|| self.names.program_names(&self.focused_id).iter().find_map(|n| registry.menu_for_app(n, 0)))
+            .or_else(|| {
             let line = ask_compositor("appmenu")?.into_iter().next()?;
             let fields: Vec<&str> = line.split('\t').collect();
             match fields.as_slice() {
@@ -1101,29 +1170,44 @@ impl Bar {
         if same || (wanted.is_some() && wanted == self.native_failed && recent_failure) {
             return;
         }
+        self.close_native_submenus();
+        let Some((_, conn)) = &self.appmenu else {
+            return;
+        };
         let previous_failure = self.native_failed.take();
         self.native_gtk = None;
+        self.native_submenus.clear();
         let failed = &mut self.native_failed;
+        let warned = &mut self.native_failed_warned;
         let native_gtk = &mut self.native_gtk;
+        let native_submenus = &mut self.native_submenus;
+        let app = if self.focused_id.is_empty() { self.focused_name.clone() } else { self.focused_id.clone() };
         self.native = wanted.and_then(|(sender, path)| {
             let layout = match &gtk {
-                Some(menu) => mide::gmenu::read(conn, menu).map(|(items, actions)| {
-                    *native_gtk = Some((menu.clone(), actions));
-                    items
+                Some(menu) => mide::gmenu::read_menubar(conn, menu).map(|bar| {
+                    *native_gtk = Some((menu.clone(), bar.actions));
+                    *native_submenus = bar.submenu_actions;
+                    bar.items
                 }),
-                None => mide::appmenu::layout(conn, &sender, &path, 0),
+                None => mide::appmenu::layout_checked(conn, &sender, &path, 0),
             };
-            let Some(layout) = layout else {
-                // A mesma falha de novo (nova tentativa) não enche o log.
-                if previous_failure.as_ref() != Some(&(sender.clone(), path.clone())) {
-                    tracing::info!("menu do app {}: não foi possível ler", self.focused_id);
+            let top: Vec<mide::appmenu::Item> = match layout {
+                Ok(layout) => layout.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect(),
+                Err(err) => {
+                    log_menu_failure(&app, &sender, &path, &err, previous_failure.as_ref() == Some(&(sender.clone(), path.clone())), warned);
+                    *failed = Some((sender, path));
+                    return None;
                 }
-                *failed = Some((sender, path));
-                return None;
             };
-            let top: Vec<mide::appmenu::Item> = layout.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect();
-            tracing::info!("menu do app {}: {}", self.focused_id, top.iter().map(|i| i.label.as_str()).collect::<Vec<_>>().join(", "));
-            (!top.is_empty()).then_some((sender, path, top))
+            if top.is_empty() {
+                log_menu_failure(&app, &sender, &path, "o app publicou um menu vazio", previous_failure.as_ref() == Some(&(sender.clone(), path.clone())), warned);
+                *failed = Some((sender, path));
+                *native_gtk = None;
+                return None;
+            }
+            *warned = false;
+            tracing::info!("menu do app {app}: {}", top.iter().map(|i| i.label.as_str()).collect::<Vec<_>>().join(", "));
+            Some((sender, path, top))
         });
         if self.native_failed.is_some() {
             self.native_failed_at = std::time::Instant::now();
@@ -1140,6 +1224,18 @@ impl Bar {
             }
         }
         self.draw_bar();
+    }
+
+    /// Fecha os submenus GTK abertos para o menu à mostra (estado das `submenu-action`
+    /// de volta a `false`, como o GTK faz ao esconder o menu).
+    fn close_native_submenus(&mut self) {
+        if self.native_open.is_empty() {
+            return;
+        }
+        let names = std::mem::take(&mut self.native_open);
+        if let (Some((_, conn)), Some((menu, _))) = (&self.appmenu, &self.native_gtk) {
+            mide::gmenu::set_submenus_open(conn, menu, &names, false);
+        }
     }
 
     /// Partes do menu Janela que mudam: "Mover para" as outras telas e a lista das
@@ -1187,12 +1283,36 @@ impl Bar {
             return Vec::new();
         };
         if let Some((menu, actions)) = &mut self.native_gtk {
-            // GTK: lê a barra inteira de novo (ações ligadas e marcadas mudam).
-            if let Some((items, new_actions)) = mide::gmenu::read(conn, menu) {
-                *top = items.into_iter().filter(|i| !i.separator && !i.label.is_empty()).collect();
-                *actions = new_actions;
+            // GTK: abre o submenu como o GTK faz (`submenu-action` = true; o LibreOffice
+            // só preenche e atualiza o menu depois disso) e lê a barra inteira de novo
+            // (ações ligadas e marcadas mudam). Submenus que aparecem dentro dele depois
+            // de aberto também são abertos (uma segunda leitura).
+            let mut open: Vec<String> = Vec::new();
+            for _ in 0..2 {
+                let wanted: Vec<String> = self.native_submenus.get(index).map(|l| l.iter().filter(|n| !open.contains(n)).cloned().collect()).unwrap_or_default();
+                if wanted.is_empty() && !open.is_empty() {
+                    break;
+                }
+                mide::gmenu::set_submenus_open(conn, menu, &wanted, true);
+                open.extend(wanted);
+                match mide::gmenu::read_menubar(conn, menu) {
+                    Ok(bar) => {
+                        *top = bar.items;
+                        *actions = bar.actions;
+                        self.native_submenus = bar.submenu_actions;
+                    }
+                    Err(err) => {
+                        tracing::warn!("menu de {} não lido: {err}", self.focused_id);
+                        break;
+                    }
+                }
             }
-            return top.get(index).map(|m| dbus_entries(&m.children, &MenuAction::Native)).unwrap_or_default();
+            self.native_open = open;
+            let Some(menu) = top.get(index) else {
+                return Vec::new();
+            };
+            log_native_menu(&self.focused_id, menu);
+            return dbus_entries(&menu.children, &MenuAction::Native);
         }
         // Os números dos itens mudam quando o app troca os menus (a Calculadora ao trocar
         // de modo): a raiz é lida de novo e o menu é achado pelo título.
@@ -1208,6 +1328,7 @@ impl Bar {
             return Vec::new();
         };
         let children = mide::appmenu::layout(conn, sender, path, menu.id).filter(|c| !c.is_empty()).unwrap_or_else(|| menu.children.clone());
+        log_native_menu(&self.focused_id, &mide::appmenu::Item { children: children.clone(), ..menu.clone() });
         dbus_entries(&children, &MenuAction::Native)
     }
 
@@ -1335,7 +1456,7 @@ impl Bar {
             self.draw_bar();
             if self.menu.as_ref().is_some_and(|m| m.id == MenuId::Media) { self.draw_menu(); }
         }
-        let (focused_id, focused, focused_pid) = ask_compositor("list")
+        let (focused_id, focused, focused_pid, focused_title) = ask_compositor("list")
             .and_then(|lines| {
                 lines.into_iter().find_map(|line| {
                     let mut parts = line.split('\t');
@@ -1347,11 +1468,11 @@ impl Bar {
                             .name_for(app_id)
                             .or_else(|| (!title.is_empty()).then(|| title.to_string()))
                             .unwrap_or_else(|| app_id.to_string());
-                        (app_id.to_string(), name, pid)
+                        (app_id.to_string(), name, pid, title.to_string())
                     })
                 })
             })
-            .unwrap_or_else(|| (String::new(), "mide".to_string(), 0));
+            .unwrap_or_else(|| (String::new(), "mide".to_string(), 0, String::new()));
         let items: Vec<bool> = mide::settings_file::BAR_ITEMS.iter().map(|(key, ..)| mide::settings_file::bar_item(key)).collect();
         if items != self.items {
             // Um item sumiu da barra: o painel dele (se aberto) fecha junto.
@@ -1380,8 +1501,11 @@ impl Bar {
             self.recording = recording;
             self.draw_bar();
         }
-        let focus_changed = focused_id != self.focused_id || focused_pid != self.focused_pid;
+        // O título também conta: duas janelas do mesmo app e processo (dois documentos
+        // do LibreOffice) têm menus diferentes.
+        let focus_changed = focused_id != self.focused_id || focused_pid != self.focused_pid || focused_title != self.focused_title;
         self.focused_pid = focused_pid;
+        self.focused_title = focused_title;
         // Bateria fraca: ao passar de 10% descarregando, som e aviso (uma vez).
         if let (Some((was, _)), Some((now, false))) = (self.battery, battery) {
             if was > 10 && now <= 10 {
@@ -1400,7 +1524,20 @@ impl Bar {
         // registro pode chegar depois da janela).
         // O nome do registrar é da barra? Outro programa (outra barra, um teste) pode tê-lo
         // tomado; quando ele sai, a barra pega o nome de volta e os apps se registram de novo.
-        if self.registrar_checked_at.elapsed() >= std::time::Duration::from_secs(5) {
+        // "Mostrar os menus dos apps na barra superior" (Configurações → Barra superior):
+        // desligado, a barra solta o nome do registrar e fica com o menu padrão.
+        let menus_on = app_menus_on();
+        if !menus_on && self.appmenu.is_some() {
+            tracing::info!("menus dos apps na barra: desligados");
+            self.close_native_submenus();
+            self.appmenu = None;
+            self.native = None;
+            self.native_gtk = None;
+            self.native_submenus.clear();
+            self.native_failed = None;
+            self.draw_bar();
+        }
+        if menus_on && self.registrar_checked_at.elapsed() >= std::time::Duration::from_secs(5) {
             self.registrar_checked_at = std::time::Instant::now();
             let lost = self.appmenu.as_ref().is_none_or(|(_, conn)| !mide::appmenu::owns_registrar(conn));
             if lost {
@@ -1838,6 +1975,8 @@ impl Bar {
     /// Abre o menu `id`, ou troca o menu aberto por ele (passar o mouse pelos títulos
     /// com um menu aberto troca de menu, como no macOS).
     fn open_menu(&mut self, id: MenuId) {
+        // Passando de um menu do app para outro: o anterior fecha os submenus dele.
+        self.close_native_submenus();
         self.media_details.store(id == MenuId::Media, std::sync::atomic::Ordering::Relaxed);
         // A engrenagem não é menu: abre as Configurações.
         if id == MenuId::Gear {
@@ -2111,6 +2250,7 @@ impl Bar {
 
     fn close_menu(&mut self) {
         self.media_details.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.close_native_submenus();
         if self.menu.take().is_some() {
             tracing::info!("menu fechado");
             self.draw_bar();
@@ -3746,6 +3886,47 @@ impl ProvidesRegistryState for Bar {
     registry_handlers![OutputState, SeatState];
 }
 
+/// Menus dos apps na barra superior (menu global) ligados? (`[bar] app_menus`, ligado
+/// por padrão; Configurações → Barra superior.)
+fn app_menus_on() -> bool {
+    mide::settings_file::flag("bar", "app_menus", true)
+}
+
+/// Avisa no log que o menu de um app não foi lido. A primeira vez é só informação (o
+/// app pode publicar o menu antes de preenchê-lo; a barra tenta de novo em 3 s); se a
+/// nova tentativa falha, vira aviso, uma vez: "menu de X não lido: ...", para
+/// diagnosticar num PC sem acesso.
+fn log_menu_failure(app: &str, sender: &str, path: &str, err: &str, again: bool, warned: &mut bool) {
+    if !again {
+        *warned = false;
+        tracing::info!("menu de {app} ainda não lido ({sender} {path}): {err}; tentando de novo");
+    } else if !*warned {
+        *warned = true;
+        tracing::warn!("menu de {app} não lido ({sender} {path}): {err}");
+    }
+}
+
+/// Registra no log o menu do app aberto na barra: quantos itens (com os dos submenus) e
+/// os primeiros, ou o aviso de que veio vazio.
+fn log_native_menu(app: &str, menu: &mide::appmenu::Item) {
+    fn walk<'a>(items: &'a [mide::appmenu::Item], out: &mut Vec<&'a str>) {
+        for item in items {
+            if !item.separator && !item.label.is_empty() {
+                out.push(&item.label);
+            }
+            walk(&item.children, out);
+        }
+    }
+    let mut labels = Vec::new();
+    walk(&menu.children, &mut labels);
+    if labels.is_empty() {
+        tracing::warn!("menu de {app} não lido: o menu {} veio vazio", menu.label);
+    } else {
+        let first: Vec<&str> = labels.iter().take(4).copied().collect();
+        tracing::info!("menu {} de {app}: {} itens ({}…)", menu.label, labels.len(), first.join(", "));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3761,3 +3942,4 @@ mod tests {
         assert_eq!(clock_format(now, true, true, true, false), "qua 21 out 2026  09:05");
     }
 }
+

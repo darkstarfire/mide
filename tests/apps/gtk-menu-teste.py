@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """App GTK 3 de teste do menu global no Wayland (gtk-shell): uma janela com barra de
 menus ("Arquivo": Abrir, Salvar; "Ajuda": Sobre) e uma opção marcável ("Exibir" →
-"Mostrar régua"). Cada ação grava o nome dela em GTK_TESTE_ARQUIVO."""
+"Mostrar régua"). Cada ação grava o nome dela em GTK_TESTE_ARQUIVO. Com
+GTK_TESTE_BARRA, grava ali, 2 s depois de abrir, se o compositor disse que mostra a
+barra de menus (`gtk-shell-shows-menubar`: "barra=True") ou não ("barra=False")."""
 
 import os
 import sys
@@ -53,6 +55,14 @@ class App(Gtk.Application):
         window = Gtk.ApplicationWindow(application=self, title="Menu GTK de teste")
         window.set_default_size(420, 240)
         window.show_all()
+        barra = os.environ.get("GTK_TESTE_BARRA")
+        if barra:
+            def report():
+                shows = Gtk.Settings.get_default().get_property("gtk-shell-shows-menubar")
+                with open(barra, "w") as f:
+                    f.write(f"barra={shows}")
+                return False
+            GLib.timeout_add(2000, report)
 
 
 sys.exit(App().run([]))
