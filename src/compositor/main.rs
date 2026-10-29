@@ -18,6 +18,7 @@ mod decorations;
 mod fullscreen;
 mod dmabuf;
 mod genie;
+mod gesture;
 mod input;
 mod lock;
 mod osd;

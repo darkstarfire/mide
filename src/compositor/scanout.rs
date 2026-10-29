@@ -47,7 +47,7 @@ pub fn candidate(state: &State, output: &Output, mode: (i32, i32)) -> Result<Can
     if state.osd.is_some() {
         return Err("aviso de volume ou brilho à mostra".into());
     }
-    if state.dnd_icon.is_some() || state.preview.is_some() || state.snap.is_some() || !state.ghosts.is_empty() || !state.appearing.is_empty() || state.launcher_anim.is_some() {
+    if state.dnd_icon.is_some() || state.preview.is_some() || state.snap.is_some() || !state.ghosts.is_empty() || !state.appearing.is_empty() || state.launcher_anim.is_some() || state.launcher_drag.is_some() {
         return Err("arrasto, prévia ou encaixe na tela".into());
     }
     if state.fs_reveal.progress(&name, std::time::Instant::now()) > 0.0 || state.fs_reveal.shown_on(&name) {

@@ -974,20 +974,35 @@ impl Settings {
             if ui.dropdown(&tr!("Lock the screen when idle for"), &options, &mut index).changed() {
                 let n = MINUTES[index];
                 match settings_file::set("lock", "idle_minutes", (n != 5).then_some(Value::Int(n))) {
-                    Ok(()) => tracing::info!("bloqueio: após {n} min sem uso"),
+                    Ok(()) => {
+                        tracing::info!("bloqueio: após {n} min sem uso");
+                        // O compositor é quem conta o tempo sem uso: relê na hora (sem isto,
+                        // a opção só valia no próximo login).
+                        ask_compositor("reload");
+                    }
                     Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
                 }
             }
             if ui.dropdown(&tr!("Turn off the display when idle for"), &blank_options, &mut blank_index).changed() {
                 let n = BLANK[blank_index];
                 match settings_file::set("lock", "blank_minutes", (n != 10).then_some(Value::Int(n))) {
-                    Ok(()) => tracing::info!("apagar a tela após {n} min sem uso"),
+                    Ok(()) => {
+                        tracing::info!("apagar a tela após {n} min sem uso");
+                        // O compositor é quem conta o tempo sem uso: relê na hora (sem isto,
+                        // a opção só valia no próximo login).
+                        ask_compositor("reload");
+                    }
                     Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
                 }
             }
             if ui.switch_detail(&tr!("Lock when suspending"), &tr!("The password is required when waking from sleep"), &mut on_suspend).changed() {
                 match settings_file::set("lock", "on_suspend", (!on_suspend).then_some(Value::Bool(false))) {
-                    Ok(()) => tracing::info!("bloqueio ao suspender {}", if on_suspend { "ligado" } else { "desligado" }),
+                    Ok(()) => {
+                        tracing::info!("bloqueio ao suspender {}", if on_suspend { "ligado" } else { "desligado" });
+                        // O compositor é quem conta o tempo sem uso: relê na hora (sem isto,
+                        // a opção só valia no próximo login).
+                        ask_compositor("reload");
+                    }
                     Err(err) => tracing::warn!("opção do bloqueio não gravada: {err}"),
                 }
             }

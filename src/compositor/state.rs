@@ -243,6 +243,15 @@ pub struct State {
     /// O launcher terminou de esmaecer ao fechar e fica invisível até a camada sumir
     /// (sem isso, ele reaparecia inteiro por alguns quadros: uma piscada).
     pub launcher_gone: bool,
+    /// De onde a animação do launcher parte (0 fechado, 1 aberto): ao soltar os dedos
+    /// no meio do gesto, ela continua dali.
+    pub launcher_from: f32,
+    /// Launcher acompanhando os dedos (gesto de três dedos): quanto já apareceu.
+    pub launcher_drag: Option<f32>,
+    /// O gesto desistiu antes de a camada do launcher chegar: fechar quando chegar.
+    pub launcher_close_pending: bool,
+    /// Gesto de três dedos no touchpad em andamento.
+    pub swipe: Option<crate::gesture::Swipe>,
     /// Algo pode ter mudado na tela (commit de um cliente, comando, entrada): pede um
     /// quadro. Parado, sem nada mudando, o compositor não desenha.
     pub redraw: bool,
@@ -488,6 +497,10 @@ impl State {
             launcher_anim: None,
             launcher_seen: false,
             launcher_gone: false,
+            launcher_from: 0.0,
+            launcher_drag: None,
+            launcher_close_pending: false,
+            swipe: None,
             redraw: true,
             waker: None,
             outputs_info: Vec::new(),
@@ -720,7 +733,12 @@ impl CompositorHandler for State {
             if has_buffer {
                 self.launcher_seen = true;
                 self.launcher_gone = false;
-                if self.config.effects.animations {
+                if std::mem::take(&mut self.launcher_close_pending) {
+                    // O gesto desistiu antes de a camada chegar.
+                    self.launcher_gone = true;
+                    crate::gesture::close_launcher_layer(self);
+                } else if self.config.effects.animations && self.launcher_drag.is_none() {
+                    self.launcher_from = 0.0;
                     self.launcher_anim = Some((Instant::now(), true));
                 }
             }
@@ -1250,6 +1268,8 @@ impl WlrLayerShellHandler for State {
                 self.launcher_seen = false;
                 self.launcher_anim = None;
                 self.launcher_gone = false;
+                self.launcher_drag = None;
+                self.launcher_close_pending = false;
             }
             if let Some(layer) = layer {
                 map.unmap_layer(&layer);
@@ -1471,6 +1491,7 @@ impl State {
                 }
                 tracing::info!("launcher: fechar");
                 if self.config.effects.animations {
+                    self.launcher_from = 1.0;
                     self.launcher_anim = Some((Instant::now(), false));
                 } else {
                     layer.layer_surface().send_close();
@@ -1519,14 +1540,20 @@ impl State {
     /// Opacidade e zoom do launcher agora (animação de abrir ou fechar).
     pub fn launcher_look(&self) -> (f32, f64) {
         let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+        // Acompanhando os dedos (gesto de três dedos): como a abertura, no ponto deles.
+        if let Some(p) = self.launcher_drag {
+            return (p, 1.06 - 0.06 * p as f64);
+        }
+        // As animações partem de `launcher_from` (o gesto pode soltar no meio).
         match self.launcher_anim {
             Some((start, true)) => {
-                let k = ease(start.elapsed().as_secs_f32() / LAUNCHER_OPEN.as_secs_f32());
+                let from = self.launcher_from;
+                let k = from + (1.0 - from) * ease(start.elapsed().as_secs_f32() / LAUNCHER_OPEN.as_secs_f32());
                 (k, 1.06 - 0.06 * k as f64)
             }
             Some((start, false)) => {
                 let k = ease(start.elapsed().as_secs_f32() / LAUNCHER_CLOSE.as_secs_f32());
-                (1.0 - k, 1.0 + 0.04 * k as f64)
+                (self.launcher_from * (1.0 - k), 1.0 + 0.04 * k as f64)
             }
             None if self.launcher_gone => (0.0, 1.04),
             None => (1.0, 1.0),

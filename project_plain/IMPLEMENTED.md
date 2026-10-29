@@ -2167,3 +2167,14 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - O painel das prévias (desenhado pelo compositor) tinha o fundo claro fixo; no tema escuro o título vinha em letra clara e quase sumia. Agora o painel, o contorno, a barra em miniatura e o destaque da prévia sob o ponteiro seguem o tema, com as cores dos menus do compositor (grafite no escuro; o vidro branco do destaque vira um véu leve no escuro).
 - Espiar (pedido do usuário): com o ponteiro parado 400 ms numa prévia da dock, a janela dela é desenhada por cima das outras, para mostrar qual é; o foco e a ordem das janelas não mudam e, ao sair da prévia, tudo volta como estava (o clique continua escolhendo a janela). Não vale no alternador (Alt+Tab), sobre o × e para janelas minimizadas.
 - Testes: duas verificações novas na seção `08-dock` (painel grafite no escuro; a janela de trás por cima depois dos 400 ms, e não antes).
+
+## Gestos de três dedos e teclas de brilho (v0.10.28, 2026-10-29)
+
+- Gestos do touchpad (pedido do usuário), em `src/compositor/gesture.rs`, com os eventos de deslizar do libinput:
+  - três dedos para cima: o launcher entra acompanhando os dedos (aparece e encolhe até o lugar conforme eles sobem, 300 pontos para abrir inteiro); ao soltar, termina de abrir se passou de 30% do caminho, senão volta; a animação continua de onde os dedos pararam;
+  - três dedos para baixo com o launcher aberto: ele sai do mesmo jeito (fecha se desceu mais de 30%);
+  - três dedos para a esquerda/direita: passa entre a mesa (a janela comum de cima) e as janelas em tela cheia da tela sob o ponteiro, na ordem em que entraram em tela cheia, como os espaços do Mac; a janela chega de lado. Jogos ficam de fora (app_id `steam_app_*`, `gamescope*`, `*.exe` ou `.desktop` com a categoria `Game`) e, com um jogo em tela cheia em foco, os gestos de três dedos não fazem nada.
+  - Passo `swipe dx dy` / `swipe end` no roteiro dos testes; verificações nas seções `02-launcher` e `44-tela-cheia`.
+  - Limitação: sem janela comum na tela, deslizar para a "mesa" não faz nada (ainda não há espaços de verdade).
+- Teclas de brilho (bug do usuário no Acer e no Chromebook): a tecla chegava, mas o `brightnessctl` 0.5 recebia `-n 1%` com espaço; o valor do `-n` é opcional e precisa vir colado, então o `1%` virava a operação e o programa só mostrava o aparelho, sem mudar o brilho (e saía com 0). Agora `--min-value=1%`, com teste de unidade.
+- Bloqueio por tempo sem uso (bug do usuário: a tela bloqueava e apagava com "Nunca" escolhido): Configurações → Bloqueio de tela gravava `[lock]` no arquivo, mas não pedia ao compositor para reler (`reload`), e a escolha só valia no próximo login; o compositor seguia com o padrão (bloquear em 5 min, apagar em 10). Agora as três opções do bloqueio pedem o `reload` na hora.

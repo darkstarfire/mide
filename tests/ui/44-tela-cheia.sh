@@ -96,6 +96,12 @@ if [ -x "$JANELA" ]; then
         echo "FALHA modo de jogo: notificação só na central, sem banner nem som"; FAIL=$((FAIL + 1))
     fi
     rm -f "$HIST"
+    # Três dedos para os lados: da tela cheia para a mesa (a janela comum vem para
+    # cima) e de volta; a lista vai do fundo para o topo.
+    LADO="400 combo ctrl+super+f; 470 swipe 200 0; 472 swipe end"
+    check_last "três dedos para a direita: da tela cheia para a mesa" 'janela "Terminal"' "$LADO; 540 list" "$TERMINAL" "$JANELA cheia"
+    check_last "três dedos para a esquerda: de volta à tela cheia" 'janela "Cheia" em tela cheia' "$LADO; 540 swipe -200 0; 542 swipe end; 620 list" "$TERMINAL" "$JANELA cheia"
+    check "três dedos sem outra tela cheia: fica onde está" "gesto: já na última" "$LADO; 540 swipe -200 0; 542 swipe end; 600 swipe -200 0; 602 swipe end; 660 list" "$TERMINAL" "$JANELA cheia"
 else
     echo "FALHA tela cheia: falta o examples/mide-janela-teste (cargo build --examples)"
     FAIL=$((FAIL + 1))

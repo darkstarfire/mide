@@ -556,7 +556,14 @@ pub fn brightness_step(up: bool) {
         fake_latency();
         fake(|f| f.brightness = step5(f.brightness, up, 0.01));
     }
-    run_wait("brightnessctl", &["-c", "backlight", "-n", "1%", "set", if up { "5%+" } else { "5%-" }]);
+    run_wait("brightnessctl", &brightness_step_args(up));
+}
+
+/// Argumentos do `brightnessctl` para as teclas de brilho. O mínimo vai colado
+/// (`--min-value=1%`): o valor dele é opcional, e com `-n 1%` separado o `1%` virava
+/// a operação, e o programa só mostrava o aparelho, sem mudar nada (o bug das teclas).
+fn brightness_step_args(up: bool) -> [&'static str; 5] {
+    ["-c", "backlight", "--min-value=1%", "set", if up { "5%+" } else { "5%-" }]
 }
 
 /// Volume (0 a 1) e mudo da saída de som padrão, agora. `None` sem áudio.
@@ -721,6 +728,9 @@ mod tests {
     #[test]
     fn brilho_do_brightnessctl() {
         assert_eq!(parse_brightness("intel_backlight,backlight,750,75%,1000\n"), Some(0.75));
+        // O mínimo colado ao valor; separado, o brightnessctl ignorava a mudança.
+        assert_eq!(brightness_step_args(true), ["-c", "backlight", "--min-value=1%", "set", "5%+"]);
+        assert!(!brightness_step_args(false).contains(&"-n"));
         assert_eq!(parse_brightness(""), None);
         assert_eq!(parse_brightness("lixo"), None);
     }

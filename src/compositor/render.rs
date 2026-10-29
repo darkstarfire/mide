@@ -107,6 +107,7 @@ impl Scene {
         (state.shake.animating(std::time::Instant::now()) && !state.cursor_plane)
             || !state.animations.is_empty()
             || state.launcher_anim.is_some()
+            || state.launcher_drag.is_some()
             || self.wallpapers.values().any(|w| w.busy())
             || !state.ghosts.is_empty()
             || !state.appearing.is_empty()
@@ -263,6 +264,7 @@ impl Scene {
         // O papel de parede trocando (esmaecer) também: o vidro acompanha a transição.
         let animating = !state.animations.is_empty()
             || state.launcher_anim.is_some()
+            || state.launcher_drag.is_some()
             || wallpaper.busy()
             || !state.ghosts.is_empty()
             || !state.appearing.is_empty()

@@ -62,6 +62,7 @@ pub fn handle_event<B: InputBackend>(state: &mut State, event: InputEvent<B>, si
 /// Como `handle_event`, com várias telas: `bounds` é a caixa que contém todas (para
 /// posições absolutas). O ponteiro anda de uma tela para a outra e não sai delas.
 pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>, bounds: smithay::utils::Rectangle<i32, Logical>) {
+    use smithay::backend::input::{GestureBeginEvent, GestureEndEvent, GestureSwipeUpdateEvent};
     match event {
         InputEvent::Keyboard { event } => keyboard_key(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
@@ -91,6 +92,13 @@ pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>,
         }
         InputEvent::PointerButton { event } => pointer_button(state, event),
         InputEvent::PointerAxis { event } => pointer_axis(state, event),
+        // Gestos do touchpad (libinput): três dedos abrem o launcher e trocam de tela cheia.
+        InputEvent::GestureSwipeBegin { event } => crate::gesture::begin(state, event.fingers()),
+        InputEvent::GestureSwipeUpdate { event } => {
+            let delta = event.delta();
+            crate::gesture::update(state, delta.x, delta.y);
+        }
+        InputEvent::GestureSwipeEnd { event } => crate::gesture::end(state, event.cancelled()),
         _ => {}
     }
 }

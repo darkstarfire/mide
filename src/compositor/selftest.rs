@@ -20,6 +20,7 @@
 //! - `combo ctrl+shift+space`: atalho, passando pelos atalhos do compositor
 //! - `wheel down` / `wheel up` (ou um número de passos): roda do mouse
 //! - `mclick x y`: clique do botão do meio
+//! - `swipe dx dy`: três dedos no touchpad andando (dx, dy); `swipe end` solta os dedos
 //! - `unplug HEADLESS-N` / `plug HEADLESS-N`: finge o monitor da tela virtual N
 //!   desconectado ou conectado de novo (a tela sai depois da folga, como no DRM)
 //!
@@ -56,6 +57,8 @@ enum Step {
     MiddleClick(f64, f64),
     /// Tela virtual `HEADLESS-N` conectada (`true`) ou desconectada.
     Plug(u32, bool),
+    /// Três dedos andando no touchpad; `None` solta os dedos.
+    Swipe(Option<(f64, f64)>),
 }
 
 /// Roteiro de autoteste em andamento.
@@ -165,6 +168,8 @@ fn parse_one(part: &str) -> Option<(u32, Step)> {
                     other => other.and_then(|w| w.parse().ok())?,
                 }),
                 "mclick" => Step::MiddleClick(coord(2)?, coord(3)?),
+                "swipe" if words.get(2) == Some(&"end") => Step::Swipe(None),
+                "swipe" => Step::Swipe(Some((coord(2)?, coord(3)?))),
                 "plug" | "unplug" => {
                     let n = words.get(2)?.strip_prefix("HEADLESS-")?.parse().ok()?;
                     Step::Plug(n, words[1] == "plug")
@@ -210,6 +215,16 @@ fn run(state: &mut State, step: Step, frame: u32) {
         Step::Ctrl(on) => state.test_ctrl = on,
         Step::Key(code, pressed) => input::evdev_key(state, code, pressed, time),
         Step::Wheel(steps) => input::wheel(state, steps, time),
+        Step::Swipe(Some((dx, dy))) => {
+            if state.swipe.is_none() {
+                crate::gesture::begin(state, 3);
+            }
+            // Em pedaços, como o libinput manda.
+            for _ in 0..4 {
+                crate::gesture::update(state, dx / 4.0, dy / 4.0);
+            }
+        }
+        Step::Swipe(None) => crate::gesture::end(state, false),
         Step::MiddleClick(x, y) => {
             input::pointer_motion(state, at(x, y), time);
             input::button(state, 0x112, ButtonState::Pressed, time);

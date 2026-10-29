@@ -264,3 +264,8 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - Auditoria em `docs/testes-efeitos-visuais-2026-10-29.md`: a mola não tem recursão nem loop infinito; durante a animação, o DRM deixa de usar o plano de hardware e compõe o cursor na cena em GLES em quadros sincronizados ao vblank. Em telas internas envia clip de saída completa para evitar artefatos PSR2, enquanto o rastreador de dano do Smithay continua limitando o desenho. Hipótese principal: carga/espera no caminho GLES/DRM/driver Intel, ainda não confirmada.
 - A v0.10.22 marca `cursor_ampliado` e escala nos logs de quadros lentos e vblank atrasado. Cursor por quadro foi movido de DEBUG para TRACE para evitar gravação síncrona repetida em disco em sessões de diagnóstico. No próximo congelamento, recolher `mide-logs --all` e `journalctl -k -b -1`; comparar `fase: render`, `fase: entrada`, `vblank não chegou` e mensagens de reset/hang da GPU.
 - v0.10.23: o cursor agitado passou a crescer no plano de cursor da placa (imagens reduzidas no processador, relógio de 8 ms no DRM), sem compor a cena a cada vblank. Falta o usuário religar `shake_cursor` no Chromebook e confirmar que não congela mais.
+
+## Gestos e brilho (v0.10.28, 2026-10-29)
+
+- Três dedos no touchpad: para cima abre o launcher acompanhando os dedos, para baixo fecha, para os lados passa entre a mesa e as janelas em tela cheia (jogos de fora). Falta o usuário conferir no touchpad de verdade (só o DRM/libinput manda os gestos).
+- Teclas de brilho corrigidas (`brightnessctl --min-value=1%`); falta conferir no Acer e no Chromebook.
