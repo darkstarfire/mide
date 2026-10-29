@@ -26,6 +26,7 @@ mod screencopy;
 mod selftest;
 mod session;
 mod shake;
+mod sleep;
 mod snap;
 mod preview;
 mod presentation;
@@ -84,6 +85,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Novos clientes entram pelo socket e recebem o estado `ClientState`.
     let socket = ListeningSocketSource::with_name(socket_name())?;
     loop_handle.insert_source(socket, |client_stream, _, state| {
+        watchdog::phase("cliente novo");
         let result = state
             .display_handle
             .insert_client(client_stream, Arc::new(ClientState::default()));
@@ -96,6 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     loop_handle.insert_source(
         Generic::new(display, Interest::READ, Mode::Level),
         |_, display, state| {
+            watchdog::phase("clientes");
             // SAFETY: o display não é descartado enquanto a fonte existir.
             // Um cliente que fecha a conexão de forma abrupta não pode derrubar o
             // compositor: o erro é registrado e o loop continua.
@@ -144,10 +147,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     state.idle_lock = drm || std::env::var_os("MIDE_LOCK_IDLE").is_some();
     if drm {
         let (sender, requests) = smithay::reexports::calloop::channel::channel::<&'static str>();
+        // Canal de volta: o laço avisa a thread do logind quando a tela de bloqueio já
+        // está no monitor, e ela solta o inibidor do sono (`crate::sleep`).
+        let (release, released) = std::sync::mpsc::channel();
+        state.sleep.set_release(release);
         loop_handle.insert_source(requests, |event, _, state: &mut State| {
             if let smithay::reexports::calloop::channel::Event::Msg(reason) = event {
+                watchdog::phase("logind");
                 if reason == "acordou" {
                     tracing::info!("o computador voltou da suspensão");
+                    state.sleep.wake();
                     state.resumed = true;
                     state.activity();
                     state.redraw = true;
@@ -156,13 +165,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     return;
                 }
-                if reason == "suspender" && !state.config.lock.on_suspend {
-                    return;
+                if reason == "suspender" {
+                    tracing::info!("o computador vai suspender");
+                    state.sleep.prepare(std::time::Instant::now());
+                    // Um quadro novo em todo caso: é o vblank dele que diz que a tela de
+                    // bloqueio (ou a tela parada, sem bloqueio) chegou ao monitor.
+                    state.redraw = true;
+                    if let Some(waker) = &state.waker {
+                        waker.ping();
+                    }
+                    if !state.config.lock.on_suspend {
+                        return;
+                    }
                 }
                 lock::request(state, reason);
             }
         })?;
-        lock::watch_logind(sender);
+        lock::watch_logind(sender, released);
     }
 
     // Apps X11 dentro do mide (xwayland-satellite); encerrado junto com o mide.
@@ -193,10 +212,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     watchdog::start();
     event_loop.run(Duration::from_millis(16), &mut state, |state| {
         watchdog::beat();
+        watchdog::phase("enviando aos clientes");
         if let Err(err) = state.display_handle.flush_clients() {
             tracing::warn!("falha ao enviar eventos: {err}");
         }
+        watchdog::phase("bloqueio e tempo sem uso");
         lock::tick(state);
+        watchdog::beat();
         if state.quit_requested {
             stop.stop();
         }

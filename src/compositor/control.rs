@@ -49,6 +49,7 @@ pub fn init(loop_handle: &LoopHandle<'static, State>, socket_name: &str) -> std:
     listener.set_nonblocking(true)?;
     loop_handle
         .insert_source(Generic::new(listener, Interest::READ, Mode::Level), |_, listener, state| {
+            crate::watchdog::phase("canal de controle");
             while let Ok((stream, _)) = listener.accept() {
                 if let Err(err) = serve(stream, state) {
                     tracing::warn!("controle: falha ao responder: {err}");
@@ -64,6 +65,9 @@ pub fn init(loop_handle: &LoopHandle<'static, State>, socket_name: &str) -> std:
 fn serve(stream: UnixStream, state: &mut State) -> std::io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(200)))?;
+    // Quem pediu e não lê a resposta (programa travado ou congelado) não pode prender o
+    // laço do compositor numa escrita sem fim.
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line)?;
     let reply = handle(state, line.trim());

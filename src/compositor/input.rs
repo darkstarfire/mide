@@ -1108,6 +1108,11 @@ fn dismiss_popups(state: &mut State) {
 
 /// Dá o foco do teclado à janela e marca só ela como ativa.
 pub fn focus_window(state: &mut State, window: &Window, serial: smithay::utils::Serial) {
+    // Tela bloqueada: o teclado fica com a tela de bloqueio (uma janela que aparece por
+    // baixo dela, como um app aberto antes de suspender, não o tira).
+    if state.lock.locked {
+        return;
+    }
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
     };

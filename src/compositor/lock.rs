@@ -58,6 +58,7 @@ impl SessionLockHandler for State {
             keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
         }
         self.preview = None;
+        close_menus(self);
         confirmation.lock();
         self.wake();
     }
@@ -119,6 +120,21 @@ impl smithay::wayland::idle_inhibit::IdleInhibitHandler for State {
 }
 smithay::delegate_idle_inhibit!(State);
 
+/// Menus abertos da barra e da dock (camadas Overlay que exigem o teclado, como a
+/// confirmação de desligar do botão de ligar) fecham ao bloquear, como no macOS: não
+/// ficam esperando por baixo da tela de bloqueio nem voltam a pegar o teclado depois.
+const MENUS: [&str; 2] = ["mide-bar-menu", "mide-dock-menu"];
+
+fn close_menus(state: &State) {
+    for output in state.space.outputs() {
+        let map = smithay::desktop::layer_map_for_output(output);
+        for layer in map.layers().filter(|l| MENUS.contains(&l.namespace())) {
+            tracing::info!("bloqueio: menu '{}' fechado", layer.namespace());
+            layer.layer_surface().send_close();
+        }
+    }
+}
+
 /// Abre o programa de bloqueio (se ainda não há um mostrando a tela).
 pub fn request(state: &mut State, reason: &str) {
     if state.lock.locked && state.lock.client_alive() {
@@ -178,7 +194,15 @@ pub fn tick(state: &mut State) {
 
 /// Pedidos do logind: "Lock" da sessão (`loginctl lock-session`) e "PrepareForSleep"
 /// (bloquear antes de suspender). Numa thread; cada pedido chega pelo canal.
-pub fn watch_logind(sender: smithay::reexports::calloop::channel::Sender<&'static str>) {
+///
+/// Para o sono, a thread segura um inibidor "delay" do logind (como o GNOME e o KDE):
+/// no `PrepareForSleep(true)` avisa o laço e só solta o inibidor quando o laço manda
+/// `released` (a tela de bloqueio já está no monitor) ou depois de
+/// `sleep::RELEASE_MAX`, mesmo com o laço parado. Na volta, pega outro.
+pub fn watch_logind(
+    sender: smithay::reexports::calloop::channel::Sender<&'static str>,
+    released: std::sync::mpsc::Receiver<()>,
+) {
     std::thread::Builder::new()
         .name("logind".into())
         .spawn(move || {
@@ -198,12 +222,49 @@ pub fn watch_logind(sender: smithay::reexports::calloop::channel::Sender<&'stati
                 let Ok(signals) = sleep_proxy.receive_signal("PrepareForSleep") else {
                     return;
                 };
+                let inhibit = || -> Option<zbus::zvariant::OwnedFd> {
+                    match sleep_proxy.call::<_, _, zbus::zvariant::OwnedFd>(
+                        "Inhibit",
+                        &("sleep", "mide", "Lock the screen before suspending", "delay"),
+                    ) {
+                        Ok(fd) => Some(fd),
+                        Err(err) => {
+                            tracing::warn!("logind: sem inibidor do sono ({err}); a suspensão não espera a tela de bloqueio");
+                            None
+                        }
+                    }
+                };
+                // Enquanto o fd está aberto, o logind espera o mide antes de suspender
+                // (até o `InhibitDelayMaxSec` dele, 5 s por padrão).
+                let mut inhibitor = inhibit();
                 // `true`: vai suspender (bloqueia antes); `false`: acordou (as telas
                 // refazem o estado: uma troca de quadro em andamento pode ter se perdido).
                 for signal in signals {
                     let going = signal.body().deserialize::<bool>().unwrap_or(false);
-                    if sleep.send(if going { "suspender" } else { "acordou" }).is_err() {
-                        break;
+                    if going {
+                        // Respostas velhas (de um pedido que já passou do limite) não valem.
+                        while released.try_recv().is_ok() {}
+                        if sleep.send("suspender").is_err() {
+                            break;
+                        }
+                        if let Some(fd) = inhibitor.take() {
+                            let started = std::time::Instant::now();
+                            let answered = released.recv_timeout(crate::sleep::RELEASE_MAX).is_ok();
+                            drop(fd);
+                            let ms = started.elapsed().as_millis();
+                            if answered {
+                                tracing::info!("logind: inibidor do sono solto ({ms} ms depois do aviso)");
+                            } else {
+                                tracing::warn!("logind: inibidor do sono solto sem resposta do laço ({ms} ms)");
+                            }
+                        }
+                    } else {
+                        if inhibitor.is_none() {
+                            inhibitor = inhibit();
+                        }
+                        if sleep.send("acordou").is_err() {
+                            break;
+                        }
                     }
                 }
             });

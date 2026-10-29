@@ -80,6 +80,11 @@ struct Head {
     /// ligada (sem desenhar) pela folga de `outputs::UNPLUG_GRACE`, porque monitores
     /// derrubam o "conectado" por um instante ao acordar do DPMS.
     missing: Option<Instant>,
+    /// Pedido de suspensão (`State::sleep`) cujo quadro com a tela de bloqueio foi
+    /// entregue e espera o vblank (0: o quadro em voo não tem a tela de bloqueio).
+    lock_queued: u64,
+    /// Pedido de suspensão cujo quadro com a tela de bloqueio já está na tela.
+    lock_shown: u64,
 }
 
 /// Cursor de hardware de uma tela (comandos de cursor do DRM): a imagem vai uma vez
@@ -182,6 +187,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let gpu = gpu.clone();
         loop_handle.insert_source(drm_notifier, move |event, meta, state| match event {
             DrmEvent::VBlank(crtc) => {
+                crate::watchdog::phase("vblank");
                 let mut gpu = gpu.borrow_mut();
                 if let Some(head) = gpu.heads.iter_mut().find(|h| h.crtc == crtc) {
                     match head.surface.frame_submitted() {
@@ -191,15 +197,19 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
                             let (time, hw_clock) = crate::presentation::vblank_time(meta.as_ref());
                             let seq = meta.as_ref().map_or(0, |m| u64::from(m.sequence));
                             crate::presentation::present_vblank(feedback, &head.output, time, hw_clock, seq);
+                            head.lock_shown = head.lock_queued;
                         }
-                        Ok(None) => {}
-                        Err(err) => tracing::warn!("vblank: {err}"),
+                        // Vblank de um quadro que o mide já tinha dado por perdido (a
+                        // tela foi recomeçada): só registra.
+                        Ok(None) => tracing::debug!("tela {}: vblank sem quadro esperando", head.output.name()),
+                        Err(err) => tracing::warn!("tela {}: vblank: {err}", head.output.name()),
                     }
                     head.pending = false;
                 }
                 if state.redraw || gpu.scene.moving(state) {
                     render(&mut gpu, state);
                 }
+                check_sleep(&mut gpu, state);
             }
             DrmEvent::Error(err) => tracing::warn!("erro do DRM: {err}"),
         })?;
@@ -210,10 +220,12 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let (ping, source) = smithay::reexports::calloop::ping::make_ping()?;
         let gpu = gpu.clone();
         loop_handle.insert_source(source, move |_, _, state: &mut State| {
-            if state.redraw {
-                if let Ok(mut gpu) = gpu.try_borrow_mut() {
+            crate::watchdog::phase("desenho pedido");
+            if let Ok(mut gpu) = gpu.try_borrow_mut() {
+                if state.redraw {
                     render(&mut gpu, state);
                 }
+                check_sleep(&mut gpu, state);
             }
         })?;
         state.waker = Some(ping);
@@ -230,9 +242,11 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let gpu = gpu.clone();
         let mut slept = suspended_time();
         loop_handle.insert_source(Timer::from_duration(TICK), move |_, _, state: &mut State| {
+            crate::watchdog::phase("relógio das telas");
             let now_slept = suspended_time();
-            if now_slept.saturating_sub(slept) > Duration::from_secs(2) {
+            if resumed_by_clock(slept, now_slept) {
                 tracing::info!("volta da suspensão percebida pelo relógio ({:.0} s suspenso)", (now_slept - slept).as_secs_f32());
+                state.sleep.wake();
                 state.resumed = true;
                 state.activity();
                 state.redraw = true;
@@ -241,21 +255,21 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             let Ok(mut gpu) = gpu.try_borrow_mut() else {
                 return TimeoutAction::ToDuration(TICK);
             };
-            if gpu.drm.is_active() && !gpu.blanked {
-                for head in gpu.heads.iter_mut().filter(|h| h.pending && h.queued_at.elapsed() > Duration::from_secs(1)) {
-                    tracing::warn!("tela {}: o vblank do último quadro não chegou em 1 s; recomeçando a tela", head.output.name());
-                    if let Err(err) = head.surface.surface().reset_state() {
-                        tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
-                    }
-                    head.surface.reset_buffers();
-                    head.pending = false;
-                    head.cursor = HwCursor::default();
+            if gpu.drm.is_active() && !gpu.blanked && state.sleep.frames_allowed() {
+                for head in gpu.heads.iter_mut().filter(|h| h.pending && h.queued_at.elapsed() > VBLANK_LOST) {
+                    tracing::warn!(
+                        "tela {}: vblank não chegou ({:.1} s depois de entregar o quadro); recomeçando a tela",
+                        head.output.name(),
+                        head.queued_at.elapsed().as_secs_f32()
+                    );
+                    restart_head(head);
                     state.redraw = true;
                 }
             }
             if state.redraw {
                 render(&mut gpu, state);
             }
+            check_sleep(&mut gpu, state);
             TimeoutAction::ToDuration(TICK)
         })?;
     }
@@ -278,6 +292,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             let gpu = gpu.clone();
             loop_handle.insert_source(udev, move |event, _, state| {
                 if let UdevEvent::Changed { .. } = event {
+                    crate::watchdog::phase("udev (telas)");
                     tracing::info!("telas mudaram (cabo conectado ou desconectado)");
                     let mut gpu = gpu.borrow_mut();
                     refresh_heads(&mut gpu, state);
@@ -307,6 +322,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     let input_devices = devices.clone();
     let input_gpu = gpu.clone();
     loop_handle.insert_source(LibinputInputBackend::new(libinput.clone()), move |event, _, state| {
+        crate::watchdog::phase("entrada");
         if let InputEvent::DeviceAdded { mut device } = event {
             apply_input_config(&mut device, &state.config.input);
             tracing::info!("dispositivo de entrada: {}", device.name());
@@ -338,7 +354,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             || state.screencopy.wants_cursor();
         if only_cursor_moved(motion, before.0 || state.redraw, follows_pointer, before.1 == cursor_key(state)) {
             let mut gpu = input_gpu.borrow_mut();
-            if !gpu.blanked && move_hw_cursors(&mut gpu, state) {
+            if !gpu.blanked && state.sleep.frames_allowed() && move_hw_cursors(&mut gpu, state) {
                 return;
             }
         }
@@ -351,11 +367,13 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let mut libinput = libinput.clone();
         loop_handle.insert_source(notifier, move |event, _, state| match event {
             SessionEvent::PauseSession => {
+                crate::watchdog::phase("sessão pausada");
                 tracing::info!("sessão pausada (outro console)");
                 libinput.suspend();
                 gpu.borrow_mut().drm.pause();
             }
             SessionEvent::ActivateSession => {
+                crate::watchdog::phase("sessão de volta");
                 tracing::info!("sessão de volta");
                 if libinput.resume().is_err() {
                     tracing::warn!("libinput não voltou");
@@ -647,7 +665,7 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
     let damage_tracker = OutputDamageTracker::from_output(&output);
     // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
     let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
-    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None })
+    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None, lock_queued: 0, lock_shown: 0 })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).
@@ -892,15 +910,76 @@ fn suspended_time() -> Duration {
 /// e cursor de novo.
 fn reset_heads(gpu: &mut Gpu) {
     for head in gpu.heads.iter_mut() {
-        head.pending = false;
-        // O estado do CRTC mudou por fora do Smithay: sem reavaliar, em alguns drivers
-        // o quadro falha e a tela fica preta.
-        if let Err(err) = head.surface.surface().reset_state() {
-            tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
+        restart_head(head);
+    }
+}
+
+/// Espera máxima pelo vblank de um quadro entregue antes de dá-lo por perdido (a 60 Hz
+/// são 16 ms; um segundo inteiro só acontece quando o aviso do kernel não vem mais).
+const VBLANK_LOST: Duration = Duration::from_secs(1);
+
+/// Recomeça uma tela: o quadro em voo é dado por apresentado, o estado do CRTC é
+/// reavaliado e os buffers e o cursor vão de novo.
+///
+/// Dar o quadro em voo por apresentado é o essencial: o `GbmBufferedSurface` do Smithay
+/// guarda esse quadro até o `frame_submitted` e, enquanto ele existe, `queue_buffer` só
+/// enfileira o próximo, sem mandá-lo à placa (e devolve `Ok`). Sem isso, depois de um
+/// vblank perdido a tela nunca mais trocaria de quadro, mesmo "recomeçada".
+fn restart_head(head: &mut Head) {
+    if head.pending {
+        match head.surface.frame_submitted() {
+            Ok(Some(_)) => tracing::info!("tela {}: quadro em voo dado por apresentado", head.output.name()),
+            Ok(None) => {}
+            Err(err) => tracing::warn!("tela {}: quadro na fila não foi entregue: {err}", head.output.name()),
         }
-        head.surface.reset_buffers();
-        // O monitor religado pode ter perdido o cursor: manda de novo.
-        head.cursor = HwCursor::default();
+    }
+    head.pending = false;
+    // O estado do CRTC mudou por fora do Smithay: sem reavaliar, em alguns drivers
+    // o quadro falha e a tela fica preta.
+    if let Err(err) = head.surface.surface().reset_state() {
+        tracing::warn!("monitor {}: estado não reavaliado: {err}", head.output.name());
+    }
+    head.surface.reset_buffers();
+    // O monitor religado pode ter perdido o cursor: manda de novo.
+    head.cursor = HwCursor::default();
+}
+
+/// O tempo suspenso (BOOTTIME − MONOTONIC) cresceu mais de 2 s desde a última
+/// conferência: o computador dormiu e voltou.
+fn resumed_by_clock(before: Duration, now: Duration) -> bool {
+    now.saturating_sub(before) > Duration::from_secs(2)
+}
+
+/// Tela de bloqueio desta saída já tem imagem (o programa de bloqueio desenhou).
+fn lock_drawn(state: &State, output: &Output) -> bool {
+    state.lock.locked
+        && state.lock.surface_for(output).is_some_and(|s| {
+            smithay::backend::renderer::utils::with_renderer_surface_state(s.wl_surface(), |r| r.buffer().is_some()).unwrap_or(false)
+        })
+}
+
+/// Suspensão em andamento (`crate::sleep`): confere se a tela de bloqueio já está em
+/// todos os monitores e, se estiver (ou o tempo acabou), libera o sistema para dormir;
+/// dormindo há tempo demais sem aviso de volta, as telas voltam.
+fn check_sleep(gpu: &mut Gpu, state: &mut State) {
+    if state.sleep.phase() == crate::sleep::Phase::Awake {
+        return;
+    }
+    let generation = state.sleep.generation();
+    let heads = gpu.heads.iter().filter(|h| h.missing.is_none());
+    let flips_pending = heads.clone().any(|h| h.pending);
+    let lock_presented = heads.clone().all(|h| h.lock_shown == generation);
+    let ready = crate::sleep::ready(
+        state.config.lock.on_suspend,
+        state.lock.locked && state.space.outputs().all(|o| lock_drawn(state, o)),
+        gpu.blanked || !gpu.drm.is_active(),
+        flips_pending,
+        lock_presented,
+    );
+    if crate::sleep::Change::Expired == state.sleep.poll(Instant::now(), ready) {
+        state.resumed = true;
+        state.redraw = true;
+        render(gpu, state);
     }
 }
 
@@ -908,6 +987,12 @@ fn reset_heads(gpu: &mut Gpu) {
 /// próximo vblank dela).
 fn render(gpu: &mut Gpu, state: &mut State) {
     if !gpu.drm.is_active() {
+        return;
+    }
+    // Suspendendo, com a tela de bloqueio já no monitor: nada vai à placa até a volta
+    // (o pedido de quadro fica guardado para ela).
+    if !state.sleep.frames_allowed() {
+        state.render_stalled = false;
         return;
     }
     // Quadro demorado atrasa o mouse (o laço não lê a entrada enquanto desenha): fica
@@ -945,6 +1030,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         // Apagada: nada a desenhar. O pedido é atendido aqui (senão o próximo `wake`,
         // vendo um quadro já pedido, não avisaria, e a tela não acenderia mais).
         state.redraw = false;
+        state.render_stalled = false;
         return;
     }
     let wanted = state.redraw;
@@ -972,6 +1058,9 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         } else {
             !hw_cursor(drm, gbm, *cursor_size, head, scene, state)
         };
+        // Suspendendo: este quadro conta como "tela de bloqueio entregue" se ela já
+        // tem imagem (o vblank dele libera a suspensão).
+        let lock_frame = if state.sleep.preparing() && lock_drawn(state, &head.output) { state.sleep.generation() } else { 0 };
         let Head { surface, output, damage_tracker, internal, .. } = head;
         let internal = *internal;
         let result = (|| -> Result<(), Box<dyn Error>> {
@@ -1002,9 +1091,16 @@ fn render(gpu: &mut Gpu, state: &mut State) {
             Ok(()) => {
                 head.pending = true;
                 head.queued_at = Instant::now();
+                head.lock_queued = lock_frame;
             }
             Err(err) => {
-                tracing::warn!("falha ao desenhar a tela {}: {err}", head.output.name());
+                // Com a nova tentativa a cada evento, o aviso sai no máximo a cada 5 s.
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static LAST: AtomicU64 = AtomicU64::new(0);
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                if now.saturating_sub(LAST.swap(now, Ordering::Relaxed)) >= 5 {
+                    tracing::warn!("falha ao entregar o quadro da tela {} à placa (tentando de novo): {err}", head.output.name());
+                }
                 again = true;
             }
         }
@@ -1016,6 +1112,12 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     if again || gpu.scene.moving(state) {
         state.redraw = true;
     }
+    // Quadro pedido e nenhuma tela esperando vblank (a entrega falhou): nenhum vblank
+    // vai chamar o desenho de novo. O próximo `wake` (cliente, entrada) avisa mesmo com o
+    // pedido já feito, e o relógio das telas tenta a cada meio segundo. Antes disso, a
+    // tela ficava parada até algo de fora (a volta da suspensão) chamar o desenho.
+    let waiting = gpu.heads.iter().any(|h| h.pending && h.missing.is_none());
+    state.render_stalled = state.redraw && !waiting;
 }
 
 /// Avisa no log, ao sair de `render`, se o quadro passou de 12 ms.
@@ -1068,7 +1170,21 @@ fn apply_input_config(device: &mut smithay::reexports::input::Device, input: &cr
 
 #[cfg(test)]
 mod tests {
-    use super::only_cursor_moved;
+    use super::{only_cursor_moved, resumed_by_clock};
+    use std::time::Duration;
+
+    #[test]
+    fn volta_da_suspensao_pelo_relogio() {
+        let s = Duration::from_secs;
+        // Tempo suspenso parado ou com ruído: não dormiu.
+        assert!(!resumed_by_clock(s(100), s(100)));
+        assert!(!resumed_by_clock(s(100), s(102)));
+        // Cresceu mais de 2 s entre duas conferências: dormiu e voltou.
+        assert!(resumed_by_clock(s(100), Duration::from_millis(102_001)));
+        assert!(resumed_by_clock(s(0), s(3600)));
+        // Relógio que "volta" (não acontece, mas não pode disparar).
+        assert!(!resumed_by_clock(s(100), s(50)));
+    }
 
     #[test]
     fn arrasto_com_icone_pede_quadro_a_cada_movimento() {

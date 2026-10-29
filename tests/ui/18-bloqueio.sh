@@ -15,6 +15,10 @@ MIDE_LOCK_TEST_PASSWORD=teste MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_
 # tela bloqueada, não abre nada por cima dela.
 check "botão de ligar pergunta antes de desligar" 'camada "mide-bar-menu"' "400 key power; 460 list"
 MIDE_LOCK_TEST_PASSWORD=teste SCENARIO_WAIT=16 check_count "botão de ligar com a tela bloqueada não abre a confirmação" 'camada "mide-bar-menu"' 0 "400 combo super+l; 600 key power; 680 list"
+# Confirmação de desligar aberta e a tela bloqueada (como antes de suspender): o menu
+# fecha e o teclado é só da tela de bloqueio (a senha chega e desbloqueia).
+MIDE_LOCK_TEST_PASSWORD=teste SCENARIO_WAIT=16 check_count "bloquear fecha a confirmação do botão de ligar" 'camada "mide-bar-menu"' 0 "400 key power; 470 combo super+l; 700 list"
+MIDE_LOCK_TEST_PASSWORD=teste SCENARIO_WAIT=16 check "senha chega à tela de bloqueio com a confirmação aberta antes" "autoteste: tela livre, desbloqueios: 1" "400 key power; 470 combo super+l; 680 type teste; 682 key enter; 820 list"
 # Tempo sem uso (contado em segundos nos testes): apaga e acende ao mexer.
 IDLECFG="$(mktemp -d)"
 mkdir -p "$IDLECFG/mide"

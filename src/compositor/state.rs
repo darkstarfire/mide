@@ -308,6 +308,13 @@ pub struct State {
     pub idle_suspended: bool,
     /// O computador voltou da suspensão: as telas refazem o estado no próximo quadro.
     pub resumed: bool,
+    /// Suspensão em andamento (`crate::sleep`): sem quadros novos para a placa entre a
+    /// tela de bloqueio entregue e a volta.
+    pub sleep: crate::sleep::Sleep,
+    /// O último desenho terminou com um quadro pedido e nenhuma tela esperando o vblank
+    /// (a entrega à placa falhou): sem vblank, ninguém desenharia de novo, então o
+    /// próximo `wake` avisa mesmo com `redraw` já ligado.
+    pub render_stalled: bool,
     /// Pedido para a barra (lido por ela com `bar_request`), como a confirmação de
     /// desligar do botão de ligar.
     pub bar_request: Option<&'static str>,
@@ -498,6 +505,8 @@ impl State {
             blanked: false,
             idle_suspended: false,
             resumed: false,
+            sleep: Default::default(),
+            render_stalled: false,
             bar_request: None,
             screencopy: Default::default(),
             dmabuf: Default::default(),
@@ -572,6 +581,11 @@ impl State {
     /// camadas que exigem o teclado, no commit (antes disso o cliente ainda não está
     /// pronto para receber teclas).
     pub fn focus_layer_if_allowed(&mut self, surface: &WlSurface) {
+        // Tela bloqueada: o teclado é só da tela de bloqueio (uma camada que exige o
+        // teclado, como um menu aberto antes do bloqueio, não o tira dela num commit).
+        if self.lock.locked {
+            return;
+        }
         let Some(layer) = self.layer_for(surface) else {
             return;
         };
@@ -1534,7 +1548,7 @@ impl State {
 
     /// Algo mudou na tela: pede um quadro ao anfitrião já.
     pub fn wake(&mut self) {
-        if !self.redraw {
+        if !self.redraw || self.render_stalled {
             self.redraw = true;
             if let Some(waker) = &self.waker {
                 waker.ping();
