@@ -2121,3 +2121,9 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - A barra superior deixa de mostrar o controle quando o último player MPRIS está parado ou quando não existe uma sessão ativa. Mantém o painel para reprodução e pausa, permitindo retomar a música.
 - Testes: teste unitário confirma a notificação após fechar a gravação do arquivo; teste da barra cobre Playing, Paused e Stopped. Compilação e testes específicos registrados no commit.
 - Investigação de congelamento: o usuário relata que o Chromebook não congelou desde que desativou o efeito de crescer o ponteiro ao agitá-lo. Isso reforça uma associação temporal, mas ainda não prova causalidade nem identifica falha de driver; a validação precisa continuar no Chromebook.
+
+## Auditoria do cursor agitado e diagnóstico de quadros (v0.10.22)
+
+- O usuário relatou também congelamentos no computador de um colega quando o efeito está ligado. A análise do fluxo identificou que, durante o crescimento, o cursor sai do plano de hardware e passa a ser composto pela cena GLES; a animação solicita quadros até a mola terminar. Essa é uma via plausível de pressão no driver Intel/DRM em telas 2K, mas o relato não veio com logs e ainda não identifica a causa.
+- A mola não apresenta recursão, sincronização entre threads ou estado sem limite. O compositor já avisa quadros acima de 12 ms e vblank perdido; esses avisos agora registram se o cursor estava ampliado e sua escala. O log detalhado por quadro passou a TRACE, evitando gravação síncrona repetida em DEBUG. O cenário `14-vidro` continua lendo o detalhe usando TRACE.
+- Testes: os seis testes unitários do efeito passaram; `cargo check --offline --bin mide` passou; `bash -n tests/ui/14-vidro.sh` e `git diff --check` passaram. A verificação gráfica no hardware do colega/Chromebook continua necessária.

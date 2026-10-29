@@ -107,7 +107,9 @@ impl Cursors {
             // `src` é a imagem inteira: sem ele, o Smithay usa o `size` como recorte da
             // imagem (o cursor aparecia cortado e "trocando de imagem" em vez de escalar).
             let src = Rectangle::<f64, Logical>::from_size((image.size.0 as f64, image.size.1 as f64).into());
-            tracing::debug!("cursor agitado: escala {grow:.3} imagem {} tamanho {}x{} canto {:.2},{:.2}", image.nominal, size.w, size.h, location.x, location.y);
+            // Este caminho roda em todo quadro da animação. TRACE evita escrita de
+            // disco por quadro quando o usuário habilita DEBUG para diagnosticar.
+            tracing::trace!("cursor agitado: escala {grow:.3} imagem {} tamanho {}x{} canto {:.2},{:.2}", image.nominal, size.w, size.h, location.x, location.y);
             return match MemoryRenderBufferRenderElement::from_buffer(renderer, location, &image.buffer, None, Some(src), Some(size), Kind::Cursor) {
                 Ok(element) => vec![MideRenderElement::Title(element)],
                 Err(err) => {

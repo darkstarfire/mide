@@ -258,9 +258,10 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             if gpu.drm.is_active() && !gpu.blanked && state.sleep.frames_allowed() {
                 for head in gpu.heads.iter_mut().filter(|h| h.pending && h.queued_at.elapsed() > VBLANK_LOST) {
                     tracing::warn!(
-                        "tela {}: vblank não chegou ({:.1} s depois de entregar o quadro); recomeçando a tela",
-                        head.output.name(),
-                        head.queued_at.elapsed().as_secs_f32()
+                        tela = %head.output.name(),
+                        segundos = head.queued_at.elapsed().as_secs_f32(),
+                        cursor_ampliado = state.shake.scale(Instant::now()) > 1.001,
+                        "vblank não chegou depois de entregar o quadro; recomeçando a tela"
                     );
                     restart_head(head);
                     state.redraw = true;
@@ -998,7 +999,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     // Quadro demorado atrasa o mouse (o laço não lê a entrada enquanto desenha): fica
     // registrado, no máximo uma vez a cada 5 s, para achar a causa.
     let started = std::time::Instant::now();
-    let _slow = SlowFrame(started);
+    let _slow = SlowFrame { started, shake_scale: state.shake.scale(std::time::Instant::now()) };
     crate::watchdog::phase("render");
     // Tela apagada (tempo sem uso): desliga os monitores e não desenha; ao acender,
     // liga de novo e recomeça os quadros (o que esperava o vblank não vai chegar).
@@ -1121,17 +1122,25 @@ fn render(gpu: &mut Gpu, state: &mut State) {
 }
 
 /// Avisa no log, ao sair de `render`, se o quadro passou de 12 ms.
-struct SlowFrame(std::time::Instant);
+struct SlowFrame {
+    started: std::time::Instant,
+    shake_scale: f32,
+}
 
 impl Drop for SlowFrame {
     fn drop(&mut self) {
         use std::sync::atomic::{AtomicU64, Ordering};
         static LAST: AtomicU64 = AtomicU64::new(0);
-        let ms = self.0.elapsed().as_secs_f32() * 1000.0;
+        let ms = self.started.elapsed().as_secs_f32() * 1000.0;
         if ms > 12.0 {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             if now.saturating_sub(LAST.swap(now, Ordering::Relaxed)) >= 5 {
-                tracing::warn!("quadro demorado: {ms:.1} ms (o ponteiro pode ter travado)");
+                tracing::warn!(
+                    milissegundos = ms,
+                    cursor_ampliado = self.shake_scale > 1.001,
+                    escala_cursor = self.shake_scale,
+                    "quadro demorado (o ponteiro pode ter travado)"
+                );
             }
         }
     }

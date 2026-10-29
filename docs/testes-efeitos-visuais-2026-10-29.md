@@ -43,3 +43,15 @@ O código grava a mudança em Configurações (`efeito shake_cursor: ligado/desl
 ## Conclusões
 
 Não foi encontrado erro na leitura independente dos 11 parâmetros, nos testes de renderização geométrica existentes nem na lógica unitária de cursor agitado. O Chromebook teve uma ocorrência associada ao primeiro acionamento de `shake_cursor`, seguida por mais de 15 minutos de uso depois de reativá-lo, sem repetição e sem carregador. É uma pista concreta, ainda inconclusiva. A bateria gráfica nesta máquina não terminou; comparações futuras devem capturar logs e variar uma condição por vez no Chromebook.
+
+## Auditoria do caminho de renderização (2026-10-29)
+
+Relato novo: um colega também observa congelamentos quando `shake_cursor` está ligado. É uma segunda máquina/usuário associando o problema ao recurso e aumenta a prioridade de investigar; ainda não temos os logs daquela ocorrência nem uma reprodução controlada.
+
+O fluxo no código é: cada evento de movimento chama `Shake::feed`; ao contar os vaivéns, `Shake::active` marca `state.redraw`; enquanto a mola cresce, segura e retorna, `Scene::moving` pede outro quadro até a animação terminar. No DRM, quando a escala passa de 1,001, `hw_cursor` oculta o plano de cursor da placa e `Plan::Surface` faz a cena compor o cursor ampliado em GLES. Assim, o cursor sai do caminho de overlay que normalmente se move sem redesenhar a cena e passa a exigir quadros sincronizados com o vblank. Em painéis internos (`head.internal`), o DRM envia clip da tela inteira para evitar artefatos Intel PSR2; a composição do Smithay ainda usa seu rastreador de dano, portanto isso não prova que cada pixel seja refeito pela GPU.
+
+Não encontramos recursão, lock entre threads, alocação sem limite ou sequência infinita na lógica `Shake`: a mola é calculada em forma fechada por tempo real, a janela de vaivéns é curta e o estado anima somente por um período finito. A hipótese de maior confiança é pressão/espera no caminho DRM/GLES ao trocar do cursor de hardware para composição por software, possivelmente agravada por resolução/escala ou pelo driver Intel. Não há evidência ainda para atribuir a falha à fórmula de movimento nem para afirmar um deadlock no compositor.
+
+Instrumentação v0.10.22: avisos de `quadro demorado` e `vblank não chegou` incluem `cursor_ampliado` e escala quando o efeito estava ativo. O detalhe por quadro do cursor foi rebaixado a TRACE, pois DEBUG o escrevia sincronamente no arquivo de log em cada frame e poderia, por si, aumentar a pressão no laço. O cenário `14-vidro` pede TRACE explicitamente para continuar verificando a escala e os saltos.
+
+Para fechar a causa no equipamento afetado, recolher após reiniciar: `mide-logs --all` e `journalctl -k -b -1` (ou o boot que contém o horário) e procurar `quadro demorado`, `cursor_ampliado=true`, `vblank não chegou`, `laço do compositor parado` e reset/hang de GPU Intel. Se houver `fase: render`, investigar o render/driver; `fase: entrada` aponta para o tratamento do evento; `vblank não chegou` aponta para apresentação/DRM. Sem essas linhas, a tela pode ter travado no kernel/driver antes que o processo consiga registrar o evento.
