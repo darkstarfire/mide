@@ -48,6 +48,8 @@ pub struct Preview {
     pub switcher: bool,
     /// Quando apareceu (entra esmaecendo, com "Transições suaves"); `None` sem transição.
     pub since: Option<std::time::Instant>,
+    /// Desde quando o ponteiro está na prévia `hovered` (para espiar a janela).
+    pub hover_since: Option<std::time::Instant>,
 }
 
 /// Duração da entrada das prévias e do alternador.
@@ -66,7 +68,25 @@ impl Preview {
     pub fn appearing(&self) -> bool {
         self.since.is_some_and(|t| t.elapsed() < APPEAR)
     }
+
+    /// Janela que se espia: com o ponteiro parado numa prévia da dock por `PEEK`,
+    /// ela é desenhada por cima das outras (sem mudar o foco nem a ordem), para
+    /// mostrar qual é. Ao sair da prévia, tudo volta como estava.
+    pub fn peeking(&self) -> Option<u64> {
+        if self.switcher || self.on_close || self.hover_since.is_none_or(|t| t.elapsed() < PEEK) {
+            return None;
+        }
+        self.hovered.and_then(|i| self.ids.get(i).copied())
+    }
+
+    /// Esperando dar o tempo de espiar (pede quadros até lá).
+    pub fn peek_pending(&self) -> bool {
+        !self.switcher && self.hovered.is_some() && self.hover_since.is_some_and(|t| t.elapsed() < PEEK)
+    }
 }
+
+/// Tempo com o ponteiro parado numa prévia até a janela dela aparecer por cima.
+pub const PEEK: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Uma miniatura posicionada.
 pub struct Thumb {
@@ -182,6 +202,9 @@ pub fn elements(
     let e = preview.appear();
     let lift = Point::<i32, Logical>::from((0, (8.0 * (1.0 - e)).round() as i32));
     let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * e];
+    // Segue o tema (claro/escuro), como os menus do compositor: o título já vem
+    // em letra clara no escuro e sumia no painel claro.
+    let dark = decorations::dark();
     // Desenho relativo à tela da dock.
     let panel = Rectangle::new(panel.loc - origin + lift, panel.size);
     for thumb in &mut thumbs {
@@ -240,7 +263,7 @@ pub fn elements(
                     (frame_x.round() as i32, frame_y.round() as i32).into(),
                     (shown.0.round() as i32, bar_shown.round().max(1.0) as i32).into(),
                 );
-                middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, bar, fade([0.90, 0.90, 0.91, 1.0]), 3)));
+                middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, bar, fade(if dark { [0.24, 0.24, 0.26, 1.0] } else { [0.90, 0.90, 0.91, 1.0] }), 3)));
             }
         }
         // Prévia sob o ponteiro: vidro claro, como a seleção do launcher (com o vidro
@@ -248,19 +271,21 @@ pub fn elements(
         // bordas claras das letras do título aparecerem como pontinhos brancos.
         if hovered {
             let glow = Rectangle::new(thumb.boxed.loc - Point::from((6, 6)), (THUMB_W + 12, THUMB_H + TITLE_H + 8).into());
-            let element = if state.config.effects.panel_glass {
+            // O vidro é branco (62%): no escuro, a letra clara do título sumiria nele.
+            let element = if state.config.effects.panel_glass && !dark {
                 decorations::glass_element(shaders, glow, 10)
             } else {
-                decorations::rounded_rect_element(shaders, glow, [1.0, 1.0, 1.0, 0.6], 10)
+                decorations::rounded_rect_element(shaders, glow, [1.0, 1.0, 1.0, if dark { 0.12 } else { 0.6 }], 10)
             };
             middle.push(MideRenderElement::from(element));
         }
     }
     let mut out = front;
     out.extend(middle);
-    // Painel claro e translúcido, como os menus do mide, com um contorno fino.
-    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade([0.965, 0.965, 0.972, 0.95]), 14)));
+    // Painel translúcido, como os menus do mide, com um contorno fino.
+    let fill = if dark { [44.0 / 255.0, 44.0 / 255.0, 48.0 / 255.0, 0.95] } else { [0.965, 0.965, 0.972, 0.95] };
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade(fill), 14)));
     let border = Rectangle::new(panel.loc - Point::from((1, 1)), (panel.size.w + 2, panel.size.h + 2).into());
-    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, fade([0.0, 0.0, 0.0, 0.16]), 15)));
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, fade(if dark { [1.0, 1.0, 1.0, 0.14] } else { [0.0, 0.0, 0.0, 0.16] }), 15)));
     out
 }

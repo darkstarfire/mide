@@ -604,7 +604,7 @@ fn switch_windows(state: &mut State, forward: bool) {
         None => state.config.effects.transitions.then(std::time::Instant::now),
     };
     tracing::info!("alternador: janela {} de {n}", next + 1);
-    state.preview = Some(crate::preview::Preview { ids, dock_x: 0, hovered: Some(next), on_close: false, switcher: true, since });
+    state.preview = Some(crate::preview::Preview { ids, dock_x: 0, hovered: Some(next), on_close: false, switcher: true, since, hover_since: None });
     state.wake();
 }
 
@@ -677,6 +677,9 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
                 // No alternador (Alt+Tab), o mouse só troca a escolha em cima de uma
                 // miniatura (fora delas, fica a do teclado).
                 if !p.switcher || hovered.is_some() {
+                    if p.hovered != hovered {
+                        p.hover_since = hovered.map(|_| std::time::Instant::now());
+                    }
                     p.hovered = hovered;
                     p.on_close = on_close && !p.switcher;
                 }

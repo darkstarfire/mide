@@ -45,3 +45,28 @@ if [ "$n" = 1 ]; then
 else
     echo "FALHA dica da dock: uma camada só passeando pelos ícones ($n camadas)"; FAIL=$((FAIL + 1))
 fi
+# Prévias no tema escuro: o painel fica grafite (o título vem em letra clara).
+# Espiar: com o ponteiro parado numa prévia, a janela dela aparece por cima das outras
+# (só no desenho); antes dos 400 ms, a ordem é a de sempre.
+PREV="$(mktemp -d)"
+mkdir -p "$PREV/cfg/mide"
+printf '[appearance]\ntheme = "dark"\n' > "$PREV/cfg/mide/config.toml"
+prev_pixel() { # prev_pixel quadro x y: cor do quadro tirado no tempo pedido
+    XDG_CONFIG_HOME="$PREV/cfg" SCENARIO_OUT="$PREV/$1" timeout 150 "$SCEN" "400 click 611 728; 480 move 503 590; 520 list" "$1" -- "$TERMINAL" "$TERMINAL" >/dev/null 2>&1
+    python3 -c "import sys; from PIL import Image; print('%d,%d,%d' % Image.open(sys.argv[1]).convert('RGB').getpixel((int(sys.argv[2]), int(sys.argv[3]))))" "$PREV/$1/frame.png" "$2" "$3" 2>/dev/null
+}
+PANEL="$(prev_pixel 470 611 685)"
+if echo "$PANEL" | awk -F, '{ exit !($1 < 90 && $2 < 90 && $3 < 95) }'; then
+    echo "ok    prévias no tema escuro: painel grafite"; PASS=$((PASS + 1))
+else
+    echo "FALHA prévias no tema escuro: painel grafite ($PANEL)"; FAIL=$((FAIL + 1))
+fi
+# No ponto (98,143) fica o cursor do terminal de trás quando ele está por cima.
+BEFORE="$(python3 -c "import sys; from PIL import Image; print('%d,%d,%d' % Image.open(sys.argv[1]).convert('RGB').getpixel((98, 143)))" "$PREV/470/frame.png" 2>/dev/null)"
+AFTER="$(prev_pixel 620 98 143)"
+if [ "$BEFORE" = "255,255,255" ] && echo "$AFTER" | awk -F, '{ exit !($1 < 150) }'; then
+    echo "ok    prévia sob o ponteiro: a janela dela aparece por cima"; PASS=$((PASS + 1))
+else
+    echo "FALHA prévia sob o ponteiro: a janela dela aparece por cima (antes $BEFORE, depois $AFTER)"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$PREV"

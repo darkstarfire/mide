@@ -110,7 +110,7 @@ impl Scene {
             || self.wallpapers.values().any(|w| w.busy())
             || !state.ghosts.is_empty()
             || !state.appearing.is_empty()
-            || state.preview.as_ref().is_some_and(|p| p.appearing())
+            || state.preview.as_ref().is_some_and(|p| p.appearing() || p.peek_pending())
             || self.genie.glass_since.borrow().values().any(|t| t.elapsed() < crate::genie::GLASS_FADE)
             || state.osd.as_ref().is_some_and(|o| o.moving(state.config.effects.transitions))
             // Barra revelada na tela cheia descendo ou subindo.
@@ -266,7 +266,7 @@ impl Scene {
             || wallpaper.busy()
             || !state.ghosts.is_empty()
             || !state.appearing.is_empty()
-            || state.preview.as_ref().is_some_and(|p| p.appearing());
+            || state.preview.as_ref().is_some_and(|p| p.appearing() || p.peek_pending());
         let strength = if state.config.effects.liquid_glass { 1.0 } else { 0.0 };
         let mut regions = glass;
         regions.sort_by(|a, b| b.at.cmp(&a.at));
@@ -413,7 +413,14 @@ fn window_elements(
     // `elements()` vai do fundo para o topo; aqui percorremos do topo para o fundo.
     // Modo de jogo: as janelas abaixo da janela em tela cheia ficam cobertas por ela.
     let mut past_game = false;
-    for window in state.space.elements().rev() {
+    // Espiar pela prévia da dock: a janela sob o ponteiro vem para cima só no desenho.
+    let peek = state.preview.as_ref().and_then(|p| p.peeking());
+    let mut order: Vec<&Window> = state.space.elements().rev().collect();
+    if let Some(i) = peek.and_then(|id| order.iter().position(|w| crate::state::window_id(w) == id)) {
+        let window = order.remove(i);
+        order.insert(0, window);
+    }
+    for window in order {
         if past_game {
             break;
         }

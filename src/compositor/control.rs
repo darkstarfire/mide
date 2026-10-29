@@ -370,6 +370,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
                         on_close: false,
                         switcher: false,
                         since: state.config.effects.transitions.then(std::time::Instant::now),
+                        hover_since: None,
                     });
                 }
                 None => state.preview = None,
