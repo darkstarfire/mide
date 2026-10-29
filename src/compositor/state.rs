@@ -319,6 +319,9 @@ pub struct State {
     /// (a entrega à placa falhou): sem vblank, ninguém desenharia de novo, então o
     /// próximo `wake` avisa mesmo com `redraw` já ligado.
     pub render_stalled: bool,
+    /// O cursor de todas as telas está no plano da placa (DRM): a animação do ponteiro
+    /// agitado anda sem a cena desenhar quadros. Fora do DRM, sempre `false`.
+    pub cursor_plane: bool,
     /// Pedido para a barra (lido por ela com `bar_request`), como a confirmação de
     /// desligar do botão de ligar.
     pub bar_request: Option<&'static str>,
@@ -515,6 +518,7 @@ impl State {
             resumed: false,
             sleep: Default::default(),
             render_stalled: false,
+            cursor_plane: false,
             bar_request: None,
             screencopy: Default::default(),
             dmabuf: Default::default(),

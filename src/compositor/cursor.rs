@@ -55,14 +55,24 @@ pub struct Cursors {
     /// (o maior tamanho que ele tem) e a metade dela, feita dos mesmos pixels. O desenho
     /// nunca troca durante a animação: a placa só escala uma das duas.
     hidpi: HashMap<String, Option<(Image, Image)>>,
+    /// Cursor crescido já reduzido no processador, por nome e tamanho em pixels: vai ao
+    /// plano de cursor da placa como qualquer outra imagem, sem a cena desenhar quadros.
+    grown: HashMap<(String, u32), Grown>,
     fallback: Image,
+}
+
+/// Uma etapa do cursor crescido (RGBA pré-multiplicado).
+struct Grown {
+    pixels: Vec<u8>,
+    size: (u32, u32),
+    hotspot: (i32, i32),
 }
 
 impl Cursors {
     pub fn new() -> Self {
         let name = std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".into());
         let size = std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(24);
-        let mut cursors = Self { theme: xcursor::CursorTheme::load(&name), size, images: HashMap::new(), hidpi: HashMap::new(), fallback: arrow() };
+        let mut cursors = Self { theme: xcursor::CursorTheme::load(&name), size, images: HashMap::new(), hidpi: HashMap::new(), grown: HashMap::new(), fallback: arrow() };
         // A seta grande já pronta: a primeira agitada não espera a leitura do tema.
         let _ = cursors.hidpi("default");
         cursors
@@ -72,9 +82,12 @@ impl Cursors {
     /// Cursor na tela que começa em `origin` (posição dela entre as telas).
     pub fn elements(&mut self, renderer: &mut GlesRenderer, state: &State, origin: smithay::utils::Point<i32, smithay::utils::Logical>) -> Vec<MideRenderElement> {
         let pointer = state.pointer_location.to_i32_round::<i32>() - origin;
+        let grow = state.shake.scale(std::time::Instant::now());
         // Bordas de redimensionar e outras formas do mide valem sobre o que o app pediu.
         let name = match (state.cursor, &state.cursor_status) {
             (CursorShape::Default, CursorImageStatus::Hidden) => return Vec::new(),
+            // Ponteiro agitado sobre um app com cursor próprio: cresce a seta do tema.
+            (CursorShape::Default, CursorImageStatus::Surface(_)) if grow > 1.001 => "default".to_string(),
             (CursorShape::Default, CursorImageStatus::Surface(surface)) => {
                 let hotspot = with_states(surface, |s| {
                     s.data_map
@@ -91,8 +104,8 @@ impl Cursors {
         // Ponteiro agitado: o cursor grande. Uma imagem de alta resolução do tema (e a
         // metade dela, dos mesmos pixels, para reduzir sem serrilhado) escalada pela GPU
         // a cada quadro; tamanho e ponto quente vêm sempre da imagem grande, então trocar
-        // a metade pela inteira não mexe na geometria, só na amostragem.
-        let grow = state.shake.scale(std::time::Instant::now());
+        // a metade pela inteira não mexe na geometria, só na amostragem. (No DRM este
+        // caminho só vale quando o plano da placa é pequeno demais: ver `plan`.)
         let base = self.size;
         if grow > 1.001 {
             let target = base as f32 * grow;
@@ -130,17 +143,35 @@ impl Cursors {
     }
 
     /// Qual cursor mostrar agora (o mesmo que `elements` desenharia).
+    ///
+    /// Ponteiro agitado: o cursor crescido também vai ao plano da placa, numa imagem
+    /// reduzida aqui para cada tamanho inteiro em pixels. Antes ele saía do plano e a
+    /// cena inteira era composta em GLES a cada vblank da animação, o que travava a tela
+    /// em placas Intel (Chromebook) até suspender e voltar.
     pub fn plan(&mut self, state: &State) -> Plan<'_> {
-        // Cursor crescido (ponteiro agitado): maior que o plano da placa; a cena desenha.
-        if state.shake.scale(std::time::Instant::now()) > 1.001 {
-            return Plan::Surface;
-        }
+        let grow = state.shake.scale(std::time::Instant::now());
         let name = match (state.cursor, &state.cursor_status) {
             (CursorShape::Default, CursorImageStatus::Hidden) => return Plan::Hidden,
+            (CursorShape::Default, CursorImageStatus::Surface(_)) if grow > 1.001 => "default".to_string(),
             (CursorShape::Default, CursorImageStatus::Surface(_)) => return Plan::Surface,
             (CursorShape::Default, CursorImageStatus::Named(icon)) => icon.name().to_string(),
             (shape, _) => shape_name(shape).to_string(),
         };
+        if grow > 1.001 {
+            let px = (self.size as f32 * grow).round().max(1.0) as u32;
+            let key = (name, px);
+            if !self.grown.contains_key(&key) {
+                let (_, full) = self.hidpi(&key.0);
+                let grown = scaled(full, px);
+                self.grown.insert(key.clone(), grown);
+            }
+            let image = &self.grown[&key];
+            return Plan::Image { name: format!("{}@{}", key.0, key.1), pixels: &image.pixels, size: image.size, hotspot: image.hotspot };
+        }
+        // Animação acabou: as etapas não servem mais (a próxima agitada refaz as dela).
+        if !self.grown.is_empty() {
+            self.grown.clear();
+        }
         let image = self.image(&name);
         Plan::Image { name, pixels: &image.pixels, size: image.size, hotspot: (image.hotspot.x, image.hotspot.y) }
     }
@@ -237,6 +268,47 @@ fn half(full: &Image) -> Image {
     Image { buffer, hotspot: (full.hotspot.x / 2, full.hotspot.y / 2).into(), pixels, size: (hw, hh), nominal: (full.nominal / 2).max(1) }
 }
 
+/// A imagem grande do tema com `px` pixels de tamanho nominal (o tamanho do cursor
+/// normal vezes a escala da agitada). Cada pixel de saída é a média de amostras em grade
+/// interpoladas na origem: reduz sem serrilhado e amplia suave, como a GPU fazia. O ponto
+/// quente segue a mesma proporção.
+fn scaled(full: &Image, px: u32) -> Grown {
+    let k = px as f64 / full.nominal.max(1) as f64;
+    let (sw, sh) = full.size;
+    let w = ((sw as f64 * k).round() as u32).max(1);
+    let h = ((sh as f64 * k).round() as u32).max(1);
+    // Amostras por eixo: o bastante para cobrir cada pixel de origem ao reduzir.
+    let n = (1.0 / k).ceil().clamp(1.0, 8.0) as u32;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = [0u32; 4];
+            for j in 0..n {
+                for i in 0..n {
+                    // Ponto da amostra na origem, interpolado entre os 4 vizinhos.
+                    let fx = ((x as f64 + (i as f64 + 0.5) / n as f64) / k - 0.5).clamp(0.0, (sw - 1) as f64);
+                    let fy = ((y as f64 + (j as f64 + 0.5) / n as f64) / k - 0.5).clamp(0.0, (sh - 1) as f64);
+                    let (x0, y0) = (fx as u32, fy as u32);
+                    let (x1, y1) = ((x0 + 1).min(sw - 1), (y0 + 1).min(sh - 1));
+                    let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+                    let at = |xx: u32, yy: u32, c: usize| full.pixels[((yy * sw + xx) * 4) as usize + c] as f64;
+                    for (c, total) in sum.iter_mut().enumerate() {
+                        let top = at(x0, y0, c) * (1.0 - tx) + at(x1, y0, c) * tx;
+                        let bottom = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
+                        *total += (top * (1.0 - ty) + bottom * ty).round() as u32;
+                    }
+                }
+            }
+            let d = ((y * w + x) * 4) as usize;
+            for (c, total) in sum.iter().enumerate() {
+                pixels[d + c] = ((total + n * n / 2) / (n * n)) as u8;
+            }
+        }
+    }
+    let hotspot = ((full.hotspot.x as f64 * k).round() as i32, (full.hotspot.y as f64 * k).round() as i32);
+    Grown { pixels, size: (w, h), hotspot }
+}
+
 /// Seta do próprio mide (preta com contorno branco), para quando não há tema.
 fn arrow() -> Image {
     const W: u32 = 16;
@@ -272,5 +344,17 @@ mod tests {
         assert_eq!(shape_name(CursorShape::ResizeHorizontal), "ew-resize");
         assert_eq!(names_for("default"), vec!["default", "left_ptr", "arrow"]);
         assert_eq!(names_for("wait"), vec!["wait"]);
+    }
+
+    #[test]
+    fn cursor_crescido_escala_tamanho_e_ponto_quente() {
+        let seta = arrow();
+        let grande = scaled(&seta, seta.nominal * 3);
+        assert_eq!(grande.size, (seta.size.0 * 3, seta.size.1 * 3));
+        assert_eq!(grande.hotspot, (3, 3));
+        let pequeno = scaled(&seta, seta.nominal / 2);
+        assert_eq!(pequeno.size, (seta.size.0 / 2, seta.size.1 / 2));
+        // Pixel opaco do miolo continua opaco depois de ampliar.
+        assert!(grande.pixels.chunks(4).any(|p| p[3] == 255));
     }
 }

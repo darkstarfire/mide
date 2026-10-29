@@ -647,10 +647,11 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     };
     state.pointer_location = pos;
     state.activity();
-    // Agitar o ponteiro faz o cursor crescer (o quadro precisa ser desenhado).
+    // Agitar o ponteiro faz o cursor crescer. Com o cursor no plano da placa (DRM), o
+    // backend troca a imagem dele sem quadro da cena; senão, a cena desenha.
     let enabled = state.config.effects.shake_cursor;
     state.shake.feed(pos.x, std::time::Instant::now(), enabled);
-    if state.shake.active(std::time::Instant::now()) {
+    if state.shake.active(std::time::Instant::now()) && !state.cursor_plane {
         state.redraw = true;
     }
     // Tela bloqueada: o ponteiro só vê a tela de bloqueio da tela onde está.

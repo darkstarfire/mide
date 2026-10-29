@@ -92,6 +92,9 @@ struct Head {
 #[derive(Default)]
 struct HwCursor {
     buffer: Option<smithay::reexports::gbm::BufferObject<()>>,
+    /// Segundo buffer: a imagem nova é escrita nele e só então mostrada, nunca no que a
+    /// placa está lendo (a animação do ponteiro agitado troca a imagem a cada quadro).
+    spare: Option<smithay::reexports::gbm::BufferObject<()>>,
     /// Nome da imagem enviada (`None`: escondido).
     shown: Option<String>,
     position: Option<(i32, i32)>,
@@ -322,6 +325,8 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     }
     let input_devices = devices.clone();
     let input_gpu = gpu.clone();
+    let input_loop = loop_handle.clone();
+    let shake_clock: Rc<std::cell::Cell<bool>> = Default::default();
     loop_handle.insert_source(LibinputInputBackend::new(libinput.clone()), move |event, _, state| {
         crate::watchdog::phase("entrada");
         if let InputEvent::DeviceAdded { mut device } = event {
@@ -355,10 +360,15 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
             || state.screencopy.wants_cursor();
         if only_cursor_moved(motion, before.0 || state.redraw, follows_pointer, before.1 == cursor_key(state)) {
             let mut gpu = input_gpu.borrow_mut();
-            if !gpu.blanked && state.sleep.frames_allowed() && move_hw_cursors(&mut gpu, state) {
+            let moved = !gpu.blanked && state.sleep.frames_allowed() && move_hw_cursors(&mut gpu, state);
+            state.cursor_plane = moved;
+            drop(gpu);
+            if moved {
+                start_shake_clock(&input_loop, &input_gpu, &shake_clock, state);
                 return;
             }
         }
+        start_shake_clock(&input_loop, &input_gpu, &shake_clock, state);
         state.wake();
     })?;
 
@@ -703,6 +713,47 @@ fn cursor_key(state: &State) -> String {
     format!("{:?} {:?}", state.cursor, state.cursor_status)
 }
 
+/// Intervalo do relógio do ponteiro agitado (~120 trocas de imagem por segundo no
+/// máximo; a imagem só vai à placa quando o tamanho em pixels muda).
+const SHAKE_TICK: Duration = Duration::from_millis(8);
+
+/// Anima o ponteiro agitado no plano de cursor da placa: um relógio troca a imagem do
+/// cursor enquanto a mola anda, sem a cena desenhar quadro nenhum. Antes, a animação
+/// compunha a tela inteira em GLES a cada vblank e travava a tela em placas Intel
+/// (Chromebook). Se o plano não serve (imagem grande demais, driver recusou), a cena
+/// volta a desenhar o cursor, como antes. Um relógio só por vez (`running`).
+fn start_shake_clock(handle: &LoopHandle<'_, State>, gpu: &Rc<RefCell<Gpu>>, running: &Rc<std::cell::Cell<bool>>, state: &State) {
+    use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+    if running.get() || !state.shake.animating(Instant::now()) {
+        return;
+    }
+    running.set(true);
+    let (gpu, flag) = (gpu.clone(), running.clone());
+    let inserted = handle.insert_source(Timer::from_duration(SHAKE_TICK), move |_, _, state: &mut State| {
+        crate::watchdog::phase("cursor agitado");
+        let animating = state.shake.animating(Instant::now());
+        let Ok(mut gpu) = gpu.try_borrow_mut() else {
+            return TimeoutAction::ToDuration(SHAKE_TICK);
+        };
+        // Tela apagada ou suspendendo: o próximo quadro de verdade acerta o cursor.
+        let moved = !gpu.blanked && state.sleep.frames_allowed() && move_hw_cursors(&mut gpu, state);
+        drop(gpu);
+        state.cursor_plane = moved;
+        if !moved {
+            // A cena assume (o `moving` dela segue a animação até o fim).
+            state.wake();
+        }
+        if animating && moved {
+            return TimeoutAction::ToDuration(SHAKE_TICK);
+        }
+        flag.set(false);
+        TimeoutAction::Drop
+    });
+    if inserted.is_err() {
+        running.set(false);
+    }
+}
+
 /// Move o cursor de hardware de todas as telas. Devolve se todas usam o cursor de
 /// hardware (senão, alguma precisa de um quadro novo com o cursor desenhado).
 fn move_hw_cursors(gpu: &mut Gpu, state: &State) -> bool {
@@ -781,8 +832,8 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
     }
     if head.cursor.shown.as_deref() != Some(name.as_str()) {
         let result = (|| -> std::io::Result<()> {
-            if head.cursor.buffer.is_none() {
-                head.cursor.buffer = Some(gbm.create_buffer_object::<()>(plane.0, plane.1, Fourcc::Argb8888, BufferObjectFlags::CURSOR | BufferObjectFlags::WRITE)?);
+            if head.cursor.spare.is_none() {
+                head.cursor.spare = Some(gbm.create_buffer_object::<()>(plane.0, plane.1, Fourcc::Argb8888, BufferObjectFlags::CURSOR | BufferObjectFlags::WRITE)?);
             }
             // RGBA pré-multiplicado do tema para ARGB8888 (B, G, R, A na memória), no
             // canto do plano; o resto transparente.
@@ -794,15 +845,18 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
                     data[d..d + 4].copy_from_slice(&[pixels[s + 2], pixels[s + 1], pixels[s], pixels[s + 3]]);
                 }
             }
-            let buffer = head.cursor.buffer.as_mut().ok_or_else(|| std::io::Error::other("sem buffer"))?;
+            let buffer = head.cursor.spare.as_mut().ok_or_else(|| std::io::Error::other("sem buffer"))?;
             buffer.write(&data)?;
             drm.set_cursor2(head.crtc, Some(&*buffer), hotspot)?;
+            // O mostrado vira o atual; o anterior fica livre para a próxima imagem.
+            std::mem::swap(&mut head.cursor.buffer, &mut head.cursor.spare);
             Ok(())
         })();
         if let Err(err) = result {
             tracing::warn!("tela {}: cursor de hardware recusado ({err}); usando o desenhado", head.output.name());
             head.cursor.failed = true;
             head.cursor.buffer = None;
+            head.cursor.spare = None;
             return false;
         }
         head.cursor.shown = Some(name);
@@ -1037,6 +1091,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     let wanted = state.redraw;
     state.redraw = false;
     let mut again = false;
+    let mut plane_ok = true;
     let Gpu { renderer, heads, scene, drm, gbm, cursor_size, .. } = gpu;
     for head in heads.iter_mut() {
         // Monitor sumido (na folga antes de a tela sair): nada a entregar ao conector.
@@ -1059,6 +1114,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         } else {
             !hw_cursor(drm, gbm, *cursor_size, head, scene, state)
         };
+        plane_ok &= !scene.draw_cursor;
         // Suspendendo: este quadro conta como "tela de bloqueio entregue" se ela já
         // tem imagem (o vblank dele libera a suspensão).
         let lock_frame = if state.sleep.preparing() && lock_drawn(state, &head.output) { state.sleep.generation() } else { 0 };
@@ -1109,6 +1165,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
             tracing::debug!("avisos de quadro: {err}");
         }
     }
+    state.cursor_plane = plane_ok;
     // Algo em movimento (ou uma tela que ficou para depois): o próximo vblank desenha.
     if again || gpu.scene.moving(state) {
         state.redraw = true;

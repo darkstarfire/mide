@@ -102,7 +102,9 @@ impl Scene {
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela
     /// fechando): o backend continua pedindo quadros.
     pub fn moving(&self, state: &State) -> bool {
-        state.shake.animating(std::time::Instant::now())
+        // Ponteiro agitado: só quando a cena desenha o cursor (no plano da placa, o
+        // relógio do cursor no backend DRM anima sem quadros).
+        (state.shake.animating(std::time::Instant::now()) && !state.cursor_plane)
             || !state.animations.is_empty()
             || state.launcher_anim.is_some()
             || self.wallpapers.values().any(|w| w.busy())
