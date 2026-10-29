@@ -557,3 +557,5 @@
 
 - **brightnessctl (2026-10-29):** opções com valor opcional (`-n`/`--min-value`) só aceitam o valor colado (`--min-value=1%`); separado, o comando "funciona" (sai com 0) sem mudar nada. Conferir um comando externo rodando-o de verdade, não só pelo código de saída.
 - **Gestos (2026-10-29):** o launcher é outro processo; o gesto pode terminar antes de a camada chegar (`launcher_close_pending`). `launcher_look` usa `launcher_drag` durante o gesto e `launcher_from` como ponto de partida das animações.
+
+- 2026-10-29: relatório e plano de HiDPI no Chromebook (2256x1504, escala 1,5): texto de título e notificações espaçado/desfocado, cursor pequeno (XCURSOR_SIZE sem escala). Ver `docs/hidpi-chromebook.md`.
