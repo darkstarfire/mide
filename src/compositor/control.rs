@@ -671,6 +671,8 @@ pub(crate) fn focus_window_id(state: &mut State, id: u64) -> bool {
     state.space.raise_element(&window, true);
     let serial = smithay::utils::SERIAL_COUNTER.next_serial();
     crate::input::focus_window(state, &window, serial);
+    // A janela trazida para a frente fica sob o ponteiro parado: ele passa a ela.
+    crate::input::refresh_pointer_focus(state);
     tracing::info!("controle: janela {id} focada");
     true
 }

@@ -7,6 +7,8 @@
 //! - `move x y`: move o ponteiro
 //! - `press x y` / `release x y`: botão esquerdo pressionado ou solto em (x, y)
 //! - `click x y`: move, pressiona e solta
+//! - `tap`: pressiona e solta onde o ponteiro já está, sem movimento nenhum (o toque
+//!   no touchpad parado, ou o clique logo depois de um Alt+Tab ou da tela cheia)
 //! - `rclick x y`: clique com o botão direito
 //! - `list`: registra no log as janelas e camadas, com posição e moldura
 //! - `restore`: restaura a janela minimizada mais recente
@@ -40,6 +42,8 @@ enum Step {
     Press(f64, f64),
     Release(f64, f64),
     Click(f64, f64),
+    /// Clique sem mover o ponteiro.
+    Tap,
     RightClick(f64, f64),
     List,
     Restore,
@@ -149,6 +153,7 @@ fn parse_one(part: &str) -> Option<(u32, Step)> {
                 "press" => Step::Press(coord(2)?, coord(3)?),
                 "release" => Step::Release(coord(2)?, coord(3)?),
                 "click" => Step::Click(coord(2)?, coord(3)?),
+                "tap" => Step::Tap,
                 "rclick" => Step::RightClick(coord(2)?, coord(3)?),
                 "list" => Step::List,
                 "restore" => Step::Restore,
@@ -188,6 +193,10 @@ fn run(state: &mut State, step: Step, frame: u32) {
         }
         Step::Click(x, y) => {
             input::pointer_motion(state, at(x, y), time);
+            input::button(state, BTN_LEFT, ButtonState::Pressed, time);
+            input::button(state, BTN_LEFT, ButtonState::Released, time + 40);
+        }
+        Step::Tap => {
             input::button(state, BTN_LEFT, ButtonState::Pressed, time);
             input::button(state, BTN_LEFT, ButtonState::Released, time + 40);
         }

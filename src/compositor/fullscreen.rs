@@ -284,6 +284,8 @@ impl State {
         crate::input::focus_window(self, &window, serial);
         self.fs_reveal = Reveal::default();
         tracing::info!("janela em tela cheia na tela {} ({}x{})", output.name(), screen.size.w, screen.size.h);
+        // A janela mudou de lugar sob o ponteiro parado: o foco dele acompanha.
+        crate::input::refresh_pointer_focus(self);
         self.wake();
     }
 
@@ -365,6 +367,8 @@ impl State {
         self.space.map_element(window, to_loc, true);
         self.fs_reveal = Reveal::default();
         tracing::info!("janela saiu da tela cheia: volta a ({}, {}) {}x{}", to_loc.x, to_loc.y, to_size.w, to_size.h);
+        // A janela mudou de lugar sob o ponteiro parado: o foco dele acompanha.
+        crate::input::refresh_pointer_focus(self);
         self.wake();
     }
 

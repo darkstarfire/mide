@@ -292,8 +292,12 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
         |state, mods, keysym| {
             let switching = state.preview.as_ref().is_some_and(|p| p.switcher);
             if key_state != KeyState::Pressed {
-                // Alt (ou Super) solto: o alternador foca a janela escolhida.
-                if switching && !mods.alt && !mods.logo {
+                // Alt (ou Super) solto: o alternador foca a janela escolhida. No estilo
+                // Mac, o ⌘ chega aos apps como Ctrl (nem Alt nem Super): sem olhar o ⌘
+                // de verdade, soltar o Tab do ⌘Tab já escolhia, e só dava para trocar
+                // entre as duas janelas de cima.
+                let command_held = mac && state.mac_keys.command;
+                if switching && !mods.alt && !mods.logo && !command_held {
                     finish_switcher(state, true);
                 }
                 return FilterResult::Forward;
@@ -735,17 +739,7 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
         return;
     }
 
-    // Em cima do painel das prévias (ou do alternador), o ponteiro é do mide: a janela
-    // de trás não recebe o movimento (nem troca o cursor para o de texto dela).
-    let over_preview = state
-        .preview
-        .as_ref()
-        .and_then(|p| crate::preview::layout(state, p))
-        .is_some_and(|(panel, _)| panel.to_f64().contains(pos));
-    // Barra de título desenhada pelo mide (e as luzes dela): o ponteiro é do mide, sem
-    // passar o movimento para a área de trabalho que fica atrás.
-    let over_bar = title_bar_under(state, pos).is_some() && top_layer_under(state, pos).is_none() && popup_under(state, pos).is_none();
-    let under = if over_preview || over_bar { None } else { surface_under(state, pos) };
+    let under = pointer_target(state, pos);
     // Trocou a superfície sob o ponteiro (ou não há nenhuma): volta a seta. O app novo
     // pede o cursor dele logo depois, se quiser outro. Sem isso, o cursor de texto de um
     // app (VS Code) ficava na barra de título e nos apps que não pedem cursor.
@@ -771,6 +765,41 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
             time,
         },
     );
+    pointer.frame(state);
+}
+
+/// Superfície que recebe o ponteiro em `pos`, com a origem dela (`None`: o ponteiro é
+/// do mide ou não há nada).
+fn pointer_target(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    // Em cima do painel das prévias (ou do alternador), o ponteiro é do mide: a janela
+    // de trás não recebe o movimento (nem troca o cursor para o de texto dela).
+    let over_preview = state
+        .preview
+        .as_ref()
+        .and_then(|p| crate::preview::layout(state, p))
+        .is_some_and(|(panel, _)| panel.to_f64().contains(pos));
+    // Barra de título desenhada pelo mide (e as luzes dela): o ponteiro é do mide, sem
+    // passar o movimento para a área de trabalho que fica atrás.
+    let over_bar = title_bar_under(state, pos).is_some() && top_layer_under(state, pos).is_none() && popup_under(state, pos).is_none();
+    if over_preview || over_bar { None } else { surface_under(state, pos) }
+}
+
+/// Atualiza o foco do ponteiro sem ele ter se mexido: o que está sob ele mudou (Alt+Tab
+/// trouxe outra janela para a frente, a janela entrou ou saiu da tela cheia, uma camada
+/// sumiu). O botão vai para o foco do último movimento, então, sem isto, um toque no
+/// touchpad parado (ou um clique logo depois do Alt+Tab) ia para a janela de antes, ou
+/// para nenhuma, e a posição dentro da janela podia estar velha.
+pub fn refresh_pointer_focus(state: &mut State) {
+    if state.lock.locked || state.move_grab.is_some() || state.resize_grab.is_some() {
+        return;
+    }
+    let Some(pointer) = state.seat.get_pointer() else {
+        return;
+    };
+    let pos = state.pointer_location;
+    let under = pointer_target(state, pos);
+    let time = state.start_time.elapsed().as_millis() as u32;
+    pointer.motion(state, under, &MotionEvent { location: pos, serial: SERIAL_COUNTER.next_serial(), time });
     pointer.frame(state);
 }
 
@@ -803,6 +832,12 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
     if let Some(tip) = state.title_tip.as_mut().filter(|t| button_state == ButtonState::Pressed && !t.dismissed) {
         tip.dismissed = true;
         state.wake();
+    }
+
+    // Antes de apertar, o foco do ponteiro passa para o que está sob ele agora (o botão
+    // vai para o foco do último movimento; veja `refresh_pointer_focus`).
+    if button_state == ButtonState::Pressed && !pointer.is_grabbed() {
+        refresh_pointer_focus(state);
     }
 
     if button_state == ButtonState::Pressed && code == BTN_LEFT {

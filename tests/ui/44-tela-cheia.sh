@@ -32,6 +32,27 @@ if [ -x "$JANELA" ]; then
     # Alt+Tab para outra janela: ela fica por cima e a barra e a dock voltam.
     check "Alt+Tab: a janela continua em tela cheia, atrás" 'janela "Cheia" em tela cheia' "400 click 520 200; 480 combo alt+tab; 560 list" "$JANELA cheia" "$JANELA comum"
     check_count "Alt+Tab para outra janela traz a barra e a dock de volta" "escondida pela tela cheia" 0 "400 click 520 200; 480 combo alt+tab; 560 list" "$JANELA cheia" "$JANELA comum"
+    # Maximizada, com a barra revelada, escondida e revelada de novo: o verde da faixa
+    # volta à maximizada (0, 58) 1366x643; e de novo pelo ⌃⌘F, com outra revelação.
+    MAXI='janela "Cheia" popups=0 posição=\(0, 58\) visível=1366x643'
+    REVELA="move 600 0"
+    check "maximizada: revelar, esconder, revelar e sair volta maximizada" "$MAXI" "400 click 300 61; 404 click 300 61; 460 click 55 43; 500 $REVELA; 520 move 601 0; 560 move 600 300; 600 $REVELA; 620 move 601 0; 660 move 55 43; 680 click 55 43; 760 list" "$JANELA cheia"
+    check_last "maximizada: entrar e sair de novo com a barra revelada" "$MAXI" "400 click 300 61; 404 click 300 61; 460 click 55 43; 500 $REVELA; 520 move 601 0; 560 move 55 43; 580 click 55 43; 640 combo ctrl+super+f; 680 $REVELA; 700 move 601 0; 740 move 55 43; 760 click 55 43; 840 list" "$JANELA cheia"
+    # Clique sem mexer o ponteiro (toque no touchpad parado) vai para a janela que está
+    # sob ele agora: depois de entrar na tela cheia pelo verde, o toque chega ao app (que
+    # sai da tela cheia); depois do Alt+Tab, à janela trazida para a frente (o app pede a
+    # tela cheia). Antes, ia para a superfície de antes da mudança, ou para nenhuma.
+    check "toque parado depois do verde chega ao app" "$ANTES" "400 click 103 61; 480 tap; 560 list" "$JANELA cheia"
+    check "toque parado depois do Alt+Tab chega à janela da frente" "$CHEIA" "400 move 300 200; 420 combo alt+tab; 460 tap; 540 list" "$JANELA cheia" "$JANELA comum"
+    # Estilo Mac: ⌘Tab, Tab com o ⌘ apertado anda no alternador (antes, soltar o Tab já
+    # escolhia, e só dava para trocar entre as duas de cima).
+    FSMAC="$(mktemp -d)"
+    mkdir -p "$FSMAC/mide"
+    printf '[keyboard]\nmac_style = true\n' >"$FSMAC/mide/config.toml"
+    XDG_CONFIG_HOME="$FSMAC" check "estilo Mac: ⌘Tab Tab chega à terceira janela" "alternador: janela 3 de 3" "400 keydown alt; 410 key tab; 430 key tab; 450 keyup alt; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
+    XDG_CONFIG_HOME="$FSMAC" check_last "estilo Mac: ⌘Tab Tab traz a terceira para a frente" 'janela "Cheia"' "400 keydown alt; 410 key tab; 430 key tab; 450 keyup alt; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
+    XDG_CONFIG_HOME="$FSMAC" check_last "estilo Mac: soltar o ⌘ escolhe a janela" 'janela "Comum"' "400 keydown alt; 410 key tab; 450 keyup alt; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
+    rm -rf "$FSMAC"
     # Dois monitores: só a tela da janela fica em tela cheia.
     MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 check "dois monitores: a tela da janela em tela cheia" "tela HEADLESS-1 em tela cheia" "400 click 103 61; 480 list" "$JANELA cheia"
     MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 check_count "dois monitores: a outra tela não muda" "tela HEADLESS-2 em tela cheia" 0 "400 click 103 61; 480 list" "$JANELA cheia"

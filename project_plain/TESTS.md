@@ -1075,3 +1075,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 
 - Automático: `tests/ui.sh tela-cheia` (seção `44-tela-cheia`, 21 ok) com o `examples/mide-janela-teste cheia` (o clique no conteúdo pede a tela cheia como o F11; `cheia ja` pede antes do primeiro quadro) e o Terminal. Bateria inteira antes de juntar ao master: 662 ok, 0 falhas; depois do rebase sobre a v0.10.15, as seções afetadas (01, 04, 05, 06, 07, 12, 37, 41, 42, 43, 44): 127 ok, 0 falhas.
 - Na sessão de verdade: F11 no Firefox/Chrome e no VLC, um jogo; verde de uma janela com a barra do mide e de um app do mide-ui; ⌃⌘F; menu Janela → Entrar em tela cheia; levar o ponteiro ao topo e usar os menus da barra e as luzes da faixa; Alt+Tab para outra janela e de volta; com dois monitores, a outra tela continua com barra e dock; em 2K com escala 1,5, nitidez da faixa revelada.
+
+## ⌘Tab e clique sem mover o ponteiro (2026-10-29, v0.10.17)
+
+- Automático: `tests/ui.sh tela-cheia` (29 ok, 8 novos: saídas com a barra revelada, toque parado depois do verde e do Alt+Tab, ⌘Tab Tab no estilo Mac) e as seções `janela`, `varias-janelas`, `atalhos-janela`, `menu-janela`, `restaurar`, `barra` e `dock`. O passo `tap` do autoteste clica sem mover o ponteiro.
+- Na sessão de verdade (estilo Mac ligado): segurar o ⌘ e apertar Tab várias vezes com três ou mais janelas (a escolha anda no painel e só vale ao soltar o ⌘); depois do ⌘Tab, tocar no touchpad sem mexer o dedo sobre a janela que veio para a frente (o clique chega a ela); verde para entrar em tela cheia e toque parado no conteúdo.
