@@ -516,3 +516,9 @@
 - Cada registro recebe pid e nome do processo no writer para distinguir eventos concorrentes. Ao alterar filtros, conservar os padrões anteriores de cada binário e respeitar `RUST_LOG`.
 - Pânicos: não chamar o hook padrão, pois ele imprime o payload e pode vazar texto privado. Registrar local e backtrace sem o conteúdo. Nunca adicionar senhas ou conteúdo de documento aos campos de tracing.
 - O congelamento de um processo impede o próprio processo de registrar a retomada. Correlacionar horário com `journalctl -k`/`coredumpctl` e, ao testar efeitos no Chromebook, anotar as configurações por etapa e recolher os logs antes de alterar o próximo efeito.
+
+## Teste no Chromebook: cursor agitado (2026-10-29)
+
+- Relato do usuário: um congelamento ao ativar `shake_cursor`; depois encerrou a sessão, voltou com ele desligado, ativou-o de novo e usou por mais de 15 minutos sem congelar. O carregador estava desconectado.
+- Tratar como associação temporal intermitente (uma ocorrência, uma reativação longa sem repetição), não causa confirmada. A lógica de oscilação (`src/compositor/shake.rs`) já passou os testes unitários de intensidade e quadros irregulares; isso não exercita o driver/gpu do Chromebook.
+- Em versão v0.10.18+, confirmar o toggle em `mide-logs --search 'efeito shake_cursor'` e o conjunto ativo no início do compositor. Se repetir, guardar `mide-logs --all`, `journalctl -k` com horário e estado de alimentação/carga.

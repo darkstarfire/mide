@@ -32,6 +32,14 @@
 - `tests/ui/04-janela.sh`, `08-dock.sh` e `44-tela-cheia.sh`: animações, lâmpada da dock e transições relacionadas às janelas.
 - Para fechar a bateria gráfica, execute `tests/ui.sh -j 1 configuracoes vidro 44-tela-cheia` numa sessão em que D-Bus privado e renderização headless estejam disponíveis. Registre capturas ligadas/desligadas para sombras, cantos, desfoques e vidro; os cenários atuais verificam mais eventos e estado do que comparação visual de pixels.
 
+## Relato de uso no Chromebook
+
+O usuário testou os efeitos no Chromebook, fora desta execução automatizada. O único congelamento observado ao ligar um efeito aconteceu ao ativar **Mouse crescer com o agito** (`shake_cursor`). Depois de encerrar a sessão e entrar de novo, o usuário o deixou desligado e então o ativou novamente. Nessa segunda ativação conseguiu usar o sistema por mais de 15 minutos sem novo congelamento. O carregador estava desconectado durante o teste.
+
+Isso aponta uma associação temporal com `shake_cursor`, mas **não confirma a causa**: houve uma ocorrência na ativação e uma reativação prolongada sem repetição, sem captura do log ou reprodução controlada. A execução na bateria também é uma variável útil para comparar, não uma explicação estabelecida. Classificação: **intermitente; uma ocorrência, não reproduzida na reativação**.
+
+O código grava a mudança em Configurações (`efeito shake_cursor: ligado/desligado`) e o compositor registra o conjunto de efeitos ao iniciar. Em MIDE v0.10.18 ou posterior, depois de reativar, confira `mide-logs --search 'efeito shake_cursor'` e `mide-logs --search 'configuração de efeitos visuais'`. Se voltar a congelar, após reiniciar recolha `mide-logs --all` e os eventos do kernel (`journalctl -k`) em torno do horário; anote se estava na bateria, o nível de carga e se o cursor foi agitado antes do travamento.
+
 ## Conclusões
 
-Não foi encontrado erro na leitura independente dos 11 parâmetros, nos testes de renderização geométrica existentes nem na lógica unitária de cursor agitado. Não é possível concluir ausência de falhas visuais ou de congelamento: a bateria de interface não terminou e o Chromebook não está disponível nesta máquina. A investigação do congelamento deve continuar reativando um efeito por vez no Chromebook, guardando `mide-logs --all` e o horário de cada etapa; correlacione com `journalctl -k` depois de qualquer travamento.
+Não foi encontrado erro na leitura independente dos 11 parâmetros, nos testes de renderização geométrica existentes nem na lógica unitária de cursor agitado. O Chromebook teve uma ocorrência associada ao primeiro acionamento de `shake_cursor`, seguida por mais de 15 minutos de uso depois de reativá-lo, sem repetição e sem carregador. É uma pista concreta, ainda inconclusiva. A bateria gráfica nesta máquina não terminou; comparações futuras devem capturar logs e variar uma condição por vez no Chromebook.

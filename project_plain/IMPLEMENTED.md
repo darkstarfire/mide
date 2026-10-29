@@ -2109,3 +2109,9 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - Auditoria dos onze efeitos em `docs/testes-efeitos-visuais-2026-10-29.md`. Teste novo desliga cada chave em separado e confirma que nenhuma outra muda: 11/11. `cargo test --offline`: 530 passaram, zero falhas, cinco ignorados. `cargo test --bin mide`: 85 passaram.
 - Inspecionadas as chamadas de renderização/animação de sombras, cantos, animações, lâmpada, desfoques, vidro, menus, transições e cursor. Os testes gráficos existentes estão mapeados por seção no relatório.
 - A bateria de interface não terminou nesta máquina: os cenários ficaram sem avançar e o compositor reportou indisponibilidade de DRM/renderização e falhas de canal de controle; a tentativa restrita também não podia criar o barramento D-Bus privado. Isso não conta como falha nem como aprovação visual. Ainda falta validar os efeitos, um a um, na GPU Intel do Chromebook onde ocorre o congelamento.
+
+
+## Relato do Chromebook sobre o cursor agitado (v0.10.20)
+
+- O usuário relatou uma ocorrência de congelamento ao ativar `shake_cursor`. Após sair e entrar com o efeito desligado, reativou e usou por mais de 15 minutos sem repetição, com o carregador desconectado.
+- O relatório de efeitos registra o caso como intermitente e inconclusivo. A associação com o cursor é uma pista; não houve reprodução na segunda ativação e ainda não há log do travamento para estabelecer causa. Para a próxima ocorrência, usar os registros do v0.10.18+ e correlacionar o horário com o journal do kernel.
