@@ -2103,3 +2103,9 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - Início, término normal, falhas de panic (com local e backtrace, sem mensagem potencialmente privada) e configuração atual dos efeitos no compositor são registrados. Configurações já registra cada efeito alterado.
 - Novo binário `mide-logs`: últimas 300 linhas por padrão; `--errors`, `--search TEXTO` e `--all` percorrem também as rotações. No checkout, compile com `cargo build --release --bin mide-logs` e execute `target/release/mide-logs`. Documentação e limites: `docs/logs-e-diagnostico.md`.
 - Privacidade: não se registram variáveis de ambiente completas, senhas, conteúdo de documentos ou texto do panic. O limite do processo que congela sem conseguir registrar está descrito no guia.
+
+## Bateria de efeitos visuais (v0.10.19)
+
+- Auditoria dos onze efeitos em `docs/testes-efeitos-visuais-2026-10-29.md`. Teste novo desliga cada chave em separado e confirma que nenhuma outra muda: 11/11. `cargo test --offline`: 530 passaram, zero falhas, cinco ignorados. `cargo test --bin mide`: 85 passaram.
+- Inspecionadas as chamadas de renderização/animação de sombras, cantos, animações, lâmpada, desfoques, vidro, menus, transições e cursor. Os testes gráficos existentes estão mapeados por seção no relatório.
+- A bateria de interface não terminou nesta máquina: os cenários ficaram sem avançar e o compositor reportou indisponibilidade de DRM/renderização e falhas de canal de controle; a tentativa restrita também não podia criar o barramento D-Bus privado. Isso não conta como falha nem como aprovação visual. Ainda falta validar os efeitos, um a um, na GPU Intel do Chromebook onde ocorre o congelamento.

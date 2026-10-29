@@ -912,6 +912,43 @@ mod tests {
     }
 
     #[test]
+    fn cada_efeito_pode_ser_desligado_independentemente() {
+        let effects: [(&str, fn(Effects) -> bool); 11] = [
+            ("shadows", |e: Effects| e.shadows),
+            ("rounded_corners", |e: Effects| e.rounded_corners),
+            ("animations", |e: Effects| e.animations),
+            ("lamp", |e: Effects| e.lamp),
+            ("dock_blur", |e: Effects| e.dock_blur),
+            ("launcher_blur", |e: Effects| e.launcher_blur),
+            ("liquid_glass", |e: Effects| e.liquid_glass),
+            ("panel_glass", |e: Effects| e.panel_glass),
+            ("menu_animation", |e: Effects| e.menu_animation),
+            ("transitions", |e: Effects| e.transitions),
+            ("shake_cursor", |e: Effects| e.shake_cursor),
+        ];
+        for (key, enabled) in effects {
+            let file: FileConfig = toml::from_str(&format!("[effects]\n{key} = false\n")).unwrap();
+            let mut expected = Effects::default();
+            match key {
+                "shadows" => expected.shadows = false,
+                "rounded_corners" => expected.rounded_corners = false,
+                "animations" => expected.animations = false,
+                "lamp" => expected.lamp = false,
+                "dock_blur" => expected.dock_blur = false,
+                "launcher_blur" => expected.launcher_blur = false,
+                "liquid_glass" => expected.liquid_glass = false,
+                "panel_glass" => expected.panel_glass = false,
+                "menu_animation" => expected.menu_animation = false,
+                "transitions" => expected.transitions = false,
+                "shake_cursor" => expected.shake_cursor = false,
+                _ => unreachable!(),
+            }
+            assert_eq!(file.effects, expected, "campo {key} alterou outros efeitos");
+            assert!(!enabled(file.effects), "campo {key} não foi desligado");
+        }
+    }
+
+    #[test]
     fn secoes_de_outros_programas_nao_quebram_a_leitura() {
         let file: FileConfig = toml::from_str(
             r#"
