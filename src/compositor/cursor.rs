@@ -68,7 +68,33 @@ struct Grown {
     hotspot: (i32, i32),
 }
 
+/// Tamanho do ponteiro da configuração (pontos), para o `XCURSOR_SIZE` dos apps que
+/// o mide abre; 0 antes de a configuração ser lida.
+static SESSION_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Guarda o tamanho do ponteiro da configuração (a cada leitura dela).
+pub fn remember_size(size: u32) {
+    SESSION_SIZE.store(size, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Tamanho do ponteiro para os apps (`XCURSOR_SIZE`), se a configuração já foi lida.
+pub fn session_size() -> Option<u32> {
+    Some(SESSION_SIZE.load(std::sync::atomic::Ordering::Relaxed)).filter(|s| *s > 0)
+}
+
 impl Cursors {
+    /// Tamanho do ponteiro escolhido nas Configurações: mudou, as imagens são lidas de
+    /// novo no tamanho novo (o crescido do cursor agitado parte dele também).
+    fn sync_size(&mut self, state: &State) {
+        let size = state.config.input.cursor_size();
+        if size != self.size {
+            tracing::info!("cursor: tamanho {size}");
+            self.size = size;
+            self.images.clear();
+            self.grown.clear();
+        }
+    }
+
     pub fn new() -> Self {
         let name = std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".into());
         let size = std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(24);
@@ -81,6 +107,7 @@ impl Cursors {
     /// Elementos do cursor na posição do ponteiro (o primeiro da lista fica na frente).
     /// Cursor na tela que começa em `origin` (posição dela entre as telas).
     pub fn elements(&mut self, renderer: &mut GlesRenderer, state: &State, origin: smithay::utils::Point<i32, smithay::utils::Logical>) -> Vec<MideRenderElement> {
+        self.sync_size(state);
         let pointer = state.pointer_location.to_i32_round::<i32>() - origin;
         let grow = state.shake.scale(std::time::Instant::now());
         // Bordas de redimensionar e outras formas do mide valem sobre o que o app pediu.
@@ -149,6 +176,7 @@ impl Cursors {
     /// cena inteira era composta em GLES a cada vblank da animação, o que travava a tela
     /// em placas Intel (Chromebook) até suspender e voltar.
     pub fn plan(&mut self, state: &State) -> Plan<'_> {
+        self.sync_size(state);
         let grow = state.shake.scale(std::time::Instant::now());
         let name = match (state.cursor, &state.cursor_status) {
             (CursorShape::Default, CursorImageStatus::Hidden) => return Plan::Hidden,

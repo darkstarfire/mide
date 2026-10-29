@@ -274,3 +274,9 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 
 - Barra, dock, launcher, notificações, títulos das janelas, dicas, lâmpada mágica e tela de bloqueio nítidos em 125/150/200% (`mide::shell::scale`); faltam o Terminal e a Captura (`fixed_scale`). Falta o usuário conferir no Chromebook 2K.
 - Bateria do Chromebook pelo EC quando o firmware a dá como ausente (`mide::battery`); falta conferir no Chromebook.
+
+## v0.10.30 (2026-10-29)
+
+- Terminal nítido em escala fracionária; menu da bateria com tempo, consumo, saúde e ciclos; tamanho do ponteiro nas Configurações; barra de título em degradê contínuo; Alt+Tab na cor de destaque; brilho pelo logind.
+- Pendentes de diagnóstico no Chromebook: VS Code com letras espaçadas e tela de bloqueio borrada em 150% (não reproduzidos no teste).
+- Próximo pedido do usuário (2026-10-29): tema tingido pela cor de destaque (vidro e transparência com um toque da cor, como o macOS) e as opções branco e preto na cor de destaque, nos temas claro e escuro.

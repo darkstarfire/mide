@@ -384,6 +384,8 @@ struct TerminalApp {
     /// Família da fonte da janela (vazio: a padrão do sistema).
     font_family: String,
     cell: (f32, f32),
+    /// Escala da tela com que `cell` foi medida.
+    cell_scale: f32,
     find: Option<Find>,
     dialog: Option<Dialog>,
     /// Arrastando para selecionar neste painel.
@@ -464,7 +466,8 @@ impl TerminalApp {
             tabs: Vec::new(),
             active: 0,
             font_size,
-            cell: cell_size(font_size, &font_family),
+            cell: cell_size(font_size, &font_family, 1.0),
+            cell_scale: 1.0,
             font_family,
             find: None,
             dialog: None,
@@ -521,11 +524,12 @@ impl TerminalApp {
             }
         };
         let (cols, rows) = (80, 24);
-        let size = Size { cols, rows, width: (cols as f32 * self.cell.0) as u16, height: (rows as f32 * self.cell.1) as u16 };
+        let (cw, ch) = self.cell_pixels();
+        let size = Size { cols, rows, width: cols * cw, height: rows * ch };
         match Pty::spawn(&spawn, size, tx, wake) {
             Ok(pty) => {
                 let mut term = Terminal::new(cols as usize, rows as usize);
-                term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
+                term.cell_pixels = self.cell_pixels();
                 let mut pane = Pane::new(term, Backend::Local(pty), output);
                 pane.profile = chosen;
                 pane.apply(&profile);
@@ -743,7 +747,7 @@ impl TerminalApp {
                 }
                 let (tx, rx) = mpsc::channel();
                 let mut term = Terminal::new(80, 24);
-                term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
+                term.cell_pixels = self.cell_pixels();
                 let mut pane = Pane::new(term, Backend::Tmux { gateway: self.tmux[i].writer.clone(), pane: remote }, rx);
                 pane.apply(&profile);
                 let id = self.next_id;
@@ -883,10 +887,17 @@ impl TerminalApp {
 
     fn set_font(&mut self, size: f32) {
         self.font_size = size.clamp(8.0, 32.0);
-        self.cell = cell_size(self.font_size, &self.font_family);
+        self.cell_scale = mide::ui::draw::scale();
+        self.cell = cell_size(self.font_size, &self.font_family, self.cell_scale);
+        let pixels = self.cell_pixels();
         for pane in self.panes.values_mut() {
-            pane.term.cell_pixels = (self.cell.0 as u16, self.cell.1 as u16);
+            pane.term.cell_pixels = pixels;
         }
+    }
+
+    /// Tamanho da célula em pixels da tela (o que os programas recebem para imagens).
+    fn cell_pixels(&self) -> (u16, u16) {
+        ((self.cell.0 * self.cell_scale).round() as u16, (self.cell.1 * self.cell_scale).round() as u16)
     }
 
     /// Releu os perfis se as Preferências gravaram (uma consulta por segundo).
@@ -1713,16 +1724,22 @@ impl App for TerminalApp {
             tab.activity = false;
         }
 
+        // A escala da tela mudou (ou chegou a do compositor): a célula é medida de novo
+        // para cair em pixels inteiros nela.
+        if (mide::ui::draw::scale() - self.cell_scale).abs() > 0.001 {
+            let size = self.font_size;
+            self.set_font(size);
+        }
         let (_, _, w, h) = self.view_size(ui);
         let (_, _, area) = self.areas((w, h));
         // Painéis da aba ativa com o tamanho da área deles.
         for (id, rect) in self.pane_rects(area) {
             let grid = self.grid_for(rect);
-            let cell = self.cell;
+            let (cw, ch) = self.cell_pixels();
             if let Some(pane) = self.panes.get_mut(&id) {
                 if (pane.term.cols(), pane.term.rows()) != grid {
                     pane.term.resize(grid.0, grid.1);
-                    pane.resize(Size { cols: grid.0 as u16, rows: grid.1 as u16, width: (grid.0 as f32 * cell.0) as u16, height: (grid.1 as f32 * cell.1) as u16 });
+                    pane.resize(Size { cols: grid.0 as u16, rows: grid.1 as u16, width: grid.0 as u16 * cw, height: grid.1 as u16 * ch });
                     pane.selection = None;
                     pane.scroll = pane.scroll.min(pane.term.history_len());
                     // As linhas mudaram de número com o reflow.
@@ -1928,7 +1945,13 @@ fn scroll_action(pane: &mut Pane, action: Action) {
     }
 }
 
+/// Ocorrências da busca (do começo ao fim de cada uma) e a atual.
+type Matches<'a> = Option<(&'a [((u64, usize), (u64, usize))], usize)>;
+
 /// Desenha um painel: fundo, células, seleção, ocorrências da busca e cursor.
+/// Em telas com escala (125%/150%/200%), desenha direto em pixels: a célula em pontos
+/// vezes a escala é um número inteiro de pixels (`cell_size`), e a grade, os quadros e
+/// as letras caem em pixels inteiros (nítido, sem emendas).
 #[allow(clippy::too_many_arguments)]
 fn draw_pane(
     pixmap: &mut Pixmap,
@@ -1937,7 +1960,28 @@ fn draw_pane(
     (x0, y0, w, h): Rect,
     cell: (f32, f32),
     font: f32,
-    matches: Option<(&[((u64, usize), (u64, usize))], usize)>,
+    matches: Matches,
+    link: Option<((u64, usize), (u64, usize))>,
+    show_cursor_here: bool,
+) {
+    let k = mide::ui::draw::scale();
+    mide::ui::draw::set_scale(1.0);
+    let cell = ((cell.0 * k).round(), (cell.1 * k).round());
+    draw_pane_pixels(pixmap, text, pane, (x0 * k, y0 * k, w * k, h * k), cell, font * k, (PAD * k).round(), matches, link, show_cursor_here);
+    mide::ui::draw::set_scale(k);
+}
+
+/// `draw_pane` em pixels (escala 1), com a margem `pad` em pixels.
+#[allow(clippy::too_many_arguments)]
+fn draw_pane_pixels(
+    pixmap: &mut Pixmap,
+    text: &mut Text,
+    pane: &Pane,
+    (x0, y0, w, h): Rect,
+    cell: (f32, f32),
+    font: f32,
+    pad: f32,
+    matches: Matches,
     link: Option<((u64, usize), (u64, usize))>,
     show_cursor_here: bool,
 ) {
@@ -1956,7 +2000,7 @@ fn draw_pane(
         .map(|(m, _)| m.iter().enumerate().filter(|(_, (a, b))| b.0 >= top_abs && a.0 <= bottom_abs).map(|(i, r)| (i, *r)).collect())
         .unwrap_or_default();
     let current = matches.map(|(_, c)| c);
-    let (px0, py0) = (x0 + PAD, y0 + PAD);
+    let (px0, py0) = (x0 + pad, y0 + pad);
     // Marcas dos prompts (integração do shell) na margem esquerda: azul se o comando
     // deu certo, vermelha se falhou, cinza enquanto não houve comando.
     for mark in term.marks().iter().filter(|m| m.line >= top_abs && m.line <= bottom_abs) {
@@ -2064,7 +2108,7 @@ fn draw_pane(
             fill(pixmap, px, py + cell.1 / 2.0, width, 1.0, fg);
         }
     }
-    draw_images(pixmap, pane, (x0, y0, w, h), cell, top_abs, bottom_abs);
+    draw_images(pixmap, pane, (x0, y0, w, h), cell, pad, top_abs, bottom_abs);
     // Lendo o histórico: barra fina à direita mostrando onde está.
     let history = term.history_len();
     if scroll > 0 && history > 0 {
@@ -2181,7 +2225,7 @@ fn draw_placeholder(pixmap: &mut Pixmap, pane: &Pane, id: u32, row: usize, col: 
 }
 
 /// Imagens do terminal visíveis no painel, recortadas na área dele.
-fn draw_images(pixmap: &mut Pixmap, pane: &Pane, (x0, y0, w, h): Rect, cell: (f32, f32), top: u64, bottom: u64) {
+fn draw_images(pixmap: &mut Pixmap, pane: &Pane, (x0, y0, w, h): Rect, cell: (f32, f32), pad: f32, top: u64, bottom: u64) {
     let visible: Vec<_> = pane.term.images().filter(|i| i.line <= bottom && i.line + i.rows as u64 > top).collect();
     let mut cache = pane.image_cache.borrow_mut();
     // Esquece as que já saíram do terminal.
@@ -2198,8 +2242,8 @@ fn draw_images(pixmap: &mut Pixmap, pane: &Pane, (x0, y0, w, h): Rect, cell: (f3
         let (cw, ch) = pane.term.cell_pixels;
         let k = (cell.0 / cw.max(1) as f32).min(cell.1 / ch.max(1) as f32);
         let (dw, dh) = (image.width as f32 * k, image.height as f32 * k);
-        let x = x0 + PAD + image.col as f32 * cell.0;
-        let y = y0 + PAD + (image.line as f32 - top as f32) * cell.1;
+        let x = x0 + pad + image.col as f32 * cell.0;
+        let y = y0 + pad + (image.line as f32 - top as f32) * cell.1;
         let (sx, sy) = (dw / source.width() as f32, dh / source.height() as f32);
         let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
         pixmap.draw_pixmap(0, 0, source.as_ref(), &paint, Transform::from_row(sx, 0.0, 0.0, sy, x, y), Some(&mask));
@@ -2499,7 +2543,8 @@ fn fill_alpha(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: Rgb, alpha
     if let Some(rect) = SkRect::from_xywh(x, y, w, h) {
         let mut paint = Paint::default();
         paint.set_color_rgba8(c[0], c[1], c[2], (alpha * 255.0) as u8);
-        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        // Em pontos: na escala da tela (a grade passa a escala 1 antes de desenhar).
+        pixmap.fill_rect(rect, &paint, mide::ui::draw::tf(), None);
     }
 }
 
@@ -2528,12 +2573,14 @@ fn mac_style() -> bool {
     matches!(mide::settings_file::get("keyboard", "mac_style"), Some(mide::settings_file::Value::Bool(true)))
 }
 
-/// Tamanho de uma célula na fonte de largura fixa (o avanço da fonte e a altura da
-/// linha, arredondados para as colunas e linhas caírem em pixels inteiros).
-fn cell_size(font: f32, family: &str) -> (f32, f32) {
+/// Tamanho de uma célula na fonte de largura fixa, em pontos (o avanço da fonte e a
+/// altura da linha, arredondados para as colunas e linhas caírem em pixels inteiros na
+/// escala `scale` da tela: medidos na fonte do tamanho real e divididos pela escala).
+fn cell_size(font: f32, family: &str, scale: f32) -> (f32, f32) {
     let text = &mut Text::new();
     text.set_mono_family(Some(family));
-    text.mono_cell(font)
+    let (w, h) = text.mono_cell(font * scale);
+    (w / scale, h / scale)
 }
 
 // ---- Preferências ----
@@ -2819,8 +2866,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if options.hotkey {
         return run_hotkey(options);
     }
-    // A grade do terminal é pintada à mão (`ui.paint`) em pixels: escala 1 por enquanto.
-    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).fixed_scale().full_size_content();
+    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).full_size_content();
     run(window, TerminalApp::new(options))
 }
 
@@ -2861,7 +2907,7 @@ fn run_hotkey(options: Options) -> Result<(), Box<dyn Error>> {
     });
     let mut app = TerminalApp::new(options);
     app.hotkey = Some(Hotkey { toggles, waker, visible: true });
-    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho").fixed_scale();
+    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho");
     let result = run(window, app);
     let _ = std::fs::remove_file(&path);
     result

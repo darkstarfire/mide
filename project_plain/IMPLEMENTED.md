@@ -2189,3 +2189,13 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - mide-ui: a tela de bloqueio desenha na escala da tela principal (as outras telas continuam em escala 1).
 - Ficam de fora: o Terminal e a Captura ainda usam `fixed_scale` (pintam a grade e a imagem em pixels por conta própria).
 - Bateria (pedido do usuário, Chromebook com MrChromebox e bateria paralela, que o firmware dá como ausente): `mide::battery` lê pelo kernel; sem bateria presente lá, usa o `/run/cros-ec-battery.json` do serviço `cros-ec-battery` (repositório chromebook-linux-fixes do usuário) quando recente, e por último o EC direto (`/dev/cros_ec`, ioctl `CROS_EC_DEV_IOCRDMEM`, memória da bateria em 0x40) quando o usuário pode lê-lo. Baterias de aparelhos (`scope=Device`) e `present=0` não contam. A barra usa esse caminho.
+
+## Terminal nítido, bateria detalhada, ponteiro, barra de título, Alt+Tab e brilho (v0.10.30, 2026-10-29)
+
+- Terminal nítido em 125/150/200% (pedido do usuário no Chromebook 2K: texto e título embaçados e espaçados): sem `fixed_scale`; a grade é desenhada em pixels inteiros (célula medida na fonte do tamanho real e dividida pela escala, para colunas e cliques baterem), com quadros, cursor, sublinhados e imagens; em escala 1, igual.
+- Menu da bateria como no Mac: carga e estado (carregando, na bateria, carregada, na tomada sem carregar), tempo restante ou até carregar (potência suavizada em ~1 min, sem tempo abaixo de 0,5 W), consumo/carga em W, saúde (cheia/projeto) e ciclos, pelos três caminhos (kernel em energia ou carga, arquivo do serviço do Chromebook e EC).
+- Configurações → Mouse e trackpad → Tamanho do ponteiro (16 a 96 pontos, `[input] cursor_size`), na hora no compositor (o cursor agitado cresce a partir dele) e `XCURSOR_SIZE` para os apps abertos depois.
+- Barra de título: o fundo é um degradê vertical contínuo (shader `GRADIENT_RECT_SRC`), no lugar da metade de cima mais clara com degrau.
+- Alt+Tab: a janela escolhida na cor de destaque do sistema (contorno cheio e fundo translúcido), seguindo Configurações → Aparência.
+- Teclas e controle de brilho: pelo logind (`Session.SetBrightness`, permitido ao usuário da sessão ativa, sem regra do udev nem grupo `video`), depois escrevendo no arquivo e só então o `brightnessctl`; a luz de fundo escolhida é a do firmware antes da de plataforma e da "raw" (como o GNOME). No Chromebook, as teclas de brilho não funcionavam mesmo com o `brightnessctl` corrigido.
+- Não reproduzido no teste (VS Code espaçado e tela de bloqueio borrada no Chromebook, em 2560x1600 a 150%): no compositor de teste, nesse tamanho, os dois saem nítidos; falta o diagnóstico na máquina.

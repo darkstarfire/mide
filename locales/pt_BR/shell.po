@@ -380,6 +380,30 @@ msgstr "na bateria"
 msgid "Battery: {level}% ({state})"
 msgstr "Bateria: {level}% ({state})"
 
+msgid "fully charged"
+msgstr "carregada"
+
+msgid "plugged in, not charging"
+msgstr "na tomada, sem carregar"
+
+msgid "{time} remaining"
+msgstr "{time} restantes"
+
+msgid "{time} until fully charged"
+msgstr "{time} para carregar por completo"
+
+msgid "Charging at {watts} W"
+msgstr "Carregando a {watts} W"
+
+msgid "Using {watts} W"
+msgstr "Consumindo {watts} W"
+
+msgid "Battery Health: {percent}%"
+msgstr "Saúde da bateria: {percent}%"
+
+msgid "Cycle Count: {count}"
+msgstr "Ciclos de carga: {count}"
+
 msgid "Day of the Week"
 msgstr "Dia da semana"
 

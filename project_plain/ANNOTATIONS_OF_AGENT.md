@@ -562,3 +562,6 @@
 
 - **Escala fracionária (2026-10-29):** `MemoryRenderBufferRenderElement::from_buffer` com `size` em pontos e `src: None` usa o tamanho em pontos como recorte da imagem (pega só o começo dela e estica): passar `src` com a imagem inteira em pixels. Nos shaders, tamanho e raio têm de estar na mesma medida (o `size` dos `PixelShaderElement` é em pontos; texturas em pixels). Para conferir nitidez, ampliar o quadro com NEAREST: a imagem reduzida engana.
 - **Bateria do Chromebook:** `/dev/cros_ec` costuma ser só do root; o caminho comum é o JSON do serviço do usuário. O mide não desliga o sistema na carga crítica (isso é do serviço).
+
+- **Brilho (2026-10-29):** o caminho certo é o logind (`org.freedesktop.login1.Session.SetBrightness("backlight", nome, valor)` em `/org/freedesktop/login1/session/auto`), como o GNOME; o `brightnessctl` depende de permissão de escrita na luz de fundo, que varia por distribuição.
+- **Agentes em paralelo:** um agente rodando `tests/ui.sh` e outro compilando ao mesmo tempo quebra a regra da bateria; ao dividir trabalho, combinar quem roda a bateria (de preferência só o agente principal, no fim).

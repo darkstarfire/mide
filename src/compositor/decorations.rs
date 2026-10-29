@@ -187,6 +187,42 @@ void main() {
 }
 "#;
 
+/// Retângulo arredondado com degradê vertical (o fundo da barra de título).
+const GRADIENT_RECT_SRC: &str = r#"
+precision highp float;
+uniform float alpha;
+uniform vec2 size;
+uniform float radius;
+uniform vec4 fill;
+// Cor embaixo: o preenchimento passa de `fill` (em cima) a esta, sem degraus.
+uniform vec4 fill_bottom;
+// Recorte pela moldura da janela (x, y, w, h na saída); largura 0 = sem recorte.
+uniform vec4 clip;
+uniform float clip_radius;
+uniform float output_height;
+varying vec2 v_coords;
+
+float sd_round_box(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + vec2(r);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
+}
+
+void main() {
+    vec2 p = v_coords * size - size * 0.5;
+    float d = sd_round_box(p, size * 0.5, radius);
+    float cover = 1.0 - smoothstep(-0.5, 0.5, d);
+    if (clip.z > 0.0) {
+        vec2 q = vec2(gl_FragCoord.x, output_height > 0.0 ? output_height - gl_FragCoord.y : gl_FragCoord.y);
+        vec2 half_clip = clip.zw * 0.5;
+        float dc = sd_round_box(q - (clip.xy + half_clip), half_clip, clip_radius);
+        cover *= 1.0 - smoothstep(-0.5, 0.5, dc);
+    }
+    vec4 c = mix(fill, fill_bottom, clamp(v_coords.y, 0.0, 1.0));
+    float a = c.a * cover * alpha;
+    gl_FragColor = vec4(c.rgb * a, a);
+}
+"#;
+
 /// Fundo do desktop com a sombra de todas as janelas (até 8), desenhado atrás de
 /// tudo. Cor opaca: o fundo escurecido. Como fica atrás, nenhuma sombra apaga outra.
 /// Uniformes e funções GLSL da sombra combinada das janelas, compartilhados pelo
@@ -393,6 +429,7 @@ void main() {
 /// Programas de shader usados pela decoração. Compilados uma vez na inicialização.
 pub struct Shaders {
     rounded: GlesPixelProgram,
+    gradient: GlesPixelProgram,
     desktop: GlesPixelProgram,
     clip_tex: GlesTexProgram,
     outline: GlesPixelProgram,
@@ -408,6 +445,17 @@ impl Shaders {
             &[
                 UniformName::new("radius", UniformType::_1f),
                 UniformName::new("fill", UniformType::_4f),
+                UniformName::new("clip", UniformType::_4f),
+                UniformName::new("clip_radius", UniformType::_1f),
+                UniformName::new("output_height", UniformType::_1f),
+            ],
+        )?;
+        let gradient = renderer.compile_custom_pixel_shader(
+            GRADIENT_RECT_SRC,
+            &[
+                UniformName::new("radius", UniformType::_1f),
+                UniformName::new("fill", UniformType::_4f),
+                UniformName::new("fill_bottom", UniformType::_4f),
                 UniformName::new("clip", UniformType::_4f),
                 UniformName::new("clip_radius", UniformType::_1f),
                 UniformName::new("output_height", UniformType::_1f),
@@ -451,6 +499,7 @@ impl Shaders {
         Ok(Self {
             window_shadow,
             rounded,
+            gradient,
             desktop,
             clip_tex,
             outline,
@@ -541,19 +590,20 @@ pub fn bar_elements(
         elements.push(ring(shaders, rect));
         elements.push(rounded(shaders, rect, color, BUTTON_SIZE / 2, clip));
     }
-    // Brilho na metade superior e linha clara no topo: dá volume à barra.
-    let top_half = Rectangle::new(bar.loc, (bar.size.w, bar.size.h / 2).into());
+    // Linha clara no topo e o fundo um pouco mais claro em cima, num degradê contínuo:
+    // dá volume à barra (antes, a metade de cima era uma faixa mais clara, com degrau).
     let dark = dark();
-    elements.push(rounded(shaders, top_half, [1.0, 1.0, 1.0, if dark { 0.03 } else { 0.16 }], 0, clip));
     let top_line = Rectangle::new(bar.loc, (bar.size.w, 1).into());
-    elements.push(rounded(shaders, top_line, [1.0, 1.0, 1.0, if dark { 0.12 } else { 0.7 }], 0, clip));
+    elements.push(rounded(shaders, top_line, [1.0, 1.0, 1.0, if dark { 0.10 } else { 0.7 }], 0, clip));
     let background = match (dark, focused) {
         (true, true) => DARK_BAR_FOCUSED,
         (true, false) => DARK_BAR_UNFOCUSED,
         (false, true) => BAR_FOCUSED,
         (false, false) => BAR_UNFOCUSED,
     };
-    elements.push(rounded(shaders, bar, background, 0, clip));
+    let lift = if dark { 0.025 } else { 0.05 };
+    let top = [(background[0] + lift).min(1.0), (background[1] + lift).min(1.0), (background[2] + lift).min(1.0), background[3]];
+    elements.push(gradient(shaders, bar, top, background, clip));
     // Linha fina separando a barra do conteúdo.
     let separator = Rectangle::new((bar.loc.x, bar.loc.y + bar.size.h - 1).into(), (bar.size.w, 1).into());
     elements.push(rounded(shaders, separator, if dark { DARK_SEPARATOR } else { SEPARATOR }, 0, clip));
@@ -652,6 +702,17 @@ pub fn shadow_strength(focused: bool) -> f32 {
 /// Os shaders daqui calculam em pontos (o `size` que o Smithay passa é o da área em
 /// pontos): raios e larguras vão em pontos, sem multiplicar pela escala da tela (com
 /// a escala, um raio em pixels passava da metade do botão e o círculo virava losango).
+/// Retângulo do tamanho de `area` com degradê vertical de `top` a `bottom`.
+fn gradient(shaders: &Shaders, area: Rect, top: [f32; 4], bottom: [f32; 4], clip: &[Uniform<'static>]) -> PixelShaderElement {
+    let mut uniforms = vec![
+        Uniform::new("radius", 0.0f32),
+        Uniform::new("fill", top),
+        Uniform::new("fill_bottom", bottom),
+    ];
+    uniforms.extend(clip.iter().cloned());
+    pixel(&shaders.gradient, 5, area, uniforms)
+}
+
 fn rounded(
     shaders: &Shaders,
     area: Rect,

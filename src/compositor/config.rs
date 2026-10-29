@@ -219,11 +219,25 @@ pub struct Input {
     pub touchpad_natural_scroll: bool,
     /// Toque no trackpad clica.
     pub tap_to_click: bool,
+    /// Tamanho do ponteiro em pontos (Configurações → Mouse e trackpad); sem ele, o
+    /// `XCURSOR_SIZE` da sessão ou 24.
+    pub cursor_size: Option<u32>,
 }
 
 impl Default for Input {
     fn default() -> Self {
-        Self { pointer_speed: 0.0, mouse_acceleration: true, mouse_natural_scroll: false, touchpad_natural_scroll: true, tap_to_click: true }
+        Self { pointer_speed: 0.0, mouse_acceleration: true, mouse_natural_scroll: false, touchpad_natural_scroll: true, tap_to_click: true, cursor_size: None }
+    }
+}
+
+/// Menor e maior tamanho do ponteiro aceitos (pontos).
+pub const CURSOR_SIZES: std::ops::RangeInclusive<u32> = 16..=128;
+
+impl Input {
+    /// Tamanho do ponteiro em pontos, dentro de `CURSOR_SIZES`.
+    pub fn cursor_size(&self) -> u32 {
+        let size = self.cursor_size.or_else(|| std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok())).unwrap_or(24);
+        size.clamp(*CURSOR_SIZES.start(), *CURSOR_SIZES.end())
     }
 }
 
@@ -539,6 +553,8 @@ impl Config {
         config.keyboard = keyboard;
         config.monitors = monitors;
         config.input = input;
+        // Os apps que o mide abre seguem o mesmo tamanho (`XCURSOR_SIZE`).
+        crate::cursor::remember_size(config.input.cursor_size());
         config.lock = lock;
         config.opacity = opacity;
         config.dark = dark;
@@ -1019,6 +1035,19 @@ mod tests {
         // O que não está no arquivo fica no padrão (rolagem natural no trackpad, como no Mac).
         assert!(file.input.touchpad_natural_scroll && file.input.mouse_acceleration && !file.input.mouse_natural_scroll);
         assert!(file.all_bindings().is_empty());
+    }
+
+    #[test]
+    fn tamanho_do_ponteiro() {
+        let file: FileConfig = toml::from_str("[input]\ncursor_size = 48\n").unwrap();
+        assert_eq!(file.input.cursor_size(), 48);
+        // Fora dos limites: preso a eles.
+        let file: FileConfig = toml::from_str("[input]\ncursor_size = 500\n").unwrap();
+        assert_eq!(file.input.cursor_size(), *CURSOR_SIZES.end());
+        let file: FileConfig = toml::from_str("[input]\ncursor_size = 2\n").unwrap();
+        assert_eq!(file.input.cursor_size(), *CURSOR_SIZES.start());
+        // Sem a chave: o da sessão (XCURSOR_SIZE) ou 24.
+        assert_eq!(Input::default().cursor_size, None);
     }
 
     #[test]

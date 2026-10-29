@@ -555,8 +555,78 @@ pub fn brightness_step(up: bool) {
     if dry_run() {
         fake_latency();
         fake(|f| f.brightness = step5(f.brightness, up, 0.01));
+        run_wait("brightnessctl", &brightness_step_args(up));
+        return;
+    }
+    // Pelo logind (sem permissão especial) ou direto no arquivo; só sem os dois, o
+    // brightnessctl (que precisa de permissão de escrita na luz de fundo: regra do udev
+    // e o grupo `video`, que nem toda distribuição configura).
+    if let Some(light) = Backlight::find() {
+        let step = (light.max as f64 * 0.05).round().max(1.0) as u32;
+        let min = (light.max as f64 * 0.01).ceil() as u32;
+        let target = if up { light.current.saturating_add(step) } else { light.current.saturating_sub(step) }.clamp(min, light.max);
+        if light.set(target) {
+            return;
+        }
     }
     run_wait("brightnessctl", &brightness_step_args(up));
+}
+
+/// Luz de fundo da tela (`/sys/class/backlight`).
+struct Backlight {
+    name: String,
+    current: u32,
+    max: u32,
+}
+
+impl Backlight {
+    /// A luz de fundo da tela interna: a do firmware antes da da plataforma e da
+    /// "raw" (a ordem do GNOME), entre as que têm brilho máximo.
+    fn find() -> Option<Self> {
+        let mut found: Vec<(u8, Self)> = std::fs::read_dir("/sys/class/backlight")
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let read = |name: &str| std::fs::read_to_string(path.join(name)).ok().map(|s| s.trim().to_string());
+                let max: u32 = read("max_brightness")?.parse().ok().filter(|m| *m > 0)?;
+                let current: u32 = read("brightness")?.parse().ok()?;
+                let rank = match read("type").as_deref() {
+                    Some("firmware") => 0,
+                    Some("platform") => 1,
+                    _ => 2,
+                };
+                Some((rank, Self { name: entry.file_name().to_string_lossy().into_owned(), current, max }))
+            })
+            .collect();
+        found.sort_by_key(|(rank, _)| *rank);
+        found.into_iter().next().map(|(_, light)| light)
+    }
+
+    /// Muda o brilho: pelo logind (`Session.SetBrightness`, permitido ao usuário da
+    /// sessão ativa) ou escrevendo no arquivo, se der.
+    fn set(&self, value: u32) -> bool {
+        let logind = zbus::blocking::Connection::system().and_then(|conn| {
+            let proxy = zbus::blocking::Proxy::new(&conn, "org.freedesktop.login1", "/org/freedesktop/login1/session/auto", "org.freedesktop.login1.Session")?;
+            proxy.call::<_, _, ()>("SetBrightness", &("backlight", self.name.as_str(), value))
+        });
+        match logind {
+            Ok(()) => {
+                tracing::info!("sistema: brilho de {} em {value}/{} (logind)", self.name, self.max);
+                true
+            }
+            Err(err) => {
+                let path = format!("/sys/class/backlight/{}/brightness", self.name);
+                let written = std::fs::write(&path, value.to_string()).is_ok();
+                if written {
+                    tracing::info!("sistema: brilho de {} em {value}/{} (arquivo)", self.name, self.max);
+                } else {
+                    tracing::warn!("sistema: brilho de {} não mudou: logind ({err}) e {path} sem permissão", self.name);
+                }
+                written
+            }
+        }
+    }
 }
 
 /// Argumentos do `brightnessctl` para as teclas de brilho. O mínimo vai colado
@@ -617,8 +687,20 @@ pub fn media_player(method: &'static str) {
 }
 
 pub fn set_brightness(value: f32) {
-    let value = format!("{}%", (value.clamp(0.01, 1.0) * 100.0).round() as i32);
-    run("brightnessctl", &["-c", "backlight", "set", &value]);
+    let value = value.clamp(0.01, 1.0);
+    if !dry_run() {
+        if let Some(light) = Backlight::find() {
+            let target = (light.max as f32 * value).round() as u32;
+            // Fora do laço da interface: o logind responde pelo D-Bus.
+            std::thread::spawn(move || {
+                if !light.set(target.clamp(1, light.max)) {
+                    run("brightnessctl", &["-c", "backlight", "set", &format!("{}%", (value * 100.0).round() as i32)]);
+                }
+            });
+            return;
+        }
+    }
+    run("brightnessctl", &["-c", "backlight", "set", &format!("{}%", (value * 100.0).round() as i32)]);
 }
 
 /// Ações de energia e sessão do menu do mide (com confirmação na barra). Nos testes

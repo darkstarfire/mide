@@ -286,6 +286,9 @@ msgstr "efeitos jogo jogos desempenho tela cheia video notificacoes"
 msgid "Pointer speed"
 msgstr "Velocidade do ponteiro"
 
+msgid "Pointer size"
+msgstr "Tamanho do ponteiro"
+
 msgid "mouse trackpad touchpad pointer speed cursor tracking"
 msgstr "mouse trackpad touchpad ponteiro velocidade cursor"
 

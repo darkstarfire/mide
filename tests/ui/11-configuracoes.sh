@@ -177,10 +177,11 @@ else
     echo "FALHA esconder item da barra grava no config.toml"; FAIL=$((FAIL + 1))
 fi
 sed -i '/gear = false/d' "$SCFG/mide/config.toml"
-# Mouse e trackpad: "Rolagem natural no mouse" em (807, 266), "Toque para clicar" em
-# (807, 416); o trilho da velocidade vai de x=488 a 778 em y=162 (meio = padrão).
-timeout 150 "$SCEN" "400 click 807 266; 430 click 807 416; 460 press 633 162; 465 move 560 162; 470 move 500 162; 475 release 488 162; 520 list" -- "$SETTINGS mouse" >/dev/null 2>&1
-if grep -q "mouse_natural_scroll = true" "$SCFG/mide/config.toml" && grep -q "tap_to_click = false" "$SCFG/mide/config.toml" && grep -q "pointer_speed = -1" "$SCFG/mide/config.toml"; then
+# Mouse e trackpad: "Rolagem natural no mouse" em (807, 308), "Toque para clicar" em
+# (807, 460); o trilho da velocidade vai de x=488 a 778 em y=162 (meio = padrão) e o
+# do tamanho do ponteiro em y=204 (16 a 96; o botão do padrão, 24, em x=517).
+timeout 150 "$SCEN" "400 click 807 308; 430 click 807 460; 460 press 633 162; 465 move 560 162; 470 move 500 162; 475 release 488 162; 490 press 517 204; 495 move 650 204; 500 move 760 204; 505 release 790 204; 540 list" -- "$SETTINGS mouse" >/dev/null 2>&1
+if grep -q "mouse_natural_scroll = true" "$SCFG/mide/config.toml" && grep -q "tap_to_click = false" "$SCFG/mide/config.toml" && grep -q "pointer_speed = -1" "$SCFG/mide/config.toml" && grep -q "cursor_size = 96" "$SCFG/mide/config.toml"; then
     echo "ok    Mouse e trackpad gravam no config.toml"; PASS=$((PASS + 1))
 else
     echo "FALHA Mouse e trackpad gravam no config.toml"; FAIL=$((FAIL + 1))

@@ -80,3 +80,8 @@ MIDE_SYSTEM_DRY_RUN_WIRED=1 check "rede: painel com a Ethernet abre Configuraç�
 check "Bluetooth: clique desconecta o fone (simulado)" "sistema \(teste\): bluetoothctl disconnect" "400 click 1257 14; 440 click 1216 99; 470 list"
 check "Sobre minimizada (Super+H) volta" "janela restaurada" "400 click 25 14; 430 click 100 49; 520 combo super+h; 600 restore; 700 list"
 check "Sobre este computador abre" 'janela "Sobre este computador"' "400 click 25 14; 430 click 100 49; 520 list"
+# Menu da bateria com tempo restante, consumo, saúde e ciclos (bateria falsa do kernel).
+BATDIR="$(mktemp -d)"; mkdir -p "$BATDIR/BAT0"
+for f in "type Battery" "capacity 75" "status Discharging" "energy_now 30000000" "energy_full 40000000" "energy_full_design 50000000" "power_now 12000000" "cycle_count 213"; do set -- $f; echo "$2" > "$BATDIR/BAT0/$1"; done
+MIDE_POWER_SUPPLY_DIR="$BATDIR" check "bateria: menu com tempo, consumo, saúde e ciclos" "menu da bateria: .* \| 2 h 30 min .* \| .*12[,.]0 W \| .*80% \| .*213" "500 click 1222 14; 560 list"
+rm -rf "$BATDIR"

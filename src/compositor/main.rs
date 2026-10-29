@@ -364,6 +364,10 @@ pub fn child_env(command: &mut std::process::Command) {
     if let Some(display) = xwayland::display() {
         command.env("DISPLAY", display);
     }
+    // Tamanho do ponteiro das Configurações também nos apps (GTK, Qt, X11).
+    if let Some(size) = cursor::session_size() {
+        command.env("XCURSOR_SIZE", size.to_string());
+    }
     let Some(bin_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) else {
         return;
     };

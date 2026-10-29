@@ -1143,8 +1143,8 @@ impl Settings {
         ui.note(&tr!("Changes take effect immediately. Per-app transparency: [opacity] in config.toml (\"app_id\" = 0.9)."));
     }
 
-    /// Mouse e trackpad (`[input]`): velocidade, aceleração, rolagem natural e toque
-    /// para clicar. Valem na hora para os aparelhos conectados.
+    /// Mouse e trackpad (`[input]`): velocidade, tamanho do ponteiro, aceleração,
+    /// rolagem natural e toque para clicar. Valem na hora para os aparelhos conectados.
     fn mouse(&mut self, ui: &mut Ui) {
         ui.title(&tr!("Mouse & Trackpad"));
         // Grava só o que difere do padrão (o resto sai do arquivo).
@@ -1164,6 +1164,13 @@ impl Settings {
             _ => 0.0,
         } * 50.0
             + 50.0;
+        // Tamanho do ponteiro em pontos (24 é o padrão), como o do Mac em Acessibilidade.
+        let mut cursor_size = match settings_file::get("input", "cursor_size") {
+            Some(Value::Int(n)) => n as f32,
+            Some(Value::Float(x)) => x as f32,
+            _ => 24.0,
+        }
+        .clamp(16.0, 96.0);
         let mut accel = flag("mouse_acceleration", true);
         let mut mouse_natural = flag("mouse_natural_scroll", false);
         let mut pad_natural = flag("touchpad_natural_scroll", true);
@@ -1174,6 +1181,11 @@ impl Settings {
                 let value = (value * 100.0).round() / 100.0;
                 tracing::info!("mouse: velocidade {value}");
                 save("pointer_speed", (value.abs() > 0.005).then_some(Value::Float(value)));
+            }
+            if ui.slider(&tr!("Pointer size"), &mut cursor_size, 16.0, 96.0).submitted() {
+                let size = cursor_size.round() as i64;
+                tracing::info!("mouse: tamanho do ponteiro {size}");
+                save("cursor_size", (size != 24).then_some(Value::Int(size)));
             }
             if ui.switch_detail(&tr!("Mouse acceleration"), &tr!("Fast movements take the pointer farther"), &mut accel).changed() {
                 tracing::info!("mouse: aceleração {}", if accel { "ligada" } else { "desligada" });

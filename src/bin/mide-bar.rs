@@ -445,6 +445,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         titles_read_at: std::time::Instant::now(),
         registrar_checked_at: std::time::Instant::now(),
         battery: None,
+        battery_info: None,
+        battery_estimate: mide::battery::Estimate::default(),
+        battery_times: (None, None),
         names: AppNames::load(),
         status: Status::default(),
         status_now: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -737,11 +740,6 @@ fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: b
     }
 }
 
-/// Carga da bateria (0 a 100) e se está carregando, se o computador tiver bateria:
-/// pelo kernel ou, sem ele, pelo EC do Chromebook (`mide::battery`).
-fn battery() -> Option<(u8, bool)> {
-    mide::battery::read().map(|b| (b.percent, b.charging))
-}
 
 /// Menu aberto: a camada em tela cheia (clique fora fecha), o menu mostrado, onde
 /// fica o painel e o item sob o ponteiro.
@@ -1050,6 +1048,11 @@ struct Bar {
     /// Última conferência de que o registrar dos menus ainda é da barra.
     registrar_checked_at: std::time::Instant,
     battery: Option<(u8, bool)>,
+    /// Leitura completa (estado, energia, saúde, ciclos) para o menu da bateria, e o
+    /// tempo até acabar / até carregar pela potência suavizada.
+    battery_info: Option<mide::battery::Battery>,
+    battery_estimate: mide::battery::Estimate,
+    battery_times: (Option<u64>, Option<u64>),
     names: AppNames,
     /// Som, Wi-Fi e Bluetooth, lidos numa thread a cada 2 s.
     status: Status,
@@ -1459,7 +1462,12 @@ impl Bar {
             }
         }
         let clock = clock_text();
-        let battery = battery();
+        let info = mide::battery::read();
+        if let Some(b) = &info {
+            self.battery_times = self.battery_estimate.update(b, std::time::Instant::now());
+        }
+        self.battery_info = info;
+        let battery = info.map(|b| (b.percent, b.charging));
         let mut media_changed = false;
         if let Some(session) = self.media_rx.try_iter().last()
             && session != self.media_session
@@ -1978,6 +1986,10 @@ impl Bar {
                     let color = match (action.is_some(), active) {
                         (_, true) => [255, 255, 255, 255],
                         (true, false) => pal().text,
+                        // As informações da bateria (carga, tempo, saúde) são para ler:
+                        // cinza secundário, não o apagado dos itens desativados.
+                        (false, false) if menu_id == MenuId::Battery && i == 0 => pal().text,
+                        (false, false) if menu_id == MenuId::Battery => pal().secondary,
                         (false, false) => pal().faint,
                     };
                     let ty = y + (ITEM_H - FONT * 1.25) / 2.0;
@@ -2090,12 +2102,16 @@ impl Bar {
         if window_menu {
             items.extend(self.window_extras());
         }
-        if id == MenuId::Battery {
-            if let Some((level, charging)) = self.battery {
-                let state = if charging { tr!("charging") } else { tr!("on battery") };
-                items.insert(0, entry(tr!("Battery: {level}% ({state})", level = level, state = state), "", None));
-                items.insert(1, MenuItem::Separator);
+        if id == MenuId::Battery
+            && let Some(info) = self.battery_info
+        {
+            let lines = battery_lines(&info, self.battery_times);
+            tracing::info!("menu da bateria: {}", lines.join(" | "));
+            let n = lines.len();
+            for (i, line) in lines.into_iter().enumerate() {
+                items.insert(i, entry(line, "", None));
             }
+            items.insert(n, MenuItem::Separator);
         }
         if id == MenuId::Calendar {
             let today = Local::now().date_naive();
@@ -2188,9 +2204,8 @@ impl Bar {
             MenuId::Control => tr!("Control Center").into_owned(),
             MenuId::Gear => tr!("System Settings").into_owned(),
             MenuId::Battery => {
-                let (level, charging) = self.battery?;
-                let state = if charging { tr!("charging") } else { tr!("on battery") };
-                tr!("Battery: {level}% ({state})", level = level, state = state)
+                let info = self.battery_info?;
+                tr!("Battery: {level}% ({state})", level = info.percent, state = battery_state(&info))
             }
             MenuId::Record => tr!("Stop Recording").into_owned(),
             MenuId::Layout => {
@@ -3717,6 +3732,55 @@ fn draw_lock(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
 }
 
 /// Ícone de bateria: contorno, ponta e preenchimento proporcional à carga.
+/// Número com uma casa decimal, com a vírgula nos idiomas que a usam ("12,5").
+fn decimal(v: f64) -> String {
+    let text = format!("{v:.1}");
+    let lang = mide::i18n::language();
+    let comma = ["pt", "de", "fr", "es", "it", "nl", "ru", "pl", "tr", "cs", "sv", "da", "fi", "nb", "id", "uk"];
+    if comma.iter().any(|c| lang == *c || lang.starts_with(&format!("{c}_"))) { text.replace('.', ",") } else { text }
+}
+
+/// O que a bateria está fazendo, para o título do menu e a dica.
+fn battery_state(info: &mide::battery::Battery) -> String {
+    use mide::battery::State;
+    match info.state {
+        State::Charging => tr!("charging"),
+        State::Full => tr!("fully charged"),
+        State::NotCharging => tr!("plugged in, not charging"),
+        State::Discharging | State::Unknown => tr!("on battery"),
+    }
+    .into_owned()
+}
+
+/// Linhas de informação do menu da bateria (como o menu da bateria do Mac): carga e
+/// estado, tempo até acabar ou até carregar, potência, saúde e ciclos. Só o que a
+/// fonte souber; sem taxa confiável, sem tempo.
+fn battery_lines(info: &mide::battery::Battery, (to_empty, to_full): (Option<u64>, Option<u64>)) -> Vec<String> {
+    use mide::battery::{format_duration, State};
+    let mut lines = vec![tr!("Battery: {level}% ({state})", level = info.percent, state = battery_state(info))];
+    if let Some(t) = to_empty {
+        lines.push(tr!("{time} remaining", time = format_duration(t)));
+    }
+    if let Some(t) = to_full {
+        lines.push(tr!("{time} until fully charged", time = format_duration(t)));
+    }
+    if let Some(w) = info.power_w.filter(|w| *w >= 0.1) {
+        let watts = decimal(w);
+        match info.state {
+            State::Charging => lines.push(tr!("Charging at {watts} W", watts = watts)),
+            State::Discharging | State::Unknown => lines.push(tr!("Using {watts} W", watts = watts)),
+            _ => {}
+        }
+    }
+    if let Some(h) = info.health_percent {
+        lines.push(tr!("Battery Health: {percent}%", percent = format!("{h:.0}")));
+    }
+    if let Some(c) = info.cycles {
+        lines.push(tr!("Cycle Count: {count}", count = c));
+    }
+    lines
+}
+
 fn draw_battery(pixmap: &mut Pixmap, x: f32, cy: f32, level: u8, charging: bool, fg: [u8; 4]) {
     let (w, h) = (24.0, 11.0);
     let y = cy - h / 2.0;

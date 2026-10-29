@@ -271,6 +271,15 @@ pub fn elements(
         // bordas claras das letras do título aparecerem como pontinhos brancos.
         if hovered {
             let glow = Rectangle::new(thumb.boxed.loc - Point::from((6, 6)), (THUMB_W + 12, THUMB_H + TITLE_H + 8).into());
+            // Alternador (Alt+Tab): a escolhida na cor de destaque do sistema (Aparência),
+            // com o fundo translúcido e o contorno na cor cheia: o título segue legível.
+            if preview.switcher {
+                let [r, g, b, _] = mide::kit::system_accent(dark);
+                let accent = |a: f32| [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a];
+                middle.push(MideRenderElement::from(decorations::stroke_element(shaders, glow, 10, accent(1.0))));
+                middle.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, glow, accent(if dark { 0.45 } else { 0.30 }), 10)));
+                continue;
+            }
             // O vidro é branco (62%): no escuro, a letra clara do título sumiria nele.
             let element = if state.config.effects.panel_glass && !dark {
                 decorations::glass_element(shaders, glow, 10)
