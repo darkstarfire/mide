@@ -70,6 +70,11 @@ if [ -x "$JANELA" ]; then
             echo "FALHA modo de jogo: $esperado"; FAIL=$((FAIL + 1))
         fi
     done
+    # Scanout direto (A18): a entrega à placa só existe no DRM; aqui, a escolha. A janela
+    # de teste desenha em memória compartilhada (não serve); com a barra revelada, o
+    # motivo muda.
+    check "scanout direto: buffer em memória compartilhada não vai à placa" "autoteste: scanout direto não: buffer na memória" "400 click 103 61; 480 list" "$JANELA cheia"
+    check "scanout direto: barra revelada volta à composição" "autoteste: scanout direto não: barra revelada" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 list" "$JANELA cheia"
     check_count "modo de jogo: maximizada não liga" "no modo de jogo" 0 "400 click 300 61; 404 click 300 61; 480 list" "$JANELA cheia"
     check "modo de jogo: Alt+Tab para outra janela desliga" "modo tela cheia: desligado na tela HEADLESS-1" "400 click 520 200; 480 combo alt+tab; 560 list" "$JANELA cheia" "$JANELA comum"
     SEMJOGO="$(mktemp -d)"

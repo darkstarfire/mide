@@ -74,6 +74,12 @@ impl Screencopy {
         self.served_now
     }
 
+    /// Há captura esperando um quadro da tela `output` (o scanout direto não serve:
+    /// a cópia sai do quadro composto).
+    pub fn pending_for(&self, output: &Output) -> bool {
+        self.pending.iter().any(|p| &p.output == output)
+    }
+
     /// Alguma captura em andamento quer o cursor na imagem.
     pub fn wants_cursor(&self) -> bool {
         self.cursor_until.is_some_and(|t| t > Instant::now())

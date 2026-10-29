@@ -310,6 +310,12 @@ fn list(state: &State) {
         }
         if state.game_window(output).is_some() {
             tracing::info!("autoteste: tela {} no modo de jogo", output.name());
+            // A escolha do scanout direto (a entrega à placa só existe no DRM).
+            let mode = output.current_mode().map(|m| (m.size.w, m.size.h)).unwrap_or_default();
+            match crate::scanout::candidate(state, output, mode) {
+                Ok(c) => tracing::info!("autoteste: scanout direto serviria ({}x{})", c.size.0, c.size.1),
+                Err(reason) => tracing::info!("autoteste: scanout direto não: {reason}"),
+            }
         }
         let map = layer_map_for_output(output);
         for layer in map.layers() {

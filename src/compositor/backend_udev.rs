@@ -85,6 +85,31 @@ struct Head {
     lock_queued: u64,
     /// Pedido de suspensão cujo quadro com a tela de bloqueio já está na tela.
     lock_shown: u64,
+    /// Scanout direto do modo de jogo (A18): o buffer do app na placa.
+    scanout: ScanoutHead,
+}
+
+/// Buffer de um app mandado direto ao plano principal (scanout direto, A18). Enquanto
+/// existe, o app não recebe o `release` do buffer (a placa ainda o lê).
+struct Scanned {
+    _buffer: smithay::backend::renderer::utils::Buffer,
+    _fb: Rc<smithay::backend::drm::gbm::GbmFramebuffer>,
+    feedback: Option<smithay::desktop::utils::OutputPresentationFeedback>,
+}
+
+/// Estado do scanout direto de uma tela.
+#[derive(Default)]
+struct ScanoutHead {
+    /// Trocado na placa, esperando o vblank.
+    pending: Option<Scanned>,
+    /// Na tela agora (solto quando outro quadro aparece).
+    shown: Option<Scanned>,
+    /// O último quadro entregue foi do app (o próximo composto redesenha tudo).
+    active: bool,
+    /// Framebuffers da placa já criados para os buffers do app (os jogos alternam 2 ou 3).
+    fbs: Vec<(smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer, Rc<smithay::backend::drm::gbm::GbmFramebuffer>)>,
+    /// Buffers que a placa recusou (não são testados de novo a cada quadro).
+    refused: Vec<smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer>,
 }
 
 /// Cursor de hardware de uma tela (comandos de cursor do DRM): a imagem vai uma vez
@@ -115,6 +140,10 @@ struct Gpu {
     blanked: bool,
     /// Tamanho do plano de cursor da placa (64x64 na maioria).
     cursor_size: (u32, u32),
+    /// Último motivo registrado do scanout direto em cada tela.
+    scanout_notes: crate::scanout::Notes,
+    /// `MIDE_NO_SCANOUT=1`: nunca manda o buffer do app direto à placa (diagnóstico).
+    scanout_off: bool,
 }
 
 /// Abre a sessão, a placa de vídeo, as telas e a entrada, e agenda o desenho.
@@ -152,8 +181,8 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
 
     let scene = Scene::new(&mut renderer, state)?.with_cursor();
     // Modo de jogo em tela cheia (A18): o scanout direto vale aqui?
-    state.game.scanout_note = Some("não: ainda não implementado no DRM (quadro composto só com a janela)");
-    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64) }));
+    state.game.scanout_note = Some("conforme o buffer do app (ver \"scanout direto:\" a seguir)");
+    let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64), scanout_notes: Default::default(), scanout_off: std::env::var_os("MIDE_NO_SCANOUT").is_some() }));
     state.session = Some(session.clone());
     // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador. Só a
     // tranche principal; a de scanout por superfície fica para o scanout direto (A18).
@@ -195,6 +224,18 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
                 crate::watchdog::phase("vblank");
                 let mut gpu = gpu.borrow_mut();
                 if let Some(head) = gpu.heads.iter_mut().find(|h| h.crtc == crtc) {
+                    // Scanout direto (A18): o buffer do app está na tela; o anterior é
+                    // solto (o app recebe o `release` dele).
+                    if let Some(mut scanned) = head.scanout.pending.take() {
+                        if let Some(feedback) = scanned.feedback.take() {
+                            let (time, hw_clock) = crate::presentation::vblank_time(meta.as_ref());
+                            let seq = meta.as_ref().map_or(0, |m| u64::from(m.sequence));
+                            crate::presentation::present_vblank(feedback, &head.output, time, hw_clock, seq);
+                        }
+                        head.scanout.shown = Some(scanned);
+                        head.lock_shown = head.lock_queued;
+                    } else {
+                    head.scanout.shown = None;
                     match head.surface.frame_submitted() {
                         // O quadro está na tela: os apps dele recebem a hora da troca
                         // de página (`wp_presentation`), a frequência e o número do vblank.
@@ -208,6 +249,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
                         // tela foi recomeçada): só registra.
                         Ok(None) => tracing::debug!("tela {}: vblank sem quadro esperando", head.output.name()),
                         Err(err) => tracing::warn!("tela {}: vblank: {err}", head.output.name()),
+                    }
                     }
                     head.pending = false;
                 }
@@ -398,6 +440,7 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
                 for head in &mut gpu.heads {
                     head.surface.reset_buffers();
                     head.pending = false;
+                    head.scanout = ScanoutHead::default();
                     // Outro programa usou a placa: o cursor de hardware vai de novo.
                     head.cursor = HwCursor::default();
                 }
@@ -678,7 +721,7 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
     let damage_tracker = OutputDamageTracker::from_output(&output);
     // Tela do próprio notebook (onde fica o PSR2): eDP, LVDS ou DSI.
     let internal = ["eDP", "LVDS", "DSI"].iter().any(|t| c.name.starts_with(t));
-    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None, lock_queued: 0, lock_shown: 0 })
+    Ok(Head { connector: c.handle, crtc, surface, output, global, damage_tracker, pending: false, queued_at: Instant::now(), internal, cursor: HwCursor::default(), missing: None, lock_queued: 0, lock_shown: 0, scanout: ScanoutHead::default() })
 }
 
 /// Modo e escala da saída Wayland (o que os apps veem).
@@ -991,6 +1034,7 @@ fn restart_head(head: &mut Head) {
         }
     }
     head.pending = false;
+    head.scanout = ScanoutHead::default();
     // O estado do CRTC mudou por fora do Smithay: sem reavaliar, em alguns drivers
     // o quadro falha e a tela fica preta.
     if let Err(err) = head.surface.surface().reset_state() {
@@ -1094,7 +1138,7 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     state.redraw = false;
     let mut again = false;
     let mut plane_ok = true;
-    let Gpu { renderer, heads, scene, drm, gbm, cursor_size, .. } = gpu;
+    let Gpu { renderer, heads, scene, drm, gbm, cursor_size, fd, scanout_notes, scanout_off, .. } = gpu;
     for head in heads.iter_mut() {
         // Monitor sumido (na folga antes de a tela sair): nada a entregar ao conector.
         if head.missing.is_some() {
@@ -1120,6 +1164,23 @@ fn render(gpu: &mut Gpu, state: &mut State) {
         // Suspendendo: este quadro conta como "tela de bloqueio entregue" se ela já
         // tem imagem (o vblank dele libera a suspensão).
         let lock_frame = if state.sleep.preparing() && lock_drawn(state, &head.output) { state.sleep.generation() } else { 0 };
+        // Modo de jogo (A18): o buffer do app direto à placa, sem compor, quando dá.
+        if try_scanout(head, fd, gbm, state, scanout_notes, *scanout_off, scene.draw_cursor) {
+            head.pending = true;
+            head.queued_at = Instant::now();
+            head.lock_queued = lock_frame;
+            if let Err(err) = send_frames(state, &head.output) {
+                tracing::debug!("avisos de quadro: {err}");
+            }
+            continue;
+        }
+        // Voltando do scanout direto: o primeiro quadro composto redesenha a tela inteira
+        // (os buffers do mide não sabem o que o app mostrou).
+        if std::mem::take(&mut head.scanout.active) {
+            head.surface.reset_buffer_ages();
+            head.scanout.fbs.clear();
+            head.scanout.refused.clear();
+        }
         let Head { surface, output, damage_tracker, internal, .. } = head;
         let internal = *internal;
         let result = (|| -> Result<(), Box<dyn Error>> {
@@ -1178,6 +1239,97 @@ fn render(gpu: &mut Gpu, state: &mut State) {
     // tela ficava parada até algo de fora (a volta da suspensão) chamar o desenho.
     let waiting = gpu.heads.iter().any(|h| h.pending && h.missing.is_none());
     state.render_stalled = state.redraw && !waiting;
+}
+
+/// Scanout direto (A18): com a tela no modo de jogo e o buffer da janela em tela cheia
+/// servindo (dmabuf no tamanho da tela, nada do mide por cima, cursor no plano da
+/// placa), manda o buffer direto ao plano principal. Devolve se a troca foi pedida;
+/// senão, a tela é composta como sempre (e o motivo vai ao log, uma vez por mudança).
+fn try_scanout(head: &mut Head, fd: &DrmDeviceFd, gbm: &GbmDevice<DrmDeviceFd>, state: &mut State, notes: &mut crate::scanout::Notes, off: bool, scene_cursor: bool) -> bool {
+    use smithay::backend::drm::{PlaneConfig, PlaneState};
+    let name = head.output.name();
+    if state.game_window(&head.output).is_none() {
+        notes.forget(&name);
+        return false;
+    }
+    let drm_surface = head.surface.surface();
+    let mode = drm_surface.pending_mode().size();
+    let mode = (mode.0 as i32, mode.1 as i32);
+    let candidate = if off {
+        Err("desligado por MIDE_NO_SCANOUT".to_string())
+    } else if scene_cursor {
+        Err("cursor desenhado pela cena".to_string())
+    } else if drm_surface.is_legacy() {
+        Err("driver sem DRM atômico".to_string())
+    } else if drm_surface.commit_pending() {
+        Err("troca de modo pendente".to_string())
+    } else {
+        crate::scanout::candidate(state, &head.output, mode)
+    };
+    let candidate = match candidate {
+        Ok(c) => c,
+        Err(reason) => {
+            notes.note(&name, Some(&reason));
+            return false;
+        }
+    };
+    let wl_buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer = &candidate.buffer;
+    if head.scanout.refused.iter().any(|b| b == wl_buffer) {
+        return false;
+    }
+    let fb = match head.scanout.fbs.iter().find(|(b, _)| b == wl_buffer) {
+        Some((_, fb)) => fb.clone(),
+        None => match smithay::backend::drm::gbm::framebuffer_from_wayland_buffer(fd, gbm, wl_buffer, true) {
+            Ok(Some(fb)) => {
+                let fb = Rc::new(fb);
+                head.scanout.fbs.push((wl_buffer.clone(), fb.clone()));
+                if head.scanout.fbs.len() > 4 {
+                    head.scanout.fbs.remove(0);
+                }
+                fb
+            }
+            Ok(None) => {
+                notes.note(&name, Some("buffer sem formato para a placa (sem modificador)"));
+                head.scanout.refused.push(wl_buffer.clone());
+                return false;
+            }
+            Err(err) => {
+                notes.note(&name, Some(&format!("a placa não importou o buffer: {err}")));
+                head.scanout.refused.push(wl_buffer.clone());
+                return false;
+            }
+        },
+    };
+    let (w, h) = candidate.size;
+    let plane = PlaneState {
+        handle: drm_surface.plane(),
+        config: Some(PlaneConfig {
+            src: Rectangle::from_size((w as f64, h as f64).into()),
+            dst: Rectangle::from_size((w, h).into()),
+            transform: Transform::Normal,
+            alpha: 1.0,
+            damage_clips: None,
+            fb: *AsRef::<smithay::reexports::drm::control::framebuffer::Handle>::as_ref(&*fb),
+            fence: None,
+        }),
+    };
+    if let Err(err) = drm_surface.test_state([plane.clone()], false) {
+        notes.note(&name, Some(&format!("a placa recusou o buffer no plano principal ({err})")));
+        head.scanout.refused.push(wl_buffer.clone());
+        if head.scanout.refused.len() > 8 {
+            head.scanout.refused.remove(0);
+        }
+        return false;
+    }
+    if let Err(err) = drm_surface.page_flip([plane], true) {
+        notes.note(&name, Some(&format!("troca de quadro recusada ({err})")));
+        return false;
+    }
+    let feedback = crate::presentation::collect(state, &head.output);
+    head.scanout.pending = Some(Scanned { _buffer: candidate.buffer.clone(), _fb: fb, feedback: Some(feedback) });
+    head.scanout.active = true;
+    notes.note(&name, None);
+    true
 }
 
 /// Avisa no log, ao sair de `render`, se o quadro passou de 12 ms.

@@ -23,6 +23,7 @@ mod lock;
 mod osd;
 mod outputs;
 mod record;
+mod scanout;
 mod screencopy;
 mod selftest;
 mod session;
