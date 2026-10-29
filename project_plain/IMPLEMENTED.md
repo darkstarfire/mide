@@ -2062,3 +2062,7 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 ## Repetição de tecla segurada (2026-10-28, v0.10.13)
 
 - Pedido do usuário: um toque um pouco mais longo repetia a letra (a repetição começava em 200 ms). Agora a espera padrão é 600 ms (25 repetições por segundo), e as duas ficam em Configurações → Teclado (`[keyboard] repeat_delay`/`repeat_rate`), valendo na hora para todos os apps (o compositor manda o `repeat_info` novo). Testes na seção `atalhos` (padrão e escolha) e coordenadas da página Teclado ajustadas na seção `configuracoes`.
+
+## Dica da dock com uma camada só (2026-10-28, v0.10.14)
+
+- Os dois congelamentos do notebook do usuário em 2026-10-28 (sessão na v0.10.10) vieram logo depois de rajadas de camadas `mide-dock-tip` criadas e destruídas (uma por ícone, várias por segundo). A causa de fundo (quadro recusado pela placa sem nova tentativa) foi corrigida no compositor na v0.10.12; a dica da dock deixa de provocar: a camada é criada uma vez, com largura fixa (a dock com folga), e reaproveitada (troca o texto e o lugar; esconder = quadro transparente). Teste na seção `dock`: passear por vários ícones cria uma camada só. Vale pelo `mide-update` sem `--all` (só a dock reinicia).

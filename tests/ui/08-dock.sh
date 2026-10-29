@@ -37,3 +37,11 @@ if [ -n "$ICONSRC" ]; then
 else
     echo "pulado: dock com o tema do mide (sem o clone do mide-icons)"
 fi
+# A dica com o nome do ícone reaproveita uma camada só: passear por vários ícones
+# não cria e destrói camadas a cada um (coincidia com congelamentos da tela).
+n="$(timeout 150 "$SCEN" "400 move 611 728; 430 move 654 728; 460 move 697 728; 490 move 611 728; 520 move 700 400; 560 list" 2>&1 | grep -c "camada 'mide-dock-tip' criada")"
+if [ "$n" = 1 ]; then
+    echo "ok    dica da dock: uma camada só passeando pelos ícones"; PASS=$((PASS + 1))
+else
+    echo "FALHA dica da dock: uma camada só passeando pelos ícones ($n camadas)"; FAIL=$((FAIL + 1))
+fi

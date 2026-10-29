@@ -1088,13 +1088,22 @@ const BOUNCE_MAX: Duration = Duration::from_secs(10);
 
 /// Ícone pulando: a camada, o app (pelo id do `.desktop`) e o começo.
 /// Nome do ícone sob o ponteiro, numa camada acima da dock que não recebe cliques.
+/// A dica com o nome do ícone. A camada é criada uma vez e reaproveitada: trocar de
+/// ícone muda o texto e o lugar, e esconder deixa a camada transparente. Criar e
+/// destruir uma camada a cada ícone (várias por segundo, com o ponteiro passeando
+/// pela dock) coincidia com os congelamentos da tela (2026-10-28).
 struct Tip {
     layer: LayerSurface,
     pool: SlotPool,
     size: (u32, u32),
     /// Onde fica o centro do nome, na camada.
     center: f32,
+    /// Nome mostrado; vazio = escondida (camada transparente).
     text: String,
+    /// O compositor já mandou o primeiro configure (antes dele, nada de desenho).
+    configured: bool,
+    /// Margem de baixo pedida (sobe com a ampliação da dock).
+    margin: i32,
 }
 
 struct Bounce {
@@ -2243,18 +2252,19 @@ impl Dock {
     fn update_tip(&mut self) {
         let shown = self.hover_index.filter(|_| self.menu.is_none() && self.press.is_none() && !self.previews_shown);
         let Some((index, name)) = shown.and_then(|i| Some((i, self.tip_name(i)?))) else {
-            self.tip = None;
+            self.hide_tip();
             return;
         };
         if self.tip.as_ref().is_some_and(|t| t.text == name) {
             return;
         }
-        self.tip = None;
         // As fontes chegam da thread de aquecimento; até lá, sem nome.
         self.poll_text();
         let Some(text) = self.text.as_mut() else { return };
         let tw = (text.measure(&name, 13.0, FontWeight::Regular) + 20.0).ceil();
-        let width = self.width.max(tw as u32 + 8);
+        // Largura fixa (a dock com folga dos dois lados): trocar de nome não muda o
+        // tamanho da camada; só um nome mais largo que a folga a faz crescer.
+        let width = (self.width + 240).max(tw as u32 + 8);
         let offset = (width - self.width) as f32 / 2.0;
         // Centro do ícone: o ampliado, se a ampliação estiver aberta.
         let icon_center = match index {
@@ -2264,10 +2274,29 @@ impl Dock {
         let center = (offset + icon_center).clamp(tw / 2.0 + 2.0, width as f32 - tw / 2.0 - 2.0);
         let size = (width, 28);
         let lift = if self.zoom.is_some() { self.magnify.unwrap_or(icon_size()).saturating_sub(icon_size()) } else { 0 };
+        let margin = BOTTOM_MARGIN + (dock_height() + lift) as i32 + 4;
+        // Já existe: só troca o texto, o lugar e (se mudou) a margem e o tamanho.
+        if let Some(tip) = self.tip.as_mut() {
+            tip.text = name;
+            tip.center = center;
+            let resized = tip.size != size;
+            if resized || tip.margin != margin {
+                tip.size = size;
+                tip.margin = margin;
+                tip.layer.set_size(size.0, size.1);
+                tip.layer.set_margin(0, 0, margin, 0);
+                tip.layer.commit();
+            }
+            // Tamanho novo: desenha no configure dele; senão, já.
+            if !resized {
+                self.paint_tip();
+            }
+            return;
+        }
         let surface = self.compositor.create_surface(&self.qh);
         let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-tip"), None);
         layer.set_anchor(Anchor::BOTTOM);
-        layer.set_margin(0, 0, BOTTOM_MARGIN + (dock_height() + lift) as i32 + 4, 0);
+        layer.set_margin(0, 0, margin, 0);
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_size(size.0, size.1);
@@ -2278,15 +2307,38 @@ impl Dock {
         let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
             return;
         };
-        self.tip = Some(Tip { layer, pool, size, center, text: name });
+        self.tip = Some(Tip { layer, pool, size, center, text: name, configured: false, margin });
+    }
+
+    /// Esconde a dica sem destruir a camada (fica transparente até o próximo nome).
+    fn hide_tip(&mut self) {
+        let Some(tip) = self.tip.as_mut() else { return };
+        if tip.text.is_empty() {
+            return;
+        }
+        tip.text.clear();
+        self.paint_tip();
     }
 
     /// Desenha o nome: cápsula com a cor dos menus e o texto, como as dicas do mide-ui.
     fn paint_tip(&mut self) {
-        let Some(tip) = self.tip.as_mut() else { return };
+        let Some(tip) = self.tip.as_mut().filter(|t| t.configured) else { return };
         let Some(text) = self.text.as_mut() else { return };
         let (w, h) = tip.size;
         let Some(mut pixmap) = Pixmap::new(w, h) else { return };
+        // Escondida: um quadro transparente (a camada continua, sem nada à vista).
+        if tip.text.is_empty() {
+            let Ok((buffer, canvas)) = tip.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+                return;
+            };
+            canvas.fill(0);
+            let surface = tip.layer.wl_surface();
+            surface.damage_buffer(0, 0, w as i32, h as i32);
+            if buffer.attach_to(surface).is_ok() {
+                tip.layer.commit();
+            }
+            return;
+        }
         let theme = mide::kit::Theme::system();
         let tw = (text.measure(&tip.text, 13.0, FontWeight::Regular) + 20.0).ceil();
         let (x, y, bh) = (tip.center - tw / 2.0, 2.0, 24.0);
@@ -2314,7 +2366,7 @@ impl Dock {
         let Some(app) = self.items.get(index).cloned() else {
             return;
         };
-        self.tip = None;
+        self.hide_tip();
         let windows = app_windows(&app);
         if windows.is_empty() {
             return;
@@ -2534,7 +2586,8 @@ impl LayerShellHandler for Dock {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+        if let Some(tip) = self.tip.as_mut().filter(|t| &t.layer == layer) {
+            tip.configured = true;
             self.paint_tip();
             return;
         }
@@ -2647,7 +2700,7 @@ impl PointerHandler for Dock {
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT || button == BTN_RIGHT => {
                     self.hide_previews();
-                    self.tip = None;
+                    self.hide_tip();
                     if button == BTN_RIGHT {
                         // Clique direito sempre abre o menu de contexto do ícone.
                         match self.icon_at(event.position.0) {
@@ -2698,7 +2751,7 @@ impl PointerHandler for Dock {
                     self.hover_index = None;
                     self.hover_gen += 1;
                     self.pointer_inside = false;
-                    self.tip = None;
+                    self.hide_tip();
                     if self.autohide && self.covered {
                         self.schedule_hide();
                     }
