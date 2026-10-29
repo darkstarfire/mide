@@ -182,6 +182,9 @@ pub struct Effects {
     pub transitions: bool,
     /// Agitar o ponteiro faz o cursor crescer por um instante (para achar onde está).
     pub shake_cursor: bool,
+    /// Modo de jogo em tela cheia (A18): a tela de uma janela em tela cheia de verdade
+    /// fica só para ela (sem barra, dock, vidro nem banners; tarefas do shell pausadas).
+    pub game_mode: bool,
 }
 
 impl Default for Effects {
@@ -198,6 +201,7 @@ impl Default for Effects {
             menu_animation: true,
             transitions: true,
             shake_cursor: true,
+            game_mode: true,
         }
     }
 }
@@ -913,7 +917,7 @@ mod tests {
 
     #[test]
     fn cada_efeito_pode_ser_desligado_independentemente() {
-        let effects: [(&str, fn(Effects) -> bool); 11] = [
+        let effects: [(&str, fn(Effects) -> bool); 12] = [
             ("shadows", |e: Effects| e.shadows),
             ("rounded_corners", |e: Effects| e.rounded_corners),
             ("animations", |e: Effects| e.animations),
@@ -925,6 +929,7 @@ mod tests {
             ("menu_animation", |e: Effects| e.menu_animation),
             ("transitions", |e: Effects| e.transitions),
             ("shake_cursor", |e: Effects| e.shake_cursor),
+            ("game_mode", |e: Effects| e.game_mode),
         ];
         for (key, enabled) in effects {
             let file: FileConfig = toml::from_str(&format!("[effects]\n{key} = false\n")).unwrap();
@@ -941,6 +946,7 @@ mod tests {
                 "menu_animation" => expected.menu_animation = false,
                 "transitions" => expected.transitions = false,
                 "shake_cursor" => expected.shake_cursor = false,
+                "game_mode" => expected.game_mode = false,
                 _ => unreachable!(),
             }
             assert_eq!(file.effects, expected, "campo {key} alterou outros efeitos");

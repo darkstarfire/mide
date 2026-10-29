@@ -13,8 +13,8 @@ min_log() { sed 's/\x1b\[[0-9;]*m//g' "$MIN/$1/mide.log" 2>/dev/null; }
 # ⌘⇧4: a captura é salva, a miniatura aparece no canto e some sozinha em 5 s.
 XDG_CONFIG_HOME="$MIN/cfg" SCENARIO_OUT="$MIN/some" SCENARIO_WAIT=18 timeout 150 "$SCEN" "$AREA4; 700 list" 700 >/dev/null 2>&1
 LOG="$(min_log some)"
-T_IN="$(echo "$LOG" | grep -m1 "miniatura: apareceu" | cut -c12-23)"
-T_OUT="$(echo "$LOG" | grep -m1 "miniatura: some sozinha" | cut -c12-23)"
+T_IN="$(echo "$LOG" | grep -m1 "miniatura: apareceu" | grep -oE 'T[0-9]{2}:[0-9]{2}:[0-9.]{6}' | head -1 | cut -c2-)"
+T_OUT="$(echo "$LOG" | grep -m1 "miniatura: some sozinha" | grep -oE 'T[0-9]{2}:[0-9]{2}:[0-9.]{6}' | head -1 | cut -c2-)"
 if echo "$LOG" | grep -q 'autoteste: camada "mide-captura-miniatura" em (1086, 401) 280x300' && [ -n "$T_IN" ] && [ -n "$T_OUT" ] \
     && python3 -c "
 import sys

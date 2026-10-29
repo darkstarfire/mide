@@ -150,6 +150,12 @@ impl Server {
             tracing::info!("notificação {id} silenciada (não perturbe): {summary}");
             return id;
         }
+        // Modo de jogo em tela cheia (A18) na tela dos banners: como o Não perturbe, só
+        // as urgentes aparecem; as outras ficam na central, sem banner nem som.
+        if urgency < 2 && game_mode_on() {
+            tracing::info!("notificação {id} guardada na central (modo tela cheia): {summary}");
+            return id;
+        }
         let icon = Some(app_icon)
             .filter(|s| !s.is_empty())
             .or_else(|| hint_str(&hints, "image-path"))
@@ -189,6 +195,11 @@ impl Server {
     fn get_server_information(&self) -> (String, String, String, String) {
         ("mide".into(), "mide".into(), env!("CARGO_PKG_VERSION").into(), "1.2".into())
     }
+}
+
+/// A tela dos banners (a principal) está no modo de jogo em tela cheia (A18)?
+fn game_mode_on() -> bool {
+    mide::control_client::ask_compositor("game_mode").is_some_and(|l| l.first().is_some_and(|w| w == "on"))
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

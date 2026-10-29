@@ -157,6 +157,15 @@ impl Scene {
         state.popups.cleanup();
         let now = std::time::Instant::now();
         state.finish_animations(now);
+        // Modo de jogo (A18): a tela que acabou de entrar solta os desfoques guardados
+        // (vidro da barra, da dock, dos menus): enquanto durar, nada disso aparece nela.
+        for name in state.refresh_game_mode() {
+            blur.forget_output(&name);
+            tone.remove(&name);
+        }
+        // Janela que tem esta tela só para ela: a cena leva só ela (e o que está por cima
+        // dela). Durante a animação de entrar, a cena inteira (o que está atrás aparece).
+        let game = state.game_window(output).filter(|w| w.toplevel().is_some_and(|t| state.animation_for(t.wl_surface()).is_none()));
         tracing::debug!("frame: {} janela(s) mapeada(s)", state.space.elements().count());
         // Da frente para trás: prévias das janelas, popups, camadas (barra, dock) e
         // depois as janelas.
@@ -232,7 +241,7 @@ impl Scene {
         // barra superior, na frente da janela.
         custom.extend(reveal_strip_elements(renderer, state, output, origin, shaders, titles));
         let before_windows = custom.len();
-        let (windows, window_glass) = window_elements(renderer, state, output, origin, shaders, genie, wallpaper, titles);
+        let (windows, window_glass) = window_elements(renderer, state, output, origin, shaders, genie, wallpaper, titles, game.as_ref());
         custom.extend(windows);
         glass.extend(window_glass.into_iter().map(|mut region| {
             region.at += before_windows;
@@ -300,7 +309,9 @@ impl Scene {
         // Direto no rastreador de dano: o `space::render_output` do Smithay acrescenta
         // sozinho as camadas da tela (barra, dock), que o mide já desenha aqui (e que
         // apareceriam atrás da tela de bloqueio).
-        let result = damage_tracker.render_output(renderer, framebuffer, age, &custom, BACKGROUND)?;
+        // No modo de jogo, sem papel de parede: o que a janela não cobre fica preto.
+        let clear = if game.is_some() { [0.0, 0.0, 0.0, 1.0] } else { BACKGROUND };
+        let result = damage_tracker.render_output(renderer, framebuffer, age, &custom, clear)?;
         tracing::debug!("quadro do compositor: {:.2} ms", now.elapsed().as_secs_f32() * 1000.0);
         if let Some(mode) = output.current_mode() {
             let area: i64 = result.damage.map(|d| d.iter().map(|r| r.size.w as i64 * r.size.h as i64).sum()).unwrap_or(0);
@@ -373,6 +384,7 @@ fn window_elements(
     genie: &crate::genie::Genie,
     wallpaper: &crate::wallpaper::Wallpaper,
     titles: &mut crate::title::TitleRenderer,
+    game: Option<&Window>,
 ) -> (Vec<MideRenderElement>, Vec<GlassRegion>) {
     use smithay::backend::renderer::element::AsRenderElements;
     let mut glass = Vec::new();
@@ -399,7 +411,13 @@ fn window_elements(
     let mut placed: Vec<Placed> = Vec::new();
     let keyboard_focus = state.seat.get_keyboard().and_then(|k| k.current_focus());
     // `elements()` vai do fundo para o topo; aqui percorremos do topo para o fundo.
+    // Modo de jogo: as janelas abaixo da janela em tela cheia ficam cobertas por ela.
+    let mut past_game = false;
     for window in state.space.elements().rev() {
+        if past_game {
+            break;
+        }
+        past_game = game == Some(window);
         let (Some(toplevel), Some(loc)) = (window.toplevel(), state.space.element_location(window))
         else {
             continue;
@@ -732,6 +750,11 @@ fn window_elements(
         }
     }
 
+    // Modo de jogo: nem ícones da mesa nem papel de parede (a janela cobre a tela).
+    if game.is_some() {
+        decorations::set_alpha(1.0);
+        return (elements, glass);
+    }
     // Camadas de fundo (ícones da área de trabalho): atrás das janelas e na frente
     // do papel de parede.
     {
@@ -1057,13 +1080,28 @@ pub fn send_frames(state: &mut State, output: &Output) -> Result<(), Box<dyn Err
     // qualquer tela (limiar zero): fica num ritmo menor, mas não para.
     let primaries: Vec<Option<Output>> =
         state.space.elements().map(|w| crate::presentation::primary_output(state, w)).collect();
+    // Modo de jogo (A18): janelas cobertas pela janela em tela cheia e as camadas
+    // escondidas da tela dela (barra, dock, mesa) recebem o aviso no máximo uma vez por
+    // segundo (sem tela principal, só quando atrasado).
+    let hidden = state.game_hidden_windows();
+    let game_here = state.game_window(output).is_some();
     for (window, primary) in state.space.elements().zip(&primaries) {
-        window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| primary.clone());
+        if hidden.contains(window) {
+            window.send_frame(output, elapsed, Some(crate::fullscreen::HIDDEN_FRAME_THROTTLE), |_, _| None);
+        } else {
+            window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| primary.clone());
+        }
     }
     // Camadas e popups também precisam do frame callback para redesenhar depois de
     // receber teclas ou cliques.
     for layer in layer_map_for_output(output).layers() {
-        layer.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
+        use smithay::wayland::shell::wlr_layer::Layer;
+        let paused = game_here && (matches!(layer.layer(), Layer::Background | Layer::Bottom) || state.layer_offset(output, layer).is_none());
+        if paused {
+            layer.send_frame(output, elapsed, Some(crate::fullscreen::HIDDEN_FRAME_THROTTLE), |_, _| None);
+        } else {
+            layer.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
+        }
     }
     for (window, primary) in state.space.elements().zip(&primaries) {
         let Some(toplevel) = window.toplevel() else {

@@ -87,6 +87,7 @@ const EFFECTS: &[(&str, &str, &str)] = &[
     ("menu_animation", "Menu animation", "Menus and lists appear with a short fade"),
     ("transitions", "Smooth transitions", "Dock previews and Alt+Tab, launcher pages and folders, Files folders, switching between icons and list, and the screenshot thumbnail"),
     ("shake_cursor", "Shake mouse pointer to locate", "Moving the mouse quickly back and forth makes the pointer big for a moment"),
+    ("game_mode", "Game mode in full screen", "A full screen window gets the display to itself: the menu bar, Dock and glass pause, and notifications wait in the notification history"),
 ];
 
 /// O que a busca encontra: nome da opção, palavras-chave e a seção dela (em inglês;
@@ -122,6 +123,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Glass in bars and menus", "effects glass bar menus notifications transparency", Section::Effects),
     ("Menu animation", "effects animation menus context fade", Section::Effects),
     ("Smooth transitions", "effects animation transition smooth launcher folders files list icons", Section::Effects),
+    ("Game mode in full screen", "effects game games performance full screen fullscreen video notifications", Section::Effects),
     ("Pointer speed", "mouse trackpad touchpad pointer speed cursor tracking", Section::Mouse),
     ("Natural scrolling", "mouse trackpad touchpad scrolling natural scroll inverted", Section::Mouse),
     ("Tap to click", "trackpad touchpad tap click", Section::Mouse),

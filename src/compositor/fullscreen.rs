@@ -89,6 +89,27 @@ impl Reveal {
     }
 }
 
+/// Modo de jogo em tela cheia (A18): com uma janela em tela cheia de verdade (não só
+/// maximizada) por cima, a tela fica só para ela. O mide cede o que é dele: a cena
+/// dessa tela leva só a janela (sem papel de parede, ícones da mesa, janelas de baixo
+/// nem vidro), os caches de desfoque da tela são soltos, as janelas e camadas escondidas
+/// recebem o aviso de quadro no máximo uma vez por segundo, a barra e a dock param as
+/// tarefas periódicas (perguntam `game_mode`/`launcher state` pelo canal de controle) e
+/// as notificações vão só para a central. Rede, Bluetooth, som e o resto do sistema não
+/// mudam. Desligável em Configurações → Efeitos (`[effects] game_mode`).
+#[derive(Debug, Default)]
+pub struct GameMode {
+    /// Telas no modo agora (para registrar a entrada e a saída uma vez cada).
+    outputs: Vec<String>,
+    /// Por que o scanout direto (o buffer do app direto ao plano da placa) não vale
+    /// neste backend; o backend diz ao começar. `None`: o backend não disse.
+    pub scanout_note: Option<&'static str>,
+}
+
+/// Aviso de quadro das janelas e camadas escondidas pelo modo de jogo: no máximo um por
+/// este intervalo (não param de vez: um app que espera o aviso não fica travado).
+pub const HIDDEN_FRAME_THROTTLE: Duration = Duration::from_secs(1);
+
 /// A camada some numa tela em tela cheia? A barra superior, a dock (e as camadas dela)
 /// e as camadas de cima que reservam espaço (barras e docks de terceiros). As
 /// notificações e as camadas Overlay (aviso de volume, menus, captura) continuam.
@@ -137,6 +158,72 @@ impl State {
                 })
             })?;
         self.fullscreen.iter().any(|e| &e.window == top && e.output == name).then(|| top.clone())
+    }
+
+    /// Janela que tem a tela `output` só para ela (modo de jogo, A18): a opção ligada, a
+    /// sessão desbloqueada e a janela de cima nessa tela em tela cheia.
+    pub fn game_window(&self, output: &Output) -> Option<Window> {
+        if !self.config.effects.game_mode || self.lock.locked {
+            return None;
+        }
+        self.fullscreen_on(output)
+    }
+
+    /// A tela principal (a da barra, da dock e dos banners) está no modo de jogo.
+    pub fn game_on_primary(&self) -> bool {
+        self.primary_output().is_some_and(|o| self.game_window(&o).is_some())
+    }
+
+    /// A barra superior está escondida pelo modo de jogo (não revelada pelo ponteiro no
+    /// topo): ela pode pausar o relógio, a bateria, a rede e a mídia.
+    pub fn bar_paused(&self) -> bool {
+        self.primary_output()
+            .is_some_and(|o| self.game_window(&o).is_some() && self.fs_reveal.progress(&o.name(), Instant::now()) <= 0.0 && !self.fs_reveal.shown_on(&o.name()))
+    }
+
+    /// Confere quais telas estão no modo de jogo, registra quem entrou e quem saiu e
+    /// devolve as telas que acabaram de entrar (o desenho solta os caches delas).
+    pub fn refresh_game_mode(&mut self) -> Vec<String> {
+        let now: Vec<(String, Window)> = self.space.outputs().filter_map(|o| Some((o.name(), self.game_window(o)?))).collect();
+        let mut entered = Vec::new();
+        for (name, window) in &now {
+            if !self.game.outputs.contains(name) {
+                let title = crate::render::window_title(window);
+                let scanout = self.game.scanout_note.unwrap_or("não: backend sem plano da placa");
+                tracing::info!("modo tela cheia: ligado na tela {name} ({title:?}); scanout direto {scanout}");
+                entered.push(name.clone());
+            }
+        }
+        let left: Vec<String> = self.game.outputs.iter().filter(|n| !now.iter().any(|(m, _)| m == *n)).cloned().collect();
+        for name in &left {
+            tracing::info!("modo tela cheia: desligado na tela {name}");
+        }
+        if !entered.is_empty() || !left.is_empty() {
+            self.game.outputs = now.into_iter().map(|(n, _)| n).collect();
+            // A barra, a dock e a mesa voltam a receber os avisos de quadro: um quadro já.
+            self.wake();
+        }
+        entered
+    }
+
+    /// Janelas escondidas pelo modo de jogo: abaixo da janela em tela cheia, na tela
+    /// dela (a tela principal de cada janela, como no aviso de quadro).
+    pub fn game_hidden_windows(&self) -> Vec<Window> {
+        if self.game.outputs.is_empty() {
+            return Vec::new();
+        }
+        let mut hidden = Vec::new();
+        for output in self.space.outputs() {
+            let Some(game) = self.game_window(output) else {
+                continue;
+            };
+            for window in self.space.elements().take_while(|w| **w != game) {
+                if crate::presentation::primary_output(self, window).as_ref() == Some(output) {
+                    hidden.push(window.clone());
+                }
+            }
+        }
+        hidden
     }
 
     /// Deslocamento vertical de uma camada na tela `output`: `None` se ela está

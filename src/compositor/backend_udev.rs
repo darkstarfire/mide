@@ -151,6 +151,8 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     crate::clip::set_flipped(false);
 
     let scene = Scene::new(&mut renderer, state)?.with_cursor();
+    // Modo de jogo em tela cheia (A18): o scanout direto vale aqui?
+    state.game.scanout_note = Some("não: ainda não implementado no DRM (quadro composto só com a janela)");
     let gpu = Rc::new(RefCell::new(Gpu { drm, fd, gbm, renderer, formats, heads: Vec::new(), scene, blanked: false, cursor_size: (64, 64) }));
     state.session = Some(session.clone());
     // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador. Só a

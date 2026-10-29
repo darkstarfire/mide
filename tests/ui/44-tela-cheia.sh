@@ -20,9 +20,9 @@ if [ -x "$JANELA" ]; then
     check "app sai da tela cheia e volta ao lugar" "$ANTES" "400 click 300 200; 480 click 300 200; 560 list" "$JANELA cheia"
     check "app pede tela cheia antes do primeiro quadro" "$CHEIA" "400 list" "$JANELA cheia ja"
     # Borda de cima: a barra desce (parada 0,3 s ou empurrando) e a faixa também.
-    check "ponteiro no topo revela a barra" "fullscreen: tela cheia: barra revelada" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 list" "$JANELA cheia"
+    check "ponteiro no topo revela a barra" "tela cheia: barra revelada" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 list" "$JANELA cheia"
     check "barra revelada aparece na lista" 'camada "mide-bar" em \(0, 0\) 1366x28' "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 list" "$JANELA cheia"
-    check "ponteiro sai e a barra sobe" "fullscreen: tela cheia: barra escondida" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 move 600 300; 600 list" "$JANELA cheia"
+    check "ponteiro sai e a barra sobe" "tela cheia: barra escondida" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 move 600 300; 600 list" "$JANELA cheia"
     check "verde da faixa revelada sai da tela cheia" "$ANTES" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 move 55 43; 580 click 55 43; 660 list" "$JANELA cheia"
     check "vermelho da faixa revelada fecha" "janela fechada" "400 click 103 61; 480 move 600 0; 520 move 601 0; 560 move 15 43; 580 click 15 43; 660 list" "$JANELA cheia"
     # O duplo clique e o ⌥ (Alt) no verde continuam maximizando (área útil (0, 28) 1366x673).
@@ -56,6 +56,41 @@ if [ -x "$JANELA" ]; then
     # Dois monitores: só a tela da janela fica em tela cheia.
     MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 check "dois monitores: a tela da janela em tela cheia" "tela HEADLESS-1 em tela cheia" "400 click 103 61; 480 list" "$JANELA cheia"
     MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 check_count "dois monitores: a outra tela não muda" "tela HEADLESS-2 em tela cheia" 0 "400 click 103 61; 480 list" "$JANELA cheia"
+    MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 check_count "dois monitores: só a tela da janela no modo de jogo" "tela HEADLESS-2 no modo de jogo" 0 "400 click 103 61; 480 list" "$JANELA cheia"
+    # Modo de jogo em tela cheia (A18): a tela fica só para a janela (cena com ela só),
+    # a barra e a dock pausam as tarefas periódicas e voltam (com o relógio em dia) ao
+    # sair; maximizada não liga; o interruptor em Efeitos desliga.
+    JOGO="$(timeout 150 "$SCEN" "400 click 103 61; 480 list; 560 combo ctrl+super+f; 640 list" -- "$JANELA cheia" 2>&1)"
+    for esperado in "autoteste: tela HEADLESS-1 no modo de jogo" "modo tela cheia: ligado na tela HEADLESS-1 .*scanout direto" \
+        "desfoque\(s\) e [0-9]+ textura\(s\) soltos da tela HEADLESS-1" "barra: pausada \(modo tela cheia\)" "dock: pausada \(modo tela cheia\)" \
+        "modo tela cheia: desligado na tela HEADLESS-1" "barra: de volta do modo tela cheia" "dock: de volta do modo tela cheia"; do
+        if echo "$JOGO" | grep -Eq "$esperado"; then
+            echo "ok    modo de jogo: $esperado"; PASS=$((PASS + 1))
+        else
+            echo "FALHA modo de jogo: $esperado"; FAIL=$((FAIL + 1))
+        fi
+    done
+    check_count "modo de jogo: maximizada não liga" "no modo de jogo" 0 "400 click 300 61; 404 click 300 61; 480 list" "$JANELA cheia"
+    check "modo de jogo: Alt+Tab para outra janela desliga" "modo tela cheia: desligado na tela HEADLESS-1" "400 click 520 200; 480 combo alt+tab; 560 list" "$JANELA cheia" "$JANELA comum"
+    SEMJOGO="$(mktemp -d)"
+    mkdir -p "$SEMJOGO/mide"
+    printf '[effects]\ngame_mode = false\n' >"$SEMJOGO/mide/config.toml"
+    XDG_CONFIG_HOME="$SEMJOGO" check_count "modo de jogo desligado: tela cheia sem o modo" "no modo de jogo" 0 "400 click 103 61; 480 list" "$JANELA cheia"
+    XDG_CONFIG_HOME="$SEMJOGO" check "modo de jogo desligado: tela cheia continua igual" "$CHEIA" "400 click 103 61; 480 list" "$JANELA cheia"
+    rm -rf "$SEMJOGO"
+    # Notificação durante o modo de jogo: sem banner nem som, só na central. O app
+    # espera o compositor dizer que o modo ligou (mide-ctl game_mode).
+    HIST="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${MIDE_TEST_SOCKET:-mide-test}-notificacoes"
+    rm -f "$HIST"
+    AVISO="sh -c 'until mide-ctl game_mode | grep -q on; do sleep 0.2; done; notify-send -a Jogo \"Partida salva\" \"Nível 3\"'"
+    NOTA="$(timeout 150 tests/scenario-dbus.sh "400 click 103 61; 700 list" -- "$JANELA cheia" "$AVISO" 2>&1)"
+    if echo "$NOTA" | grep -q "guardada na central (modo tela cheia): Partida salva" && ! echo "$NOTA" | grep -q 'camada "mide-notifications"' \
+        && ! echo "$NOTA" | grep -q "som (teste): message-new-instant" && grep -q "Partida salva" "$HIST" 2>/dev/null; then
+        echo "ok    modo de jogo: notificação só na central, sem banner nem som"; PASS=$((PASS + 1))
+    else
+        echo "FALHA modo de jogo: notificação só na central, sem banner nem som"; FAIL=$((FAIL + 1))
+    fi
+    rm -f "$HIST"
 else
     echo "FALHA tela cheia: falta o examples/mide-janela-teste (cargo build --examples)"
     FAIL=$((FAIL + 1))

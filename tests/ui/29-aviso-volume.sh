@@ -17,8 +17,8 @@ falha() { echo "FALHA $1"; FAIL=$((FAIL + 1)); }
 # Volume +: o aviso aparece com o novo nível, desenha a barra e some ~1,5 s depois.
 osd_run sobe "500 key volumeup; 700 list"
 LOG="$(osd_log sobe)"
-T_IN="$(echo "$LOG" | grep -m1 "osd: volume 55%" | cut -c12-23)"
-T_OUT="$(echo "$LOG" | grep -m1 "osd: escondido" | cut -c12-23)"
+T_IN="$(echo "$LOG" | grep -m1 "osd: volume 55%" | grep -oE 'T[0-9]{2}:[0-9]{2}:[0-9.]{6}' | head -1 | cut -c2-)"
+T_OUT="$(echo "$LOG" | grep -m1 "osd: escondido" | grep -oE 'T[0-9]{2}:[0-9]{2}:[0-9.]{6}' | head -1 | cut -c2-)"
 if echo "$LOG" | grep -q "osd: aparece" && [ -n "$T_IN" ] && [ -n "$T_OUT" ] && python3 -c "
 import sys
 f = lambda s: sum(float(x) * m for x, m in zip(s.split(':'), (3600, 60, 1)))

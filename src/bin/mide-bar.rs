@@ -412,6 +412,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         over_launcher: false,
         launcher_k: 0.0,
         tone_dark: None,
+        game_paused: false,
+        game_resumed: false,
         tone_k: if wallpaper_top_dark() { 1.0 } else { 0.0 },
         clock: String::new(),
         items: Vec::new(),
@@ -545,9 +547,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(50)), move |_, _, bar| {
             bar.refresh_launcher();
+            // Modo de jogo em tela cheia (A18): escondida, a barra só pergunta ao
+            // compositor (menos vezes) quando volta; o resto fica parado.
+            if bar.game_paused {
+                return TimeoutAction::ToDuration(GAME_POLL);
+            }
             bar.refresh_tray();
             bar.step_tip();
-            if last_refresh.elapsed() >= Duration::from_millis(450) {
+            if std::mem::take(&mut bar.game_resumed) || last_refresh.elapsed() >= Duration::from_millis(450) {
                 bar.refresh();
                 last_refresh = std::time::Instant::now();
             }
@@ -982,6 +989,11 @@ struct Bar {
     /// O compositor diz se o que está atrás da barra é escuro (`None`: não disse, vale
     /// o alto do papel de parede).
     tone_dark: Option<bool>,
+    /// Modo de jogo em tela cheia (A18) com a barra escondida: relógio, bateria, rede,
+    /// mídia e bandeja ficam parados até ela voltar.
+    game_paused: bool,
+    /// Acabou de sair da pausa: atualiza tudo já, antes de aparecer.
+    game_resumed: bool,
     /// Transição do texto da barra sem fundo: 0 = texto escuro (fundo claro), 1 = texto
     /// branco (fundo escuro).
     tone_k: f32,
@@ -1065,6 +1077,8 @@ struct Tip {
 }
 
 /// Quanto o ponteiro precisa parar num ícone da barra para a dica aparecer.
+/// Intervalo das perguntas ao compositor com a barra pausada pelo modo de jogo.
+const GAME_POLL: Duration = Duration::from_millis(200);
 const TIP_DELAY: Duration = Duration::from_millis(800);
 
 impl Bar {
@@ -1114,6 +1128,15 @@ impl Bar {
         if tone.is_some() && tone != self.tone_dark {
             tracing::info!("barra: fundo atrás {}", if tone == Some(true) { "escuro (texto branco)" } else { "claro (texto escuro)" });
             self.tone_dark = tone;
+        }
+        let paused = reply.iter().any(|l| l == "game paused");
+        if paused != self.game_paused {
+            self.game_paused = paused;
+            self.game_resumed = !paused;
+            tracing::info!("barra: {}", if paused { "pausada (modo tela cheia)" } else { "de volta do modo tela cheia" });
+            if paused {
+                self.close_menu();
+            }
         }
         if open != self.over_launcher {
             self.over_launcher = open;

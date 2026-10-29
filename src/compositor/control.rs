@@ -15,6 +15,7 @@
 //! - `workarea`: área útil da tela (`x y largura altura`), sem a barra e a dock.
 //! - `dock_covered`: `yes` se alguma janela está onde a dock aparece.
 //! - `force_quit`: termina o processo do app em foco (menu do mide).
+//! - `game_mode`: `on` se a tela principal está no modo de jogo em tela cheia (A18).
 //! - `glass <camada> raio[@opacidade]:x,y,w,h ...`: a camada pede vidro (desfoque e vidro
 //!   líquido) atrás desses retângulos, relativos a ela; sem regiões, limpa.
 
@@ -83,7 +84,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
     // tela; os outros comandos pedem um quadro.
     let query = matches!(
         command.split_whitespace().next(),
-        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs")
+        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs" | "game_mode")
     ) || matches!(command.trim(), "launcher state" | "shortcuts captured");
     if !query {
         state.wake();
@@ -94,6 +95,10 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // Recursos que este compositor tem, uma palavra cada (o mide-ui pergunta uma vez):
         // `child_glass` = vidro por janela filha, pelo nome `app:<app_id>><título>`.
         Some("features") => "child_glass\n".into(),
+        // Modo de jogo em tela cheia (A18) na tela principal (a da barra, da dock e dos
+        // banners): `on` ou `off`. A dock pausa as tarefas periódicas e as notificações
+        // vão só para a central enquanto for `on`.
+        Some("game_mode") => if state.game_on_primary() { "on\n".into() } else { "off\n".into() },
         // Onde está o menu da janela em foco (apps GTK e Qt no Wayland): `gtk<TAB>bus
         // <TAB>barra<TAB>app<TAB>janela`, `dbusmenu<TAB>serviço<TAB>objeto` ou vazio.
         Some("appmenu") => {
@@ -521,10 +526,17 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 let open = if state.launcher_open() { "open" } else { "closed" };
                 let primary = state.primary_output().map(|o| o.name());
                 let tone = primary.and_then(|name| state.bar_tone.get(&name).copied()).or_else(|| state.bar_tone.values().next().copied());
-                match tone {
+                let mut reply = match tone {
                     Some(dark) => format!("{open}\ntone {}\n", if dark { "dark" } else { "light" }),
                     None => format!("{open}\n"),
+                };
+                // Modo de jogo (A18) com a barra escondida: ela pausa relógio, bateria,
+                // rede e mídia e pergunta menos vezes, até a tela cheia acabar ou o
+                // ponteiro revelar a barra.
+                if state.bar_paused() {
+                    reply.push_str("game paused\n");
                 }
+                reply
             }
             Some("close") => {
                 if state.launcher_open() {

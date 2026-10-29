@@ -141,6 +141,12 @@ msgstr "Agitar o ponteiro para localizá-lo"
 msgid "Moving the mouse quickly back and forth makes the pointer big for a moment"
 msgstr "Mexer o mouse rápido de um lado para o outro deixa o ponteiro grande por um instante"
 
+msgid "Game mode in full screen"
+msgstr "Modo de jogo em tela cheia"
+
+msgid "A full screen window gets the display to itself: the menu bar, Dock and glass pause, and notifications wait in the notification history"
+msgstr "Uma janela em tela cheia fica com a tela só para ela: a barra, a dock e o vidro param, e as notificações esperam na central"
+
 # Busca (nome da opção e palavras-chave; a busca olha as duas línguas)
 msgid "Lock the screen after"
 msgstr "Bloquear a tela após"
@@ -273,6 +279,9 @@ msgstr "efeitos animacao menus contexto esmaecer"
 
 msgid "effects animation transition smooth launcher folders files list icons"
 msgstr "efeitos animacao transicao suave launcher pastas arquivos lista icones"
+
+msgid "effects game games performance full screen fullscreen video notifications"
+msgstr "efeitos jogo jogos desempenho tela cheia video notificacoes"
 
 msgid "Pointer speed"
 msgstr "Velocidade do ponteiro"

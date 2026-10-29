@@ -187,6 +187,9 @@ pub struct State {
     pub fullscreen: Vec<crate::fullscreen::Entry>,
     /// Barra superior revelada no topo de uma tela em tela cheia.
     pub fs_reveal: crate::fullscreen::Reveal,
+    /// Modo de jogo em tela cheia (A18): telas que estão nele agora (para registrar a
+    /// entrada e a saída uma vez cada) e o porquê de o scanout direto valer ou não.
+    pub game: crate::fullscreen::GameMode,
     /// Forma do ponteiro (redimensionar, padrão); o backend a mostra.
     pub cursor: crate::input::CursorShape,
     /// Redimensionamento pela borda em andamento.
@@ -462,6 +465,7 @@ impl State {
             tiled: Vec::new(),
             fullscreen: Vec::new(),
             fs_reveal: Default::default(),
+            game: Default::default(),
             cursor: Default::default(),
             animations: Vec::new(),
             close_requests: Vec::new(),

@@ -2135,3 +2135,15 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - Sobre apps que desenham o próprio cursor (navegadores, VS Code, GTK), agitar cresce a seta do tema (antes, o cursor do app não crescia e a cena desenhava quadros à toa).
 - A cena só volta a desenhar o cursor crescido quando o plano não serve (imagem maior que o plano, driver que recusa, `MIDE_SW_CURSOR=1`), como antes. `State::cursor_plane` diz se o cursor de todas as telas está no plano; com ele, `pointer_motion` e `Scene::moving` não pedem quadros pela agitada.
 - Testes: teste de unidade da redução (tamanho e ponto quente); 86 testes do compositor; seção `14-vidro` (33 ok, com "ponteiro agitado cresce e volta sem saltos", no backend sem tela, que segue pela cena). O caminho do plano só roda no DRM: falta o usuário religar o efeito no Chromebook e conferir.
+
+## Modo de jogo em tela cheia (A18, v0.10.24)
+
+- Quando uma janela está em tela cheia de verdade (botão verde, ⌃⌘F, menu Janela, F11/jogos pelo `xdg_toplevel.set_fullscreen`, apps X11 pelo satellite) e é a de cima na tela dela, essa tela entra no modo de jogo. Maximizada não liga; Alt+Tab para outra janela, sair da tela cheia ou bloquear a tela desliga; com vários monitores só a tela da janela muda.
+- O que o mide cede nessa tela: a cena leva só a janela em tela cheia (e diálogos por cima), sem papel de parede, ícones da mesa, janelas de baixo nem vidro, com fundo preto onde o app não cobre; os desfoques guardados da tela (barra, dock, menus) e a textura de fundo das passadas são soltos ao entrar e refeitos quando forem pedidos de novo; janelas cobertas e camadas escondidas (barra, dock, mesa) recebem o aviso de quadro no máximo uma vez por segundo.
+- Barra e dock: escondidas, param relógio, bateria, rede, mídia, bandeja, apps abertos, Lixeira e configuração (a barra pergunta ao compositor a cada 200 ms em vez de 50 ms; a dock só pergunta `game_mode`) e atualizam tudo na hora ao voltar. Com a barra revelada pelo ponteiro no topo, ela volta a atualizar.
+- Notificações: as não urgentes vão só para a central, sem banner e sem som (as urgentes aparecem, como no Não perturbe). O aviso de volume e brilho continua.
+- Nada do sistema é desligado: rede, Wi-Fi, Bluetooth, som e o resto seguem iguais.
+- Configurações → Efeitos → "Modo de jogo em tela cheia" (`[effects] game_mode`, ligado por padrão, vale na hora pelo `reload`; texto em inglês com tradução pt-BR).
+- Log (`mide-logs --search "modo tela cheia"`): "modo tela cheia: ligado na tela X ("título"); scanout direto …" e "desligado na tela X", uma vez cada; "vidro: N desfoque(s) … soltos"; "barra/dock: pausada (modo tela cheia)" e "de volta". Nesta versão o scanout direto ainda não existe no DRM (a cena composta tem só a janela).
+- Canal de controle: `game_mode` (`on`/`off`, tela principal) e a linha `game paused` no `launcher state`.
+- Corrigidos também testes quebrados pelo formato novo dos logs (seções 28, 29 e duas checagens da 44) e a tradução de "Refresh" do Arquivos.

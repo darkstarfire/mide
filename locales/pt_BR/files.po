@@ -641,3 +641,6 @@ msgstr ", {size} disponíveis"
 
 msgid "Icon Size"
 msgstr "Tamanho dos ícones"
+
+msgid "Refresh"
+msgstr "Atualizar"

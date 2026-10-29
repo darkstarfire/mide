@@ -308,6 +308,9 @@ fn list(state: &State) {
         if state.fullscreen_on(output).is_some() {
             tracing::info!("autoteste: tela {} em tela cheia", output.name());
         }
+        if state.game_window(output).is_some() {
+            tracing::info!("autoteste: tela {} no modo de jogo", output.name());
+        }
         let map = layer_map_for_output(output);
         for layer in map.layers() {
             if state.layer_offset(output, layer).is_none() {

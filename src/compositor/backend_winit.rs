@@ -67,6 +67,8 @@ pub fn init(
     // Quando o anfitrião pede o último quadro (para o relógio de reserva abaixo).
     let last_redraw = std::rc::Rc::new(std::cell::Cell::new(std::time::Instant::now()));
     let mut scene = Scene::new(backend.renderer(), state)?;
+    // Modo de jogo em tela cheia (A18): o scanout direto vale aqui?
+    state.game.scanout_note = Some("não: mide em janela (winit), quem mostra é o desktop de baixo");
 
     let size = backend.window_size();
     let output = Output::new(

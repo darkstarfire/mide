@@ -96,6 +96,8 @@ pub fn init(loop_handle: &LoopHandle<State>, state: &mut State) -> Result<(), Bo
     // `MIDE_SCENE_CURSOR=1`: a cena desenha o cursor, como no DRM sem o plano de cursor
     // (para medir o ponteiro agitado e o custo do cursor na cena).
     let scene = Scene::new(&mut renderer, state)?;
+    // Modo de jogo em tela cheia (A18): o scanout direto vale aqui?
+    state.game.scanout_note = Some("não: backend de teste, sem tela");
     let scene = if std::env::var_os("MIDE_SCENE_CURSOR").is_some() { scene.with_cursor() } else { scene };
     let gpu = Rc::new(RefCell::new(Gpu { renderer, scene, heads }));
     // Buffers dos apps na GPU (linux-dmabuf): importados neste renderizador.

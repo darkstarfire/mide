@@ -348,6 +348,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         sliding: false,
         pointer_inside: false,
         covered: false,
+        game_paused: false,
         dark: mide::kit::system_dark(),
         magnify: magnify_size(),
         zoom: None,
@@ -367,6 +368,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(100)), |_, _, dock| {
+            if dock.check_game_mode() {
+                return TimeoutAction::ToDuration(Duration::from_millis(800));
+            }
             dock.refresh_running();
             dock.refresh_trash();
             dock.watch_config();
@@ -385,7 +389,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(250)), |_, _, dock| {
-            if dock.autohide {
+            if dock.autohide && !dock.game_paused {
                 dock.check_covered();
             }
             TimeoutAction::ToDuration(Duration::from_millis(250))
@@ -607,6 +611,9 @@ struct Dock {
     sliding: bool,
     /// O ponteiro está sobre a dock.
     pointer_inside: bool,
+    /// Modo de jogo em tela cheia (A18) na tela da dock: as tarefas periódicas
+    /// (apps abertos, Lixeira, configuração) ficam paradas até ele acabar.
+    game_paused: bool,
     /// Há janela onde a dock aparece (só então a dock que se esconde sozinha some).
     covered: bool,
     /// Tema escuro (Configurações → Aparência): véu, separadores e pontos escuros.
@@ -778,6 +785,17 @@ impl Dock {
         if buffer.attach_to(surface).is_ok() {
             self.layer.commit();
         }
+    }
+
+    /// Pergunta ao compositor se a tela da dock está no modo de jogo em tela cheia
+    /// (A18); devolve se a dock deve ficar parada agora.
+    fn check_game_mode(&mut self) -> bool {
+        let paused = ask_compositor("game_mode").is_some_and(|l| l.first().is_some_and(|w| w == "on"));
+        if paused != self.game_paused {
+            self.game_paused = paused;
+            tracing::info!("dock: {}", if paused { "pausada (modo tela cheia)" } else { "de volta do modo tela cheia" });
+        }
+        paused
     }
 
     /// Confere se há janela sobre a área da dock e mostra ou esconde a dock.

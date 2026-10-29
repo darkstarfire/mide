@@ -252,6 +252,21 @@ impl Blur {
         Some((blurred, size, id))
     }
 
+    /// Solta os desfoques guardados da tela `output` (vidro da barra, da dock, dos
+    /// menus) e a textura de fundo das passadas; são refeitos quando voltarem a ser
+    /// pedidos (modo de jogo, A18).
+    pub fn forget_output(&self, output: &str) {
+        let prefix = format!("{output}:");
+        let mut regions = self.regions.borrow_mut();
+        let before = regions.len();
+        regions.retain(|name, _| !name.starts_with(&prefix));
+        let freed = before - regions.len();
+        let mut pool = self.pool.borrow_mut();
+        let before = pool.len();
+        pool.retain(|(_, _, _, owner), _| !owner.starts_with(&prefix) && !owner.is_empty());
+        tracing::info!("vidro: {freed} desfoque(s) e {} textura(s) soltos da tela {output} (modo tela cheia)", before - pool.len());
+    }
+
     /// Brilho médio (0 a 255) dos elementos `behind` na área `area` da tela (pixels):
     /// desenha a área na textura de fundo de sempre e lê só ela (`src`, a mesma área
     /// nas coordenadas da textura), amostrando um pixel a cada poucos.
