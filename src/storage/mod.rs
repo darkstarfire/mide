@@ -2,6 +2,7 @@
 
 pub mod files_info;
 pub mod files_view;
+pub mod directory_watch;
 pub mod templates;
 pub mod transfer;
 

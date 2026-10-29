@@ -188,6 +188,8 @@ struct Files {
     prompt: Option<Prompt>,
     /// Nome e ícone dos atalhos `.desktop`, mostrados no lugar do nome do arquivo.
     labels: Labels,
+    /// Observa alterações externas na pasta atual (gravações, downloads etc.).
+    directory_watch: Option<mide::storage::directory_watch::DirectoryWatch>,
 }
 
 impl Files {
@@ -261,6 +263,7 @@ impl Files {
             info: None,
             prompt: None,
             labels: Labels::default(),
+            directory_watch: None,
             back: Vec::new(),
             forward: Vec::new(),
             entries: Vec::new(),
@@ -508,6 +511,11 @@ impl Files {
             Place::Dir(dir) => dir.clone(),
             Place::Trash => Self::trash().join("files"),
         };
+        if let Some(watch) = &self.directory_watch {
+            watch.set_path(dir.clone());
+        } else {
+            self.directory_watch = mide::storage::directory_watch::DirectoryWatch::new(dir.clone());
+        }
         self.entries = match files::list_dir(&dir, self.hidden) {
             Ok(list) => list,
             Err(err) if self.place == Place::Trash && err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -1024,6 +1032,7 @@ impl Files {
             places::parse_user_dir(&text, key, &home).filter(|p| p.is_dir()).unwrap_or(home)
         };
         match action {
+            "refresh" => self.reload(),
             "new-folder" => self.new_folder(),
             "new-file" => self.new_file(),
             "open" => {
@@ -1337,6 +1346,12 @@ impl Files {
 
     /// Teclas da janela (quando não há um campo de texto com o foco).
     fn keys(&mut self, ui: &mut Ui, shown: &[Entry], columns: usize, list: bool) {
+        let refresh = ui.input().presses.iter().any(|press| press.keysym == xkbcommon::xkb::keysyms::KEY_F5);
+        if refresh && !ui.typing() && self.dialog.is_none() {
+            self.reload();
+            tracing::debug!("pasta atualizada pelo atalho F5");
+            ui.request_repaint();
+        }
         let input = ui.input();
         let (enter, delete, backspace) = (input.key(Key::Enter), input.key(Key::Delete), input.key(Key::Backspace));
         // Na lista, ← e → fecham e abrem a pasta escolhida (como no Finder).
@@ -1822,6 +1837,11 @@ impl Files {
     }
 
     fn content(&mut self, ui: &mut Ui) {
+        if self.directory_watch.as_ref().is_some_and(|watch| watch.take_change()) {
+            self.reload();
+            tracing::debug!("pasta atualizada após alteração externa");
+            ui.request_repaint();
+        }
         // Tamanhos de pastas e tarefas (compactar, extrair) que terminaram.
         while let Ok((path, size)) = self.from_sizer.try_recv() {
             self.sizes_waiting.remove(&path);
@@ -3287,6 +3307,8 @@ impl App for Files {
             MenuGroup {
                 title: tr!("View").into_owned(),
                 items: vec![
+                    MenuItem::action("refresh", &tr!("Refresh")).shortcut("F5"),
+                    MenuItem::Separator,
                     MenuItem::action("view-icons", &tr!("as Icons")).checked(mode == 0),
                     MenuItem::action("view-list", &tr!("as List")).checked(mode == 1),
                     MenuItem::action("view-columns", &tr!("as Columns")).checked(mode == 2),

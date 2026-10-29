@@ -2115,3 +2115,9 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 
 - O usuário relatou uma ocorrência de congelamento ao ativar `shake_cursor`. Após sair e entrar com o efeito desligado, reativou e usou por mais de 15 minutos sem repetição, com o carregador desconectado.
 - O relatório de efeitos registra o caso como intermitente e inconclusivo. A associação com o cursor é uma pista; não houve reprodução na segunda ativação e ainda não há log do travamento para estabelecer causa. Para a próxima ocorrência, usar os registros do v0.10.18+ e correlacionar o horário com o journal do kernel.
+# Atualização automática de Arquivos e mídia da barra (v0.10.21)
+
+- O MIDE Files agora observa a pasta atual com `inotify` e atualiza a lista quando outro processo cria, move, altera ou termina de gravar um arquivo. Isso cobre gravações de tela e downloads sem exigir fechar e reabrir o app. A atualização manual também está disponível por F5 e no menu Visualizar.
+- A barra superior deixa de mostrar o controle quando o último player MPRIS está parado ou quando não existe uma sessão ativa. Mantém o painel para reprodução e pausa, permitindo retomar a música.
+- Testes: teste unitário confirma a notificação após fechar a gravação do arquivo; teste da barra cobre Playing, Paused e Stopped. Compilação e testes específicos registrados no commit.
+- Investigação de congelamento: o usuário relata que o Chromebook não congelou desde que desativou o efeito de crescer o ponteiro ao agitá-lo. Isso reforça uma associação temporal, mas ainda não prova causalidade nem identifica falha de driver; a validação precisa continuar no Chromebook.

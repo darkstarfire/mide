@@ -459,7 +459,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         qh: qh.clone(),
     };
     std::thread::spawn(move || loop {
-        let session = mide::settings_file::bar_item("media").then(|| mide::platform::media::active_with_details(media_details.load(std::sync::atomic::Ordering::Relaxed))).flatten();
+        let session = mide::settings_file::bar_item("media")
+            .then(|| mide::platform::media::active_with_details(media_details.load(std::sync::atomic::Ordering::Relaxed)))
+            .flatten()
+            .filter(media_session_visible);
         if media_tx.send(session).is_err() { break; }
         std::thread::sleep(Duration::from_millis(650));
     });
@@ -565,6 +568,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+/// Mantém o controle visível enquanto a sessão toca ou está pausada; players apenas
+/// registrados no D-Bus, mas parados, não devem ocupar a barra.
+fn media_session_visible(session: &mide::platform::media::MediaSession) -> bool {
+    matches!(session.playback_status.as_str(), "Playing" | "Paused")
 }
 
 /// Nomes de apps a partir dos `.desktop`, indexados pelos ids possíveis do app_id.
@@ -3943,6 +3952,22 @@ mod tests {
         assert_eq!(clock_format(now, false, false, false, true), "09:05:07");
         assert_eq!(clock_format(now, true, true, false, false), "qua 21 out  09:05");
         assert_eq!(clock_format(now, true, true, true, false), "qua 21 out 2026  09:05");
+    }
+
+    #[test]
+    fn player_parado_nao_mantem_controle_de_midia_na_barra() {
+        for status in ["Playing", "Paused"] {
+            let session = mide::platform::media::MediaSession {
+                playback_status: status.into(),
+                ..Default::default()
+            };
+            assert!(media_session_visible(&session));
+        }
+        let stopped = mide::platform::media::MediaSession {
+            playback_status: "Stopped".into(),
+            ..Default::default()
+        };
+        assert!(!media_session_visible(&stopped));
     }
 }
 

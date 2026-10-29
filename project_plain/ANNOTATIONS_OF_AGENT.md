@@ -522,3 +522,8 @@
 - Relato do usuário: um congelamento ao ativar `shake_cursor`; depois encerrou a sessão, voltou com ele desligado, ativou-o de novo e usou por mais de 15 minutos sem congelar. O carregador estava desconectado.
 - Tratar como associação temporal intermitente (uma ocorrência, uma reativação longa sem repetição), não causa confirmada. A lógica de oscilação (`src/compositor/shake.rs`) já passou os testes unitários de intensidade e quadros irregulares; isso não exercita o driver/gpu do Chromebook.
 - Em versão v0.10.18+, confirmar o toggle em `mide-logs --search 'efeito shake_cursor'` e o conjunto ativo no início do compositor. Se repetir, guardar `mide-logs --all`, `journalctl -k` com horário e estado de alimentação/carga.
+# Atualização automática e sessão MPRIS parada (v0.10.21)
+
+- `src/storage/directory_watch.rs` encapsula o `inotify` em uma thread de sistema com canal de mudanças; a UI só recarrega em seu ciclo normal. Não fazer polling de diretório por frame. Se a pasta navegada ainda não existir, observa o diretório pai e muda para ela quando criada.
+- A enumeração `active_with_details` do mide-ui escolhe um player Playing, depois Paused, mas como fallback aceita o primeiro player MPRIS sem filtrar `Stopped`. A política de visibilidade da barra fica no `mide-bar`: manter Playing/Paused e ocultar Stopped.
+- Chromebook: usuário relata ausência de novos congelamentos desde desligar `shake_cursor`. Tratar como observação temporal; mudança de driver/hardware não foi confirmada e o ambiente atual não reproduz a GPU do equipamento.
