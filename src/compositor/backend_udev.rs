@@ -378,12 +378,14 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
         let devices = devices.clone();
         loop_handle.insert_source(source, move |_, _, state: &mut State| {
             for device in devices.borrow_mut().iter_mut() {
-                apply_input_config(device, &state.config.input);
+                apply_input_config(device, &state.config.input, state.touch.tablet);
             }
             tracing::info!("mouse e trackpad: configuração aplicada");
         })?;
         state.input_waker = Some(ping);
     }
+    // Sensor de orientação (tela que gira, nos conversíveis).
+    crate::rotation::start_sensor(state);
     let input_devices = devices.clone();
     let input_gpu = gpu.clone();
     let input_loop = loop_handle.clone();
@@ -391,8 +393,13 @@ pub fn init(event_loop: &EventLoop<State>, loop_handle: &LoopHandle<State>, stat
     loop_handle.insert_source(LibinputInputBackend::new(libinput.clone()), move |event, _, state| {
         crate::watchdog::phase("entrada");
         if let InputEvent::DeviceAdded { mut device } = event {
-            apply_input_config(&mut device, &state.config.input);
+            apply_input_config(&mut device, &state.config.input, state.touch.tablet);
             tracing::info!("dispositivo de entrada: {}", device.name());
+            // Tem a chave de modo tablet: a tela só gira no modo tablet (como no GNOME).
+            if device.switch_has_switch(smithay::reexports::input::event::switch::Switch::TabletMode) == Ok(true) {
+                tracing::info!("chave de modo tablet: {}", device.name());
+                state.touch.tablet_switch = true;
+            }
             input_devices.borrow_mut().push(device);
             return;
         }
@@ -839,6 +846,11 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
         }
     };
     if head.cursor.failed || std::env::var_os("MIDE_SW_CURSOR").is_some() {
+        return false;
+    }
+    // Tela girada: o plano de cursor da placa não gira junto; a cena desenha o cursor.
+    if crate::rotation::rotated(&head.output) {
+        hide(head);
         return false;
     }
     let Some(area) = state.space.output_geometry(&head.output) else {
@@ -1489,7 +1501,17 @@ pub fn output_scale(scale: f64) -> Scale {
 
 /// Velocidade, aceleração, rolagem natural e toque para clicar (`[input]`) num mouse ou
 /// trackpad. Trackpad é o que aceita toque (`tap`).
-fn apply_input_config(device: &mut smithay::reexports::input::Device, input: &crate::config::Input) {
+fn apply_input_config(device: &mut smithay::reexports::input::Device, input: &crate::config::Input, tablet: bool) {
+    // Modo tablet (tela dobrada para trás): o teclado e o touchpad internos param, como
+    // no GNOME; os de fora (USB, Bluetooth) e a tela de toque continuam.
+    if internal_keyboard_or_touchpad(device) {
+        use smithay::reexports::input::SendEventsMode;
+        let mode = if tablet { SendEventsMode::DISABLED } else { SendEventsMode::ENABLED };
+        if device.config_send_events_mode() != mode {
+            tracing::info!("modo tablet: {} {}", device.name(), if tablet { "desligado" } else { "religado" });
+            let _ = device.config_send_events_set_mode(mode);
+        }
+    }
     use smithay::reexports::input::AccelProfile;
     let touchpad = device.config_tap_finger_count() > 0;
     if touchpad {
@@ -1508,9 +1530,40 @@ fn apply_input_config(device: &mut smithay::reexports::input::Device, input: &cr
     }
 }
 
+/// Teclado ou touchpad embutido no notebook (não USB nem Bluetooth). Os aparelhos da
+/// chave de modo tablet e da tela de toque ficam de fora: sem eles, não daria para sair
+/// do modo tablet.
+fn internal_keyboard_or_touchpad(device: &smithay::reexports::input::Device) -> bool {
+    use smithay::reexports::input::DeviceCapability;
+    if device.has_capability(DeviceCapability::Switch) || device.has_capability(DeviceCapability::Touch) {
+        return false;
+    }
+    let name = device.name().to_lowercase();
+    let keyboard = device.has_capability(DeviceCapability::Keyboard) && !["button", "video bus", "hotkey", "wmi", "switch"].iter().any(|w| name.contains(w));
+    let touchpad = device.config_tap_finger_count() > 0;
+    if !keyboard && !touchpad {
+        return false;
+    }
+    let path = std::fs::canonicalize(format!("/sys/class/input/{}", device.sysname())).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    !path.is_empty() && !external_path(&path)
+}
+
+/// Caminho no `/sys` de um aparelho ligado por fora (USB, Bluetooth).
+fn external_path(path: &str) -> bool {
+    ["/usb", "uhid", "bluetooth"].iter().any(|w| path.contains(w))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{only_cursor_moved, resumed_by_clock};
+    use super::{external_path, only_cursor_moved, resumed_by_clock};
+
+    #[test]
+    fn aparelhos_de_fora_pelo_caminho() {
+        assert!(external_path("/sys/devices/pci0000:00/0000:00:14.0/usb1/1-2/1-2:1.0/0003:046D:C52B.0001/input/input12/event5"));
+        assert!(external_path("/sys/devices/virtual/misc/uhid/0005:046D:B342.0002/input/input20/event9"));
+        assert!(!external_path("/sys/devices/platform/i8042/serio0/input/input3/event3"));
+        assert!(!external_path("/sys/devices/pci0000:00/0000:00:15.0/i2c_designware.0/i2c-6/i2c-ELAN0000:00/0018:04F3:3082.0001/input/input8/event7"));
+    }
     use std::time::Duration;
 
     #[test]

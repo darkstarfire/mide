@@ -60,6 +60,8 @@ pub enum Kind {
     Volume,
     Mic,
     Brightness,
+    /// Luz do teclado.
+    KeyboardLight,
 }
 
 /// Nível lido depois da tecla.
@@ -79,6 +81,7 @@ impl Reading {
             (Kind::Volume, false) => format!("volume {percent}%"),
             (Kind::Volume, true) => format!("volume {percent}% (mudo)"),
             (Kind::Brightness, _) => format!("brilho {percent}%"),
+            (Kind::KeyboardLight, _) => format!("luz do teclado {percent}%"),
             (Kind::Mic, true) => "microfone desligado".into(),
             (Kind::Mic, false) => "microfone ligado".into(),
         }
@@ -193,6 +196,9 @@ fn apply(media: Media) -> Option<(f32, bool)> {
             system::toggle_mic_mute();
             system::read_mic_muted().map(|muted| (if muted { 0.0 } else { 1.0 }, muted))
         }
+        Media::KeyboardLightUp => system::keyboard_light_key(system::KeyboardLightKey::Up).map(|level| (level, false)),
+        Media::KeyboardLightDown => system::keyboard_light_key(system::KeyboardLightKey::Down).map(|level| (level, false)),
+        Media::KeyboardLightToggle => system::keyboard_light_key(system::KeyboardLightKey::Toggle).map(|level| (level, false)),
         _ => {
             system::brightness_step(media == Media::BrightnessUp);
             system::read_brightness().map(|level| (level, false))
@@ -207,6 +213,7 @@ pub fn media_key(state: &mut State, media: Media) {
         Media::VolumeUp | Media::VolumeDown | Media::Mute => Kind::Volume,
         Media::MicMute => Kind::Mic,
         Media::BrightnessUp | Media::BrightnessDown => Kind::Brightness,
+        Media::KeyboardLightUp | Media::KeyboardLightDown | Media::KeyboardLightToggle => Kind::KeyboardLight,
         _ => return,
     };
     state.osd_seq += 1;
@@ -267,20 +274,22 @@ fn show(state: &mut State, update: Update) {
 /// Último volume (nível e mudo) e brilho mostrados pelo aviso, com o número do
 /// aperto: a barra pergunta (`launcher state`, a cada 50 ms) e acompanha na hora, sem
 /// esperar a leitura dela, que é lenta (a cada 2 s, junto com rede e Bluetooth).
-type Levels = (Option<(u64, f32, bool)>, Option<(u64, f32)>);
-static LEVELS: std::sync::Mutex<Levels> = std::sync::Mutex::new((None, None));
+type Levels = (Option<(u64, f32, bool)>, Option<(u64, f32)>, Option<(u64, f32)>);
+static LEVELS: std::sync::Mutex<Levels> = std::sync::Mutex::new((None, None, None));
 
 fn remember(seq: u64, reading: Reading) {
     if let Ok(mut levels) = LEVELS.lock() {
         match reading.kind {
             Kind::Volume => levels.0 = Some((seq, reading.level, reading.muted)),
             Kind::Brightness => levels.1 = Some((seq, reading.level)),
+            Kind::KeyboardLight => levels.2 = Some((seq, reading.level)),
             Kind::Mic => {}
         }
     }
 }
 
-/// Linhas para a barra: `volume <aperto> <nível> <mudo>` e `brightness <aperto> <nível>`.
+/// Linhas para a barra: `volume <aperto> <nível> <mudo>`, `brightness <aperto> <nível>`
+/// e `keyboard_light <aperto> <nível>`.
 pub fn levels_for_bar() -> String {
     let Ok(levels) = LEVELS.lock() else {
         return String::new();
@@ -291,6 +300,9 @@ pub fn levels_for_bar() -> String {
     }
     if let Some((seq, level)) = levels.1 {
         out.push_str(&format!("brightness {seq} {level:.4}\n"));
+    }
+    if let Some((seq, level)) = levels.2 {
+        out.push_str(&format!("keyboard_light {seq} {level:.4}\n"));
     }
     out
 }
@@ -401,6 +413,45 @@ fn draw_icon(kind: Kind, waves: u8, muted: bool, color: [u8; 4], size: u32) -> V
             }
             if let Some(path) = pb.finish() {
                 pixmap.stroke_path(&path, &paint, &stroke(1.8), ts, None);
+            }
+        }
+        Kind::KeyboardLight => {
+            // Teclado (contorno arredondado, teclas e a barra de espaço) com três raios
+            // de luz em cima.
+            let mut pb = PathBuilder::new();
+            let (x0, y0, x1, y1, r) = (2.5f32, 10.0f32, 21.5f32, 21.0f32, 2.0f32);
+            pb.move_to(x0 + r, y0);
+            pb.line_to(x1 - r, y0);
+            pb.quad_to(x1, y0, x1, y0 + r);
+            pb.line_to(x1, y1 - r);
+            pb.quad_to(x1, y1, x1 - r, y1);
+            pb.line_to(x0 + r, y1);
+            pb.quad_to(x0, y1, x0, y1 - r);
+            pb.line_to(x0, y0 + r);
+            pb.quad_to(x0, y0, x0 + r, y0);
+            pb.close();
+            if let Some(path) = pb.finish() {
+                pixmap.stroke_path(&path, &paint, &stroke(1.6), ts, None);
+            }
+            for row in 0..2 {
+                for col in 0..4 {
+                    let (x, y) = (5.6 + col as f32 * 4.3, 13.2 + row as f32 * 2.8);
+                    if let Some(path) = PathBuilder::from_circle(x, y, 0.9) {
+                        pixmap.fill_path(&path, &paint, FillRule::Winding, ts, None);
+                    }
+                }
+            }
+            let mut pb = PathBuilder::new();
+            pb.move_to(8.5, 18.6);
+            pb.line_to(15.5, 18.6);
+            pb.move_to(12.0, 2.5);
+            pb.line_to(12.0, 6.0);
+            pb.move_to(6.0, 4.0);
+            pb.line_to(7.8, 7.0);
+            pb.move_to(18.0, 4.0);
+            pb.line_to(16.2, 7.0);
+            if let Some(path) = pb.finish() {
+                pixmap.stroke_path(&path, &paint, &stroke(1.6), ts, None);
             }
         }
     }
@@ -543,6 +594,7 @@ mod tests {
         assert_eq!(Reading { kind: Kind::Volume, level: 0.5, muted: true }.describe(), "volume 50% (mudo)");
         assert_eq!(Reading { kind: Kind::Mic, level: 0.0, muted: true }.describe(), "microfone desligado");
         assert_eq!(Reading { kind: Kind::Brightness, level: 0.75, muted: false }.describe(), "brilho 75%");
+        assert_eq!(Reading { kind: Kind::KeyboardLight, level: 0.3, muted: false }.describe(), "luz do teclado 30%");
     }
 
     #[test]
@@ -561,7 +613,7 @@ mod tests {
 
     #[test]
     fn icones_desenham_algo() {
-        for kind in [Kind::Volume, Kind::Mic, Kind::Brightness] {
+        for kind in [Kind::Volume, Kind::Mic, Kind::Brightness, Kind::KeyboardLight] {
             let pixels = draw_icon(kind, 3, false, [0, 0, 0, 255], 24);
             assert!(pixels.chunks(4).any(|p| p[3] > 200), "{kind:?} vazio");
         }

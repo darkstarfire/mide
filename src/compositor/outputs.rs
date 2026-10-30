@@ -211,7 +211,8 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
     // Escala de cada tela: a das Configurações, ou, espelhando, a que deixa a largura
     // igual à da principal (o mesmo conteúdo em telas de tamanhos diferentes).
     let primary_name = state.config.monitors.primary.clone().filter(|p| live.iter().any(|o| o.name() == *p)).or_else(|| live.first().map(|o| o.name()));
-    let mode_of = |o: &smithay::output::Output| o.current_mode().map(|m| (m.size.w, m.size.h)).unwrap_or((1366, 768));
+    // Tamanho da tela já girado (tela interna em retrato, pelo sensor).
+    let mode_of = |o: &smithay::output::Output| o.current_mode().map(|m| o.current_transform().transform_size(m.size)).map(|m| (m.w, m.h)).unwrap_or((1366, 768));
     let configured = |name: &str| state.config.monitors.outputs.get(name).map(|m| m.scale).filter(|s| s.is_finite() && *s >= 0.5).unwrap_or(1.0);
     let primary_width = primary_name.as_ref().and_then(|p| live.iter().find(|o| o.name() == *p)).map(|o| logical_size(mode_of(o), configured(&o.name())).0);
     for output in live {
@@ -228,8 +229,7 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
     let heads: Vec<Head> = live
         .iter()
         .map(|o| {
-            let mode = o.current_mode().map(|m| (m.size.w, m.size.h)).unwrap_or((1366, 768));
-            Head { name: o.name(), size: logical_size(mode, o.current_scale().fractional_scale()) }
+            Head { name: o.name(), size: logical_size(mode_of(o), o.current_scale().fractional_scale()) }
         })
         .collect();
     for (name, pos) in arrange(&heads, &state.config.monitors) {

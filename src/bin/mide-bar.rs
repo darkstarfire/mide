@@ -255,6 +255,8 @@ impl MenuId {
 /// O que um clique num painel da direita faz.
 #[derive(Debug, Clone, PartialEq)]
 enum PanelAction {
+    /// Trava de rotação da tela (conversíveis com sensor de orientação).
+    ToggleRotationLock,
     PrevMonth,
     NextMonth,
     Today,
@@ -269,6 +271,8 @@ enum PanelAction {
     /// Central de controle: Não perturbe e o trilho do brilho.
     ToggleDnd,
     BrightnessTrack,
+    /// Trilho da luz do teclado (só com luz de teclado).
+    KeyboardLightTrack,
     /// Confirmação: fazer ou cancelar.
     ConfirmYes,
     ConfirmNo,
@@ -419,7 +423,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         tone_k: if wallpaper_top_dark() { 1.0 } else { 0.0 },
         shown_volume: None,
         shown_brightness: None,
-        levels_seen: (None, None),
+        shown_keyboard_light: None,
+        orientation_sensor: None,
+        levels_seen: (None, None, None),
         levels_primed: false,
         clock: String::new(),
         items: Vec::new(),
@@ -767,6 +773,8 @@ struct Menu {
     dragging_volume: bool,
     /// Arrastando o trilho do brilho (central de controle).
     dragging_brightness: bool,
+    /// Arrastando o trilho da luz do teclado.
+    dragging_keyboard_light: bool,
     /// Topo do painel na tela (abaixo da barra; as confirmações ficam no meio).
     panel_top: f32,
 }
@@ -1012,9 +1020,14 @@ struct Bar {
     /// (`CONTROL_SLIDE`), para a barrinha deslizar até o valor novo de uma tecla.
     shown_volume: Option<f32>,
     shown_brightness: Option<f32>,
-    /// Último aperto de volume e de brilho visto no compositor (`launcher state`), e
-    /// se a primeira resposta já veio (ela só é guardada: pode ser de antes da barra).
-    levels_seen: (Option<u64>, Option<u64>),
+    shown_keyboard_light: Option<f32>,
+    /// Há sensor de orientação (o compositor diz) e quando foi perguntado: a trava de
+    /// rotação só aparece na central de controle com sensor.
+    orientation_sensor: Option<(std::time::Instant, bool)>,
+    /// Último aperto de volume, de brilho e da luz do teclado visto no compositor
+    /// (`launcher state`), e se a primeira resposta já veio (ela só é guardada: pode
+    /// ser de antes da barra).
+    levels_seen: (Option<u64>, Option<u64>, Option<u64>),
     levels_primed: bool,
     clock: String,
     /// Quais itens de `BAR_ITEMS` estão à mostra (para redesenhar quando mudam).
@@ -1150,8 +1163,8 @@ impl Bar {
     /// 2 s). A primeira resposta só é guardada: pode ser de antes de a barra abrir.
     fn follow_key_levels(&mut self, reply: &[String]) {
         let primed = std::mem::replace(&mut self.levels_primed, true);
-        let dragging = self.menu.as_ref().map_or((false, false), |m| (m.dragging_volume, m.dragging_brightness));
-        let dragging = (dragging.0 || !primed, dragging.1 || !primed);
+        let dragging = self.menu.as_ref().map_or((false, false, false), |m| (m.dragging_volume, m.dragging_brightness, m.dragging_keyboard_light));
+        let dragging = (dragging.0 || !primed, dragging.1 || !primed, dragging.2 || !primed);
         let mut changed = false;
         for line in reply {
             let words: Vec<&str> = line.split_whitespace().collect();
@@ -1172,6 +1185,14 @@ impl Bar {
                         changed = true;
                     }
                 }
+                ["keyboard_light", seq, level] => {
+                    let (Ok(seq), Ok(level)) = (seq.parse::<u64>(), level.parse::<f32>()) else { continue };
+                    if self.levels_seen.2.replace(seq) != Some(seq) && !dragging.2 {
+                        self.status.keyboard_light = Some(level);
+                        tracing::info!("barra: luz do teclado da tecla {:.0}%", level * 100.0);
+                        changed = true;
+                    }
+                }
                 _ => {}
             }
         }
@@ -1188,7 +1209,8 @@ impl Bar {
     fn step_levels(&mut self) -> bool {
         let volume = self.status.volume.map(|(v, muted)| if muted { 0.0 } else { v.clamp(0.0, 1.0) });
         let brightness = self.status.brightness.map(|b| b.clamp(0.0, 1.0));
-        let dragging = self.menu.as_ref().map_or((false, false), |m| (m.dragging_volume, m.dragging_brightness));
+        let keyboard_light = self.status.keyboard_light.map(|b| b.clamp(0.0, 1.0));
+        let dragging = self.menu.as_ref().map_or((false, false, false), |m| (m.dragging_volume, m.dragging_brightness, m.dragging_keyboard_light));
         let smooth = mide::settings_file::effect("transitions");
         // Por quadro de 16 ms: em ~200 ms (`CONTROL_SLIDE`) falta menos de 5%.
         let k = 1.0 - (-3.0 * 16.0 / mide::motion::CONTROL_SLIDE.as_millis() as f32).exp();
@@ -1206,6 +1228,7 @@ impl Bar {
         };
         let moving = chase(&mut self.shown_volume, volume, dragging.0 || !smooth);
         let moving = chase(&mut self.shown_brightness, brightness, dragging.1 || !smooth) || moving;
+        let moving = chase(&mut self.shown_keyboard_light, keyboard_light, dragging.2 || !smooth) || moving;
         let open = self.menu.as_ref().is_some_and(|m| m.id.custom());
         if moving && open {
             self.draw_menu();
@@ -2243,6 +2266,7 @@ impl Bar {
             menu.hover_region = None;
             menu.dragging_volume = false;
             menu.dragging_brightness = false;
+            menu.dragging_keyboard_light = false;
             menu.panel_top = PANEL_TOP;
             self.draw_menu();
             self.draw_bar();
@@ -2275,6 +2299,7 @@ impl Bar {
             panel_top: PANEL_TOP,
             dragging_volume: false,
             dragging_brightness: false,
+            dragging_keyboard_light: false,
         });
         self.draw_bar();
     }
@@ -3054,6 +3079,21 @@ impl Bar {
         self.text.draw(p, &mide::i18n::trc("Do Not Disturb, second line", "Disturb"), rx + 48.0, gap + 54.0, FONT, FontWeight::Semibold, dark);
         regions.push(((rx, gap, half, 104.0), PanelAction::ToggleDnd));
         let mut y = gap + 104.0 + gap;
+        // Trava de rotação: só com sensor de orientação (perguntado no máximo a cada 5 s).
+        if self.orientation_sensor.is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(5)) {
+            let sensor = ask_compositor("orientation_sensor").is_some_and(|r| r.first().is_some_and(|l| l == "yes"));
+            self.orientation_sensor = Some((std::time::Instant::now(), sensor));
+        }
+        if self.orientation_sensor.is_some_and(|(_, s)| s) {
+            let locked = matches!(mide::settings_file::get("display", "rotation_lock"), Some(mide::settings_file::Value::Bool(true)));
+            tile(p, gap, y, pw - 2.0 * gap, 52.0);
+            round(p, gap + 26.0, y + 26.0, locked);
+            draw_rotation_lock_icon(p, gap + 26.0, y + 26.0, if locked { [255, 255, 255, 255] } else { dark });
+            self.text.draw(p, &tr!("Rotation Lock"), gap + 48.0, y + 9.0, FONT, FontWeight::Semibold, dark);
+            self.text.draw(p, &if locked { tr!("On") } else { tr!("Off") }, gap + 48.0, y + 27.0, 11.5, FontWeight::Regular, gray);
+            regions.push(((gap, y, pw - 2.0 * gap, 52.0), PanelAction::ToggleRotationLock));
+            y += 52.0 + gap;
+        }
         // Trilhos: brilho (se houver controle) e som.
         // Tahoe: o deslizante é uma cápsula larga; a parte cheia é na cor de destaque do
         // mide (pedido do usuário: o azul padrão, não branco), com um botão branco na
@@ -3080,6 +3120,11 @@ impl Bar {
         if let Some(level) = self.status.brightness {
             let level = self.shown_brightness.unwrap_or(level);
             slider(self, p, y, &tr!("Display"), level, PanelAction::BrightnessTrack);
+            y += 60.0 + gap;
+        }
+        if let Some(level) = self.status.keyboard_light {
+            let level = self.shown_keyboard_light.unwrap_or(level);
+            slider(self, p, y, &tr!("Keyboard Brightness"), level, PanelAction::KeyboardLightTrack);
             y += 60.0 + gap;
         }
         if let Some((volume, muted)) = self.status.volume {
@@ -3145,6 +3190,17 @@ impl Bar {
                     return;
                 }
             }
+        }
+        if self.menu.as_ref().is_some_and(|m| m.dragging_keyboard_light) {
+            if let Some(value) = self.track_from_x(x, PanelAction::KeyboardLightTrack) {
+                self.status.keyboard_light = Some(value);
+                if self.volume_sent.elapsed() >= Duration::from_millis(80) {
+                    system::set_keyboard_light(value);
+                    self.volume_sent = std::time::Instant::now();
+                }
+                self.draw_menu();
+            }
+            return;
         }
         if self.menu.as_ref().is_some_and(|m| m.dragging_brightness) {
             if let Some(value) = self.track_from_x(x, PanelAction::BrightnessTrack) {
@@ -3301,6 +3357,16 @@ impl Bar {
                 system::open_settings(panel);
                 self.close_menu();
             }
+            PanelAction::ToggleRotationLock => {
+                let locked = !matches!(mide::settings_file::get("display", "rotation_lock"), Some(mide::settings_file::Value::Bool(true)));
+                match mide::settings_file::set("display", "rotation_lock", locked.then_some(mide::settings_file::Value::Bool(true))) {
+                    Ok(()) => {
+                        tracing::info!("trava de rotação: {}", if locked { "ligada" } else { "desligada" });
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("trava de rotação não gravada: {err}"),
+                }
+            }
             PanelAction::ToggleDnd => {
                 let on = !dnd_on();
                 match mide::settings_file::set("notifications", "dnd", on.then_some(mide::settings_file::Value::Bool(true))) {
@@ -3315,6 +3381,16 @@ impl Bar {
                     self.volume_sent = std::time::Instant::now();
                     if let Some(menu) = self.menu.as_mut() {
                         menu.dragging_brightness = true;
+                    }
+                }
+            }
+            PanelAction::KeyboardLightTrack => {
+                if let Some(value) = self.track_from_x(x, PanelAction::KeyboardLightTrack) {
+                    self.status.keyboard_light = Some(value);
+                    system::set_keyboard_light(value);
+                    self.volume_sent = std::time::Instant::now();
+                    if let Some(menu) = self.menu.as_mut() {
+                        menu.dragging_keyboard_light = true;
                     }
                 }
             }
@@ -3436,6 +3512,31 @@ fn draw_gear_icon(p: &mut Pixmap, cx: f32, cy: f32, fg: [u8; 4]) {
     }
     if let Some(ring) = PathBuilder::from_circle(cx, cy, 5.2) {
         p.stroke_path(&ring, &stroke_color(fg, 255), &Stroke { width: 2.4, ..Default::default() }, tf(), None);
+    }
+}
+
+/// Cadeado da trava de rotação, com uma seta circular atrás.
+fn draw_rotation_lock_icon(p: &mut Pixmap, cx: f32, cy: f32, color: [u8; 4]) {
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.set_color(rgba(color[0], color[1], color[2], color[3]));
+    let stroke = Stroke { width: 1.6, ..Stroke::default() };
+    // Seta circular (três quartos de volta).
+    let mut pb = PathBuilder::new();
+    let r = 9.0;
+    let steps = 18;
+    for i in 0..=steps {
+        let a = std::f32::consts::PI * (0.75 + 1.5 * i as f32 / steps as f32);
+        let (x, y) = (cx + r * a.cos(), cy + r * a.sin());
+        if i == 0 { pb.move_to(x, y) } else { pb.line_to(x, y) }
+    }
+    if let Some(path) = pb.finish() {
+        p.stroke_path(&path, &paint, &stroke, tf(), None);
+    }
+    // Cadeado no meio.
+    fill_rounded(p, cx - 4.0, cy - 1.0, 8.0, 6.0, 1.5, rgba(color[0], color[1], color[2], color[3]));
+    if let Some(shackle) = rounded_rect(cx - 2.6, cy - 5.0, 5.2, 6.0, 2.6) {
+        p.stroke_path(&shackle, &paint, &Stroke { width: 1.4, ..Stroke::default() }, tf(), None);
     }
 }
 
@@ -4017,6 +4118,11 @@ impl PointerHandler for Bar {
                     if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_brightness)) {
                         if let Some(value) = self.status.brightness {
                             system::set_brightness(value);
+                        }
+                    }
+                    if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_keyboard_light)) {
+                        if let Some(value) = self.status.keyboard_light {
+                            system::set_keyboard_light(value);
                         }
                     }
                     let dragged = self.menu.as_mut().map(|m| std::mem::take(&mut m.dragging_volume)).unwrap_or(false);

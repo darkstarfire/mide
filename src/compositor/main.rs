@@ -21,6 +21,7 @@ mod genie;
 mod gesture;
 mod overview;
 mod input;
+mod input_method;
 mod lock;
 mod login;
 mod osd;
@@ -36,8 +37,10 @@ mod snap;
 mod preview;
 mod presentation;
 mod render;
+mod rotation;
 mod state;
 mod title;
+mod touch;
 mod wallpaper;
 mod watchdog;
 mod wm;
@@ -211,6 +214,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         spawn_client("mide-dock");
         spawn_client("mide-bar");
         spawn_client("mide-notifications");
+        // Teclado na tela: método de entrada da sessão, sem janela até um campo de texto
+        // pedir (no modo tablet ou com a opção ligada).
+        spawn_client("mide-keyboard");
         if wants_portal() {
             spawn_client("mide-portal");
         }
@@ -257,7 +263,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 static SHELL: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
 
 /// Programas do DE que ficam sempre abertos (o launcher e o buscador abrem sob demanda).
-const SHELL_CLIENTS: [&str; 4] = ["mide-desktop", "mide-dock", "mide-bar", "mide-notifications"];
+const SHELL_CLIENTS: [&str; 5] = ["mide-desktop", "mide-dock", "mide-bar", "mide-notifications", "mide-keyboard"];
 
 /// O `mide-portal` (Arquivos como `FileManager1` e o seletor de arquivos do portal, B25)
 /// só roda na sessão do mide: num mide em janela (desenvolvimento, dentro do Cinnamon)

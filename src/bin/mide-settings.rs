@@ -609,6 +609,21 @@ impl Settings {
                 }
             });
         }
+        // Trava de rotação: só em aparelhos com sensor de orientação (conversíveis).
+        if orientation_sensor() {
+            let mut locked = matches!(settings_file::get("display", "rotation_lock"), Some(Value::Bool(true)));
+            ui.card(|ui| {
+                if ui.switch_detail(&tr!("Rotation Lock"), &tr!("The built-in display does not turn with the device"), &mut locked).changed() {
+                    match settings_file::set("display", "rotation_lock", locked.then_some(Value::Bool(true))) {
+                        Ok(()) => {
+                            tracing::info!("trava de rotação: {}", if locked { "ligada" } else { "desligada" });
+                            ask_compositor("reload");
+                        }
+                        Err(err) => tracing::warn!("trava de rotação não gravada: {err}"),
+                    }
+                }
+            });
+        }
     }
 
     /// Depois de aplicar as telas: janelinha (modal) "Manter estas configurações?", por
@@ -1283,6 +1298,20 @@ impl Settings {
                         ask_compositor("reload");
                     }
                     Err(err) => tracing::warn!("repetição não gravada: {err}"),
+                }
+            }
+        });
+        // Teclado na tela (`mide-keyboard`): sozinho no modo tablet; com esta opção,
+        // sempre que um campo de texto pede (lida a cada campo, vale na hora).
+        let mut on_screen = settings_file::flag("keyboard", "on_screen", false);
+        ui.card(|ui| {
+            if ui
+                .switch_detail(&tr!("Show the on-screen keyboard when typing"), &tr!("Without this, it appears only in tablet mode (screen folded back)"), &mut on_screen)
+                .changed()
+            {
+                match settings_file::set("keyboard", "on_screen", on_screen.then_some(Value::Bool(true))) {
+                    Ok(()) => tracing::info!("teclado na tela: sempre {}", if on_screen { "ligado" } else { "desligado" }),
+                    Err(err) => tracing::warn!("opção do teclado na tela não gravada: {err}"),
                 }
             }
         });
@@ -2362,6 +2391,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     mide::i18n::init();
     let window = Window::new(&tr!("System Settings")).app_id("mide-settings").size(820, 560).min_size(640, 440).full_size_content();
     run(window, Settings::new(section))
+}
+
+/// Há sensor de orientação (o compositor diz)? Perguntado no máximo a cada 5 s: a tela
+/// das Configurações é redesenhada a cada quadro.
+fn orientation_sensor() -> bool {
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    let Ok(mut cache) = CACHE.lock() else {
+        return false;
+    };
+    if cache.is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(5)) {
+        let sensor = ask_compositor("orientation_sensor").is_some_and(|r| r.first().is_some_and(|l| l.trim() == "yes"));
+        *cache = Some((std::time::Instant::now(), sensor));
+    }
+    cache.is_some_and(|(_, s)| s)
 }
 
 #[cfg(test)]

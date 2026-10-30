@@ -22,6 +22,9 @@
 //! - `mclick x y`: clique do botão do meio
 //! - `swipe dx dy`: três dedos no touchpad andando (dx, dy); `swipe end` solta os dedos
 //! - `swipe4 dx dy` / `swipe4 end`: o mesmo com quatro dedos (visão das janelas)
+//! - `touch down x y` / `touch move x y` / `touch up`: um dedo na tela de toque
+//! - `tablet on` / `tablet off`: a chave de modo tablet (tela dobrada para trás)
+//! - `orientation normal|left-up|right-up|bottom-up`: o sensor de orientação
 //! - `unplug HEADLESS-N` / `plug HEADLESS-N`: finge o monitor da tela virtual N
 //!   desconectado ou conectado de novo (a tela sai depois da folga, como no DRM)
 //!
@@ -60,6 +63,12 @@ enum Step {
     Plug(u32, bool),
     /// Dedos (3 ou 4) andando no touchpad; `None` solta os dedos.
     Swipe(u32, Option<(f64, f64)>),
+    /// Dedo na tela de toque: encostar, andar (com posição) ou soltar (`None`).
+    Touch(u8, Option<(f64, f64)>),
+    /// Chave de modo tablet.
+    Tablet(bool),
+    /// Orientação lida do sensor (0 normal, 1 left-up, 2 right-up, 3 bottom-up).
+    Orientation(u8),
 }
 
 /// Roteiro de autoteste em andamento.
@@ -169,6 +178,14 @@ fn parse_one(part: &str) -> Option<(u32, Step)> {
                     other => other.and_then(|w| w.parse().ok())?,
                 }),
                 "mclick" => Step::MiddleClick(coord(2)?, coord(3)?),
+                "touch" => match *words.get(2)? {
+                    "down" => Step::Touch(0, Some((coord(3)?, coord(4)?))),
+                    "move" => Step::Touch(1, Some((coord(3)?, coord(4)?))),
+                    "up" => Step::Touch(2, None),
+                    _ => return None,
+                },
+                "tablet" => Step::Tablet(words.get(2) == Some(&"on")),
+                "orientation" => Step::Orientation(["normal", "left-up", "right-up", "bottom-up"].iter().position(|o| words.get(2) == Some(o))? as u8),
                 "swipe" | "swipe4" if words.get(2) == Some(&"end") => Step::Swipe(if words[1] == "swipe4" { 4 } else { 3 }, None),
                 "swipe" | "swipe4" => Step::Swipe(if words[1] == "swipe4" { 4 } else { 3 }, Some((coord(2)?, coord(3)?))),
                 "plug" | "unplug" => {
@@ -226,6 +243,29 @@ fn run(state: &mut State, step: Step, frame: u32) {
             }
         }
         Step::Swipe(_, None) => crate::gesture::end(state, false),
+        Step::Touch(0, Some((x, y))) => {
+            crate::touch::down(state, 0, at(x, y), time);
+            crate::touch::frame(state);
+        }
+        Step::Touch(_, Some((x, y))) => {
+            crate::touch::motion(state, 0, at(x, y), time);
+            crate::touch::frame(state);
+        }
+        Step::Touch(_, None) => {
+            crate::touch::up(state, 0, time);
+            crate::touch::frame(state);
+        }
+        Step::Tablet(on) => {
+            state.touch.tablet_switch = true;
+            crate::touch::set_tablet_mode(state, on);
+        }
+        Step::Orientation(i) => {
+            let name = ["normal", "left-up", "right-up", "bottom-up"][i as usize % 4];
+            state.touch.sensor = true;
+            state.touch.orientation = Some(name.to_string());
+            tracing::info!("sensor de orientação: {name}");
+            crate::rotation::apply(state);
+        }
         Step::MiddleClick(x, y) => {
             input::pointer_motion(state, at(x, y), time);
             input::button(state, 0x112, ButtonState::Pressed, time);

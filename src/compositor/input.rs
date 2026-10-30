@@ -62,7 +62,7 @@ pub fn handle_event<B: InputBackend>(state: &mut State, event: InputEvent<B>, si
 /// Como `handle_event`, com várias telas: `bounds` é a caixa que contém todas (para
 /// posições absolutas). O ponteiro anda de uma tela para a outra e não sai delas.
 pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>, bounds: smithay::utils::Rectangle<i32, Logical>) {
-    use smithay::backend::input::{GestureBeginEvent, GestureEndEvent, GestureSwipeUpdateEvent};
+    use smithay::backend::input::{GestureBeginEvent, GestureEndEvent, GestureSwipeUpdateEvent, TouchEvent};
     match event {
         InputEvent::Keyboard { event } => keyboard_key(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
@@ -99,8 +99,36 @@ pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>,
             crate::gesture::update(state, delta.x, delta.y);
         }
         InputEvent::GestureSwipeEnd { event } => crate::gesture::end(state, event.cancelled()),
+        // Tela de toque: a posição vem como fração do painel (sem a rotação da tela).
+        InputEvent::TouchDown { event } => {
+            if let Some(pos) = touch_position(state, &event) {
+                crate::touch::down(state, event.slot().into(), pos, event.time_msec());
+            }
+        }
+        InputEvent::TouchMotion { event } => {
+            if let Some(pos) = touch_position(state, &event) {
+                crate::touch::motion(state, event.slot().into(), pos, event.time_msec());
+            }
+        }
+        InputEvent::TouchUp { event } => crate::touch::up(state, event.slot().into(), event.time_msec()),
+        InputEvent::TouchCancel { .. } => crate::touch::cancel(state),
+        InputEvent::TouchFrame { .. } => crate::touch::frame(state),
+        // Tela dobrada para trás (notebook conversível): modo tablet.
+        InputEvent::SwitchToggle { event } => {
+            use smithay::backend::input::{Switch, SwitchState, SwitchToggleEvent};
+            if event.switch() == Some(Switch::TabletMode) {
+                crate::touch::set_tablet_mode(state, event.state() == SwitchState::On);
+            }
+        }
         _ => {}
     }
+}
+
+/// Posição global de um toque (fração do painel, mapeada na tela interna girada).
+fn touch_position<B: InputBackend>(state: &State, event: &impl smithay::backend::input::AbsolutePositionEvent<B>) -> Option<Point<f64, Logical>> {
+    const UNIT: i32 = 1 << 16;
+    let p = event.position_transformed((UNIT, UNIT).into());
+    crate::touch::panel_to_global(state, p.x / UNIT as f64, p.y / UNIT as f64)
 }
 
 fn keyboard_key<B: InputBackend>(state: &mut State, event: impl KeyboardKeyEvent<B>) {
@@ -130,6 +158,9 @@ pub fn evdev_code(name: &str) -> Option<u32> {
         "previoussong" => 165,
         "brightnessdown" => 224,
         "brightnessup" => 225,
+        "kbdilluminationtoggle" => 228,
+        "kbdilluminationdown" => 229,
+        "kbdilluminationup" => 230,
         "micmute" => 248,
         "backspace" => 14,
         "delete" => 111,
@@ -321,6 +352,7 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             // Teclas multimídia (volume, brilho, mídia): do mide, em qualquer app; volume e
             // brilho também com a tela bloqueada.
             if let Some(media) = crate::config::Media::from_keysym(keysym.modified_sym().raw()) {
+                let media = media.with_ctrl(mods.ctrl);
                 if !locked || media.when_locked() {
                     return FilterResult::Intercept(Some(Action::Media(media)));
                 }
@@ -483,7 +515,13 @@ fn run_action(state: &mut State, action: Action) {
                     crate::osd::media_key(state, media);
                     mide::sounds::play("audio-volume-change");
                 }
-                Media::Mute | Media::MicMute | Media::BrightnessUp | Media::BrightnessDown => crate::osd::media_key(state, media),
+                Media::Mute
+                | Media::MicMute
+                | Media::BrightnessUp
+                | Media::BrightnessDown
+                | Media::KeyboardLightUp
+                | Media::KeyboardLightDown
+                | Media::KeyboardLightToggle => crate::osd::media_key(state, media),
                 Media::PlayPause => system::media_player("PlayPause"),
                 Media::Pause => system::media_player("Pause"),
                 Media::Stop => system::media_player("Stop"),
@@ -1049,6 +1087,39 @@ fn window_with_origin_under(state: &State, pos: Point<f64, Logical>) -> Option<(
             .is_in_input_region(&(pos - origin.to_f64()))
             .then(|| (window.clone(), origin))
     })
+}
+
+/// Superfície de app que recebe o toque como `wl_touch` sob `pos` (e a origem dela),
+/// ou `None` quando o toque vira ponteiro: camadas (barra, dock, mesa), barra de título
+/// e bordas do mide, a tela de bloqueio, a visão das janelas e os apps do mide (o
+/// mide-ui ainda não trata toque).
+pub(crate) fn touch_app_target(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    use smithay::reexports::wayland_server::Resource;
+    if state.lock.locked || state.overview.is_some() || state.preview.is_some() {
+        return None;
+    }
+    if top_layer_under(state, pos).is_some() || title_bar_under(state, pos).is_some() || resize_target(state, pos).is_some() {
+        return None;
+    }
+    let mide_client = |surface: &WlSurface| {
+        state.space.elements().any(|w| {
+            let mide = w.toplevel().is_some_and(|t| {
+                smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+                    s.data_map
+                        .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
+                })
+                .is_some_and(|id| id.to_lowercase().starts_with("mide"))
+            });
+            mide && w.toplevel().is_some_and(|t| t.wl_surface().client() == surface.client())
+        })
+    };
+    if let Some(found) = popup_under(state, pos) {
+        return (!mide_client(&found.0)).then_some(found);
+    }
+    let (window, loc) = window_with_origin_under(state, pos)?;
+    let found = window.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL).map(|(surface, p)| (surface, (p + loc).to_f64()))?;
+    (!mide_client(&found.0)).then_some(found)
 }
 
 /// Janela mapeada sob `pos`, a de cima primeiro.

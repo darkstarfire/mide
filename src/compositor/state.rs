@@ -256,6 +256,10 @@ pub struct State {
     pub launcher_close_pending: bool,
     /// Gesto de três dedos no touchpad em andamento.
     pub swipe: Option<crate::gesture::Swipe>,
+    /// Dedos na tela de toque, modo tablet e rotação da tela interna.
+    pub touch: crate::touch::Touch,
+    /// Véu preto esmaecendo depois de a tela girar.
+    pub rotation_fade: Option<Instant>,
     /// Visão de todas as janelas (quatro dedos para cima, Super+W).
     pub overview: Option<crate::overview::Overview>,
     /// Algo pode ter mudado na tela (commit de um cliente, comando, entrada): pede um
@@ -431,6 +435,8 @@ impl State {
         crate::screencopy::init(&display_handle);
         // Onde está o menu de cada janela (apps GTK e Qt no Wayland).
         crate::app_menus::init(&display_handle);
+        // Campos de texto e o teclado na tela (text-input v3 + input-method v2).
+        crate::input_method::init(&display_handle);
         // Escala exata da tela para cada janela (nítidas em 1,25, 1,5...).
         smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(&display_handle);
         let xdg_activation_state = smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(&display_handle);
@@ -457,6 +463,8 @@ impl State {
         tracing::info!("teclado: repetição depois de {repeat_delay} ms, {repeat_rate} por segundo");
         seat.add_keyboard(xkb, repeat_delay, repeat_rate)?;
         seat.add_pointer();
+        // Tela de toque: os apps recebem `wl_touch` (as partes do mide, um ponteiro).
+        seat.add_touch();
 
         Ok(Self {
             display_handle,
@@ -507,6 +515,8 @@ impl State {
             launcher_drag: None,
             launcher_close_pending: false,
             swipe: None,
+            touch: Default::default(),
+            rotation_fade: None,
             overview: None,
             redraw: true,
             waker: None,
@@ -1418,6 +1428,8 @@ pub const ABOVE_LAUNCHER: &[&str] = &[
     "mide-bar-menu",
     "mide-dock-menu",
     "mide-notifications",
+    // O teclado na tela também sobre o launcher (a busca dele).
+    "mide-keyboard",
 ];
 
 /// Camadas de topo e sobrepostas da saída, da frente para trás (ordem de desenho

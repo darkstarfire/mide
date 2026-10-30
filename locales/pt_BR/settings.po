@@ -1186,3 +1186,15 @@ msgstr "Espera para repetir (ms)"
 
 msgid "Repeat rate (per second)"
 msgstr "Repetições por segundo"
+
+msgid "Show the on-screen keyboard when typing"
+msgstr "Mostrar o teclado na tela ao digitar"
+
+msgid "Without this, it appears only in tablet mode (screen folded back)"
+msgstr "Sem isto, ele aparece só no modo tablet (tela dobrada para trás)"
+
+msgid "Rotation Lock"
+msgstr "Trava de rotação"
+
+msgid "The built-in display does not turn with the device"
+msgstr "A tela embutida não gira com o aparelho"

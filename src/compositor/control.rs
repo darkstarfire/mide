@@ -99,6 +99,10 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // banners): `on` ou `off`. A dock pausa as tarefas periódicas e as notificações
         // vão só para a central enquanto for `on`.
         Some("game_mode") => if state.game_on_primary() { "on\n".into() } else { "off\n".into() },
+        // Modo tablet (tela dobrada para trás): o teclado na tela aparece sozinho nele.
+        Some("tablet_mode") => if state.touch.tablet { "on\n".into() } else { "off\n".into() },
+        // Há sensor de orientação (a central de controle mostra a trava de rotação).
+        Some("orientation_sensor") => if state.touch.sensor { "yes\n".into() } else { "no\n".into() },
         // Onde está o menu da janela em foco (apps GTK e Qt no Wayland): `gtk<TAB>bus
         // <TAB>barra<TAB>app<TAB>janela`, `dbusmenu<TAB>serviço<TAB>objeto` ou vazio.
         Some("appmenu") => {
@@ -357,6 +361,12 @@ pub fn handle(state: &mut State, command: &str) -> String {
         // `closed`); `launcher close` fecha se estiver aberto.
         // Prévias das janelas acima da dock: `preview <x do ícone na dock> <ids...>`,
         // ou `preview hide`.
+        // Teclado na tela (`mide-keyboard`): `osk key NOME` aperta uma tecla que não é
+        // texto (enter, backspace, setas, tab, esc) no app com o foco.
+        Some("osk") => match (words.next(), words.next()) {
+            (Some("key"), Some(name)) if crate::input_method::press_key(state, name) => "ok\n".into(),
+            _ => "erro: osk key NOME\n".into(),
+        },
         Some("preview") => {
             let first = words.next();
             match first.and_then(|w| w.parse::<i32>().ok()) {
@@ -455,6 +465,8 @@ pub fn handle(state: &mut State, command: &str) -> String {
                     tracing::info!("teclado: repetição depois de {} ms, {} por segundo", repeat.0, repeat.1);
                 }
                 state.config = config;
+                // Trava de rotação solta: a tela volta a seguir o sensor.
+                crate::rotation::apply(state);
                 // Menus dos apps na barra superior ligados ou desligados: os apps GTK abertos
                 // ficam sabendo (mostram ou escondem a barra de menus deles).
                 crate::app_menus::refresh_capabilities();

@@ -572,6 +572,9 @@ msgstr "perturbe"
 msgid "Display"
 msgstr "Tela"
 
+msgid "Keyboard Brightness"
+msgstr "Luz do teclado"
+
 msgid "Restart your computer now?"
 msgstr "Reiniciar o computador agora?"
 
@@ -716,3 +719,6 @@ msgstr "Nenhuma sessão para iniciar"
 msgctxt "window title"
 msgid "Login"
 msgstr "Login"
+
+msgid "Rotation Lock"
+msgstr "Trava de rotação"

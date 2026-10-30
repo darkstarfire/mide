@@ -37,6 +37,8 @@ pub struct Status {
     /// Brilho da tela de 0.0 a 1.0. `None` sem controle de brilho (`brightnessctl`)
     /// ou sem tela com luz de fundo (monitores de mesa).
     pub brightness: Option<f32>,
+    /// Luz do teclado de 0.0 a 1.0. `None` sem luz de teclado.
+    pub keyboard_light: Option<f32>,
     /// Saídas de som (alto-falantes, fones, HDMI) e entradas (microfones), com a
     /// padrão marcada. Vazias sem o `wpctl`.
     pub outputs: Vec<AudioDevice>,
@@ -367,6 +369,7 @@ fn fake_status() -> Status {
             ],
         )),
         brightness: Some(0.7),
+        keyboard_light: read_keyboard_light(),
         outputs,
         inputs,
         output_gone,
@@ -423,7 +426,8 @@ pub fn read_status() -> Status {
         })
         .collect();
     let primary = output("ip", &["route", "show", "default"]).and_then(|t| network::parse_primary(&t));
-    Status { volume, wifi, bluetooth, brightness, outputs, inputs, output_gone, input_gone, wired, primary }
+    let keyboard_light = read_keyboard_light();
+    Status { volume, wifi, bluetooth, brightness, keyboard_light, outputs, inputs, output_gone, input_gone, wired, primary }
 }
 
 /// Saídas e entradas pelo `pactl -f json` (portas das placas em todos os perfis); sem
@@ -629,6 +633,147 @@ impl Backlight {
     }
 }
 
+/// Tecla da luz do teclado: mais, menos ou liga/desliga.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardLightKey {
+    Up,
+    Down,
+    Toggle,
+}
+
+/// Luz do teclado (`/sys/class/leds/*::kbd_backlight`; no Chromebook,
+/// `chromeos::kbd_backlight`). `MIDE_LEDS_DIR` troca a pasta nos testes.
+struct KeyboardLight {
+    dir: std::path::PathBuf,
+    name: String,
+    current: u32,
+    max: u32,
+}
+
+/// Nível de antes de desligar pela tecla de liga/desliga (para voltar a ele).
+static KEYBOARD_LIGHT_BEFORE_OFF: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+impl KeyboardLight {
+    fn leds_dir() -> (std::path::PathBuf, bool) {
+        match std::env::var_os("MIDE_LEDS_DIR") {
+            Some(dir) => (dir.into(), true),
+            None => ("/sys/class/leds".into(), false),
+        }
+    }
+
+    /// A primeira luz de teclado com brilho máximo (a do Chromebook antes das outras).
+    fn find() -> Option<Self> {
+        let (root, fake_dir) = Self::leds_dir();
+        // Nos testes, só a pasta falsa: a barra fica igual com ou sem luz na máquina.
+        if dry_run() && !fake_dir {
+            return None;
+        }
+        Self::find_in(&root)
+    }
+
+    fn find_in(root: &std::path::Path) -> Option<Self> {
+        let mut found: Vec<Self> = std::fs::read_dir(root)
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.ends_with("::kbd_backlight") {
+                    return None;
+                }
+                let path = entry.path();
+                let read = |file: &str| std::fs::read_to_string(path.join(file)).ok().and_then(|s| s.trim().parse::<u32>().ok());
+                let max = read("max_brightness").filter(|m| *m > 0)?;
+                let current = read("brightness")?.min(max);
+                Some(Self { dir: root.to_path_buf(), name, current, max })
+            })
+            .collect();
+        found.sort_by_key(|l| (!l.name.starts_with("chromeos::"), l.name.clone()));
+        found.into_iter().next()
+    }
+
+    fn level(&self) -> f32 {
+        self.current as f32 / self.max as f32
+    }
+
+    /// Muda o brilho: pelo logind (`Session.SetBrightness("leds", ...)`, permitido ao
+    /// usuário da sessão ativa) ou escrevendo no arquivo. Nos testes, só registra (e
+    /// grava na pasta falsa de `MIDE_LEDS_DIR`, nunca no `/sys`).
+    fn set(&self, value: u32) -> bool {
+        let path = self.dir.join(&self.name).join("brightness");
+        if dry_run() {
+            tracing::info!("sistema (teste): luz do teclado {} em {value}/{}", self.name, self.max);
+            if Self::leds_dir().1 {
+                let _ = std::fs::write(&path, value.to_string());
+            }
+            return true;
+        }
+        let logind = zbus::blocking::Connection::system().and_then(|conn| {
+            let proxy = zbus::blocking::Proxy::new(&conn, "org.freedesktop.login1", "/org/freedesktop/login1/session/auto", "org.freedesktop.login1.Session")?;
+            proxy.call::<_, _, ()>("SetBrightness", &("leds", self.name.as_str(), value))
+        });
+        match logind {
+            Ok(()) => {
+                tracing::info!("sistema: luz do teclado {} em {value}/{} (logind)", self.name, self.max);
+                true
+            }
+            Err(err) => {
+                let written = std::fs::write(&path, value.to_string()).is_ok();
+                if written {
+                    tracing::info!("sistema: luz do teclado {} em {value}/{} (arquivo)", self.name, self.max);
+                } else {
+                    tracing::warn!("sistema: luz do teclado {} não mudou: logind ({err}) e {} sem permissão", self.name, path.display());
+                }
+                written
+            }
+        }
+    }
+}
+
+/// Próximo nível da luz do teclado: passos de 10% (com poucos níveis, como 0 a 3, um
+/// nível por aperto); pode chegar a 0 (desligada).
+fn keyboard_light_next(current: u32, max: u32, up: bool) -> u32 {
+    let step = ((max as f32) * 0.1).round().max(1.0) as u32;
+    if up { current.saturating_add(step).min(max) } else { current.saturating_sub(step) }
+}
+
+/// Teclas da luz do teclado (Ctrl + brilho da tela, ou as teclas próprias). Devolve o
+/// nível que ficou (0 a 1), ou `None` sem luz de teclado.
+pub fn keyboard_light_key(key: KeyboardLightKey) -> Option<f32> {
+    use std::sync::atomic::Ordering;
+    let light = KeyboardLight::find()?;
+    let target = match key {
+        KeyboardLightKey::Up => keyboard_light_next(light.current, light.max, true),
+        KeyboardLightKey::Down => keyboard_light_next(light.current, light.max, false),
+        KeyboardLightKey::Toggle if light.current > 0 => {
+            KEYBOARD_LIGHT_BEFORE_OFF.store(light.current, Ordering::Relaxed);
+            0
+        }
+        KeyboardLightKey::Toggle => match KEYBOARD_LIGHT_BEFORE_OFF.load(Ordering::Relaxed) {
+            0 => light.max.div_ceil(2),
+            before => before.min(light.max),
+        },
+    };
+    if light.set(target) {
+        Some(target as f32 / light.max as f32)
+    } else {
+        Some(light.level())
+    }
+}
+
+/// Luz do teclado (0 a 1), agora. `None` sem luz de teclado.
+pub fn read_keyboard_light() -> Option<f32> {
+    KeyboardLight::find().map(|l| l.level())
+}
+
+/// Luz do teclado pelo deslizante da central de controle (0 a 1), numa thread.
+pub fn set_keyboard_light(value: f32) {
+    std::thread::spawn(move || {
+        if let Some(light) = KeyboardLight::find() {
+            light.set((light.max as f32 * value.clamp(0.0, 1.0)).round() as u32);
+        }
+    });
+}
+
 /// Argumentos do `brightnessctl` para as teclas de brilho. O mínimo vai colado
 /// (`--min-value=1%`): o valor dele é opcional, e com `-n 1%` separado o `1%` virava
 /// a operação, e o programa só mostrava o aparelho, sem mudar nada (o bug das teclas).
@@ -806,6 +951,35 @@ pub fn open_settings(panel: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn luz_do_teclado_passos_e_escolha() {
+        // Poucos níveis (0 a 3): um por aperto, até desligar.
+        assert_eq!(keyboard_light_next(2, 3, true), 3);
+        assert_eq!(keyboard_light_next(3, 3, true), 3);
+        assert_eq!(keyboard_light_next(1, 3, false), 0);
+        assert_eq!(keyboard_light_next(0, 3, false), 0);
+        // Muitos níveis: 10% por aperto.
+        assert_eq!(keyboard_light_next(50, 100, true), 60);
+        assert_eq!(keyboard_light_next(5, 100, false), 0);
+        // A do Chromebook antes das outras; sem `::kbd_backlight`, nada.
+        let root = std::env::temp_dir().join(format!("mide-leds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (name, cur, max) in [("input3::capslock", "0", "1"), ("asus::kbd_backlight", "1", "3"), ("chromeos::kbd_backlight", "40", "100")] {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("brightness"), cur).unwrap();
+            std::fs::write(dir.join("max_brightness"), max).unwrap();
+        }
+        let light = KeyboardLight::find_in(&root).unwrap();
+        assert_eq!((light.name.as_str(), light.current, light.max), ("chromeos::kbd_backlight", 40, 100));
+        assert!((light.level() - 0.4).abs() < 1e-6);
+        std::fs::remove_dir_all(root.join("chromeos::kbd_backlight")).unwrap();
+        assert_eq!(KeyboardLight::find_in(&root).map(|l| l.name), Some("asus::kbd_backlight".to_string()));
+        std::fs::remove_dir_all(root.join("asus::kbd_backlight")).unwrap();
+        assert!(KeyboardLight::find_in(&root).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn brilho_do_brightnessctl() {

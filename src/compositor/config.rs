@@ -69,6 +69,11 @@ pub enum Media {
     MicMute,
     BrightnessUp,
     BrightnessDown,
+    /// Luz do teclado: Ctrl + teclas de brilho da tela (como no GNOME) ou as teclas
+    /// próprias do teclado.
+    KeyboardLightUp,
+    KeyboardLightDown,
+    KeyboardLightToggle,
     PlayPause,
     Pause,
     Stop,
@@ -87,6 +92,9 @@ impl Media {
             k::KEY_XF86AudioMicMute => Media::MicMute,
             k::KEY_XF86MonBrightnessUp => Media::BrightnessUp,
             k::KEY_XF86MonBrightnessDown => Media::BrightnessDown,
+            k::KEY_XF86KbdBrightnessUp => Media::KeyboardLightUp,
+            k::KEY_XF86KbdBrightnessDown => Media::KeyboardLightDown,
+            k::KEY_XF86KbdLightOnOff => Media::KeyboardLightToggle,
             k::KEY_XF86AudioPlay => Media::PlayPause,
             k::KEY_XF86AudioPause => Media::Pause,
             k::KEY_XF86AudioStop => Media::Stop,
@@ -98,7 +106,27 @@ impl Media {
 
     /// Vale com a tela bloqueada (volume e brilho; a mídia, não).
     pub fn when_locked(self) -> bool {
-        matches!(self, Media::VolumeUp | Media::VolumeDown | Media::Mute | Media::MicMute | Media::BrightnessUp | Media::BrightnessDown)
+        matches!(
+            self,
+            Media::VolumeUp
+                | Media::VolumeDown
+                | Media::Mute
+                | Media::MicMute
+                | Media::BrightnessUp
+                | Media::BrightnessDown
+                | Media::KeyboardLightUp
+                | Media::KeyboardLightDown
+                | Media::KeyboardLightToggle
+        )
+    }
+
+    /// Com o Ctrl, as teclas de brilho da tela mudam a luz do teclado (como no GNOME).
+    pub fn with_ctrl(self, ctrl: bool) -> Media {
+        match (self, ctrl) {
+            (Media::BrightnessUp, true) => Media::KeyboardLightUp,
+            (Media::BrightnessDown, true) => Media::KeyboardLightDown,
+            (media, _) => media,
+        }
     }
 }
 
@@ -137,6 +165,7 @@ struct FileConfig {
     opacity: Opacity,
     appearance: Appearance,
     power: Power,
+    display: Display,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -261,6 +290,14 @@ impl Default for Lock {
     fn default() -> Self {
         Self { idle_minutes: 5, on_suspend: true, blank_minutes: 10 }
     }
+}
+
+/// Tela, na seção `[display]`: a trava de rotação (central de controle e
+/// Configurações → Monitores). Travada, a tela interna não gira com o sensor.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Display {
+    pub rotation_lock: bool,
 }
 
 /// Energia, na seção `[power]` (Configurações → Energia).
@@ -525,6 +562,7 @@ pub struct Config {
     /// Tema escuro (`[appearance] theme = "dark"`).
     pub dark: bool,
     pub power: Power,
+    pub display: Display,
 }
 
 impl Config {
@@ -532,6 +570,7 @@ impl Config {
     pub fn load() -> Result<Self, Box<dyn Error>> {
         let mut dark = false;
         let mut power = Power::default();
+        let mut display = Display::default();
         let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
@@ -546,6 +585,7 @@ impl Config {
                 let opacity = std::mem::take(&mut file.opacity);
                 dark = file.appearance.theme == "dark";
                 power = std::mem::take(&mut file.power);
+                display = std::mem::take(&mut file.display);
                 (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock, opacity)
             }
             _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default(), Opacity::default()),
@@ -562,6 +602,7 @@ impl Config {
         config.opacity = opacity;
         config.dark = dark;
         config.power = power;
+        config.display = display;
         Ok(config)
     }
 
@@ -596,6 +637,7 @@ impl Config {
             opacity: Opacity::default(),
             dark: false,
             power: Power::default(),
+            display: Display::default(),
         })
     }
 

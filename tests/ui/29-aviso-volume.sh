@@ -127,4 +127,42 @@ if osd_log bloqueada-mic | grep -q "autoteste: tela bloqueada" && osd_log bloque
 else
     falha "tela bloqueada: microfone mudo também mostra o aviso"
 fi
+
+# Luz do teclado (como no GNOME): Ctrl + tecla de brilho muda a luz do teclado, não a
+# da tela; a tecla própria também; sem luz de teclado, nada. LED falso em
+# MIDE_LEDS_DIR (40 de 100), passos de 10%.
+LEDS="$OSD/leds/chromeos::kbd_backlight"
+mkdir -p "$LEDS"; echo 40 > "$LEDS/brightness"; echo 100 > "$LEDS/max_brightness"
+MIDE_LEDS_DIR="$OSD/leds" osd_run teclado "500 combo ctrl+brightnessup; 600 list"
+LOG="$(osd_log teclado)"
+if echo "$LOG" | grep -q "sistema (teste): luz do teclado chromeos::kbd_backlight em 50/100" && echo "$LOG" | grep -q "osd: luz do teclado 50%" && ! echo "$LOG" | grep -q "osd: brilho"; then
+    ok "Ctrl + brilho +: a luz do teclado sobe 10% (não o brilho da tela)"
+else
+    falha "Ctrl + brilho +: a luz do teclado sobe 10% (não o brilho da tela)"
+    echo "$LOG" | grep -E "osd:|luz do teclado" | sed 's/^/      /'
+fi
+if osd_blue "$(osd_pixel teclado 615 614)"; then
+    ok "luz do teclado: o aviso mostra a barra com o nível"
+else
+    falha "luz do teclado: o aviso mostra a barra com o nível ($(osd_pixel teclado 615 614))"
+fi
+echo 40 > "$LEDS/brightness"
+MIDE_LEDS_DIR="$OSD/leds" osd_run teclado-tecla "500 key kbdilluminationdown; 560 key kbdilluminationtoggle; 620 key kbdilluminationtoggle; 700 list"
+if [ "$(osd_log teclado-tecla | grep -oE "osd: luz do teclado [0-9]+%" | tr '\n' ' ')" = "osd: luz do teclado 30% osd: luz do teclado 0% osd: luz do teclado 30% " ]; then
+    ok "teclas próprias da luz do teclado: menos, desliga e volta ao nível de antes"
+else
+    falha "teclas próprias da luz do teclado: menos, desliga e volta ao nível de antes ($(osd_log teclado-tecla | grep -oE "osd: luz do teclado [0-9]+%" | tr '\n' ' '))"
+fi
+MIDE_LEDS_DIR="$OSD/leds" osd_run teclado-barra "500 combo ctrl+brightnessdown; 700 list"
+if osd_log teclado-barra | grep -q "barra: luz do teclado da tecla"; then
+    ok "luz do teclado: a central de controle recebe o nível na hora"
+else
+    falha "luz do teclado: a central de controle recebe o nível na hora"
+fi
+osd_run sem-teclado "500 combo ctrl+brightnessup; 600 list"
+if osd_log sem-teclado | grep -q "osd: sem nível para mostrar (KeyboardLight)" && ! osd_log sem-teclado | grep -q "osd: brilho"; then
+    ok "sem luz de teclado: Ctrl + brilho não mexe no brilho da tela"
+else
+    falha "sem luz de teclado: Ctrl + brilho não mexe no brilho da tela"
+fi
 rm -rf "$OSD"

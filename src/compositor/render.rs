@@ -71,6 +71,28 @@ pub struct Scene {
     osd_icons: crate::osd::Icons,
     /// Quando medir o tom atrás da barra superior, por tela.
     tone: std::collections::HashMap<String, crate::bar_tone::Probe>,
+    /// Telas giradas (sensor de orientação): a imagem da tela girada, por tela.
+    rotated: std::collections::HashMap<String, Rotated>,
+}
+
+/// Tela girada: a cena é desenhada numa textura no tamanho da tela girada, sem giro (os
+/// shaders do mide usam a posição do pixel na tela), e a textura vai girada para o
+/// quadro de verdade.
+struct Rotated {
+    texture: smithay::backend::renderer::gles::GlesTexture,
+    tracker: OutputDamageTracker,
+    size: smithay::utils::Size<i32, Physical>,
+    scale: f64,
+    frames: usize,
+}
+
+/// Resultado de um quadro: o ponto de sincronização e as áreas que mudaram.
+type Rendered = Result<(smithay::backend::renderer::sync::SyncPoint, Option<Vec<Rectangle<i32, Physical>>>), Box<dyn Error>>;
+
+thread_local! {
+    /// Desenhando a tela girada na textura intermediária (o quadro salvo para os testes
+    /// sai do quadro de verdade, girado como na tela).
+    static INNER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Scene {
@@ -85,7 +107,7 @@ impl Scene {
         // Compila o shader do papel de parede já aqui, para o erro aparecer na partida.
         crate::wallpaper::Wallpaper::new(renderer, None).map_err(|e| format!("falha ao compilar o shader do papel de parede: {e}"))?;
         let _ = state;
-        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true, osd_icons: Default::default(), tone: Default::default() })
+        Ok(Self { shaders, genie, blur, wallpapers: Default::default(), titles: crate::title::TitleRenderer::new(), cursors: None, draw_cursor: true, osd_icons: Default::default(), tone: Default::default(), rotated: Default::default() })
     }
 
     /// A cena desenha o cursor (backends sem anfitrião).
@@ -97,6 +119,67 @@ impl Scene {
     /// Qual cursor mostrar agora (`None`: a cena não desenha cursor).
     pub fn cursor_plan(&mut self, state: &State, scale: f64) -> Option<crate::cursor::Plan<'_>> {
         self.cursors.as_mut().map(|c| c.plan(state, scale))
+    }
+
+    /// Tela girada: a cena na textura intermediária (no tamanho da tela girada) e a
+    /// textura girada no quadro de verdade, pelo rastreador da saída (que tem a rotação).
+    fn render_rotated(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        framebuffer: &mut GlesTarget<'_>,
+        output: &Output,
+        damage_tracker: &mut OutputDamageTracker,
+        state: &mut State,
+    ) -> Rendered {
+        use smithay::backend::renderer::{Bind, Offscreen, Renderer as _};
+        let mode = output.current_mode().ok_or("tela sem modo")?;
+        let size = output.current_transform().transform_size(mode.size);
+        let scale = output.current_scale().fractional_scale();
+        let name = output.name();
+        if self.rotated.get(&name).is_none_or(|r| r.size != size || (r.scale - scale).abs() > 0.001) {
+            let texture: smithay::backend::renderer::gles::GlesTexture =
+                renderer.create_buffer(smithay::backend::allocator::Fourcc::Abgr8888, (size.w, size.h).into())?;
+            let tracker = OutputDamageTracker::new(size, scale, Transform::Normal);
+            self.rotated.insert(name.clone(), Rotated { texture, tracker, size, scale, frames: 0 });
+        }
+        let Some(mut rotated) = self.rotated.remove(&name) else {
+            return Err("tela girada sem textura".into());
+        };
+        let inner = {
+            INNER.set(true);
+            let result = match renderer.bind(&mut rotated.texture) {
+                Ok(mut target) => {
+                    // A textura guarda o quadro anterior: idade 1 depois do primeiro.
+                    let age = usize::from(rotated.frames > 0);
+                    self.render(renderer, &mut target, output, &mut rotated.tracker, state, age)
+                }
+                Err(err) => Err(err.into()),
+            };
+            INNER.set(false);
+            result
+        };
+        rotated.frames += 1;
+        let texture = rotated.texture.clone();
+        self.rotated.insert(name, rotated);
+        // Mesmo contexto do GL: a textura fica pronta antes de o quadro de verdade lê-la.
+        let _inner_sync = inner?.0;
+        let logical = state.space.output_geometry(output).map(|g| g.size).unwrap_or_default();
+        let element = smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
+            smithay::backend::renderer::element::Id::new(),
+            renderer.context_id(),
+            (0.0, 0.0),
+            texture,
+            1,
+            Transform::Normal,
+            None,
+            None,
+            Some(logical),
+            None,
+            Kind::Unspecified,
+        );
+        let result = damage_tracker.render_output(renderer, framebuffer, 0, &[MideRenderElement::Blurred(element)], [0.0, 0.0, 0.0, 1.0])?;
+        dump_frame_if_requested(renderer, framebuffer, output)?;
+        Ok((result.sync, result.damage.cloned()))
     }
 
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela
@@ -117,6 +200,8 @@ impl Scene {
             || state.osd.as_ref().is_some_and(|o| o.moving(state.config.effects.transitions))
             // Barra revelada na tela cheia descendo ou subindo.
             || state.fs_reveal.animating(std::time::Instant::now())
+            // Véu da troca de orientação da tela.
+            || crate::rotation::fade(state).is_some()
             // Medida do tom atrás da barra adiada (intervalo mínimo): mais um quadro.
             || self.tone.values().any(|p| p.pending)
     }
@@ -136,8 +221,11 @@ impl Scene {
         damage_tracker: &mut OutputDamageTracker,
         state: &mut State,
         age: usize,
-    ) -> Result<(smithay::backend::renderer::sync::SyncPoint, Option<Vec<Rectangle<i32, Physical>>>), Box<dyn Error>> {
-        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor, osd_icons, tone } = self;
+    ) -> Rendered {
+        if crate::rotation::rotated(output) && !INNER.get() {
+            return self.render_rotated(renderer, framebuffer, output, damage_tracker, state);
+        }
+        let Self { shaders, genie, blur, wallpapers, titles, cursors, draw_cursor, osd_icons, tone, rotated: _ } = self;
         // Cada tela tem o seu papel de parede (textura no tamanho dela).
         let output_name = output.name();
         if !wallpapers.contains_key(&output_name) {
@@ -182,6 +270,11 @@ impl Scene {
         if let Some((icon, offset)) = state.dnd_icon.as_ref().filter(|_| !capturing) {
             let at = crate::clip::phys(state.pointer_location.to_i32_round::<i32>() - origin + *offset);
             custom.extend(render_elements_from_surface_tree(renderer, icon, at, crate::clip::scale(), 1.0, Kind::Unspecified));
+        }
+        // Tela acabou de girar: um véu preto esmaecendo por cima de tudo.
+        if let Some(alpha) = crate::rotation::fade(state) {
+            let screen = Rectangle::from_size(state.space.output_geometry(output).map(|g| g.size).unwrap_or_default());
+            custom.insert(0, MideRenderElement::from(decorations::rounded_rect_element(shaders, screen, [0.0, 0.0, 0.0, alpha], 0)));
         }
         // Tela apagada (no DRM o monitor desliga; aqui, preto).
         if state.blanked {
@@ -1056,6 +1149,9 @@ fn dump_frame_if_requested(
     let Ok(path) = std::env::var("MIDE_DUMP_FRAME") else {
         return Ok(());
     };
+    if INNER.get() {
+        return Ok(());
+    }
     // Com várias telas, só uma é salva: a de `MIDE_DUMP_OUTPUT`, ou a primeira desenhada.
     static FIRST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let wanted = std::env::var("MIDE_DUMP_OUTPUT").unwrap_or_else(|_| FIRST.get_or_init(|| output.name()).clone());

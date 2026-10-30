@@ -19,6 +19,8 @@
 //!   clique no conteúdo pede para entrar ou sair da tela cheia
 //!   (`xdg_toplevel.set_fullscreen`, como o F11 dos navegadores); `ja` pede tela cheia
 //!   antes do primeiro quadro (como um jogo).
+//! - `mide-janela-teste toque`: janela "Toque" 400x300 (app_id `teste-toque`, como um
+//!   app de terceiros) que trata `wl_touch`: um dedo encostando pinta a janela de verde.
 //!
 //! Cada janela é pintada de uma cor só; o programa sai sozinho em 20 s.
 
@@ -46,7 +48,8 @@ use smithay_client_toolkit::{
     },
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
-use smithay_client_toolkit::reexports::client::protocol::{wl_pointer, wl_seat};
+use smithay_client_toolkit::reexports::client::protocol::{wl_pointer, wl_seat, wl_touch};
+use smithay_client_toolkit::seat::touch::TouchHandler;
 
 struct Teste {
     registry: RegistryState,
@@ -54,6 +57,9 @@ struct Teste {
     seat_state: SeatState,
     seat: Option<wl_seat::WlSeat>,
     pointer: Option<wl_pointer::WlPointer>,
+    /// Modo `toque`: a tela de toque (`wl_touch`).
+    touch: Option<wl_touch::WlTouch>,
+    touch_mode: bool,
     /// Demora de propósito para responder a cada configure (`lento`).
     slow: bool,
     /// Fora de maximizada, ignora o tamanho pedido e volta ao seu (`propria`).
@@ -99,7 +105,7 @@ impl Teste {
         let surface = self.compositor.create_surface(qh);
         let window = self.xdg.create_window(surface, deco, qh);
         window.set_title(title);
-        window.set_app_id("mide-janela-teste");
+        window.set_app_id(if self.touch_mode { "teste-toque" } else { "mide-janela-teste" });
         if fixed {
             window.set_min_size(Some((w, h)));
             window.set_max_size(Some((w, h)));
@@ -156,6 +162,9 @@ impl SeatHandler for Teste {
     }
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Touch && self.touch_mode && self.touch.is_none() {
+            self.touch = self.seat_state.get_touch(qh, &seat).ok();
+        }
         if capability == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
             self.seat = Some(seat);
@@ -192,6 +201,20 @@ impl PointerHandler for Teste {
             }
         }
     }
+}
+
+impl TouchHandler for Teste {
+    fn down(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, _: u32, surface: wl_surface::WlSurface, _: i32, position: (f64, f64)) {
+        println!("toque recebido em {position:?}");
+        if let Some((_, w, h)) = self.windows.iter().find(|(w, _, _)| w.wl_surface() == &surface).cloned() {
+            paint(&mut self.pool, &surface, w, h, 0xff20c040);
+        }
+    }
+    fn up(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, _: u32, _: i32) {}
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, _: i32, _: (f64, f64)) {}
+    fn shape(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: i32, _: f64, _: f64) {}
+    fn orientation(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: i32, _: f64) {}
+    fn cancel(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch) {}
 }
 
 impl CompositorHandler for Teste {
@@ -242,6 +265,8 @@ fn main() {
         seat_state: SeatState::new(&globals, &qh),
         seat: None,
         pointer: None,
+        touch: None,
+        touch_mode: mode == "toque",
         slow: std::env::args().any(|a| a == "lento"),
         own_size: std::env::args().any(|a| a == "propria"),
         fullscreen_toggle: mode == "cheia",
@@ -272,6 +297,7 @@ fn main() {
                 app.windows[0].0.commit();
             }
         }
+        "toque" => app.open(&qh, "Toque", 400, 300, WindowDecorations::RequestServer, false, None),
         "ssd-max" => app.open_with(&qh, "SSD", 500, 300, WindowDecorations::RequestServer, false, None, true),
         _ => app.open(&qh, "Comum", 400, 300, WindowDecorations::RequestServer, false, None),
     }
