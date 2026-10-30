@@ -31,7 +31,7 @@ pub struct Candidate {
 /// O buffer da janela em tela cheia da tela `output` pode ir direto à placa (modo de
 /// pixels `mode`)? `Err` diz por que não (para o log).
 pub fn candidate(state: &State, output: &Output, mode: (i32, i32)) -> Result<Candidate, String> {
-    if crate::rotation::rotated(output) {
+    if crate::rotation::via_texture(state, output) {
         return Err("tela girada".into());
     }
     let Some(window) = state.game_window(output) else {

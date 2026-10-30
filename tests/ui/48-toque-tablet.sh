@@ -129,4 +129,69 @@ if tt_log e15 | grep -q "rotação: tela HEADLESS-1 em _180" && tt_log e15 | gre
 else
     falha "escala 1,5: a tela gira de cabeça para baixo"
 fi
+# Toque com a tela girada: o dedo em pixels do painel passa pela rotação (`touch panel`).
+# Depois do giro a janela "Toque" fica em (26, 91) 400x300 (lógico); o centro dela,
+# (226, 241), fica no painel em (1125, 226) com left-up (_90: o topo da cena na borda
+# direita) e em (241, 542) com right-up (_270).
+if [ -x "$JANELA" ]; then
+    tt_run giro90 "350 orientation left-up; 420 touch panel down 1125 226; 424 touch up; 470 list" 460 "$JANELA toque"
+    PIX="$(tt_pixel giro90 1125 226)"
+    if echo "$PIX" | awk -F, '{ exit !($2 > 150 && $1 < 100 && $3 < 120) }'; then
+        ok "tela girada (left-up): o toque cai no lugar certo do app"
+    else
+        falha "tela girada (left-up): o toque cai no lugar certo do app (pixel $PIX)"
+    fi
+    tt_run giro270 "350 orientation right-up; 420 touch panel down 241 542; 424 touch up; 470 list" 460 "$JANELA toque"
+    PIX="$(tt_pixel giro270 241 542)"
+    if echo "$PIX" | awk -F, '{ exit !($2 > 150 && $1 < 100 && $3 < 120) }'; then
+        ok "tela girada (right-up): o toque cai no lugar certo do app"
+    else
+        falha "tela girada (right-up): o toque cai no lugar certo do app (pixel $PIX)"
+    fi
+    # Janela maximizada (dois toques na barra) se refaz no tamanho da tela em pé.
+    tt_run maxgira "400 touch down 300 61; 402 touch up; 406 touch down 300 61; 408 touch up; 450 orientation left-up; 520 list" "" "$JANELA comum"
+    if tt_log maxgira | grep -qE 'janela "Comum" popups=0 posição=\(0, 58\) visível=768x'; then
+        ok "janela maximizada ocupa a largura da tela girada"
+    else
+        falha "janela maximizada ocupa a largura da tela girada ($(tt_log maxgira | grep -o 'janela "Comum" popups=0 posição=([0-9, ]*) visível=[0-9x]*' | tail -1))"
+    fi
+fi
+# Deitado (o sensor diz `undefined`): fica a última orientação.
+tt_run deitado "400 orientation left-up; 440 orientation undefined; 480 list"
+if tt_log deitado | grep -q 'camada "mide-bar" em (0, 0) 768x28' && tt_log deitado | grep -q "fica a última"; then
+    ok "aparelho deitado mantém a última orientação"
+else
+    falha "aparelho deitado mantém a última orientação"
+fi
+# O giro é animado: no meio dele (giro de 3 s no teste), a foto da cena antiga gira e
+# encolhe, e os cantos do painel ficam pretos.
+MIDE_ROTATE_MS=3000 tt_run anima "300 orientation left-up; 600 list" 330
+CORNER="$(tt_pixel anima 2 2)"
+if tt_log anima | grep -q "rotação: tela HEADLESS-1 em _90" && echo "$CORNER" | awk -F, '{ exit !($1 < 12 && $2 < 12 && $3 < 12) }'; then
+    ok "o giro da tela é animado (a cena gira no meio)"
+else
+    falha "o giro da tela é animado (canto $CORNER)"
+fi
+# Nitidez em 1,5 numa tela 2256x1504 (a do Chromebook): de cabeça para baixo, a barra e
+# a janela saem iguais, pixel a pixel, à tela normal desvirada (sem esticar a imagem).
+if [ -x "$JANELA" ]; then
+    mkdir -p "$TT/n15-cfg/mide"
+    printf '[monitors.outputs."HEADLESS-1"]\nscale = 1.5\n' > "$TT/n15-cfg/mide/config.toml"
+    MIDE_WINIT_SIZE=2256x1504 XDG_CONFIG_HOME="$TT/n15-cfg" tt_run n15a "420 list" 400 "$JANELA comum"
+    MIDE_WINIT_SIZE=2256x1504 XDG_CONFIG_HOME="$TT/n15-cfg" tt_run n15b "300 orientation bottom-up; 420 list" 400 "$JANELA comum"
+    DIFF="$(python3 -c "
+import sys
+from PIL import Image, ImageChops
+a = Image.open(sys.argv[1]).convert('RGB'); b = Image.open(sys.argv[2]).convert('RGB').rotate(180)
+n = 0
+for box in [(0, 0, 700, 42), (60, 110, 700, 560)]:
+    h = ImageChops.difference(a.crop(box), b.crop(box)).convert('L').histogram()
+    n += sum(h[20:])
+print(n)" "$TT/n15a/frame.png" "$TT/n15b/frame.png" 2>/dev/null)"
+    if [ "$DIFF" = "0" ]; then
+        ok "escala 1,5 girada: barra e janela nítidas (iguais à tela normal)"
+    else
+        falha "escala 1,5 girada: barra e janela nítidas ($DIFF pixels diferentes)"
+    fi
+fi
 rm -rf "$TT"

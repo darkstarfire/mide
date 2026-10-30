@@ -1089,6 +1089,9 @@ fn window_with_origin_under(state: &State, pos: Point<f64, Logical>) -> Option<(
     })
 }
 
+/// Camadas do mide que tratam o toque de verdade (as outras recebem um ponteiro).
+const TOUCH_LAYERS: &[&str] = &["mide-launcher", "mide-keyboard"];
+
 /// Superfície de app que recebe o toque como `wl_touch` sob `pos` (e a origem dela),
 /// ou `None` quando o toque vira ponteiro: camadas (barra, dock, mesa), barra de título
 /// e bordas do mide, a tela de bloqueio, a visão das janelas e os apps do mide (o
@@ -1098,7 +1101,17 @@ pub(crate) fn touch_app_target(state: &State, pos: Point<f64, Logical>) -> Optio
     if state.lock.locked || state.overview.is_some() || state.preview.is_some() {
         return None;
     }
-    if top_layer_under(state, pos).is_some() || title_bar_under(state, pos).is_some() || resize_target(state, pos).is_some() {
+    // O launcher e o teclado na tela tratam o dedo (passar páginas, segurar para editar,
+    // deslizar no espaço): recebem o toque de verdade.
+    if let Some((surface, origin)) = top_layer_under(state, pos) {
+        let touch_layer = state.output_at(pos).is_some_and(|output| {
+            layer_map_for_output(&output)
+                .layer_for_surface(&surface, WindowSurfaceType::ALL)
+                .is_some_and(|l| TOUCH_LAYERS.contains(&l.namespace()))
+        });
+        return touch_layer.then_some((surface, origin));
+    }
+    if title_bar_under(state, pos).is_some() || resize_target(state, pos).is_some() {
         return None;
     }
     let mide_client = |surface: &WlSurface| {

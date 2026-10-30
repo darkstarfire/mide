@@ -636,6 +636,46 @@ impl Settings {
                 }
             });
         }
+        // Modo tablet (tela dobrada para trás), como no iPad: gestos das bordas, apps
+        // ocupando a tela e alvos maiores para o dedo (`[tablet]`, ligados por padrão).
+        ui.heading(&tr!("Tablet Mode"));
+        ui.card(|ui| {
+            let options = [
+                ("edge_gestures", tr!("Edge gestures"), tr!("Swipe up from the bottom for the launcher (hold for all windows); down from the top corners for Control Center and notifications")),
+                ("maximize_windows", tr!("Apps fill the screen"), tr!("Windows open and stay maximized, as on a tablet")),
+                ("large_targets", tr!("Larger touch targets"), tr!("Bigger Dock icons and more forgiving menu bar items")),
+            ];
+            for (i, (key, title, detail)) in options.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                let mut on = settings_file::flag("tablet", key, true);
+                if ui.switch_detail(title, detail, &mut on).changed() {
+                    match settings_file::set("tablet", key, (!on).then_some(Value::Bool(false))) {
+                        Ok(()) => {
+                            tracing::info!("modo tablet: {key} {}", if on { "ligado" } else { "desligado" });
+                            ask_compositor("reload");
+                        }
+                        Err(err) => tracing::warn!("opção do modo tablet não gravada: {err}"),
+                    }
+                }
+            }
+            // Teclado na tela: som das teclas e o atalho dos dois espaços (lidos a cada
+            // tecla). Aqui, e não em Teclado, para a lista de atalhos de lá não descer.
+            for (key, title, detail) in [
+                ("osk_sound", tr!("Keyboard clicks"), tr!("A soft click on each key of the on-screen keyboard")),
+                ("osk_period", tr!("“.” shortcut"), tr!("Double-tapping the space bar types a period and a space")),
+            ] {
+                ui.separator();
+                let mut on = settings_file::flag("keyboard", key, true);
+                if ui.switch_detail(&title, &detail, &mut on).changed() {
+                    match settings_file::set("keyboard", key, (!on).then_some(Value::Bool(false))) {
+                        Ok(()) => tracing::info!("teclado na tela: {key} {}", if on { "ligado" } else { "desligado" }),
+                        Err(err) => tracing::warn!("opção do teclado na tela não gravada: {err}"),
+                    }
+                }
+            }
+        });
     }
 
     /// Depois de aplicar as telas: janelinha (modal) "Manter estas configurações?", por

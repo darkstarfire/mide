@@ -258,8 +258,8 @@ pub struct State {
     pub swipe: Option<crate::gesture::Swipe>,
     /// Dedos na tela de toque, modo tablet e rotação da tela interna.
     pub touch: crate::touch::Touch,
-    /// Véu preto esmaecendo depois de a tela girar.
-    pub rotation_fade: Option<Instant>,
+    /// Giro da tela pedido e a animação dele (`crate::rotation`).
+    pub rotation: crate::rotation::Rotation,
     /// Visão de todas as janelas (quatro dedos para cima, Super+W).
     pub overview: Option<crate::overview::Overview>,
     /// Algo pode ter mudado na tela (commit de um cliente, comando, entrada): pede um
@@ -516,7 +516,7 @@ impl State {
             launcher_close_pending: false,
             swipe: None,
             touch: Default::default(),
-            rotation_fade: None,
+            rotation: Default::default(),
             overview: None,
             redraw: true,
             waker: None,

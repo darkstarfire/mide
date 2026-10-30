@@ -166,6 +166,7 @@ struct FileConfig {
     appearance: Appearance,
     power: Power,
     display: Display,
+    tablet: Tablet,
     /// Qualquer outra chave de texto é tratada como atalho solto no topo.
     #[serde(flatten)]
     top_level: BTreeMap<String, toml::Value>,
@@ -289,6 +290,27 @@ pub struct Lock {
 impl Default for Lock {
     fn default() -> Self {
         Self { idle_minutes: 5, on_suspend: true, blank_minutes: 10 }
+    }
+}
+
+/// Modo tablet, na seção `[tablet]` (Configurações → Monitores → Modo tablet): o que
+/// muda quando a tela é dobrada para trás.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Tablet {
+    /// Gestos das bordas com o dedo: de baixo para cima abre o launcher (segurando, a
+    /// visão das janelas); do canto de cima à direita, a central de controle; do canto
+    /// de cima à esquerda, as notificações.
+    pub edge_gestures: bool,
+    /// Apps abrem (e ficam, ao girar) ocupando a tela, como no iPad.
+    pub maximize_windows: bool,
+    /// Barra e dock maiores, para o dedo.
+    pub large_targets: bool,
+}
+
+impl Default for Tablet {
+    fn default() -> Self {
+        Self { edge_gestures: true, maximize_windows: true, large_targets: true }
     }
 }
 
@@ -563,6 +585,7 @@ pub struct Config {
     pub dark: bool,
     pub power: Power,
     pub display: Display,
+    pub tablet: Tablet,
 }
 
 impl Config {
@@ -571,6 +594,7 @@ impl Config {
         let mut dark = false;
         let mut power = Power::default();
         let mut display = Display::default();
+        let mut tablet = Tablet::default();
         let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match config_path() {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
@@ -586,6 +610,7 @@ impl Config {
                 dark = file.appearance.theme == "dark";
                 power = std::mem::take(&mut file.power);
                 display = std::mem::take(&mut file.display);
+                tablet = std::mem::take(&mut file.tablet);
                 (file.all_bindings(), effects, desktop, keyboard, monitors, input, lock, opacity)
             }
             _ => (BTreeMap::new(), Effects::default(), Desktop::default(), Keyboard::default(), Monitors::default(), Input::default(), Lock::default(), Opacity::default()),
@@ -603,6 +628,7 @@ impl Config {
         config.dark = dark;
         config.power = power;
         config.display = display;
+        config.tablet = tablet;
         Ok(config)
     }
 
@@ -638,6 +664,7 @@ impl Config {
             dark: false,
             power: Power::default(),
             display: Display::default(),
+            tablet: Tablet::default(),
         })
     }
 

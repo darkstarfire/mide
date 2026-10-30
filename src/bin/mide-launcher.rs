@@ -14,6 +14,12 @@
 //!   para a esquerda); para cima, para a da esquerda.
 //!   Clique do meio vai para a próxima página e, da última, volta para a primeira.
 //!   Page Up/Down, setas nas bordas e os pontos também trocam a página.
+//! - Passar a página arrastando, como no iPad e no Launchpad: com o dedo em qualquer
+//!   lugar (inclusive sobre os ícones) e com o mouse no vazio; as páginas acompanham o
+//!   dedo e, ao soltar, terminam de passar ou voltam.
+//! - Modo de edição, como na tela de início do iPad: segurar um ícone (dedo ou botão)
+//!   ou arrastar um ícone com o mouse; os ícones balançam e aí dá para arrastar,
+//!   reordenar e juntar em pastas. Sai com um toque no vazio, Esc ou "OK".
 
 use mide::tr;
 use std::{collections::HashMap, error::Error, num::NonZeroU32, time::Duration};
@@ -41,7 +47,7 @@ use smithay_client_toolkit::{
         calloop_wayland_source::WaylandSource,
         client::{
             globals::registry_queue_init,
-            protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+            protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
             Connection, QueueHandle,
         },
     },
@@ -50,6 +56,7 @@ use smithay_client_toolkit::{
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        touch::TouchHandler,
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -171,6 +178,38 @@ struct Drag {
     active: bool,
 }
 
+/// Página arrastada com o dedo (ou com o mouse no vazio).
+#[derive(Debug, Clone, Copy)]
+struct Swipe {
+    start: (f64, f64),
+    pos: (f64, f64),
+    /// Andou o bastante na horizontal: as páginas acompanham.
+    active: bool,
+    /// Página vizinha entrando (`None`: não há página daquele lado).
+    to: Option<usize>,
+    /// Ponto e hora de um pouco antes (a velocidade ao soltar).
+    prev: ((f64, f64), std::time::Instant),
+}
+
+impl Swipe {
+    fn new(x: f64, y: f64) -> Self {
+        Self { start: (x, y), pos: (x, y), active: false, to: None, prev: ((x, y), std::time::Instant::now()) }
+    }
+}
+
+/// Inclinação dos ícones balançando no modo de edição (graus), como no iPad.
+const JIGGLE_DEG: f32 = 2.2;
+/// Botão "OK" do modo de edição e o selo de remover (raio), em pontos.
+const DONE_H: f32 = 30.0;
+const BADGE_R: f32 = 11.0;
+
+/// Ângulo de um ícone balançando: cada um num tempo, uns para cada lado.
+fn jiggle_angle(index: usize, seconds: f32) -> f32 {
+    let period = mide::motion::ICON_JIGGLE.as_secs_f32();
+    let phase = index as f32 * 1.7 + if index % 2 == 0 { 0.0 } else { std::f32::consts::PI };
+    JIGGLE_DEG * (std::f32::consts::TAU * seconds / period + phase).sin()
+}
+
 /// Menu de contexto aberto (clique direito num AppImage instalado pelo mide): o app
 /// (índice em `apps`), o retângulo do menu e se o ponteiro está no item.
 #[derive(Debug, Clone, Copy)]
@@ -221,6 +260,8 @@ struct PageAnim {
     frames: Option<(Vec<u8>, Vec<u8>, (usize, usize, usize, usize))>,
     /// Vidro das pastas na página antiga e na nova (desliza junto com elas).
     glass: (Vec<GlassRect>, Vec<GlassRect>),
+    /// Arrastada pelo dedo: a fração andada (0 a 1), no lugar do relógio.
+    finger: Option<f32>,
 }
 
 /// Distância mínima para um clique virar arrasto.
@@ -244,6 +285,10 @@ enum Target {
     Search,
     /// Dentro do painel da pasta, fora dos apps.
     FolderPanel,
+    /// Botão "OK" do modo de edição.
+    Done,
+    /// Selo de remover de um app (modo de edição, AppImages instalados pelo mide).
+    Remove(usize),
     Empty,
 }
 
@@ -328,6 +373,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         opened: started,
         dirty: false,
         menu: None,
+        edit: None,
+        done_rect: None,
+        hold: None,
+        swipe: None,
+        touch: None,
+        touch_id: None,
+        last_touch: (0.0, 0.0),
     };
 
     launcher.rebuild();
@@ -417,8 +469,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             if launcher.closing.is_some_and(|t| t.elapsed().as_secs_f32() * 1000.0 >= CLOSE_MS) {
                 launcher.exit = true;
             } else if launcher.animating() {
+                launcher.check_hold();
                 launcher.redraw();
             } else {
+                launcher.check_hold();
                 launcher.warm_pages();
             }
             TimeoutAction::ToDuration(Duration::from_millis(16))
@@ -509,6 +563,18 @@ struct Launcher {
     dirty: bool,
     /// Menu de contexto de um AppImage instalado (Mover para a Lixeira).
     menu: Option<AppMenu>,
+    /// Modo de edição (ícones balançando), desde quando.
+    edit: Option<std::time::Instant>,
+    /// Botão "OK" do modo de edição, do último desenho.
+    done_rect: Option<(f32, f32, f32, f32)>,
+    /// Dedo ou botão parado num ícone: depois de `EDIT_HOLD`, o modo de edição.
+    hold: Option<(usize, std::time::Instant, (f64, f64))>,
+    /// Página arrastada com o dedo (ou com o mouse no vazio).
+    swipe: Option<Swipe>,
+    touch: Option<wl_touch::WlTouch>,
+    /// O dedo que está valendo e o último ponto dele (o `up` não traz o ponto).
+    touch_id: Option<i32>,
+    last_touch: (f64, f64),
 }
 
 impl Launcher {
@@ -697,6 +763,29 @@ impl Launcher {
     }
 
     fn target_at(&self, x: f64, y: f64) -> Target {
+        if let Some((bx, by, bw, bh)) = self.done_rect.filter(|_| self.edit.is_some()) {
+            if x >= bx as f64 - 6.0 && x <= (bx + bw) as f64 + 6.0 && y >= by as f64 - 6.0 && y <= (by + bh) as f64 + 6.0 {
+                return Target::Done;
+            }
+        }
+        if self.edit.is_some() {
+            let (grid, page) = self.active_grid_page();
+            let entries = self.entries();
+            let start = page * grid.per_page();
+            for slot in 0..grid.per_page() {
+                let index = start + slot;
+                let Some(Entry::App(i)) = entries.get(index).copied() else {
+                    continue;
+                };
+                if !self.removable(i) {
+                    continue;
+                }
+                let (bx, by) = Self::badge_center(&grid, slot);
+                if ((x - bx as f64).powi(2) + (y - by as f64).powi(2)).sqrt() <= BADGE_R as f64 + 6.0 {
+                    return Target::Remove(index);
+                }
+            }
+        }
         let (sx, sy) = self.search_rect();
         if x >= sx as f64 && x <= (sx + SEARCH_W) as f64 && y >= sy as f64 && y <= (sy + SEARCH_H) as f64 {
             return Target::Search;
@@ -731,7 +820,7 @@ impl Launcher {
             if page != self.folder_page {
                 tracing::info!("página da pasta {} → {}", self.folder_page, page);
                 if mide::settings_file::effect("transitions") {
-                    self.page_anim = Some(PageAnim { from: self.folder_page, to: page, folder: true, start: std::time::Instant::now(), frames: None, glass: Default::default() });
+                    self.page_anim = Some(PageAnim { from: self.folder_page, to: page, folder: true, start: std::time::Instant::now(), frames: None, glass: Default::default(), finger: None });
                 }
                 self.folder_page = page;
                 self.redraw();
@@ -742,7 +831,7 @@ impl Launcher {
             // Carrossel: a página atual sai para um lado e a nova entra pelo outro.
             tracing::info!("página {} → {}", self.page, page);
             if mide::settings_file::effect("transitions") {
-                self.page_anim = Some(PageAnim { from: self.page, to: page, folder: false, start: std::time::Instant::now(), frames: None, glass: Default::default() });
+                self.page_anim = Some(PageAnim { from: self.page, to: page, folder: false, start: std::time::Instant::now(), frames: None, glass: Default::default(), finger: None });
             }
             self.page = page;
             self.log_folders();
@@ -757,7 +846,11 @@ impl Launcher {
     /// Alguma animação em andamento (pede quadros seguidos). Abrir e fechar são
     /// animados pelo compositor, na GPU: aqui só o carrossel e a pasta surgindo.
     fn animating(&self) -> bool {
-        self.page_anim.is_some() || self.folder_anim.is_some() || self.pop.is_some_and(|(_, t)| Self::elapsed_ms(t) < POP_MS)
+        // Página arrastada pelo dedo: o quadro sai a cada movimento, não pelo relógio.
+        self.page_anim.as_ref().is_some_and(|a| a.finger.is_none())
+            || self.folder_anim.is_some()
+            || self.pop.is_some_and(|(_, t)| Self::elapsed_ms(t) < POP_MS)
+            || self.edit.is_some()
     }
 
     /// Ícone da pasta `f` na grade principal (página atual), para a transição.
@@ -950,9 +1043,9 @@ impl Launcher {
         }
         // Carrossel: as duas páginas são desenhadas uma vez, já no formato final, e
         // cada quadro só copia as linhas deslocadas (sem desenhar nada).
-        let sliding = self.page_anim.as_ref().map(|a| (a.folder, a.from, a.to, Self::elapsed_ms(a.start) / PAGE_MS));
-        if let Some((folder, from, to, t)) = sliding {
-            if t < 1.0 && folder == self.open_folder.is_some() {
+        let sliding = self.page_anim.as_ref().map(|a| (a.folder, a.from, a.to, a.finger.unwrap_or(Self::elapsed_ms(a.start) / PAGE_MS), a.finger.is_some()));
+        if let Some((folder, from, to, t, finger)) = sliding {
+            if (t < 1.0 || finger) && folder == self.open_folder.is_some() {
                 if self.page_anim.as_ref().is_some_and(|a| a.frames.is_none()) {
                     // A página antiga é o que já está na tela: só a nova é desenhada.
                     let bytes = |p: &Pixmap| {
@@ -973,7 +1066,8 @@ impl Launcher {
                     }
                 }
                 let dir = if to > from { 1 } else { -1 };
-                self.present_slide(t, dir);
+                // Com o dedo, a página anda junto (sem a curva do relógio).
+                self.present_slide(if finger { t.clamp(0.0, 1.0) } else { ease_out(t) }, dir);
                 tracing::debug!("quadro do launcher (carrossel): {:.1} ms", frame_start.elapsed().as_secs_f32() * 1000.0);
                 return;
             }
@@ -1105,7 +1199,8 @@ impl Launcher {
 
     /// Um quadro do carrossel: copia as linhas da página antiga deslocadas e a parte
     /// da página nova que já entrou, só dentro da faixa; fora dela, a página nova.
-    fn present_slide(&mut self, t: f32, dir: i32) {
+    /// `frac` é quanto já andou (0 a 1, com a curva aplicada).
+    fn present_slide(&mut self, frac: f32, dir: i32) {
         let (pw, ph) = self.surface_scale.pixels(self.width, self.height);
         let (w, h) = (pw as usize, ph as usize);
         let stride = w * 4;
@@ -1117,7 +1212,7 @@ impl Launcher {
         let to_px = |v: usize| (v as f32 * k).round() as usize;
         let (bx0, by0, bx1, by1) = (to_px(band.0), to_px(band.1).min(h), to_px(band.2).min(w), to_px(band.3).min(h));
         let bw = bx1.saturating_sub(bx0);
-        let shift = ((ease_out(t) * bw as f32) as usize).min(bw);
+        let shift = ((frac * bw as f32) as usize).min(bw);
         let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888) else {
             return;
         };
@@ -1306,7 +1401,31 @@ impl Launcher {
         if let Some(menu) = self.menu.filter(|_| interactive) {
             self.draw_menu(&mut pixmap, &menu);
         }
+        // Modo de edição: o botão "OK" no canto de cima à direita, em cápsula de vidro.
+        self.done_rect = None;
+        if self.edit.is_some() && interactive && !self.panel_only && !self.background_only {
+            let label = mide::i18n::trc("launcher", "Done");
+            let tw = self.text.measure(&label, 15.0, FontWeight::Semibold);
+            let bw = tw + 36.0;
+            let (bx, by) = (w as f32 - bw - 28.0, SEARCH_Y + (SEARCH_H - DONE_H) / 2.0);
+            mide::ui::draw::glass(&mut pixmap, bx, by, bw, DONE_H, DONE_H / 2.0);
+            fill_rounded(&mut pixmap, bx, by, bw, DONE_H, DONE_H / 2.0, rgba(255, 255, 255, 46));
+            self.text.draw(&mut pixmap, &label, bx + 18.0, by + (DONE_H - 15.0 * 1.25) / 2.0, 15.0, FontWeight::Semibold, [255, 255, 255, 250]);
+            self.done_rect = Some((bx, by, bw, DONE_H));
+        }
         pixmap
+    }
+
+    /// Centro do selo de remover de um ícone (canto de cima à esquerda dele).
+    fn badge_center(grid: &Grid, slot: usize) -> (f32, f32) {
+        let (cx, cy) = grid.cell(slot);
+        let ix = cx + (grid.cell_w - grid.icon) / 2;
+        (ix as f32 + grid.icon as f32 * 0.08, (cy + 8) as f32 + grid.icon as f32 * 0.08)
+    }
+
+    /// O app pode ser removido pelo launcher (AppImage instalado pelo mide).
+    fn removable(&self, app: usize) -> bool {
+        self.apps.get(app).is_some_and(|a| a.id.starts_with(mide::appimage::DESKTOP_PREFIX))
     }
 
     /// Menu de contexto: painel escuro com o item "Mover para a Lixeira" em vermelho.
@@ -1367,20 +1486,66 @@ impl Launcher {
             };
             let size = grid.icon as f32 * grow;
             let (gx, gy) = (ix as f32 + (grid.icon as f32 - size) / 2.0, iy as f32 + (grid.icon as f32 - size) / 2.0);
-            let (label, bold) = match entry {
-                Entry::App(i) => {
-                    let app = self.apps[i].clone();
-                    self.draw_app_icon(pixmap, &app, gx, gy, size);
-                    (app.name.clone(), false)
-                }
-                Entry::Folder(f) => {
-                    self.draw_folder_icon(pixmap, f, gx, gy, size);
-                    (self.folders[f].name.clone(), true)
-                }
+            // Modo de edição: o ícone balança (desenhado à parte e girado no lugar).
+            let angle = match self.edit {
+                Some(since) if interactive => jiggle_angle(index, since.elapsed().as_secs_f32()),
+                _ => 0.0,
             };
+            let label = match entry {
+                Entry::App(i) => (self.apps[i].name.clone(), false),
+                Entry::Folder(f) => (self.folders[f].name.clone(), true),
+            };
+            if angle != 0.0 {
+                self.draw_jiggling(pixmap, entry, gx, gy, size, angle);
+            } else {
+                match entry {
+                    Entry::App(i) => {
+                        let app = self.apps[i].clone();
+                        self.draw_app_icon(pixmap, &app, gx, gy, size);
+                    }
+                    Entry::Folder(f) => self.draw_folder_icon(pixmap, f, gx, gy, size),
+                }
+            }
+            // Selo de remover (só os apps que o launcher remove).
+            if self.edit.is_some() && interactive && matches!(entry, Entry::App(i) if self.removable(i)) {
+                let (bx, by) = Self::badge_center(grid, slot);
+                mide::ui::draw::soft_shadow(pixmap, bx - BADGE_R, by - BADGE_R, BADGE_R * 2.0, BADGE_R * 2.0, BADGE_R, 4.0, 1.0, 70);
+                fill_rounded(pixmap, bx - BADGE_R, by - BADGE_R, BADGE_R * 2.0, BADGE_R * 2.0, BADGE_R, rgba(110, 110, 118, 235));
+                fill_rounded(pixmap, bx - 5.5, by - 1.0, 11.0, 2.0, 1.0, rgba(255, 255, 255, 255));
+            }
+            let (label, bold) = label;
             let label = self.label(&label, grid.cell_w, bold);
             pixmap.draw_pixmap(px(cx as f32), px((iy + grid.icon + 7) as f32), label.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
         }
+    }
+
+    /// Ícone balançando: desenhado numa imagem à parte e girado de `angle` graus em volta
+    /// do centro dele.
+    fn draw_jiggling(&mut self, pixmap: &mut Pixmap, entry: Entry, x: f32, y: f32, size: f32, angle: f32) {
+        let k = self.scale;
+        let margin = (size * 0.1).ceil();
+        let side = ((size + 2.0 * margin) * k).ceil() as u32;
+        let Some(mut icon) = Pixmap::new(side, side) else {
+            return;
+        };
+        // O vidro das pastas fica parado (o compositor não gira); só o desenho balança.
+        let glass = self.glass_rects.len();
+        match entry {
+            Entry::App(i) => {
+                let app = self.apps[i].clone();
+                self.draw_app_icon(&mut icon, &app, margin, margin, size);
+            }
+            Entry::Folder(f) => self.draw_folder_icon(&mut icon, f, margin, margin, size),
+        }
+        for r in self.glass_rects.iter_mut().skip(glass) {
+            r.0 += x - margin;
+            r.1 += y - margin;
+        }
+        let (ox, oy) = ((x - margin) * k, (y - margin) * k);
+        let c = side as f32 / 2.0;
+        let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
+        let transform = Transform::from_rotate_at(angle, c, c).post_translate(ox, oy);
+        pixmap.draw_pixmap(0, 0, icon.as_ref(), &paint, transform, None);
     }
 
     /// Ícone de um app reduzido para `size`, ou um espaço discreto enquanto carrega.
@@ -1603,6 +1768,9 @@ impl SeatHandler for Launcher {
         if capability == Capability::Keyboard && self.keyboard.is_none() {
             self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
         }
+        if capability == Capability::Touch && self.touch.is_none() {
+            self.touch = self.seat_state.get_touch(qh, &seat).ok();
+        }
     }
 
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
@@ -1614,6 +1782,11 @@ impl SeatHandler for Launcher {
         if capability == Capability::Keyboard {
             if let Some(keyboard) = self.keyboard.take() {
                 keyboard.release();
+            }
+        }
+        if capability == Capability::Touch {
+            if let Some(touch) = self.touch.take() {
+                touch.release();
             }
         }
     }
@@ -1670,6 +1843,7 @@ impl Launcher {
         let (grid, page) = self.active_grid_page();
         let cols = grid.cols as isize;
         match event.keysym {
+            Keysym::Escape if self.edit.is_some() => self.end_edit(),
             Keysym::Escape => {
                 if self.open_folder.is_some() {
                     self.close_folder();
@@ -1756,94 +1930,20 @@ impl PointerHandler for Launcher {
                         self.open_menu(index, x, y);
                     }
                 }
-                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    if let Some(drag) = self.drag.as_mut() {
-                        drag.pos = (x, y);
-                        let moved = ((x - drag.start.0).powi(2) + (y - drag.start.1).powi(2)).sqrt();
-                        if !drag.active && moved >= DRAG_THRESHOLD {
-                            drag.active = true;
-                            tracing::info!("arrastando o item {}", drag.entry);
-                        }
-                        if drag.active {
-                            // Perto da borda, troca de página (no máximo a cada 0,7 s).
-                            if self.last_flip.elapsed() >= std::time::Duration::from_millis(700) && self.open_folder.is_none() {
-                                let page = self.current_page();
-                                if x < EDGE && page > 0 {
-                                    self.set_page(page - 1);
-                                    self.last_flip = std::time::Instant::now();
-                                } else if x > self.width as f64 - EDGE {
-                                    self.set_page(page + 1);
-                                    self.last_flip = std::time::Instant::now();
-                                }
-                            }
-                            self.redraw();
-                            continue;
-                        }
-                    }
-                    let target = self.target_at(x, y);
-                    let hover = matches!(target, Target::Entry(_) | Target::Dot(_)).then_some(target);
-                    if hover != self.hover {
-                        self.hover = hover;
-                        self.redraw();
-                    }
-                }
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => self.motion_at(x, y),
                 PointerEventKind::Leave { .. } => {
                     if self.hover.take().is_some() {
                         self.redraw();
                     }
                 }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
-                    // Clique fora do título encerra a edição do nome (salvando).
-                    let on_title = self.title_rect.is_some_and(|(tx, ty, tw, th)| {
-                        x >= tx as f64 && x <= (tx + tw) as f64 && y >= ty as f64 && y <= (ty + th) as f64
-                    });
-                    if self.editing.is_some() && !on_title {
-                        self.commit_rename();
-                    }
-                    if on_title && self.editing.is_none() {
-                        if let Some(f) = self.open_folder {
-                            tracing::info!("renomeando a pasta {}", self.folders[f].name);
-                            self.editing = Some(self.folders[f].name.clone());
-                            self.redraw();
-                        }
-                        continue;
-                    }
-                    let target = self.target_at(x, y);
-                    self.press = Some(target);
-                    // Arrastar só com a grade organizada (sem busca).
-                    if let Target::Entry(entry) = target {
-                        if self.query.trim().is_empty() {
-                            self.drag = Some(Drag { entry, start: (x, y), pos: (x, y), active: false });
-                        }
-                    }
-                }
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT => self.press_at(x, y, false),
                 PointerEventKind::Press { button, .. } if button == BTN_MIDDLE => {
                     // Próxima página; da última, volta para a primeira.
                     let pages = self.pages();
                     let next = (self.current_page() + 1) % pages;
                     self.set_page(next);
                 }
-                PointerEventKind::Release { button, .. } if button == BTN_LEFT => {
-                    if let Some(drag) = self.drag.take() {
-                        if drag.active {
-                            self.press = None;
-                            self.drop_drag(Drag { pos: (x, y), ..drag });
-                            self.redraw();
-                            continue;
-                        }
-                    }
-                    let target = self.target_at(x, y);
-                    if self.press.take() != Some(target) {
-                        continue;
-                    }
-                    match target {
-                        Target::Entry(index) => self.activate(index),
-                        Target::Dot(page) => self.set_page(page),
-                        Target::Search | Target::FolderPanel => {}
-                        Target::Empty if self.open_folder.is_some() => self.close_folder(),
-                        Target::Empty => self.close(),
-                    }
-                }
+                PointerEventKind::Release { button, .. } if button == BTN_LEFT => self.release_at(x, y),
                 PointerEventKind::Axis { horizontal, vertical, .. } => {
                     // Roda do mouse: passos (v120 ou o "discrete" antigo); touchpad: valor contínuo.
                     let steps = (vertical.value120 + horizontal.value120) as f64 / 120.0;
@@ -1868,6 +1968,307 @@ impl PointerHandler for Launcher {
                 _ => {}
             }
         }
+    }
+}
+
+impl Launcher {
+    fn begin_edit(&mut self) {
+        if self.edit.is_none() && self.query.trim().is_empty() {
+            tracing::info!("launcher: modo de edição (ícones balançando)");
+            self.edit = Some(std::time::Instant::now());
+            self.hover = None;
+            self.menu = None;
+            self.redraw();
+        }
+    }
+
+    fn end_edit(&mut self) {
+        if self.edit.take().is_some() {
+            tracing::info!("launcher: fim do modo de edição");
+            self.done_rect = None;
+            self.redraw();
+        }
+    }
+
+    /// Relógio do launcher: dedo (ou botão) parado num ícone por `EDIT_HOLD` entra no
+    /// modo de edição, com o ícone já pronto para arrastar.
+    fn check_hold(&mut self) {
+        let Some((entry, since, at)) = self.hold else {
+            return;
+        };
+        if since.elapsed() < mide::motion::EDIT_HOLD {
+            return;
+        }
+        self.hold = None;
+        self.swipe = None;
+        self.press = None;
+        self.begin_edit();
+        if self.edit.is_some() {
+            self.drag = Some(Drag { entry, start: at, pos: at, active: false });
+        }
+    }
+
+    /// Botão ou dedo apertado em (x, y).
+    fn press_at(&mut self, x: f64, y: f64, touch: bool) {
+        // Clique fora do título encerra a edição do nome (salvando).
+        let on_title = self.title_rect.is_some_and(|(tx, ty, tw, th)| x >= tx as f64 && x <= (tx + tw) as f64 && y >= ty as f64 && y <= (ty + th) as f64);
+        if self.editing.is_some() && !on_title {
+            self.commit_rename();
+        }
+        if on_title && self.editing.is_none() {
+            if let Some(f) = self.open_folder {
+                tracing::info!("renomeando a pasta {}", self.folders[f].name);
+                self.editing = Some(self.folders[f].name.clone());
+                self.redraw();
+            }
+            return;
+        }
+        let target = self.target_at(x, y);
+        self.press = Some(target);
+        self.hold = None;
+        self.swipe = None;
+        let organized = self.query.trim().is_empty();
+        match target {
+            Target::Entry(entry) => {
+                // O mouse arrasta o ícone (e entra no modo de edição); o dedo passa a
+                // página, a não ser no modo de edição.
+                if organized && (self.edit.is_some() || !touch) {
+                    self.drag = Some(Drag { entry, start: (x, y), pos: (x, y), active: false });
+                }
+                if organized && self.edit.is_none() {
+                    self.hold = Some((entry, std::time::Instant::now(), (x, y)));
+                }
+                if touch && self.edit.is_none() {
+                    self.swipe = Some(Swipe::new(x, y));
+                }
+            }
+            Target::Empty | Target::FolderPanel => self.swipe = Some(Swipe::new(x, y)),
+            _ => {}
+        }
+    }
+
+    /// Ponteiro ou dedo andou.
+    fn motion_at(&mut self, x: f64, y: f64) {
+        if self.hold.is_some_and(|(_, _, at)| ((x - at.0).powi(2) + (y - at.1).powi(2)).sqrt() >= DRAG_THRESHOLD) {
+            self.hold = None;
+        }
+        if let Some(mut swipe) = self.swipe {
+            let (dx, dy) = (x - swipe.start.0, y - swipe.start.1);
+            if !swipe.active && dx.abs() >= DRAG_THRESHOLD && dx.abs() > dy.abs() {
+                swipe.active = true;
+                swipe.to = self.start_finger_slide(dx);
+                self.press = None;
+                self.drag = None;
+                self.hold = None;
+                tracing::info!("launcher: página arrastada ({})", swipe.to.map_or("sem página ao lado".into(), |p| format!("para a {p}")));
+            } else if !swipe.active && dy.abs() >= DRAG_THRESHOLD * 2.0 && dy.abs() > dx.abs() {
+                // Na vertical: não é passar a página (nem um toque).
+                self.swipe = None;
+                if self.drag.is_none() {
+                    self.press = None;
+                }
+                return;
+            }
+            if swipe.prev.1.elapsed() > std::time::Duration::from_millis(60) {
+                swipe.prev = (swipe.pos, std::time::Instant::now());
+            }
+            swipe.pos = (x, y);
+            self.swipe = Some(swipe);
+            if swipe.active {
+                self.follow_finger(swipe);
+                return;
+            }
+        }
+        if let Some(drag) = self.drag.as_mut() {
+            drag.pos = (x, y);
+            let moved = ((x - drag.start.0).powi(2) + (y - drag.start.1).powi(2)).sqrt();
+            if !drag.active && moved >= DRAG_THRESHOLD {
+                drag.active = true;
+                tracing::info!("arrastando o item {}", drag.entry);
+                // Como no Launchpad: arrastar um ícone já é o modo de edição.
+                self.hold = None;
+                self.swipe = None;
+                self.begin_edit();
+            }
+            if self.drag.is_some_and(|d| d.active) {
+                // Perto da borda, troca de página (no máximo a cada 0,7 s).
+                if self.last_flip.elapsed() >= std::time::Duration::from_millis(700) && self.open_folder.is_none() {
+                    let page = self.current_page();
+                    if x < EDGE && page > 0 {
+                        self.set_page(page - 1);
+                        self.last_flip = std::time::Instant::now();
+                    } else if x > self.width as f64 - EDGE {
+                        self.set_page(page + 1);
+                        self.last_flip = std::time::Instant::now();
+                    }
+                }
+                self.redraw();
+                return;
+            }
+        }
+        let target = self.target_at(x, y);
+        let hover = matches!(target, Target::Entry(_) | Target::Dot(_)).then_some(target).filter(|_| self.edit.is_none());
+        if hover != self.hover {
+            self.hover = hover;
+            self.redraw();
+        }
+    }
+
+    /// Botão ou dedo soltou em (x, y).
+    fn release_at(&mut self, x: f64, y: f64) {
+        self.hold = None;
+        if let Some(swipe) = self.swipe.take().filter(|s| s.active) {
+            self.press = None;
+            self.drag = None;
+            self.settle_finger(swipe);
+            return;
+        }
+        if let Some(drag) = self.drag.take() {
+            if drag.active {
+                self.press = None;
+                self.drop_drag(Drag { pos: (x, y), ..drag });
+                self.redraw();
+                return;
+            }
+        }
+        let target = self.target_at(x, y);
+        if self.press.take() != Some(target) {
+            return;
+        }
+        match target {
+            Target::Done => self.end_edit(),
+            Target::Remove(index) => {
+                if let Some(Entry::App(i)) = self.entries().get(index).copied() {
+                    self.move_to_trash(i);
+                }
+            }
+            // No modo de edição, tocar num app não abre (como no iPad); a pasta abre.
+            Target::Entry(index) if self.edit.is_some() => {
+                if matches!(self.entries().get(index), Some(Entry::Folder(_))) {
+                    self.activate(index);
+                }
+            }
+            Target::Entry(index) => self.activate(index),
+            Target::Dot(page) => self.set_page(page),
+            Target::Search | Target::FolderPanel => {}
+            Target::Empty if self.edit.is_some() && self.open_folder.is_none() => self.end_edit(),
+            Target::Empty if self.open_folder.is_some() => self.close_folder(),
+            Target::Empty => self.close(),
+        }
+    }
+
+    /// Começa a passar a página com o dedo: a vizinha do lado para onde ele anda.
+    fn start_finger_slide(&mut self, dx: f64) -> Option<usize> {
+        let current = self.current_page();
+        let to = if dx < 0.0 { Some(current + 1).filter(|p| *p < self.pages()) } else { current.checked_sub(1) }?;
+        self.page_anim = Some(PageAnim { from: current, to, folder: self.open_folder.is_some(), start: std::time::Instant::now(), frames: None, glass: Default::default(), finger: Some(0.0) });
+        Some(to)
+    }
+
+    /// As páginas acompanham o dedo.
+    fn follow_finger(&mut self, swipe: Swipe) {
+        let Some(to) = swipe.to else {
+            return;
+        };
+        let band = self.slide_band(self.open_folder.is_some());
+        let width = (band.2.saturating_sub(band.0)).max(1) as f64;
+        let dx = swipe.pos.0 - swipe.start.0;
+        // Só conta o caminho para o lado da página que entra.
+        let toward = if to > self.current_page() { -dx } else { dx };
+        if let Some(anim) = self.page_anim.as_mut() {
+            anim.finger = Some((toward / width).clamp(0.0, 1.0) as f32);
+        }
+        self.redraw();
+    }
+
+    /// Dedo solto: a página termina de passar (andou bastante ou foi rápido) ou volta.
+    fn settle_finger(&mut self, swipe: Swipe) {
+        let Some(to) = swipe.to else {
+            self.page_anim = None;
+            self.redraw();
+            return;
+        };
+        let Some(anim) = self.page_anim.as_mut().filter(|a| a.finger.is_some()) else {
+            return;
+        };
+        let f = anim.finger.take().unwrap_or(0.0);
+        let dt = swipe.prev.1.elapsed().as_secs_f64().max(0.001);
+        let speed = (swipe.pos.0 - swipe.prev.0.0) / dt / 1000.0;
+        let toward_speed = if to > anim.from { -speed } else { speed };
+        let pass = f > 0.3 || (f > 0.04 && toward_speed > 0.35);
+        // Recomeça pelo relógio do ponto onde o dedo deixou (a curva é a do carrossel).
+        let started_at = |frac: f32| {
+            let t = 1.0 - (1.0 - frac.clamp(0.0, 0.999)).cbrt();
+            std::time::Instant::now() - std::time::Duration::from_secs_f32(t * PAGE_MS / 1000.0)
+        };
+        let from = anim.from;
+        if pass {
+            anim.start = started_at(f);
+            tracing::info!("página {from} → {to} (com o dedo)");
+            if anim.folder {
+                self.folder_page = to;
+            } else {
+                self.page = to;
+                self.log_folders();
+            }
+        } else if anim.frames.is_some() {
+            // Volta: a mesma faixa, de trás para a frente.
+            anim.from = to;
+            anim.to = from;
+            if let Some((old, new, band)) = anim.frames.take() {
+                anim.frames = Some((new, old, band));
+            }
+            anim.glass = (std::mem::take(&mut anim.glass.1), std::mem::take(&mut anim.glass.0));
+            anim.start = started_at(1.0 - f);
+            tracing::info!("página {from}: o dedo voltou");
+        } else {
+            self.page_anim = None;
+        }
+        self.redraw();
+    }
+}
+
+impl TouchHandler for Launcher {
+    fn down(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, _: u32, surface: wl_surface::WlSurface, id: i32, position: (f64, f64)) {
+        if &surface != self.layer.wl_surface() || self.touch_id.is_some() {
+            return;
+        }
+        self.touch_id = Some(id);
+        self.last_touch = position;
+        if self.menu.take().is_some() {
+            self.redraw();
+            return;
+        }
+        self.press_at(position.0, position.1, true);
+    }
+
+    fn up(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, _: u32, id: i32) {
+        if self.touch_id == Some(id) {
+            self.touch_id = None;
+            let (x, y) = self.last_touch;
+            self.release_at(x, y);
+        }
+    }
+
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, id: i32, position: (f64, f64)) {
+        if self.touch_id == Some(id) {
+            self.last_touch = position;
+            self.motion_at(position.0, position.1);
+        }
+    }
+
+    fn shape(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: i32, _: f64, _: f64) {}
+    fn orientation(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: i32, _: f64) {}
+
+    fn cancel(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch) {
+        self.touch_id = None;
+        self.hold = None;
+        self.press = None;
+        if let Some(swipe) = self.swipe.take().filter(|s| s.active) {
+            self.settle_finger(Swipe { pos: swipe.start, ..swipe });
+        }
+        self.drag = None;
+        self.redraw();
     }
 }
 

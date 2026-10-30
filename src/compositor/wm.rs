@@ -779,6 +779,18 @@ impl State {
             return;
         }
 
+        // Modo tablet: o app abre ocupando a tela, como no iPad (diálogos, aberturas e
+        // janelas de tamanho fixo ficam como são).
+        if crate::touch::maximize_windows(self)
+            && !crate::state::fixed_size(window)
+            && app_id != "mide-chooser"
+            && app_id != "mide-auth"
+            && let Some(area) = self.area_for(window)
+        {
+            tracing::info!("modo tablet: janela nova ocupando a tela");
+            self.maximize_in(&toplevel, area);
+            return;
+        }
         if app_id != "mide-chooser" && app_id != "mide-auth" {
             return;
         }
