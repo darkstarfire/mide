@@ -1,35 +1,34 @@
-//! Tela de login do mide (C5): o greeter do `greetd`, com o visual da tela de
-//! bloqueio (relógio, data, foto e senha sobre o papel de parede desfocado). Roda
+//! Tela de login do mide (C5): o greeter do `greetd`, no estilo da janela de início de
+//! sessão do macOS Sonoma/Tahoe (data e hora grandes em cima, as fotos dos usuários
+//! embaixo, o campo de senha de vidro, Desligar/Reiniciar/Repousar em botões redondos,
+//! sessão, layout do teclado, Wi-Fi e bateria no canto de cima à direita). Roda
 //! dentro do compositor em modo de login (`mide --login`), pelo protocolo de bloqueio:
 //! o compositor desenha o fundo, cobre todas as telas e só ela recebe o teclado.
 //!
-//! Como no GDM: escolher o usuário (com foto, ou "Outro usuário"), a senha e as outras
-//! perguntas do PAM (código de verificação, senha vencida), a sessão (a do mide é a
-//! padrão; a última de cada usuário fica lembrada), o layout de teclado, e desligar,
-//! reiniciar ou repousar. Quem confere a senha é o greetd, pelo PAM: o greeter só
+//! Como no Mac e no GDM: lista de usuários (com foto, ou "Outro…") ou campos de nome e
+//! senha (`[login] show = "name"`), a senha e as outras perguntas do PAM (código de
+//! verificação, senha vencida), a dica de senha depois de três tentativas erradas, o
+//! aviso de Caps Lock, a mensagem da tela de bloqueio, a sessão (a do mide é a padrão;
+//! a última de cada usuário fica lembrada), o layout de teclado, e desligar, reiniciar
+//! ou repousar. As opções vêm da seção `[login]` (Configurações → Usuários e grupos). Quem confere a senha é o greetd, pelo PAM: o greeter só
 //! repassa o que a pessoa digita e nunca guarda nada.
 
 mod greetd;
 mod system;
 
 use std::{
-    collections::HashMap,
     error::Error,
     path::PathBuf,
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use chrono::{Local, Timelike};
 use mide::tr;
 use mide::{
-    kit::{run, App, Key, Ui, Waker, Window},
-    ui::{
-        draw::{fill_rounded, rgba},
-        text::FontWeight,
-    },
+    kit::{run, App, Key, LockField, Ui, Waker, Window},
+    lockscreen::{self, Avatars, LoginOptions},
+    ui::text::FontWeight,
 };
-use tiny_skia::Pixmap;
 
 use greetd::{AuthKind, ErrorType, Request, Response};
 use system::{Memory, Session, User};
@@ -39,8 +38,8 @@ use system::{Memory, Session, User};
 enum Stage {
     /// A lista de usuários.
     Choose,
-    /// "Outro usuário": digitar o nome.
-    OtherName,
+    /// Campos de nome e senha (`[login] show = "name"`, ou "Outro…" na lista).
+    Credentials,
     /// Uma pergunta do PAM (senha, código): `secret` esconde o que se digita.
     Ask { prompt: String, secret: bool },
     /// Esperando o greetd.
@@ -54,8 +53,26 @@ enum Pending {
     Auth,
     /// `start_session`.
     Start,
-    /// `cancel_session`; `retry`: começar de novo com o mesmo usuário (senha recusada).
-    Cancel { retry: bool },
+    /// `cancel_session`, e o que fazer depois.
+    Cancel(After),
+}
+
+/// Para onde a tela vai depois de cancelar o login no greetd.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum After {
+    /// Começar de novo com o mesmo usuário (senha recusada).
+    Retry,
+    /// Voltar à lista de usuários.
+    List,
+    /// Voltar aos campos de nome e senha (senha recusada nesse modo).
+    Credentials,
+}
+
+/// Menu aberto no canto de cima.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Menu {
+    Session,
+    Layout,
 }
 
 struct Login {
@@ -65,10 +82,24 @@ struct Login {
     /// O nome completo e a foto de quem está entrando.
     name: String,
     icon: Option<PathBuf>,
+    hint: String,
+    /// Senhas recusadas seguidas deste usuário (a dica aparece na terceira).
+    failures: u32,
+    hint_logged: bool,
     /// Destaque do teclado na lista (o último é "Outro usuário").
     highlight: usize,
+    /// Nome digitado nos campos de nome e senha.
     other: String,
     input: String,
+    /// Nos campos de nome e senha: o foco está no nome (`true`) ou na senha.
+    name_focus: bool,
+    /// Senha digitada junto com o nome: vai na primeira pergunta secreta do PAM.
+    queued: Option<String>,
+    /// O login começou pelos campos de nome e senha.
+    from_credentials: bool,
+    options: LoginOptions,
+    status: lockscreen::Status,
+    menu: Option<(Menu, (f32, f32, f32, f32))>,
     stage: Stage,
     /// Aviso embaixo do campo; `true` em vermelho.
     message: Option<(String, bool)>,
@@ -81,7 +112,7 @@ struct Login {
     layouts: Vec<mide::keyboard_layouts::Choice>,
     layout: usize,
     memory: Memory,
-    avatars: HashMap<(PathBuf, u32), Option<Pixmap>>,
+    avatars: Avatars,
     client: Arc<Mutex<Option<greetd::Client>>>,
     pending: Option<(Pending, mpsc::Receiver<Result<Response, String>>)>,
     started: bool,
@@ -93,7 +124,14 @@ impl Login {
         let sessions = system::sessions();
         let layouts = system::keyboard_layouts();
         let memory = Memory::load();
-        tracing::info!("login: {} usuário(s), {} sessão(ões), {} layout(s)", users.len(), sessions.len(), layouts.len());
+        let options = LoginOptions::load();
+        tracing::info!(
+            "login: {} usuário(s), {} sessão(ões), {} layout(s); {}",
+            users.len(),
+            sessions.len(),
+            layouts.len(),
+            if options.list { "lista de usuários" } else { "nome e senha" }
+        );
         let highlight = memory.last_user.as_ref().and_then(|u| users.iter().position(|x| &x.login == u)).unwrap_or(0);
         let layout = mide::control_client::ask_compositor("layout")
             .and_then(|l| l.first().and_then(|n| n.trim().parse().ok()))
@@ -103,10 +141,19 @@ impl Login {
             login: String::new(),
             name: String::new(),
             icon: None,
+            hint: String::new(),
+            failures: 0,
+            hint_logged: false,
             highlight,
             other: String::new(),
             input: String::new(),
-            stage: Stage::Choose,
+            name_focus: true,
+            queued: None,
+            from_credentials: false,
+            stage: if options.list { Stage::Choose } else { Stage::Credentials },
+            options,
+            status: lockscreen::Status::start(),
+            menu: None,
             message: None,
             shake: None,
             focus_input: false,
@@ -116,7 +163,7 @@ impl Login {
             layouts,
             layout,
             memory,
-            avatars: HashMap::new(),
+            avatars: Avatars::default(),
             client: Arc::new(Mutex::new(None)),
             pending: None,
             started: false,
@@ -151,7 +198,11 @@ impl Login {
     /// Começa o login de `login` (a sessão lembrada dele vira a escolhida).
     fn choose(&mut self, login: String, waker: Option<Waker>) {
         let user = self.users.iter().find(|u| u.login == login).cloned();
+        if login != self.login {
+            self.failures = 0;
+        }
         self.name = user.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| login.clone());
+        self.hint = user.as_ref().map(|u| u.hint.clone()).unwrap_or_default();
         self.icon = user.and_then(|u| u.icon);
         if let Some(i) = self.memory.session_of(&login).and_then(|id| self.sessions.iter().position(|s| s.id == id)).filter(|_| !self.session_chosen) {
             self.session = i;
@@ -164,15 +215,28 @@ impl Login {
         self.ask(Request::CreateSession { username: login }, Pending::Auth, waker);
     }
 
-    /// Volta para a lista (desiste do login em andamento).
+    /// Volta para a lista ou para os campos de nome e senha (desiste do login em
+    /// andamento).
     fn back(&mut self, waker: Option<Waker>) {
         self.input.clear();
         self.message = None;
+        self.queued = None;
+        self.from_credentials = false;
         if self.pending.is_none() {
-            self.ask(Request::CancelSession, Pending::Cancel { retry: false }, waker);
+            self.ask(Request::CancelSession, Pending::Cancel(After::List), waker);
         }
-        self.stage = Stage::Choose;
+        self.stage = if self.options.list { Stage::Choose } else { Stage::Credentials };
+        self.name_focus = true;
         self.login.clear();
+    }
+
+    /// Mostra os campos de nome e senha ("Outro…").
+    fn credentials(&mut self) {
+        self.stage = Stage::Credentials;
+        self.other.clear();
+        self.input.clear();
+        self.name_focus = true;
+        self.message = None;
     }
 
     /// Trata a resposta do greetd que chegou.
@@ -183,7 +247,7 @@ impl Login {
             Err(err) => {
                 tracing::warn!("login: greetd não respondeu: {err}");
                 self.message = Some((tr!("The login service is not responding").into_owned(), true));
-                self.stage = Stage::Choose;
+                self.stage = if self.from_credentials || !self.options.list { Stage::Credentials } else { Stage::Choose };
                 return;
             }
         };
@@ -192,6 +256,11 @@ impl Login {
                 AuthKind::Secret | AuthKind::Visible => {
                     let secret = auth_message_type == AuthKind::Secret;
                     tracing::info!("login: pergunta do PAM ({}): {}", if secret { "secreta" } else { "visível" }, auth_message.trim());
+                    // A senha digitada junto com o nome responde a primeira pergunta secreta.
+                    if let Some(password) = self.queued.take().filter(|_| secret) {
+                        self.ask(Request::PostAuthMessageResponse { response: Some(password) }, Pending::Auth, waker);
+                        return;
+                    }
                     self.stage = Stage::Ask { prompt: auth_message.trim().trim_end_matches(':').to_string(), secret };
                     self.input.clear();
                     self.focus_input = true;
@@ -214,13 +283,17 @@ impl Login {
             }
             (Pending::Auth, Response::Error { error_type, description }) => {
                 tracing::info!("login: recusado ({description})");
-                self.message = Some(match error_type {
-                    ErrorType::AuthError => (tr!("Incorrect password").into_owned(), true),
-                    ErrorType::Error => (description, true),
-                });
+                // Como no Mac, a senha errada só balança o campo; outros erros aparecem.
+                self.message = match error_type {
+                    ErrorType::AuthError => None,
+                    ErrorType::Error => Some((description, true)),
+                };
+                self.failures += 1;
                 self.shake = Some(Instant::now());
+                self.queued = None;
                 // O greetd pede o cancelamento antes de outra tentativa.
-                self.ask(Request::CancelSession, Pending::Cancel { retry: true }, waker);
+                let after = if self.from_credentials { After::Credentials } else { After::Retry };
+                self.ask(Request::CancelSession, Pending::Cancel(after), waker);
             }
             (Pending::Start, Response::Success) => {
                 if let Some(session) = self.sessions.get(self.session) {
@@ -234,74 +307,40 @@ impl Login {
             (Pending::Start, Response::Error { description, .. }) => {
                 tracing::warn!("login: a sessão não iniciou: {description}");
                 self.message = Some((description, true));
-                self.ask(Request::CancelSession, Pending::Cancel { retry: true }, waker);
+                self.ask(Request::CancelSession, Pending::Cancel(After::Retry), waker);
             }
-            (Pending::Cancel { retry }, _) => {
-                if retry && !self.login.is_empty() {
+            (Pending::Cancel(after), _) => match after {
+                After::Retry if !self.login.is_empty() => {
                     let login = self.login.clone();
                     let message = self.message.take();
                     self.choose(login, waker);
                     self.message = message;
-                } else {
-                    self.stage = Stage::Choose;
                 }
-            }
+                After::Credentials => {
+                    self.stage = Stage::Credentials;
+                    self.input.clear();
+                    self.name_focus = false;
+                    // Para a dica e o ✓ do nome digitado.
+                    self.from_credentials = true;
+                }
+                _ => {
+                    if self.stage == Stage::Waiting {
+                        self.stage = if self.options.list { Stage::Choose } else { Stage::Credentials };
+                    }
+                }
+            },
             (_, other) => tracing::warn!("login: resposta inesperada do greetd: {other:?}"),
         }
     }
 
-    /// Foto redonda de `path` em `px` pixels (guardada).
-    fn avatar(&mut self, path: &PathBuf, px: u32) -> Option<&Pixmap> {
-        self.avatars
-            .entry((path.clone(), px))
-            .or_insert_with(|| {
-                let image = image::open(path).ok()?.to_rgba8();
-                let image = image::imageops::resize(&image, px, px, image::imageops::FilterType::Triangle);
-                let mut pixmap = Pixmap::new(px, px)?;
-                for (i, p) in image.pixels().enumerate() {
-                    let a = p[3] as u16;
-                    let pm = |c: u8| ((c as u16 * a) / 255) as u8;
-                    pixmap.pixels_mut()[i] = tiny_skia::PremultipliedColorU8::from_rgba(pm(p[0]), pm(p[1]), pm(p[2]), p[3]).unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
-                }
-                Some(pixmap)
-            })
-            .as_ref()
-    }
-
-    /// Desenha a foto (ou a inicial num círculo) de `size` pontos em (x, y).
-    fn paint_avatar(&mut self, ui: &mut Ui, icon: Option<PathBuf>, name: &str, x: f32, y: f32, size: f32) {
-        let k = mide::ui::draw::scale();
-        let px = (size * k).round() as u32;
-        let photo = icon.and_then(|p| self.avatar(&p, px).cloned());
-        let initial = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
-        ui.paint_text(|pixmap, text, (ox, oy)| {
-            let (x, y) = (ox + x, oy + y);
-            match photo {
-                Some(photo) => {
-                    let shader = tiny_skia::Pattern::new(photo.as_ref(), tiny_skia::SpreadMode::Pad, tiny_skia::FilterQuality::Bilinear, 1.0, tiny_skia::Transform::from_translate(x * k, y * k));
-                    let paint = tiny_skia::Paint { shader, anti_alias: true, ..Default::default() };
-                    if let Some(circle) = tiny_skia::PathBuilder::from_circle((x + size / 2.0) * k, (y + size / 2.0) * k, size * k / 2.0) {
-                        pixmap.fill_path(&circle, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
-                    }
-                }
-                None => {
-                    fill_rounded(pixmap, x, y, size, size, size / 2.0, rgba(255, 255, 255, 70));
-                    let font = size * 0.44;
-                    let w = text.measure(&initial, font, FontWeight::Semibold);
-                    text.draw(pixmap, &initial, x + (size - w) / 2.0, y + (size - font * 1.2) / 2.0, font, FontWeight::Semibold, [255, 255, 255, 255]);
-                }
-            }
-        });
-    }
-
-    /// A lista de usuários (e "Outro usuário"), centrada em `y`.
+    /// A lista de usuários (e "Outro…"), com as fotos no alto `y`.
     fn user_list(&mut self, ui: &mut Ui, w: f32, y: f32) {
-        const TILE: f32 = 132.0;
+        const TILE: f32 = 148.0;
         const AVATAR: f32 = 88.0;
         let count = self.users.len() + 1;
         let x0 = (w - TILE * count as f32) / 2.0;
         // Teclado: setas trocam, Enter escolhe.
-        if !ui.mirror() {
+        if !ui.mirror() && self.menu.is_none() {
             if ui.take_key(Key::Left) {
                 self.highlight = self.highlight.saturating_sub(1);
             }
@@ -309,98 +348,266 @@ impl Login {
                 self.highlight = (self.highlight + 1).min(count - 1);
             }
         }
-        let enter = !ui.mirror() && ui.take_key(Key::Enter);
+        let enter = !ui.mirror() && self.menu.is_none() && ui.take_key(Key::Enter);
         let pointer = ui.pointer();
-        let clicked = ui.input().released;
+        let clicked = ui.input().released && self.menu.is_none();
         let mut chosen = enter.then_some(self.highlight);
         for i in 0..count {
             let tx = x0 + i as f32 * TILE;
-            let (icon, name) = match self.users.get(i) {
-                Some(u) => (u.icon.clone(), u.name.clone()),
-                None => (None, tr!("Other…").into_owned()),
+            let (icon, name, label) = match self.users.get(i) {
+                Some(u) => (u.icon.clone(), u.name.clone(), u.name.clone()),
+                None => (None, String::new(), tr!("Other…").into_owned()),
             };
-            let over = pointer.is_some_and(|(px, py)| px >= tx && px < tx + TILE && py >= y && py < y + AVATAR + 40.0);
+            let over = pointer.is_some_and(|(px, py)| px >= tx && px < tx + TILE && py >= y - 6.0 && py < y + AVATAR + 40.0);
             if over {
                 self.highlight = i;
                 if clicked {
                     chosen = Some(i);
                 }
             }
+            let ax = tx + (TILE - AVATAR) / 2.0;
             if i == self.highlight {
                 // Foco visível (teclado e ponteiro): anel claro em volta da foto.
-                let ring = AVATAR + 10.0;
-                let (rx, ry) = (tx + (TILE - ring) / 2.0, y - 5.0);
-                ui.paint_text(|pixmap, _, (ox, oy)| fill_rounded(pixmap, ox + rx, oy + ry, ring, ring, ring / 2.0, rgba(255, 255, 255, 110)));
+                let ring = AVATAR + 8.0;
+                ui.paint_text(|pixmap, _, (ox, oy)| {
+                    mide::ui::draw::fill_rounded(pixmap, ox + ax - 4.0, oy + y - 4.0, ring, ring, ring / 2.0, mide::ui::draw::rgba(255, 255, 255, 120));
+                });
             }
-            self.paint_avatar(ui, icon, if i < self.users.len() { &name } else { "+" }, tx + (TILE - AVATAR) / 2.0, y, AVATAR);
-            ui.paint_text(|pixmap, text, (ox, oy)| {
-                let nw = text.measure(&name, 15.0, FontWeight::Semibold).min(TILE - 8.0);
-                text.draw(pixmap, &name, ox + tx + (TILE - nw) / 2.0, oy + y + AVATAR + 12.0, 15.0, FontWeight::Semibold, [255, 255, 255, 255]);
-            });
+            self.avatars.paint(ui, icon.as_deref(), &name, ax, y, AVATAR, over);
+            let label = fit(ui, &label, 15.0, TILE - 10.0);
+            lockscreen::centered(ui, &label, tx + TILE / 2.0, y + AVATAR + 12.0, 15.0, FontWeight::Semibold, lockscreen::WHITE);
+        }
+        if over_any(pointer, x0, y, TILE * count as f32, AVATAR + 40.0) {
+            ui.request_tick();
         }
         if let Some(i) = chosen.filter(|_| !ui.mirror()) {
             match self.users.get(i).map(|u| u.login.clone()) {
                 Some(login) => self.choose(login, ui.waker()),
-                None => {
-                    self.stage = Stage::OtherName;
-                    self.other.clear();
-                    self.focus_input = true;
-                    self.message = None;
-                }
+                None => self.credentials(),
             }
         }
     }
 
-    /// Sessão, layout de teclado e energia, embaixo.
-    fn bottom_bar(&mut self, ui: &mut Ui, w: f32, h: f32) {
-        let y = h - 72.0;
-        // Cartões claros atrás das listas (o texto do kit é escuro).
-        let card = |ui: &mut Ui, x: f32, width: f32| ui.paint_text(move |pixmap, _, (ox, oy)| fill_rounded(pixmap, ox + x - 8.0, oy + y - 6.0, width + 16.0, 44.0, 14.0, rgba(255, 255, 255, 205)));
-        if self.sessions.len() > 1 {
-            card(ui, 24.0, 280.0);
-            let names: Vec<String> = self.sessions.iter().map(|s| s.name.clone()).collect();
-            let mut session = self.session;
-            ui.at(24.0, y, 280.0, |ui| {
-                if ui.dropdown(&tr!("Session"), &names, &mut session).changed() {
-                    tracing::info!("login: sessão escolhida: {}", names.get(session).cloned().unwrap_or_default());
-                }
-            });
-            if session != self.session {
-                self.session_chosen = true;
+    /// Quem está entrando: foto, nome e o campo da pergunta do PAM, com o alto da foto
+    /// em `y`. `dx` é o balanço da senha recusada.
+    fn user_view(&mut self, ui: &mut Ui, cx: f32, y: f32, dx: f32) {
+        const AVATAR: f32 = 100.0;
+        let icon = self.icon.clone();
+        let name = self.name.clone();
+        self.avatars.paint(ui, icon.as_deref(), &name, cx - AVATAR / 2.0, y, AVATAR, false);
+        lockscreen::centered(ui, &name, cx, y + AVATAR + 12.0, 20.0, FontWeight::Semibold, lockscreen::WHITE);
+        let field_y = y + AVATAR + 50.0;
+        let (placeholder, secret) = match &self.stage {
+            Stage::Ask { prompt, secret } => {
+                let lower = prompt.to_lowercase();
+                let generic = *secret && (lower.starts_with("pass") || lower.starts_with("senha"));
+                (if generic { tr!("Enter Password").into_owned() } else { prompt.clone() }, *secret)
             }
-            self.session = session;
-        }
-        if self.layouts.len() > 1 {
-            card(ui, w - 24.0 - 240.0, 240.0);
-            let names: Vec<String> = self.layouts.iter().map(|l| l.name()).collect();
-            let mut layout = self.layout;
-            ui.at(w - 24.0 - 240.0, y, 240.0, |ui| {
-                if ui.dropdown(&tr!("Keyboard"), &names, &mut layout).changed() {
-                    mide::control_client::ask_compositor(&format!("layout {layout}"));
-                    tracing::info!("login: layout de teclado {layout}");
-                }
-            });
-            self.layout = layout;
-        }
-        // Energia, no meio, como na tela de login do Mac.
-        let actions = [
-            (tr!("Sleep").into_owned(), mide::system::Power::Sleep, "repousar"),
-            (tr!("Restart").into_owned(), mide::system::Power::Restart, "reiniciar"),
-            (tr!("Shut Down").into_owned(), mide::system::Power::Shutdown, "desligar"),
-        ];
-        let bw = 120.0;
-        let x0 = (w - bw * actions.len() as f32 - 12.0 * (actions.len() - 1) as f32) / 2.0;
-        for (i, (label, action, log)) in actions.into_iter().enumerate() {
-            let x = x0 + i as f32 * (bw + 12.0);
-            ui.at(x, y, bw, |ui| {
-                // Cápsula de vidro: legível sobre o papel de parede (o botão comum sumia).
-                if ui.button_styled(&label, mide::kit::ButtonStyle::Glass).clicked() && !ui.mirror() {
-                    tracing::info!("login: {log}");
-                    mide::system::power(action);
-                }
-            });
+            _ => (tr!("Enter Password").into_owned(), true),
+        };
+        let busy = self.stage == Stage::Waiting;
+        let mut submitted = false;
+        let typing = !ui.mirror() && self.menu.is_none();
+        ui.at(cx - FIELD_W / 2.0 + dx, field_y, FIELD_W, |ui| {
+            let look = LockField { secret, focused: typing, busy, submit: true };
+            submitted = ui.lock_field(&mut self.input, &placeholder, look).submitted;
+        });
+        self.below_field(ui, cx, field_y + 46.0);
+        if submitted && !ui.mirror() && self.pending.is_none() && matches!(self.stage, Stage::Ask { .. }) {
+            let response = std::mem::take(&mut self.input);
+            self.stage = Stage::Waiting;
+            self.message = None;
+            self.ask(Request::PostAuthMessageResponse { response: Some(response) }, Pending::Auth, ui.waker());
         }
     }
+
+    /// Campos de nome e senha (modo "nome e senha" ou "Outro…"), com o alto da silhueta
+    /// em `y`.
+    fn credentials_view(&mut self, ui: &mut Ui, cx: f32, y: f32, dx: f32) {
+        const AVATAR: f32 = 100.0;
+        self.avatars.paint(ui, None, "", cx - AVATAR / 2.0, y, AVATAR, false);
+        let field_y = y + AVATAR + 22.0;
+        let busy = self.pending.is_some() || self.stage == Stage::Waiting;
+        let typing = !ui.mirror() && self.menu.is_none() && !busy;
+        // Tab troca de campo; Enter no nome vai para a senha.
+        if typing && ui.take_key(Key::Tab) {
+            self.name_focus = !self.name_focus;
+        }
+        let (mut name_r, mut pass_r) = (None, None);
+        ui.at(cx - FIELD_W / 2.0, field_y, FIELD_W, |ui| {
+            let look = LockField { secret: false, focused: typing && self.name_focus, busy: false, submit: false };
+            name_r = Some(ui.lock_field(&mut self.other, &tr!("Name"), look));
+        });
+        ui.at(cx - FIELD_W / 2.0 + dx, field_y + 46.0, FIELD_W, |ui| {
+            let look = LockField { secret: true, focused: typing && !self.name_focus, busy, submit: true };
+            pass_r = Some(ui.lock_field(&mut self.input, &tr!("Password"), look));
+        });
+        let (name_r, pass_r) = (name_r.unwrap_or_default(), pass_r.unwrap_or_default());
+        if typing {
+            if name_r.clicked {
+                self.name_focus = true;
+            }
+            if pass_r.clicked {
+                self.name_focus = false;
+            }
+            if name_r.submitted {
+                self.name_focus = false;
+            }
+        }
+        self.below_field(ui, cx, field_y + 92.0);
+        let login = self.other.trim().to_string();
+        if typing && pass_r.submitted && !login.is_empty() {
+            tracing::info!("login: nome e senha para {login}");
+            self.queued = Some(std::mem::take(&mut self.input));
+            self.from_credentials = true;
+            self.choose(login, ui.waker());
+        } else if typing && pass_r.submitted {
+            self.name_focus = true;
+        }
+    }
+
+    /// Embaixo do campo: o aviso do PAM ou do greetd, ou a dica de senha depois de três
+    /// tentativas erradas (como no Mac).
+    fn below_field(&mut self, ui: &mut Ui, cx: f32, y: f32) {
+        if self.failures >= 3 && self.options.password_hints && self.hint.is_empty() && !self.login.is_empty() && !ui.mirror() {
+            // Nome digitado à mão: a dica vem do AccountsService (uma vez).
+            self.hint = lockscreen::account(&self.login).map(|a| a.hint).filter(|h| !h.is_empty()).unwrap_or_else(|| " ".into());
+        }
+        let hint = self.hint.trim();
+        if let Some((message, error)) = self.message.clone() {
+            let color = if error { [255, 214, 214, 255] } else { [255, 255, 255, 235] };
+            lockscreen::centered(ui, &message, cx, y, 13.0, FontWeight::Semibold, color);
+        } else if self.failures >= 3 && self.options.password_hints && !hint.is_empty() {
+            let text = tr!("Hint: {hint}", hint = hint);
+            if !self.hint_logged && !ui.mirror() {
+                self.hint_logged = true;
+                tracing::info!("login: dica de senha mostrada");
+            }
+            lockscreen::centered(ui, &text, cx, y, 13.0, FontWeight::Semibold, [255, 255, 255, 235]);
+        }
+    }
+
+    /// Botões de baixo: Cancelar quando dá para voltar; senão Desligar, Reiniciar e
+    /// Repousar (se as opções mostram).
+    fn bottom(&mut self, ui: &mut Ui, w: f32, h: f32, can_back: bool) {
+        let y = h - 98.0;
+        if !self.options.message.is_empty() {
+            let message = self.options.message.clone();
+            let my = if can_back || self.options.power_buttons { y - 34.0 } else { h - 48.0 };
+            lockscreen::centered(ui, &message, w / 2.0, my, 13.0, FontWeight::Semibold, [255, 255, 255, 230]);
+        }
+        if can_back {
+            if lockscreen::circle_button(ui, "go-previous-symbolic", &tr!("Cancel"), w / 2.0, y) && self.menu.is_none() {
+                self.back(ui.waker());
+            }
+            return;
+        }
+        if !self.options.power_buttons {
+            return;
+        }
+        let actions = [
+            ("system-shutdown-symbolic", tr!("Shut Down").into_owned(), mide::system::Power::Shutdown, "desligar"),
+            ("system-reboot-symbolic", tr!("Restart").into_owned(), mide::system::Power::Restart, "reiniciar"),
+            ("system-suspend-symbolic", tr!("Sleep").into_owned(), mide::system::Power::Sleep, "repousar"),
+        ];
+        let step = 104.0;
+        let x0 = w / 2.0 - step * (actions.len() as f32 - 1.0) / 2.0;
+        for (i, (symbol, label, action, log)) in actions.into_iter().enumerate() {
+            if lockscreen::circle_button(ui, symbol, &label, x0 + i as f32 * step, y) && self.menu.is_none() {
+                tracing::info!("login: {log}");
+                mide::system::power(action);
+            }
+        }
+    }
+
+    /// Canto de cima à direita: sessão e layout do teclado (cada um abre um menu), Wi-Fi
+    /// e bateria.
+    fn status_bar(&mut self, ui: &mut Ui, w: f32) {
+        let status = self.status.get();
+        let mut right = w - 10.0;
+        if let Some((percent, charging)) = status.battery {
+            right = lockscreen::status_battery(ui, percent, charging, right);
+        }
+        if let Some(signal) = status.wifi {
+            right = lockscreen::status_wifi(ui, signal, right);
+        }
+        let clicked = ui.input().released && !ui.mirror();
+        let pointer = ui.pointer();
+        let hit = |r: (f32, f32, f32, f32)| pointer.is_some_and(|(px, py)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3);
+        if self.options.input_menu && self.layouts.len() > 1 {
+            let name = self.layouts.get(self.layout).map(|l| l.name()).unwrap_or_default();
+            let open = matches!(self.menu, Some((Menu::Layout, _)));
+            let rect = lockscreen::status_text(ui, &name, right - 4.0, open);
+            if clicked && hit(rect) {
+                self.menu = if open { None } else { Some((Menu::Layout, rect)) };
+            }
+            right = rect.0;
+        }
+        if self.sessions.len() > 1 {
+            let name = self.sessions.get(self.session).map(|s| s.name.clone()).unwrap_or_default();
+            let open = matches!(self.menu, Some((Menu::Session, _)));
+            let rect = lockscreen::status_text(ui, &name, right - 4.0, open);
+            if clicked && hit(rect) {
+                self.menu = if open { None } else { Some((Menu::Session, rect)) };
+            }
+        }
+    }
+
+    /// O menu aberto do canto de cima, por cima de tudo.
+    fn open_menu(&mut self, ui: &mut Ui) {
+        let Some((kind, anchor)) = self.menu else {
+            return;
+        };
+        if !ui.mirror() && ui.take_key(Key::Escape) {
+            self.menu = None;
+            return;
+        }
+        let (items, selected): (Vec<String>, usize) = match kind {
+            Menu::Session => (self.sessions.iter().map(|s| s.name.clone()).collect(), self.session),
+            Menu::Layout => (self.layouts.iter().map(|l| l.name()).collect(), self.layout),
+        };
+        match lockscreen::menu(ui, anchor, &items, selected) {
+            Some(Some(i)) => {
+                self.menu = None;
+                match kind {
+                    Menu::Session => {
+                        tracing::info!("login: sessão escolhida: {}", items.get(i).cloned().unwrap_or_default());
+                        if i != self.session {
+                            self.session_chosen = true;
+                        }
+                        self.session = i;
+                    }
+                    Menu::Layout => {
+                        mide::control_client::ask_compositor(&format!("layout {i}"));
+                        tracing::info!("login: layout de teclado {i}");
+                        self.layout = i;
+                    }
+                }
+            }
+            Some(None) => self.menu = None,
+            None => {}
+        }
+    }
+}
+
+/// Largura dos campos de senha e de nome.
+const FIELD_W: f32 = 240.0;
+
+/// O ponteiro está na área.
+fn over_any(pointer: Option<(f32, f32)>, x: f32, y: f32, w: f32, h: f32) -> bool {
+    pointer.is_some_and(|(px, py)| px >= x && px < x + w && py >= y && py < y + h)
+}
+
+/// `s` cortado com reticências para caber em `width` pontos.
+fn fit(ui: &mut Ui, s: &str, size: f32, width: f32) -> String {
+    if lockscreen::measure(ui, s, size, FontWeight::Semibold) <= width {
+        return s.to_string();
+    }
+    let mut out: String = s.to_string();
+    while out.chars().count() > 1 && lockscreen::measure(ui, &format!("{out}…"), size, FontWeight::Semibold) > width {
+        out.pop();
+    }
+    format!("{}…", out.trim_end())
 }
 
 impl App for Login {
@@ -418,8 +625,8 @@ impl App for Login {
             if self.started {
                 return;
             }
-            // Um usuário só: já começa nele, como o GDM.
-            if self.stage == Stage::Choose && self.login.is_empty() && self.users.len() == 1 && self.pending.is_none() && self.message.is_none() {
+            // Um usuário só: já começa nele, como o Mac e o GDM.
+            if self.options.list && self.stage == Stage::Choose && self.login.is_empty() && self.users.len() == 1 && self.pending.is_none() && self.message.is_none() {
                 let login = self.users[0].login.clone();
                 self.choose(login, ui.waker());
             }
@@ -434,91 +641,33 @@ impl App for Login {
             (s * 40.0).sin() * 12.0 * (1.0 - s / 0.45)
         });
 
-        let now = Local::now();
-        let time = format!("{:02}:{:02}", now.hour(), now.minute());
-        let date = mide::calendar::long_date(now.date_naive());
-        let (cx, top) = (w / 2.0, h * 0.12);
-        ui.paint_text(|pixmap, text, (ox, oy)| {
-            let tw = text.measure(&time, 84.0, FontWeight::Semibold);
-            text.draw(pixmap, &time, ox + cx - tw / 2.0, oy + top, 84.0, FontWeight::Semibold, [255, 255, 255, 255]);
-            let dw = text.measure(&date, 20.0, FontWeight::Regular);
-            text.draw(pixmap, &date, ox + cx - dw / 2.0, oy + top + 110.0, 20.0, FontWeight::Regular, [255, 255, 255, 220]);
-        });
-
-        let field_w = 260.0;
-        let field_y = h * 0.58;
+        let cx = w / 2.0;
+        lockscreen::clock(ui, cx, (h * 0.075).round());
+        self.status_bar(ui, w);
+        // O conteúdo fica na metade de baixo, como no Sonoma e no Tahoe.
+        let content = (h * 0.50).round();
+        let can_back = match self.stage {
+            Stage::Choose => false,
+            Stage::Credentials => self.options.list,
+            _ => self.options.list && (self.users.len() > 1 || self.from_credentials),
+        };
+        let credentials = self.stage == Stage::Credentials || (self.from_credentials && self.queued.is_some());
         if self.stage == Stage::Choose {
-            self.user_list(ui, w, h * 0.40);
+            self.user_list(ui, w, (h * 0.56).round());
+        } else if credentials {
+            self.credentials_view(ui, cx, (content - 24.0).round(), dx);
         } else {
-            // Quem está entrando: foto e nome, acima do campo.
-            let avatar = 96.0;
-            let (icon, name) = match self.stage {
-                Stage::OtherName => (None, tr!("Other…").into_owned()),
-                _ => (self.icon.clone(), self.name.clone()),
-            };
-            self.paint_avatar(ui, icon, &name, cx - avatar / 2.0, field_y - 150.0, avatar);
-            ui.paint_text(|pixmap, text, (ox, oy)| {
-                let nw = text.measure(&name, 17.0, FontWeight::Semibold);
-                text.draw(pixmap, &name, ox + cx - nw / 2.0, oy + field_y - 40.0, 17.0, FontWeight::Semibold, [255, 255, 255, 255]);
-            });
-            if self.focus_input {
-                ui.focus_next_input();
-                self.focus_input = false;
-            }
-            let waker = ui.waker();
-            let stage = self.stage.clone();
-            let mut submitted = false;
-            ui.at(cx - field_w / 2.0 + dx, field_y, field_w, |ui| match &stage {
-                Stage::OtherName => submitted = ui.text_input(&mut self.other, &tr!("Name")).submitted(),
-                Stage::Ask { prompt, secret } => {
-                    let lower = prompt.to_lowercase();
-                    let placeholder = if *secret && (lower.starts_with("pass") || lower.starts_with("senha")) {
-                        tr!("Enter Password").into_owned()
-                    } else {
-                        prompt.clone()
-                    };
-                    submitted = if *secret { ui.password_input(&mut self.input, &placeholder) } else { ui.text_input(&mut self.input, &placeholder) }.submitted();
-                }
-                _ => {
-                    let mut empty = String::new();
-                    let _ = ui.password_input(&mut empty, &tr!("Checking…"));
-                }
-            });
-            // Voltar à lista (Esc ou o botão), com mais de um usuário.
-            let can_back = self.users.len() > 1 || self.stage == Stage::OtherName;
-            if can_back {
-                let mut back = !ui.mirror() && ui.take_key(Key::Escape);
-                ui.at(cx - field_w / 2.0 - 52.0, field_y, 40.0, |ui| {
-                    back |= ui.button_styled("←", mide::kit::ButtonStyle::Glass).clicked();
-                });
-                if back {
-                    self.back(waker.clone());
-                }
-            }
-            if submitted && !ui.mirror() {
-                match self.stage.clone() {
-                    Stage::OtherName if !self.other.trim().is_empty() => {
-                        let login = self.other.trim().to_string();
-                        self.choose(login, waker);
-                    }
-                    Stage::Ask { .. } if self.pending.is_none() => {
-                        let response = std::mem::take(&mut self.input);
-                        self.stage = Stage::Waiting;
-                        self.message = None;
-                        self.ask(Request::PostAuthMessageResponse { response: Some(response) }, Pending::Auth, waker);
-                    }
-                    _ => {}
-                }
+            self.user_view(ui, cx, content, dx);
+            // Esc volta à lista.
+            if can_back && !ui.mirror() && self.menu.is_none() && ui.take_key(Key::Escape) {
+                self.back(ui.waker());
             }
         }
-        if let Some((message, error)) = self.message.clone() {
-            let color = if error { [255, 220, 220, 255] } else { [255, 255, 255, 230] };
-            ui.paint_text(|pixmap, text, (ox, oy)| {
-                let mw = text.measure(&message, 14.0, FontWeight::Regular);
-                text.draw(pixmap, &message, ox + cx - mw / 2.0, oy + field_y + 52.0, 14.0, FontWeight::Regular, color);
-            });
+        if self.stage == Stage::Credentials && can_back && !ui.mirror() && self.menu.is_none() && ui.take_key(Key::Escape) {
+            self.back(ui.waker());
         }
-        self.bottom_bar(ui, w, h);
+        self.bottom(ui, w, h, can_back);
+        self.open_menu(ui);
     }
 }
 

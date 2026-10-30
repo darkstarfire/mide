@@ -1,5 +1,8 @@
-//! Tela de bloqueio do mide: relógio, data, quem está usando e a senha, sobre o papel
-//! de parede desfocado. Usa o protocolo de bloqueio do Wayland (`ext-session-lock-v1`):
+//! Tela de bloqueio do mide, com o visual da tela de login (no estilo do macOS
+//! Sonoma/Tahoe): a data e a hora grandes em cima, a foto e o nome de quem está usando,
+//! o campo de senha de vidro (aviso de Caps Lock, botão →, a roda enquanto confere), a
+//! mensagem da tela de bloqueio (`[login] message`), o Wi-Fi e a bateria no canto, sobre
+//! o papel de parede desfocado. Usa o protocolo de bloqueio do Wayland (`ext-session-lock-v1`):
 //! enquanto ela está aberta, o compositor não mostra nem deixa usar mais nada, e se
 //! ela fechar sem a senha, a tela continua bloqueada.
 //!
@@ -12,14 +15,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{Local, Timelike};
 use mide::tr;
 use mide::{
-    kit::{run, App, Ui, Waker, Window},
-    ui::{
-        draw::{fill_rounded, rgba},
-        text::FontWeight,
-    },
+    kit::{run, App, LockField, Ui, Waker, Window},
+    lockscreen::{self, Avatars, LoginOptions},
+    ui::text::FontWeight,
 };
 
 /// Conferência da senha pelo PAM (interface C da libpam, sem crate).
@@ -149,12 +149,32 @@ struct Lock {
     message: Option<String>,
     /// Quando a senha foi recusada (o campo balança).
     shake: Option<Instant>,
+    /// Senhas recusadas seguidas (a dica aparece na terceira, como no Mac).
+    failures: u32,
+    account: lockscreen::Account,
+    options: LoginOptions,
+    avatars: Avatars,
+    status: lockscreen::Status,
 }
 
 impl Lock {
     fn new() -> Self {
         let (login, name) = user();
-        Self { login, name, password: String::new(), checking: None, message: None, shake: None }
+        let account = lockscreen::account(&login).unwrap_or_default();
+        let name = if account.name.trim().is_empty() { name } else { account.name.clone() };
+        Self {
+            login,
+            name,
+            password: String::new(),
+            checking: None,
+            message: None,
+            shake: None,
+            failures: 0,
+            account,
+            options: LoginOptions::load(),
+            avatars: Avatars::default(),
+            status: lockscreen::Status::start(),
+        }
     }
 
     fn check(&mut self, waker: Option<Waker>) {
@@ -183,18 +203,17 @@ impl App for Lock {
         let (_, _, w, h) = ui.region();
         // Resposta do PAM: só na tela principal (as dos outros monitores são cópias e
         // não podem consumir a resposta).
-        if let Some(rx) = self.checking.as_ref().filter(|_| !ui.mirror()) {
-            if let Ok(ok) = rx.try_recv() {
-                self.checking = None;
-                if ok {
-                    tracing::info!("senha aceita: desbloqueando");
-                    ui.unlock();
-                    return;
-                }
-                tracing::info!("senha recusada");
-                self.message = Some(tr!("Incorrect password").into_owned());
-                self.shake = Some(Instant::now());
+        if let Some(Ok(ok)) = self.checking.as_ref().filter(|_| !ui.mirror()).map(|rx| rx.try_recv()) {
+            self.checking = None;
+            if ok {
+                tracing::info!("senha aceita: desbloqueando");
+                ui.unlock();
+                return;
             }
+            tracing::info!("senha recusada");
+            // Como no Mac, a senha errada só balança o campo (e a dica vem na terceira).
+            self.failures += 1;
+            self.shake = Some(Instant::now());
         }
         // O relógio anda; o campo balança por meio segundo.
         ui.wake_after(Duration::from_secs(1));
@@ -207,45 +226,39 @@ impl App for Lock {
             (s * 40.0).sin() * 12.0 * (1.0 - s / 0.45)
         });
 
-        let now = Local::now();
-        let time = format!("{:02}:{:02}", now.hour(), now.minute());
-        let date = mide::calendar::long_date(now.date_naive());
-        let initial = self.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-        let name = self.name.clone();
-        let (cx, top) = (w / 2.0, h * 0.18);
-        // O fundo (papel de parede desfocado e escurecido) é do compositor, na GPU:
-        // aqui só o relógio, o avatar e o campo, e cada tecla custa pouco.
-        ui.paint_text(|pixmap, text, (ox, oy)| {
-            let white = [255, 255, 255, 255];
-            let tw = text.measure(&time, 84.0, FontWeight::Semibold);
-            text.draw(pixmap, &time, ox + cx - tw / 2.0, oy + top, 84.0, FontWeight::Semibold, white);
-            let dw = text.measure(&date, 20.0, FontWeight::Regular);
-            text.draw(pixmap, &date, ox + cx - dw / 2.0, oy + top + 110.0, 20.0, FontWeight::Regular, [255, 255, 255, 220]);
-            // Avatar com a inicial e o nome, acima do campo de senha.
-            let ay = h * 0.58;
-            fill_rounded(pixmap, ox + cx - 36.0, oy + ay - 110.0, 72.0, 72.0, 36.0, rgba(255, 255, 255, 70));
-            let iw = text.measure(&initial, 32.0, FontWeight::Semibold);
-            text.draw(pixmap, &initial, ox + cx - iw / 2.0, oy + ay - 110.0 + 16.0, 32.0, FontWeight::Semibold, white);
-            let nw = text.measure(&name, 16.0, FontWeight::Semibold);
-            text.draw(pixmap, &name, ox + cx - nw / 2.0, oy + ay - 28.0, 16.0, FontWeight::Semibold, white);
-        });
-        let field_w = 260.0;
+        let cx = w / 2.0;
+        lockscreen::clock(ui, cx, (h * 0.075).round());
+        let status = self.status.get();
+        let mut right = w - 10.0;
+        if let Some((percent, charging)) = status.battery {
+            right = lockscreen::status_battery(ui, percent, charging, right);
+        }
+        if let Some(signal) = status.wifi {
+            lockscreen::status_wifi(ui, signal, right);
+        }
+        // Foto, nome e a senha na metade de baixo, como na tela de login.
+        const AVATAR: f32 = 100.0;
+        let y = (h * 0.50).round();
+        let (icon, name) = (self.account.icon.clone(), self.name.clone());
+        self.avatars.paint(ui, icon.as_deref(), &name, cx - AVATAR / 2.0, y, AVATAR, false);
+        lockscreen::centered(ui, &name, cx, y + AVATAR + 12.0, 20.0, FontWeight::Semibold, lockscreen::WHITE);
+        let field_w = 240.0;
+        let field_y = y + AVATAR + 50.0;
         let mut submitted = false;
         let checking = self.checking.is_some();
-        ui.at(cx - field_w / 2.0 + dx, h * 0.58, field_w, |ui| {
-            let placeholder = if checking { tr!("Checking…") } else { tr!("Enter Password") };
-            if !checking {
-                submitted = ui.password_input(&mut self.password, &placeholder).submitted();
-            } else {
-                let mut empty = String::new();
-                let _ = ui.password_input(&mut empty, &placeholder);
-            }
+        ui.at(cx - field_w / 2.0 + dx, field_y, field_w, |ui| {
+            let look = LockField { secret: true, focused: !ui.mirror(), busy: checking, submit: true };
+            submitted = ui.lock_field(&mut self.password, &tr!("Enter Password"), look).submitted;
         });
+        let hint = self.account.hint.trim().to_string();
         if let Some(message) = self.message.clone() {
-            ui.paint_text(|pixmap, text, (ox, oy)| {
-                let mw = text.measure(&message, 14.0, FontWeight::Regular);
-                text.draw(pixmap, &message, ox + cx - mw / 2.0, oy + h * 0.58 + 52.0, 14.0, FontWeight::Regular, [255, 220, 220, 255]);
-            });
+            lockscreen::centered(ui, &message, cx, field_y + 46.0, 13.0, FontWeight::Semibold, [255, 214, 214, 255]);
+        } else if self.failures >= 3 && self.options.password_hints && !hint.is_empty() {
+            lockscreen::centered(ui, &tr!("Hint: {hint}", hint = hint), cx, field_y + 46.0, 13.0, FontWeight::Semibold, [255, 255, 255, 235]);
+        }
+        if !self.options.message.is_empty() {
+            let message = self.options.message.clone();
+            lockscreen::centered(ui, &message, cx, h - 48.0, 13.0, FontWeight::Semibold, [255, 255, 255, 230]);
         }
         if submitted && !self.password.is_empty() {
             self.check(ui.waker());

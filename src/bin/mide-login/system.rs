@@ -11,6 +11,8 @@ pub struct User {
     pub name: String,
     /// Foto do AccountsService, se houver.
     pub icon: Option<PathBuf>,
+    /// Dica de senha do AccountsService (mostrada depois de três tentativas erradas).
+    pub hint: String,
 }
 
 /// Usuários comuns do sistema (sem as contas de serviço), em ordem de nome.
@@ -23,8 +25,8 @@ pub fn users() -> Vec<User> {
     list
 }
 
-/// Usuários dos testes (`MIDE_LOGIN_TEST_USERS="ana:Ana Souza;bruno:Bruno"`), só nas
-/// compilações de desenvolvimento.
+/// Usuários dos testes (`MIDE_LOGIN_TEST_USERS="ana:Ana Souza:dica;bruno:Bruno"`; a
+/// dica de senha é opcional), só nas compilações de desenvolvimento.
 fn test_users() -> Option<Vec<User>> {
     if !cfg!(debug_assertions) {
         return None;
@@ -33,8 +35,11 @@ fn test_users() -> Option<Vec<User>> {
     Some(
         text.split(';')
             .filter_map(|item| {
-                let (login, name) = item.split_once(':').unwrap_or((item, item));
-                (!login.trim().is_empty()).then(|| User { login: login.trim().into(), name: name.trim().into(), icon: None })
+                let mut parts = item.splitn(3, ':');
+                let login = parts.next().unwrap_or("").trim();
+                let name = parts.next().unwrap_or(login).trim();
+                let hint = parts.next().unwrap_or("").trim();
+                (!login.is_empty()).then(|| User { login: login.into(), name: name.into(), icon: None, hint: hint.into() })
             })
             .collect(),
     )
@@ -56,7 +61,8 @@ fn accounts_service() -> Option<Vec<User>> {
             let real: String = user.get_property("RealName").unwrap_or_default();
             let icon: String = user.get_property("IconFile").unwrap_or_default();
             let icon = Some(PathBuf::from(icon)).filter(|p| p.is_file());
-            Some(User { name: if real.trim().is_empty() { login.clone() } else { real }, login, icon })
+            let hint: String = user.get_property("PasswordHint").unwrap_or_default();
+            Some(User { name: if real.trim().is_empty() { login.clone() } else { real }, login, icon, hint })
         })
         .collect();
     Some(users)
@@ -92,7 +98,7 @@ fn parse_passwd(passwd: &str, min: u32, max: u32) -> Vec<User> {
                 return None;
             }
             let real = f.get(4)?.split(',').next().unwrap_or("").trim();
-            Some(User { login: f[0].into(), name: if real.is_empty() { f[0].into() } else { real.into() }, icon: None })
+            Some(User { login: f[0].into(), name: if real.is_empty() { f[0].into() } else { real.into() }, icon: None, hint: String::new() })
         })
         .collect()
 }

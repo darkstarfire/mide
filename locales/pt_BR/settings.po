@@ -1198,3 +1198,211 @@ msgstr "Trava de rotação"
 
 msgid "The built-in display does not turn with the device"
 msgstr "A tela embutida não gira com o aparelho"
+
+# Usuários e grupos (contas do AccountsService) e a tela de início de sessão
+msgid "Users & Groups"
+msgstr "Usuários e grupos"
+
+msgid "users accounts user account admin administrator picture photo name"
+msgstr "usuários contas usuário conta admin administrador imagem foto nome"
+
+msgid "Add a user"
+msgstr "Adicionar um usuário"
+
+msgid "user account new create add password"
+msgstr "usuário conta novo criar adicionar senha"
+
+msgid "Delete a user"
+msgstr "Apagar um usuário"
+
+msgid "user account delete remove"
+msgstr "usuário conta apagar remover excluir"
+
+msgid "Login window"
+msgstr "Tela de início de sessão"
+
+msgid "login window list users name password sleep restart shut down buttons hints input menu"
+msgstr "login início sessão tela lista usuários nome senha repousar reiniciar desligar botões dicas menu entrada teclado"
+
+msgid "Automatically log in"
+msgstr "Iniciar sessão automaticamente"
+
+msgid "login automatic autologin without password"
+msgstr "login início automático entrar sem senha"
+
+msgid "Message on the login window"
+msgstr "Mensagem na tela de início de sessão"
+
+msgid "login lock message text"
+msgstr "login bloqueio mensagem texto"
+
+msgid "Reading the users…"
+msgstr "Lendo os usuários…"
+
+msgid "Users can't be managed here"
+msgstr "Não dá para gerenciar os usuários aqui"
+
+msgid "The system service that manages accounts (AccountsService) is not running. Install the “accountsservice” package with your distribution's package manager and open Settings again."
+msgstr "O serviço do sistema que gerencia as contas (AccountsService) não está rodando. Instale o pacote “accountsservice” pelo gerenciador de pacotes da sua distribuição e abra as Configurações de novo."
+
+msgid "Could not read the users: {error}"
+msgstr "Não foi possível ler os usuários: {error}"
+
+msgid "Admin"
+msgstr "Administrador"
+
+msgid "Standard"
+msgstr "Padrão"
+
+msgid "{kind} · You"
+msgstr "{kind} · Você"
+
+msgid "Add User…"
+msgstr "Adicionar usuário…"
+
+msgid "Waiting for the administrator password…"
+msgstr "Esperando a senha de administrador…"
+
+msgid "Not changed: the administrator password was not given."
+msgstr "Nada mudou: a senha de administrador não foi informada."
+
+msgid "Not changed: the accounts service (AccountsService) is not running."
+msgstr "Nada mudou: o serviço de contas (AccountsService) não está rodando."
+
+msgid "Not changed: {error}"
+msgstr "Nada mudou: {error}"
+
+msgid "Login Window"
+msgstr "Tela de início de sessão"
+
+msgid "Automatically log in as"
+msgstr "Iniciar sessão automaticamente como"
+
+msgid "Display login window as"
+msgstr "Mostrar a tela de início de sessão como"
+
+msgid "List of users"
+msgstr "Lista de usuários"
+
+msgid "Name and password"
+msgstr "Nome e senha"
+
+msgid "Show the Sleep, Restart and Shut Down buttons"
+msgstr "Mostrar os botões Repousar, Reiniciar e Desligar"
+
+msgid "Show password hints"
+msgstr "Mostrar dicas de senha"
+
+msgid "After three wrong passwords"
+msgstr "Depois de três senhas erradas"
+
+msgid "Show the input menu in the login window"
+msgstr "Mostrar o menu de entrada na tela de início de sessão"
+
+msgid "To choose the keyboard layout before typing the password"
+msgstr "Para escolher o layout do teclado antes de digitar a senha"
+
+msgid "Show message when locked"
+msgstr "Mostrar mensagem quando bloqueado"
+
+msgid "On the login window and the lock screen"
+msgstr "Na tela de início de sessão e na tela de bloqueio"
+
+msgid "Message"
+msgstr "Mensagem"
+
+msgid "Applying…"
+msgstr "Aplicando…"
+
+msgid "Apply to Login Window…"
+msgstr "Aplicar à tela de início de sessão…"
+
+msgid "The login window now uses these settings."
+msgstr "A tela de início de sessão passou a usar estes ajustes."
+
+msgid "The login window runs before anyone logs in, so it keeps its own copy of these options, the wallpaper and the displays. Apply copies yours to it (asks for the administrator password)."
+msgstr "A tela de início de sessão roda antes de alguém entrar, por isso guarda a própria cópia destas opções, do papel de parede e das telas. Aplicar copia as suas para ela (pede a senha de administrador)."
+
+msgid "To apply these options, update the mide login window: in the mide project folder, run “sudo data/mide-login-install” once."
+msgstr "Para aplicar estas opções, atualize a tela de início de sessão do mide: na pasta do projeto do mide, rode “sudo data/mide-login-install” uma vez."
+
+msgid "These options are for the mide login window, which is not installed. To install it, run “sudo data/mide-login-install” in the mide project folder."
+msgstr "Estas opções são da tela de início de sessão do mide, que não está instalada. Para instalar, rode “sudo data/mide-login-install” na pasta do projeto do mide."
+
+msgid "Not applied: the administrator password was not given."
+msgstr "Não aplicado: a senha de administrador não foi informada."
+
+msgid "Not applied: {error}"
+msgstr "Não aplicado: {error}"
+
+msgid "Change Picture…"
+msgstr "Mudar imagem…"
+
+msgid "Full name"
+msgstr "Nome completo"
+
+msgid "Account name"
+msgstr "Nome da conta"
+
+msgid "Password hint"
+msgstr "Dica de senha"
+
+msgid "Optional"
+msgstr "Opcional"
+
+msgid "Account type"
+msgstr "Tipo de conta"
+
+msgid "Administrator"
+msgstr "Administrador"
+
+msgid "To change your own password, run “passwd” in Terminal."
+msgstr "Para mudar a sua própria senha, rode “passwd” no Terminal."
+
+msgid "Delete User…"
+msgstr "Apagar usuário…"
+
+msgid "Choose a Picture"
+msgstr "Escolha uma imagem"
+
+msgid "Delete the user “{name}”?"
+msgstr "Apagar o usuário “{name}”?"
+
+msgid "The account is removed from this computer. This can't be undone."
+msgstr "A conta é removida deste computador. Não dá para desfazer."
+
+msgid "Also delete the home folder ({folder})"
+msgstr "Apagar também a pasta pessoal ({folder})"
+
+msgid "Delete User"
+msgstr "Apagar usuário"
+
+msgid "New User"
+msgstr "Novo usuário"
+
+msgid "The user chooses a password at first login"
+msgstr "O usuário escolhe a senha ao entrar pela primeira vez"
+
+msgid "Required"
+msgstr "Obrigatória"
+
+msgid "Verify"
+msgstr "Confirmar"
+
+msgid "Create User"
+msgstr "Criar usuário"
+
+msgid "Type the full name."
+msgstr "Digite o nome completo."
+
+msgid "The account name must start with a lowercase letter and have only lowercase letters, digits, “-” and “_”."
+msgstr "O nome da conta precisa começar com uma letra minúscula e ter só letras minúsculas, algarismos, “-” e “_”."
+
+msgid "There is already a user named “{name}”."
+msgstr "Já existe um usuário chamado “{name}”."
+
+msgid "Type a password, or let the user choose one at first login."
+msgstr "Digite uma senha, ou deixe o usuário escolher a dele ao entrar pela primeira vez."
+
+msgid "The passwords don't match."
+msgstr "As senhas não são iguais."

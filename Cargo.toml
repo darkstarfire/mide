@@ -45,6 +45,9 @@ x11rb = "0.13"
 zbus = "5"
 # Compactar e extrair .zip no Arquivos, sem programa externo.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Senha de um usuário novo (Configurações → Usuários e grupos): o AccountsService pede o
+# hash crypt ($6$, SHA-512). Sem o recurso "simple": o sal vem do /dev/urandom.
+sha-crypt = { version = "0.5", default-features = false }
 # Compactar o conteúdo do PDF do Editor de Texto (já vem com o zip).
 flate2 = "1"
 

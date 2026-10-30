@@ -197,3 +197,6 @@ msgstr "App \"{name}\" criado em {path}"
 
 msgid "To run it:  cd {path} && cargo run"
 msgstr "Para rodar:  cd {path} && cargo run"
+
+msgid "Hint: {hint}"
+msgstr "Dica: {hint}"

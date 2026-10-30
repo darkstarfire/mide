@@ -228,6 +228,33 @@ if ! grep -q "keybindings" "$SCFG/mide/config.toml"; then
 else
     echo "FALHA restaurar os atalhos padrão"; FAIL=$((FAIL + 1))
 fi
+# Usuários e grupos, com contas de teste (MIDE_ACCOUNTS_TEST, sem AccountsService) e a
+# tela de login "instalada" numa pasta falsa (MIDE_LOGIN_LIB). Lista: Fabio, Ana, bruno;
+# "Adicionar usuário…" em (723, 330); na folha, Senha em (537, 433), Confirmar em
+# (537, 475), "Criar usuário" em (628, 559).
+mkdir -p "$SCFG/login-lib"
+touch "$SCFG/login-lib/mide-login" "$SCFG/login-lib/mide-login-install"
+USERS_APP="MIDE_ACCOUNTS_TEST='fabio:Fabio Carneiro:admin:current;ana:Ana Souza:standard;bruno::admin' MIDE_LOGIN_LIB='$SCFG/login-lib' RUST_LOG=mide=info,mide_settings=info $SETTINGS users"
+timeout 150 "$SCEN" "400 click 723 330; 420 type Jose Silva; 450 click 537 433; 460 type abc; 480 click 537 475; 490 type abc; 520 click 628 559; 600 list" -- "$USERS_APP >'$SCFG/usuarios.log' 2>&1" >/dev/null 2>&1
+if grep -q "contas (teste): josesilva criado (padrão)" "$SCFG/usuarios.log" && grep -q "contas (teste): senha de josesilva definida" "$SCFG/usuarios.log"; then
+    echo "ok    Usuários e grupos: adicionar usuário com senha"; PASS=$((PASS + 1))
+else
+    echo "FALHA Usuários e grupos: adicionar usuário com senha"; FAIL=$((FAIL + 1))
+fi
+# Tela de início de sessão (rolando 20): "Iniciar sessão automaticamente como" em
+# (778, 225), "Ana Souza" na lista em (700, 315); Repousar/Reiniciar/Desligar em
+# (807, 309); mensagem em (807, 470), campo em (560, 519); "Aplicar…" em (670, 566).
+timeout 150 "$SCEN" "400 move 600 400; 410 wheel 20; 450 click 778 225; 480 click 700 315; 500 click 807 309; 520 click 807 470; 550 click 560 519; 560 type Bem-vindo; 600 click 670 566; 660 list" -- "$USERS_APP >'$SCFG/usuarios.log' 2>&1" >/dev/null 2>&1
+if grep -q 'autologin = "ana"' "$SCFG/mide/config.toml" && grep -q "power_buttons = false" "$SCFG/mide/config.toml" && grep -q 'message = "Bem-vindo"' "$SCFG/mide/config.toml"; then
+    echo "ok    Usuários e grupos: opções da tela de início de sessão em [login]"; PASS=$((PASS + 1))
+else
+    echo "FALHA Usuários e grupos: opções da tela de início de sessão em [login]"; FAIL=$((FAIL + 1))
+fi
+if grep -q "sistema (teste): pkexec $SCFG/login-lib/mide-login-install --sync" "$SCFG/usuarios.log"; then
+    echo "ok    Usuários e grupos: Aplicar roda o --sync pelo pkexec"; PASS=$((PASS + 1))
+else
+    echo "FALHA Usuários e grupos: Aplicar roda o --sync pelo pkexec"; FAIL=$((FAIL + 1))
+fi
 export XDG_CONFIG_HOME="$OLD_SCFG"
 unset MIDE_BACKGROUNDS_DIR
 rm -rf "$SCFG"

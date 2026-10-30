@@ -6,6 +6,10 @@
 #
 #   sudo data/mide-login-install            # instala
 #   sudo data/mide-login-install --uninstall  # volta ao gerenciador de antes
+#   pkexec /usr/local/lib/mide-login/mide-login-install --sync USUARIO
+#       copia de novo a configuração e o papel de parede de USUARIO para a tela de
+#       login e aplica o "entrar automaticamente" ([login] autologin); é o que o botão
+#       "Aplicar à tela de início de sessão" das Configurações roda
 #
 # Nada da senha passa pelo mide: quem confere é o greetd, pelo PAM do sistema.
 set -euo pipefail
@@ -24,6 +28,121 @@ cd "$(dirname "$(readlink -f "$0")")/.."
 # Quem chamou o sudo: a configuração (telas, escala, teclado, papel de parede) vem dele.
 DONO="${SUDO_USER:-}"
 DONO_HOME="$( [ -n "$DONO" ] && getent passwd "$DONO" | cut -d: -f6 || true)"
+
+# Lê um arquivo com as permissões de $DONO (não as do root): o caminho do papel de
+# parede vem da configuração dele, e um "wallpaper = /etc/shadow" não pode virar uma
+# cópia legível por todos.
+ler_como_dono() {
+    if [ -n "$DONO" ] && [ "$DONO" != root ] && command -v runuser >/dev/null; then
+        runuser -u "$DONO" -- cat -- "$1"
+    elif [ -n "$DONO" ] && [ "$DONO" != root ]; then
+        su -s /bin/sh "$DONO" -c 'cat -- "$1"' sh "$1"
+    else
+        cat -- "$1"
+    fi
+}
+
+# Passo 4/6 (e --sync): config.toml e papel de parede de $DONO em $CONF/mide, para o
+# greeter (que roda como outro usuário e não lê a pasta pessoal).
+copiar_configuracao() {
+    install -d -m755 "$CONF/mide"
+    local origem="${DONO_HOME:+$DONO_HOME/.config/mide/config.toml}"
+    rm -f "$CONF"/wallpaper.*
+    if [ -n "$origem" ] && ler_como_dono "$origem" > "$CONF/mide/config.toml.novo" 2>/dev/null; then
+        mv "$CONF/mide/config.toml.novo" "$CONF/mide/config.toml"
+        chmod 644 "$CONF/mide/config.toml"
+        # O papel de parede vai junto (o greeter não lê a pasta pessoal).
+        local papel ext
+        papel="$(sed -nE 's/^\s*wallpaper\s*=\s*"([^"]+)".*/\1/p' "$CONF/mide/config.toml" | head -1)"
+        ext="$(printf '%s' "${papel##*.}" | tr 'A-Z' 'a-z')"
+        case "$ext" in png | jpg | jpeg | webp) ;; *) papel="" ;; esac
+        if [ -n "$papel" ] && ler_como_dono "$papel" > "$CONF/wallpaper.$ext" 2>/dev/null; then
+            chmod 644 "$CONF/wallpaper.$ext"
+            sed -i -E "s|^(\s*wallpaper\s*=\s*)\"[^\"]*\"|\1\"$CONF/wallpaper.$ext\"|" "$CONF/mide/config.toml"
+            echo "   papel de parede copiado."
+        else
+            rm -f "$CONF/wallpaper.$ext"
+        fi
+        echo "   configuração copiada (a tela de login abre na mesma escala e no mesmo layout)."
+    else
+        rm -f "$CONF/mide/config.toml.novo"
+        : > "$CONF/mide/config.toml"
+        echo "   sem configuração do mide para copiar: a tela de login usa os padrões."
+    fi
+}
+
+# Valor de uma chave de texto numa seção de um TOML simples (`[login] autologin`).
+valor_toml() {
+    awk -v secao="$2" -v chave="$3" '
+        /^[ \t]*\[/ { dentro = ($0 ~ "^[ \t]*\\[" secao "\\]") }
+        dentro && $0 ~ "^[ \t]*" chave "[ \t]*=" {
+            sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]*(#.*)?$/, ""); gsub(/^"|"$/, ""); print; exit
+        }' "$1"
+}
+
+# Tira a seção [initial_session] (entrar automaticamente) do config.toml do greetd.
+tirar_initial_session() {
+    awk '
+        /^[ \t]*\[/ { pular = ($0 ~ /^[ \t]*\[initial_session\]/) }
+        !pular' "$1"
+}
+
+# Comando da sessão do mide (o Exec da entrada de sessão instalada, com o ambiente que
+# a tela de login daria), para o "entrar automaticamente".
+comando_da_sessao() {
+    local f exec_="" id="mide"
+    for f in /usr/local/share/wayland-sessions/*.desktop /usr/share/wayland-sessions/*.desktop; do
+        [ -f "$f" ] || continue
+        grep -qE '^DesktopNames=mide;?$' "$f" || continue
+        exec_="$(sed -nE 's/^Exec=(.*)$/\1/p' "$f" | head -1)"
+        id="$(basename "$f" .desktop)"
+        [ -n "$exec_" ] && break
+    done
+    [ -n "$exec_" ] || exec_="mide-session"
+    echo "env XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=$id XDG_CURRENT_DESKTOP=mide $exec_"
+}
+
+# --sync USUARIO: refaz o passo 4/6 para USUARIO e aplica o [login] autologin.
+sincronizar() {
+    local quem="${1:-}"
+    [ -n "$quem" ] || falha "uso: $0 --sync USUARIO"
+    getent passwd "$quem" >/dev/null || falha "usuário não existe: $quem"
+    # Pelo pkexec, só a própria configuração de quem pediu.
+    if [ -n "${PKEXEC_UID:-}" ]; then
+        [ "$(getent passwd "$PKEXEC_UID" | cut -d: -f1)" = "$quem" ] || falha "só dá para aplicar a sua própria configuração"
+    fi
+    [ -x "$LIB/mide-login" ] && [ -f "$GREETD_CONF" ] ||
+        falha "a tela de login do mide não está instalada (instale com: sudo data/mide-login-install)"
+    grep -q "$LIB/mide" "$GREETD_CONF" ||
+        falha "o greetd não está usando a tela de login do mide ($GREETD_CONF); instale de novo com: sudo data/mide-login-install"
+    DONO="$quem"
+    DONO_HOME="$(getent passwd "$quem" | cut -d: -f6)"
+    passo "Configuração e papel de parede de $DONO em $CONF"
+    copiar_configuracao
+    passo "Entrar automaticamente"
+    local auto
+    auto="$(valor_toml "$CONF/mide/config.toml" login autologin)"
+    if [ -n "$auto" ]; then
+        printf '%s' "$auto" | grep -qE '^[a-z_][a-z0-9_-]*\$?$' || falha "nome de usuário inválido em [login] autologin: $auto"
+        getent passwd "$auto" >/dev/null || falha "usuário de [login] autologin não existe: $auto"
+    fi
+    local novo
+    novo="$(mktemp "$GREETD_CONF.XXXXXX")"
+    tirar_initial_session "$GREETD_CONF" > "$novo"
+    if [ -n "$auto" ]; then
+        # Sem linhas em branco sobrando no fim antes da seção nova.
+        sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$novo"
+        # Aspas e barras do Exec escapadas para o TOML.
+        printf '\n[initial_session]\ncommand = "%s"\nuser = "%s"\n' "$(comando_da_sessao | sed 's/[\\"]/\\&/g')" "$auto" >> "$novo"
+        echo "   $auto entra sem senha ao ligar o computador."
+    else
+        echo "   desligado: a tela de login sempre aparece."
+    fi
+    chmod 644 "$novo"
+    mv "$novo" "$GREETD_CONF"
+    printf '\nPronto: vale na próxima vez que a tela de login aparecer.\n'
+    exit 0
+}
 
 # Usuário que roda o greeter: o do greetd instalado (Debian: _greetd; Fedora e Arch:
 # greeter), ou o que já está no config.toml.
@@ -72,7 +191,8 @@ desinstalar() {
 }
 
 [ "${1:-}" = "--uninstall" ] && desinstalar
-[ -n "${1:-}" ] && falha "opção desconhecida: $1 (use --uninstall para remover)"
+[ "${1:-}" = "--sync" ] && sincronizar "${2:-}"
+[ -n "${1:-}" ] && falha "opção desconhecida: $1 (use --uninstall para remover ou --sync USUARIO)"
 
 BIN=""
 for d in target/release target/debug; do
@@ -101,6 +221,9 @@ passo "2/6 Programas da tela de login em $LIB"
 # funcionando enquanto o projeto é recompilado.
 install -d -m755 "$LIB"
 install -m755 "$BIN/mide" "$BIN/mide-login" "$LIB/"
+# O próprio instalador também: as Configurações rodam o --sync dele pelo pkexec, e ele
+# precisa estar num lugar só do root (não na pasta do projeto, que o usuário altera).
+install -m755 data/mide-login-install "$LIB/"
 echo "   copiados de $BIN (rode este script de novo depois de atualizar o mide)."
 
 passo "3/6 Fonte da interface (Noto Sans) em $FONTS"
@@ -108,23 +231,7 @@ install -d -m755 "$FONTS"
 install -m644 data/fonts/*.ttf data/fonts/OFL.txt "$FONTS/"
 
 passo "4/6 Telas, escala, teclado e papel de parede de ${DONO:-ninguém} em $CONF"
-install -d -m755 "$CONF/mide"
-origem="${DONO_HOME:+$DONO_HOME/.config/mide/config.toml}"
-if [ -n "$origem" ] && [ -f "$origem" ]; then
-    install -m644 "$origem" "$CONF/mide/config.toml"
-    # O papel de parede vai junto (o greeter não lê a pasta pessoal).
-    papel="$(sed -nE 's/^\s*wallpaper\s*=\s*"([^"]+)".*/\1/p' "$origem" | head -1)"
-    if [ -n "$papel" ] && [ -f "$papel" ]; then
-        ext="${papel##*.}"
-        install -m644 "$papel" "$CONF/wallpaper.$ext"
-        sed -i -E "s|^(\s*wallpaper\s*=\s*)\"[^\"]*\"|\1\"$CONF/wallpaper.$ext\"|" "$CONF/mide/config.toml"
-        echo "   papel de parede copiado."
-    fi
-    echo "   configuração copiada (a tela de login abre na mesma escala e no mesmo layout)."
-else
-    : > "$CONF/mide/config.toml"
-    echo "   sem configuração do mide para copiar: a tela de login usa os padrões."
-fi
+copiar_configuracao
 install -d -m755 -o "$GREETER" "$STATE"
 
 passo "5/6 Configuração do greetd ($GREETD_CONF)"
