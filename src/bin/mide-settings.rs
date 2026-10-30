@@ -879,7 +879,7 @@ impl Settings {
                     });
                 }
             }
-            add = ui.tile_wide(Tile::Icon("list-add"), &tr!("Add Image…"), false, THUMB.0, THUMB.1).clicked();
+            add = ui.tile_wide(Tile::Symbol("list-add-symbolic"), &tr!("Add Image…"), false, THUMB.0, THUMB.1).clicked();
         });
         ui.note(&tr!("Right-click an added image to remove it from the list."));
         if let Some(path) = chosen {

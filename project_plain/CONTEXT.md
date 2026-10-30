@@ -307,3 +307,8 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - Barra: menus do app que não cabem vão para o menu com o nome do app (submenus com ›).
 - Falta o usuário conferir: a tela de login instalada de verdade (`sudo data/mide-login-install` de novo, para copiar os binários novos), o "Aplicar à tela de início de sessão…" com a senha de administrador, criar usuário, o VS Code numa tela pequena e o modo tablet no Chromebook.
 - Ficam para depois: troca rápida de usuário, usuário convidado, leitor de digital, teclado na tela nas telas de login e de bloqueio.
+
+## v0.10.38 (2026-10-30)
+
+- Dock (ocultar automaticamente com ampliação e prévias) e modo de edição do launcher aprovados pelo usuário: etapas dadas como finalizadas.
+- Atalhos criados pelo launcher na área de trabalho saem com `rwxrwxrwx` e confiados (nome e ícone do app na hora); área de trabalho com o menu do fundo nos monitores externos (`mide-desktop --output NOME`); "+" de Adicionar imagem menor (`Tile::Symbol` do mide-ui).

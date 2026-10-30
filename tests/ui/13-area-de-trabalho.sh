@@ -25,7 +25,22 @@ if [ -d "$DESK/Nova pasta" ]; then
 else
     echo "FALHA menu da área de trabalho → Nova pasta"; FAIL=$((FAIL + 1))
 fi
-rm -rf "$DESK"
+# Monitor externo (HEADLESS-2 em (1366, 0)): a mesa principal abre a mesa dele, sem
+# ícones e com o mesmo menu do fundo; a pasta criada lá vai para a área de trabalho.
+reset_desk
+DSTATE="$(mktemp -d)"
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 timeout 150 "$SCEN" "400 rclick 1766 300; 430 click 1816 326; 480 list" >"$DSTATE/scen.txt" 2>&1
+if grep -aq 'camada "mide-desktop@HEADLESS-2" em (1366, 0)' "$DSTATE/scen.txt"; then
+    echo "ok    área de trabalho no monitor externo"; PASS=$((PASS + 1))
+else
+    echo "FALHA área de trabalho no monitor externo"; FAIL=$((FAIL + 1))
+fi
+if [ -d "$DESK/Nova pasta" ] && ! grep -q "Nova pasta" "$DSTATE/mide/desktop-positions" 2>/dev/null; then
+    echo "ok    menu da área de trabalho no monitor externo → Nova pasta"; PASS=$((PASS + 1))
+else
+    echo "FALHA menu da área de trabalho no monitor externo → Nova pasta"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$DESK" "$DSTATE"
 
 # Arrastar ícones: muda de lugar (guardado) e, solto numa pasta, vai para dentro dela.
 DESK="$(mktemp -d)"; DSTATE="$(mktemp -d)"

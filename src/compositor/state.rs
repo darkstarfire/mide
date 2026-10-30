@@ -1225,9 +1225,15 @@ impl WlrLayerShellHandler for State {
         layer: Layer,
         namespace: String,
     ) {
+        // Sem tela pedida: a do nome depois do `@` (`mide-desktop@HDMI-A-1`, a mesa de um
+        // monitor externo, que abre antes de conhecer os `wl_output`), ou a principal.
+        let named = namespace
+            .rsplit_once('@')
+            .and_then(|(_, name)| self.space.outputs().find(|o| o.name() == name).cloned());
         let output = output
             .as_ref()
             .and_then(Output::from_resource)
+            .or(named)
             .or_else(|| self.primary_output());
         let Some(output) = output else {
             tracing::warn!("superfície de camada sem saída, ignorada");

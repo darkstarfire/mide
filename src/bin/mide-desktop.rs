@@ -127,6 +127,12 @@ struct Desktop {
     from_loader: mpsc::Receiver<(PathBuf, SystemTime, Option<Pixmap>)>,
     /// Apps que abrem arquivos (para o "Abrir com"), lidos na primeira vez.
     apps: Option<Vec<mide::apps::App>>,
+    /// Mesa de um monitor externo (`--output NOME`): sem ícones (como no macOS, eles
+    /// ficam só na tela principal), só o menu do fundo; o que ela cria vai para a pasta
+    /// da área de trabalho e aparece na principal.
+    output: Option<String>,
+    /// Na principal: as mesas dos monitores externos abertas por ela (tela, processo).
+    others: Vec<(String, std::process::Child)>,
 }
 
 thread_local! {
@@ -428,6 +434,8 @@ impl Desktop {
             to_loader,
             from_loader,
             apps: None,
+            output: None,
+            others: Vec::new(),
         };
         app.cells = cells_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_cells(&t)).unwrap_or_default();
         app.reload();
@@ -448,6 +456,9 @@ impl Desktop {
 
     /// Discos e arquivos, na ordem da grade (discos primeiro: canto de cima à direita).
     fn items(&mut self) -> Vec<Item> {
+        if self.output.is_some() {
+            return Vec::new();
+        }
         let mut out: Vec<Item> = self
             .drives
             .iter()
@@ -479,6 +490,10 @@ impl Desktop {
     }
 
     fn save_cells(&self) {
+        // Os lugares são da mesa principal: a de um monitor externo nunca grava por cima.
+        if self.output.is_some() {
+            return;
+        }
         if let Some(path) = cells_path() {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -505,6 +520,60 @@ impl Desktop {
     }
 
     /// Começa a renomear no lugar: o nome embaixo do ícone vira um campo de texto.
+    /// Na principal: uma mesa (`--output NOME`) em cada monitor externo ligado, aberta
+    /// quando ele entra e fechada quando ele sai. Elas morrem junto com esta (sinal do
+    /// pai), inclusive quando o compositor reinicia o shell.
+    fn sync_other_screens(&mut self) {
+        let Some(lines) = mide::control_client::ask_compositor("outputs") else {
+            return;
+        };
+        let wanted: Vec<String> = lines
+            .iter()
+            .filter_map(|l| mide::displays::parse_line(l))
+            .filter(|d| d.enabled && !d.primary)
+            .map(|d| d.name)
+            .collect();
+        // Espelhando, as outras telas mostram a principal: nenhuma mesa extra.
+        let wanted = if mirroring() { Vec::new() } else { wanted };
+        self.others.retain_mut(|(name, child)| {
+            let alive = matches!(child.try_wait(), Ok(None));
+            if alive && wanted.contains(name) {
+                return true;
+            }
+            if alive {
+                tracing::info!("área de trabalho: tela {name} saiu, mesa dela fechada");
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+            false
+        });
+        for name in wanted {
+            if self.others.iter().any(|(n, _)| *n == name) {
+                continue;
+            }
+            let Ok(exe) = std::env::current_exe() else {
+                return;
+            };
+            let mut command = std::process::Command::new(exe);
+            command.args(["--output", &name]);
+            // A mesa extra morre junto com esta.
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                command.pre_exec(|| {
+                    rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))?;
+                    Ok(())
+                });
+            }
+            match command.spawn() {
+                Ok(child) => {
+                    tracing::info!("área de trabalho: mesa aberta na tela {name}");
+                    self.others.push((name, child));
+                }
+                Err(err) => tracing::warn!("área de trabalho: mesa da tela {name} não abriu: {err}"),
+            }
+        }
+    }
+
     fn start_rename(&mut self, path: PathBuf) {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.selected = vec![path.clone()];
@@ -1043,13 +1112,18 @@ impl App for Desktop {
     fn view(&mut self, ui: &mut Ui) {
         // A pasta pode mudar por fora (Arquivos, terminal) e discos entram e saem:
         // confere de tempos em tempos.
-        if self.changed() || self.asked_at.is_none_or(|at| at.elapsed() > Duration::from_millis(1500)) && read_drives() != self.drives {
+        if self.changed() || self.output.is_none() && self.asked_at.is_none_or(|at| at.elapsed() > Duration::from_millis(1500)) && read_drives() != self.drives {
             self.reload();
         }
         // A área útil muda quando a dock muda de tamanho ou passa a se esconder
         // (pergunta no máximo a cada 1,5 s).
         if self.asked_at.is_none_or(|at| at.elapsed() > Duration::from_millis(1500)) {
-            self.ask_workarea();
+            // A área útil do compositor é a da tela principal; num monitor externo, a
+            // camada inteira.
+            if self.output.is_none() {
+                self.ask_workarea();
+                self.sync_other_screens();
+            }
             self.asked_at = Some(Instant::now());
         }
         // Miniaturas que ficaram prontas.
@@ -1376,9 +1450,12 @@ impl App for Desktop {
         }
         // Clique direito no vazio: o que o menu criar aparece ali.
         if bg.secondary_clicked() {
-            self.menu_point = pointer;
+            // Num monitor externo o ponto não vale na grade da principal: o novo item
+            // vai para o próximo lugar livre de lá.
+            self.menu_point = if self.output.is_some() { None } else { pointer };
         }
         let has_dir = self.dir.is_some();
+        let main_screen = self.output.is_none();
         ui.context_menu(&bg, |m| {
             let mut chosen = None;
             if has_dir {
@@ -1402,9 +1479,11 @@ impl App for Desktop {
                 if m.item(&tr!("Show in Files")) {
                     chosen = Some(Action::ShowFolder);
                 }
-                m.separator();
-                if m.item(&tr!("Clean Up")) {
-                    chosen = Some(Action::CleanUp);
+                if main_screen {
+                    m.separator();
+                    if m.item(&tr!("Clean Up")) {
+                        chosen = Some(Action::CleanUp);
+                    }
                 }
             }
             if m.item(&tr!("Change Wallpaper…")) {
@@ -1416,6 +1495,12 @@ impl App for Desktop {
         });
         if let Some((a, item)) = action {
             self.act(a, item, area, ui);
+            // Sem o ícone aqui para renomear no lugar: a pasta nova fica com o nome
+            // padrão, na tela principal.
+            if self.output.is_some() {
+                self.inline = None;
+                self.selected.clear();
+            }
             ui.request_repaint();
         }
         // Renomeando ou com uma confirmação aberta: a camada vem para a frente das
@@ -1433,12 +1518,31 @@ impl App for Desktop {
     }
 }
 
+/// As telas estão espelhadas (`[monitors] mirror` no config do mide)?
+fn mirroring() -> bool {
+    mide::settings_file::config_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|t| t.get("monitors")?.get("mirror")?.as_bool())
+        .unwrap_or(false)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-desktop", "mide_desktop=info");
     // Nomes brancos (com sombra) sobre o papel de parede.
     let theme = Theme { tile_text: [255, 255, 255, 255], ..Theme::default() };
     warm_drag_text();
-    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop("mide-desktop").accepts_files().theme(theme), Desktop::new())
+    // `--output NOME`: a mesa de um monitor externo (aberta pela mesa principal), numa
+    // camada que o compositor põe naquela tela pelo nome depois do `@`.
+    let args: Vec<String> = std::env::args().collect();
+    let output = args.iter().position(|a| a == "--output").and_then(|i| args.get(i + 1)).cloned();
+    let namespace = match &output {
+        Some(name) => format!("mide-desktop@{name}"),
+        None => "mide-desktop".to_string(),
+    };
+    let mut desktop = Desktop::new();
+    desktop.output = output;
+    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop(&namespace).accepts_files().theme(theme), desktop)
 }
 
 #[cfg(test)]

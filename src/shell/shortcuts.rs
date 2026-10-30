@@ -83,26 +83,29 @@ pub fn desktop_file(id: &str) -> Option<PathBuf> {
     None
 }
 
-/// Cria na área de trabalho o atalho do app (cópia do `.desktop`, executável: a mesa
-/// abre o app com o nome e o ícone dele, sem perguntar). Devolve o caminho do atalho;
-/// se já existe, o mesmo caminho sem mexer.
+/// Cria na área de trabalho o atalho do app (cópia do `.desktop`) já pronto para só
+/// executar: leitura e escrita para todos, executável e confiado (no registro dos
+/// programas confiáveis), para a mesa mostrar o nome e o ícone do app e abrir sem
+/// perguntar. Devolve o caminho do atalho; se já existe, acerta as permissões e a
+/// confiança dele (atalhos criados antes ficavam com o nome do arquivo).
 pub fn add_to_desktop(id: &str) -> std::io::Result<PathBuf> {
     let source = desktop_file(id).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{id}.desktop não encontrado")))?;
     let dir = crate::places::desktop_dir().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "sem pasta da área de trabalho"))?;
-    add_to_folder(&source, id, &dir)
+    add_to_folder(&source, id, &dir, &crate::programs::Dirs::current())
 }
 
-fn add_to_folder(source: &Path, id: &str, dir: &Path) -> std::io::Result<PathBuf> {
+/// Permissões do atalho: `rwxrwxrwx`.
+const SHORTCUT_MODE: u32 = 0o777;
+
+fn add_to_folder(source: &Path, id: &str, dir: &Path, dirs: &crate::programs::Dirs) -> std::io::Result<PathBuf> {
     let target = dir.join(format!("{id}.desktop"));
-    if target.exists() {
-        return Ok(target);
+    if !target.exists() {
+        fs::copy(source, &target)?;
     }
-    fs::copy(source, &target)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))?;
-    }
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&target, fs::Permissions::from_mode(SHORTCUT_MODE))?;
+    // Por último: a confiança guarda o tamanho e a data do arquivo como estão agora.
+    crate::programs::trust(dirs, &target)?;
     Ok(target)
 }
 
@@ -118,16 +121,21 @@ mod tests {
         fs::write(&source, "[Desktop Entry]\nName=Teste\nExec=true\n").unwrap();
         let mesa = dir.join("mesa");
         fs::create_dir_all(&mesa).unwrap();
-        let made = add_to_folder(&source, "teste", &mesa).unwrap();
+        let dirs = crate::programs::Dirs { data: dir.join("data"), downloads: dir.join("Downloads"), home: dir.clone() };
+        let made = add_to_folder(&source, "teste", &mesa, &dirs).unwrap();
         assert_eq!(made, mesa.join("teste.desktop"));
         assert!(fs::read_to_string(&made).unwrap().contains("Name=Teste"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(&made).unwrap().permissions().mode() & 0o777, 0o755);
-        }
-        // De novo: não mexe.
-        assert_eq!(add_to_folder(&source, "teste", &mesa).unwrap(), made);
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&made).unwrap().permissions().mode() & 0o777, 0o777);
+        // Confiado: a mesa mostra o nome e o ícone do app, sem perguntar ao abrir.
+        assert!(crate::programs::is_trusted(&dirs, &made));
+        // Atalho de antes (sem confiança, 0644): de novo acerta, sem copiar por cima.
+        fs::set_permissions(&made, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::write(&made, "[Desktop Entry]\nName=Mexido\nExec=true\n").unwrap();
+        assert_eq!(add_to_folder(&source, "teste", &mesa, &dirs).unwrap(), made);
+        assert!(fs::read_to_string(&made).unwrap().contains("Name=Mexido"));
+        assert_eq!(fs::metadata(&made).unwrap().permissions().mode() & 0o777, 0o777);
+        assert!(crate::programs::is_trusted(&dirs, &made));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
