@@ -706,3 +706,13 @@ msgstr "Tocar"
 
 msgid "Next"
 msgstr "Próxima"
+
+msgid "The login service is not responding"
+msgstr "O serviço de login não está respondendo"
+
+msgid "No session to start"
+msgstr "Nenhuma sessão para iniciar"
+
+msgctxt "window title"
+msgid "Login"
+msgstr "Login"

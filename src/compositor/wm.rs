@@ -345,6 +345,7 @@ impl State {
                 alpha_to: 1.0,
                 hide_at_end: false,
                 genie: false,
+                follow_icon: false,
                 duration: ANIMATION_DURATION,
                 start: Instant::now(),
             });
@@ -548,6 +549,7 @@ impl State {
                 alpha_to: 1.0,
                 hide_at_end: false,
                 genie: false,
+                follow_icon: false,
                 duration: ANIMATION_DURATION,
                 start: Instant::now(),
             });
@@ -633,6 +635,10 @@ impl State {
         };
         let size = window.geometry().size;
         let target = self.dock_target(&window, size);
+        let follow = self.dock_icon_for(&window).is_some();
+        // Restaurando ainda (clique rápido no ícone): volta de onde a lâmpada está, sem
+        // recomeçar do tamanho cheio.
+        let start = self.reverse_start(surface, false);
         self.minimized.push(MinimizedWindow {
             window: window.clone(),
             loc,
@@ -656,8 +662,9 @@ impl State {
             alpha_to: 0.0,
             hide_at_end: true,
             genie: self.config.effects.lamp,
+            follow_icon: follow,
             duration: if self.config.effects.lamp { GENIE_DURATION } else { ANIMATION_DURATION },
-            start: Instant::now(),
+            start,
         });
         }
         // Se a janela tinha o foco, o foco vai para a janela de cima que sobrou.
@@ -687,6 +694,9 @@ impl State {
             return;
         };
         let target = self.dock_target(&window, size);
+        let follow = self.dock_icon_for(&window).is_some();
+        // Minimizando ainda (clique rápido no ícone): a lâmpada inverte de onde está.
+        let start = self.reverse_start(&surface, true);
         self.space.map_element(window.clone(), loc, true);
         self.animations.retain(|a| a.surface != surface);
         if self.config.effects.animations {
@@ -703,8 +713,9 @@ impl State {
             alpha_to: 1.0,
             hide_at_end: false,
             genie: self.config.effects.lamp,
+            follow_icon: follow,
             duration: if self.config.effects.lamp { GENIE_DURATION } else { ANIMATION_DURATION },
-            start: Instant::now(),
+            start,
         });
         }
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
@@ -829,16 +840,61 @@ impl State {
             alpha_to: 1.0,
             hide_at_end: false,
             genie: self.config.effects.lamp,
+            follow_icon: true,
             duration: if self.config.effects.lamp { GENIE_DURATION } else { ANIMATION_DURATION },
             start: Instant::now(),
         });
+    }
+
+    /// Início da animação de minimizar (`hiding` falso) ou restaurar (`hiding`
+    /// verdadeiro: a que está em andamento minimiza) que inverte a contrária no ponto em
+    /// que ela está: a nova começa "no passado", no instante em que o desenho é o mesmo.
+    /// Sem a contrária em andamento, agora.
+    fn reverse_start(&self, surface: &WlSurface, hiding: bool) -> Instant {
+        let now = Instant::now();
+        // Só a de minimizar ou restaurar (a janela encolhida numa ponta), não a de
+        // maximizar ou encaixar.
+        let dock_like = |a: &WindowAnimation| a.zoom_to == MINIMIZE_SCALE || a.zoom_from == MINIMIZE_SCALE;
+        let Some(running) = self.animations.iter().find(|a| &a.surface == surface && a.hide_at_end == hiding && dock_like(a) && !a.finished(now)) else {
+            return now;
+        };
+        // Quanto da ida já aconteceu (0 a 1, na curva) e o ponto da volta com o mesmo
+        // desenho: a volta anda de 1 para 0 na mesma curva.
+        let shown = running.eased(now);
+        let duration = if self.config.effects.lamp { GENIE_DURATION } else { ANIMATION_DURATION };
+        let ease = |t: f32| if self.config.effects.lamp { mide::motion::ease_in_out(t) } else { mide::motion::ease_out(t) };
+        let t = inverse_ease(ease, 1.0 - shown);
+        tracing::info!("lâmpada invertida em {:.0}%", shown * 100.0);
+        now.checked_sub(duration.mul_f32(t)).unwrap_or(now)
+    }
+
+    /// A cada quadro: as animações que seguem o ícone da dock vão até onde ele está
+    /// agora (a ampliação e a dock mudando mexem nele).
+    pub(crate) fn follow_dock_icons(&mut self) {
+        let targets: Vec<(usize, smithay::utils::Rectangle<i32, Logical>)> = self
+            .animations
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.follow_icon)
+            .filter_map(|(i, a)| Some((i, self.dock_icon_for(&a.window)?)))
+            .collect();
+        for (i, icon) in targets {
+            let anim = &mut self.animations[i];
+            if anim.hide_at_end {
+                anim.to_loc = icon.loc;
+                anim.to_size = icon.size;
+            } else {
+                anim.from_loc = icon.loc;
+                anim.from_size = icon.size;
+            }
+        }
     }
 
     /// Posição e tamanho de origem da animação de minimizar: centro inferior, pequeno.
     fn dock_target(&self, window: &Window, size: Size<i32, Logical>) -> (Point<i32, Logical>, Size<i32, Logical>) {
         // Se a dock tem o ícone do app, o efeito vai até ele, onde ele estiver agora.
         if let Some(icon) = self.dock_icon_for(window) {
-            tracing::debug!("lâmpada: alvo no ícone da dock em {:?} {:?}", icon.loc, icon.size);
+            tracing::info!("lâmpada: alvo no ícone da dock em {:?} {:?}", icon.loc, icon.size);
             return (icon.loc, icon.size);
         }
         tracing::debug!("lâmpada: ícone do app não encontrado na dock, alvo no centro inferior");
@@ -1127,11 +1183,41 @@ impl State {
                 alpha_to: 1.0,
                 hide_at_end: false,
                 genie: false,
+                follow_icon: false,
                 duration: REVEAL_DURATION,
                 start: Instant::now(),
             });
         }
         self.space.map_element(window.clone(), to, false);
         self.wake();
+    }
+}
+
+/// O `t` (0 a 1) em que a curva `ease` vale `y` (as curvas do mide são crescentes).
+fn inverse_ease(ease: impl Fn(f32) -> f32, y: f32) -> f32 {
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if ease(mid) < y {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
+#[cfg(test)]
+mod reverse_tests {
+    use super::inverse_ease;
+
+    #[test]
+    fn curva_invertida_volta_ao_mesmo_ponto() {
+        for y in [0.0f32, 0.1, 0.5, 0.83, 1.0] {
+            let t = inverse_ease(mide::motion::ease_out, y);
+            assert!((mide::motion::ease_out(t) - y).abs() < 1e-3, "{y}");
+            let t = inverse_ease(mide::motion::ease_in_out, y);
+            assert!((mide::motion::ease_in_out(t) - y).abs() < 1e-3, "{y}");
+        }
     }
 }

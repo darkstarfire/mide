@@ -291,6 +291,9 @@ struct Press {
     index: usize,
     start_x: f64,
     dragged: bool,
+    /// Distância do ponteiro à esquerda do ícone ao apertar: arrastando, o ícone segue
+    /// o ponteiro mantendo esse ponto debaixo dele.
+    grab: f64,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -383,6 +386,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         zoom: None,
         zoom_extra: 0,
         zoom_slots: Vec::new(),
+        slides: HashMap::new(),
+        slide_timer: false,
         zoom_icons: HashMap::new(),
         globals,
     };
@@ -662,6 +667,11 @@ struct Dock {
     zoom_icons: HashMap<String, Option<Pixmap>>,
     /// Para pedir a escala das camadas criadas depois (ampliação, pulo, menu, dica).
     globals: GlobalList,
+    /// Ícones deslizando até o lugar novo (reordenar arrastando, como no Mac): pelo id
+    /// do app, a distância que ainda falta no começo e quando começou.
+    slides: HashMap<String, (f32, std::time::Instant)>,
+    /// O relógio das deslizadas está rodando.
+    slide_timer: bool,
 }
 
 /// Camada transparente acima da dock com os ícones ampliados (como a Ampliação do
@@ -760,10 +770,14 @@ impl Dock {
             }
         }
 
-        // Ícones, centralizados em cada posição.
+        // Ícones, centralizados em cada posição (o arrastado por último, por cima).
         let bouncing = self.bounce.as_ref().map(|b| b.app.clone());
-        for (i, app) in self.items.iter().enumerate() {
-            let x = icon_x(&self.items, i) as f32;
+        let dragged = self.press.as_ref().filter(|p| p.dragged).map(|p| p.index);
+        let mut order: Vec<usize> = (0..self.items.len()).filter(|i| Some(*i) != dragged).collect();
+        order.extend(dragged.filter(|i| *i < self.items.len()));
+        for i in order {
+            let app = &self.items[i];
+            let x = self.app_x(i);
             let y = PADDING as f32;
             // O ícone que pula é desenhado na camada do pulo, acima da dock.
             if bouncing.as_deref() == Some(app.id.as_str()) {
@@ -907,15 +921,25 @@ impl Dock {
         });
     }
 
-    /// Informa ao compositor onde está cada ícone (para o efeito lâmpada ir até ele).
+    /// Informa ao compositor onde está cada ícone agora (para o efeito lâmpada ir até
+    /// ele): com a ampliação, o ícone ampliado (maior e mais alto, em coordenadas da
+    /// dock, que cresceu junto); deslizando ou arrastado, onde está desenhado. O
+    /// compositor relê o alvo a cada quadro da lâmpada.
     fn report_icons(&mut self) {
+        let zoomed = self.zoom.is_some() && !self.zoom_slots.is_empty();
         let report = self
             .items
             .iter()
             .enumerate()
             .map(|(i, app)| {
-                let x = icon_x(&self.items, i);
-                format!("{}:{}:{}:{}:{}", app.match_ids.join(","), x, PADDING, icon_size(), icon_size())
+                let (x, y, side) = match self.zoom_slots.iter().find(|(index, ..)| zoomed && *index == i) {
+                    Some((_, left, w)) => {
+                        let bottom = (dock_height() - PADDING - BOTTOM_EXTRA) as f32;
+                        (left.round() as i32, (bottom - w).round() as i32, w.round() as i32)
+                    }
+                    None => (self.app_x(i).round() as i32, PADDING as i32, icon_size() as i32),
+                };
+                format!("{}:{}:{}:{}:{}", app.match_ids.join(","), x, y, side, side)
             })
             .collect::<Vec<_>>()
             .join(";");
@@ -1012,7 +1036,8 @@ impl Dock {
         self.resize();
     }
 
-    /// Arrasto de um ícone fixado: troca de lugar com o ícone sob o ponteiro.
+    /// Arrasto de um ícone fixado: ele segue o ponteiro e, ao passar por cima de outro,
+    /// troca de lugar; os outros deslizam para abrir espaço (como no Mac).
     fn drag_to(&mut self, x: f64) {
         let Some(press) = self.press.as_mut() else {
             return;
@@ -1027,16 +1052,102 @@ impl Dock {
             return;
         }
         let slot = (icon_size() + ICON_GAP) as f64;
-        let target = (((x - PADDING as f64 - slot) / slot).floor().max(0.0) as usize).min(pinned_count - 1);
+        // A casa sob o centro do ícone arrastado.
+        let center = x - press.grab + icon_size() as f64 / 2.0;
+        let target = (((center - PADDING as f64 - slot) / slot).floor().max(0.0) as usize).min(pinned_count - 1);
         if target != from {
+            let before = self.displayed_positions();
             let app = self.items.remove(from);
             self.items.insert(target, app);
             if let Some(press) = self.press.as_mut() {
                 press.index = target;
             }
-            let qh = self.qh.clone();
-            self.draw(&qh);
+            self.start_slides(before);
         }
+        let qh = self.qh.clone();
+        self.draw(&qh);
+    }
+
+    /// X de um app da dock agora: o arrastado segue o ponteiro (sem sair da faixa dos
+    /// fixados); os outros, na casa deles mais o que ainda falta deslizar.
+    fn app_x(&self, index: usize) -> f32 {
+        if let Some(press) = self.press.as_ref().filter(|p| p.dragged && p.index == index) {
+            let pinned = self.items.iter().filter(|a| a.pinned).count().max(1);
+            let (lo, hi) = (icon_x(&self.items, 0) as f64, icon_x(&self.items, pinned - 1) as f64);
+            return (self.pointer_x - press.grab).clamp(lo, hi) as f32;
+        }
+        let base = icon_x(&self.items, index) as f32;
+        let Some((from, start)) = self.items.get(index).and_then(|a| self.slides.get(&a.id)) else {
+            return base;
+        };
+        let t = mide::motion::progress(*start, mide::motion::WINDOW_MOVE);
+        base + from * (1.0 - mide::motion::ease_out(t))
+    }
+
+    /// Onde cada app está desenhado agora, pelo id.
+    fn displayed_positions(&self) -> Vec<(String, f32)> {
+        (0..self.items.len()).map(|i| (self.items[i].id.clone(), self.app_x(i))).collect()
+    }
+
+    /// Depois de a ordem mudar: quem trocou de casa desliza de onde estava até a casa
+    /// nova (o arrastado não: ele segue o ponteiro).
+    fn start_slides(&mut self, before: Vec<(String, f32)>) {
+        if !mide::settings_file::effect("animations") {
+            self.slides.clear();
+            return;
+        }
+        let now = std::time::Instant::now();
+        let dragged = self.press.as_ref().filter(|p| p.dragged).map(|p| p.index);
+        for (i, app) in self.items.iter().enumerate() {
+            if Some(i) == dragged {
+                continue;
+            }
+            let Some((_, old)) = before.iter().find(|(id, _)| *id == app.id) else {
+                continue;
+            };
+            let offset = old - icon_x(&self.items, i) as f32;
+            if offset.abs() >= 0.5 {
+                self.slides.insert(app.id.clone(), (offset, now));
+            }
+        }
+        self.run_slides();
+    }
+
+    /// Ícone solto depois de arrastar: desliza do ponteiro até a casa dele.
+    fn settle_dragged(&mut self, index: usize, grab: f64) {
+        let Some(app) = self.items.get(index) else {
+            return;
+        };
+        let from = (self.pointer_x - grab) as f32 - icon_x(&self.items, index) as f32;
+        if mide::settings_file::effect("animations") && from.abs() >= 0.5 {
+            self.slides.insert(app.id.clone(), (from, std::time::Instant::now()));
+            self.run_slides();
+        }
+    }
+
+    /// Redesenha a cada quadro enquanto algum ícone desliza.
+    fn run_slides(&mut self) {
+        if self.slide_timer || self.slides.is_empty() {
+            return;
+        }
+        let Some(handle) = self.loop_handle.clone() else {
+            return;
+        };
+        self.slide_timer = true;
+        let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
+            dock.slides.retain(|_, (_, start)| start.elapsed() < mide::motion::WINDOW_MOVE);
+            let qh = dock.qh.clone();
+            dock.draw(&qh);
+            if dock.bounce.is_some() {
+                dock.paint_bounce();
+            }
+            if dock.slides.is_empty() {
+                dock.slide_timer = false;
+                TimeoutAction::Drop
+            } else {
+                TimeoutAction::ToDuration(Duration::from_millis(16))
+            }
+        });
     }
 
     /// Índice do ícone sob a coordenada `x`, se houver.
@@ -1129,8 +1240,17 @@ impl Dock {
 }
 
 
-/// Altura extra da camada do pulo acima da dock (o ícone sobe até aqui).
-const BOUNCE_ROOM: u32 = 40;
+/// Altura do pulo (o ícone no tamanho normal sobe até aqui).
+const BOUNCE_HEIGHT: u32 = 40;
+/// Altura extra da camada do pulo acima da dock: o pulo inteiro e uma folga para a
+/// borda suavizada do ícone (sem ela, o topo do ícone era cortado no alto do pulo).
+const BOUNCE_ROOM: u32 = BOUNCE_HEIGHT + 8;
+
+/// Espaço acima da ampliação para o ícone ampliado pular inteiro (ele sobe na
+/// proporção do tamanho dele).
+fn zoom_bounce_room(max: u32) -> u32 {
+    (BOUNCE_HEIGHT as f32 * max as f32 / icon_size() as f32).ceil() as u32 + 8
+}
 /// Duração de um pulo (sobe e desce) e o tempo máximo pulando.
 const BOUNCE_PERIOD: f32 = 0.62;
 const BOUNCE_MAX: Duration = Duration::from_secs(10);
@@ -1160,6 +1280,10 @@ struct Bounce {
     layer: LayerSurface,
     scale: SurfaceScale,
     pool: SlotPool,
+    /// Tamanho pedido à camada: a largura acompanha a da dock (centradas na mesma
+    /// borda, as casas coincidem; com a largura velha, o ícone pulava fora do lugar
+    /// quando a dock crescia ou encolhia).
+    size: (u32, u32),
     app: String,
     start: std::time::Instant,
     last_check: std::time::Instant,
@@ -1194,7 +1318,7 @@ fn magnify_scale(distance: f32, reach: f32, max_scale: f32) -> f32 {
 fn bounce_height(t: f32) -> f32 {
     let p = (t / BOUNCE_PERIOD).fract();
     let k = (t / BOUNCE_PERIOD).floor();
-    let amplitude = BOUNCE_ROOM as f32 * if k < 1.0 { 1.0 } else { 0.8 };
+    let amplitude = BOUNCE_HEIGHT as f32 * if k < 1.0 { 1.0 } else { 0.8 };
     amplitude * 4.0 * p * (1.0 - p)
 }
 
@@ -1248,7 +1372,7 @@ impl Dock {
         if self.zoom.is_none() {
             let extra = max - icon_size();
             // Em cima, espaço para o ícone ampliado pular (app abrindo).
-            let size = (self.width + 4 * extra, dock_height() + extra + BOUNCE_ROOM);
+            let size = (self.width + 4 * extra, dock_height() + extra + zoom_bounce_room(max));
             let surface = self.compositor.create_surface(&self.qh);
             let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
             let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-zoom"), None);
@@ -1418,6 +1542,7 @@ impl Dock {
             zoom.scale.set_destination(size.0, size.1);
             zoom.layer.commit();
         }
+        self.report_icons();
     }
 
     /// Começa o pulo do ícone (com as animações ligadas e o app ainda sem janela).
@@ -1448,7 +1573,8 @@ impl Dock {
         };
         let now = std::time::Instant::now();
         tracing::info!("dock: {} pulando até abrir", app.name);
-        self.bounce = Some(Bounce { layer, scale, pool, app: app.id.clone(), start: now, last_check: now });
+        let size = (self.width, dock_height() + BOUNCE_ROOM);
+        self.bounce = Some(Bounce { layer, scale, pool, size, app: app.id.clone(), start: now, last_check: now });
         if let Some(handle) = self.loop_handle.clone() {
             let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
                 if dock.step_bounce() { TimeoutAction::ToDuration(Duration::from_millis(16)) } else { TimeoutAction::Drop }
@@ -1499,11 +1625,19 @@ impl Dock {
             return;
         };
         let (w, h) = (self.width, dock_height() + BOUNCE_ROOM);
+        if bounce.size != (w, h) {
+            bounce.size = (w, h);
+            bounce.layer.set_size(w, h);
+        }
         let Some(mut pixmap) = canvas(w, h) else {
             return;
         };
         let lift = bounce_height(bounce.start.elapsed().as_secs_f32());
-        let x = icon_x(&self.items, index) as f32;
+        // Na casa onde o ícone está agora (também deslizando).
+        let x = self.app_x(index);
+        let Some(bounce) = self.bounce.as_mut() else {
+            return;
+        };
         let y = BOUNCE_ROOM as f32 + PADDING as f32 - lift;
         if let (false, Some(icon)) = (zooming, &self.items[index].icon) {
             pixmap.draw_pixmap(px(x), px(y), icon.as_ref(), &Default::default(), Transform::identity(), None);
@@ -2820,7 +2954,14 @@ impl PointerHandler for Dock {
                         index,
                         start_x: event.position.0,
                         dragged: false,
+                        grab: 0.0,
                     });
+                    if let Some(index) = self.press.as_ref().map(|p| p.index).filter(|i| *i < self.items.len()) {
+                        let grab = event.position.0 - self.app_x(index) as f64;
+                        if let Some(press) = self.press.as_mut() {
+                            press.grab = grab;
+                        }
+                    }
                     // O ícone apertado escurece (na dock ou na ampliação).
                     let qh = self.qh.clone();
                     self.draw(&qh);
@@ -2836,6 +2977,7 @@ impl PointerHandler for Dock {
                             ask_compositor("launcher close");
                         }
                         if press.dragged {
+                            self.settle_dragged(press.index, press.grab);
                             save_pinned(&self.pinned_order());
                         } else if press.index == LAUNCHER {
                             self.menu = None;

@@ -347,6 +347,7 @@ impl State {
                 alpha_to: 1.0,
                 hide_at_end: false,
                 genie: false,
+                follow_icon: false,
                 duration: ANIMATION_DURATION,
                 start: Instant::now(),
             });
@@ -447,6 +448,7 @@ impl State {
                 alpha_to: 1.0,
                 hide_at_end: false,
                 genie: false,
+                follow_icon: false,
                 duration: ANIMATION_DURATION,
                 start: Instant::now(),
             });

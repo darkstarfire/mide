@@ -252,6 +252,7 @@ fn show(state: &mut State, update: Update) {
         }
     }
     tracing::info!("osd: {}", reading.describe());
+    remember(update.seq, reading);
     // Parado, o compositor não desenha: o relógio acorda o laço para o aviso sair.
     let timer = Timer::from_duration(HOLD + Duration::from_millis(5));
     if let Err(err) = state.loop_handle.insert_source(timer, |_, _, state| {
@@ -261,6 +262,37 @@ fn show(state: &mut State, update: Update) {
         tracing::warn!("osd: relógio indisponível: {err}");
     }
     state.wake();
+}
+
+/// Último volume (nível e mudo) e brilho mostrados pelo aviso, com o número do
+/// aperto: a barra pergunta (`launcher state`, a cada 50 ms) e acompanha na hora, sem
+/// esperar a leitura dela, que é lenta (a cada 2 s, junto com rede e Bluetooth).
+type Levels = (Option<(u64, f32, bool)>, Option<(u64, f32)>);
+static LEVELS: std::sync::Mutex<Levels> = std::sync::Mutex::new((None, None));
+
+fn remember(seq: u64, reading: Reading) {
+    if let Ok(mut levels) = LEVELS.lock() {
+        match reading.kind {
+            Kind::Volume => levels.0 = Some((seq, reading.level, reading.muted)),
+            Kind::Brightness => levels.1 = Some((seq, reading.level)),
+            Kind::Mic => {}
+        }
+    }
+}
+
+/// Linhas para a barra: `volume <aperto> <nível> <mudo>` e `brightness <aperto> <nível>`.
+pub fn levels_for_bar() -> String {
+    let Ok(levels) = LEVELS.lock() else {
+        return String::new();
+    };
+    let mut out = String::new();
+    if let Some((seq, level, muted)) = levels.0 {
+        out.push_str(&format!("volume {seq} {level:.4} {}\n", u8::from(muted)));
+    }
+    if let Some((seq, level)) = levels.1 {
+        out.push_str(&format!("brightness {seq} {level:.4}\n"));
+    }
+    out
 }
 
 /// Tira o aviso que já terminou de sair (chamado a cada quadro).

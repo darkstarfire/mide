@@ -417,6 +417,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         game_paused: false,
         game_resumed: false,
         tone_k: if wallpaper_top_dark() { 1.0 } else { 0.0 },
+        shown_volume: None,
+        shown_brightness: None,
+        levels_seen: (None, None),
+        levels_primed: false,
         clock: String::new(),
         items: Vec::new(),
         // Com "Mostrar os menus dos apps na barra superior" desligado, a barra nem toma o
@@ -567,6 +571,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             let animating = bar.step_launcher_fade();
             let animating = bar.step_tone() || animating;
+            let animating = bar.step_levels() || animating;
             TimeoutAction::ToDuration(Duration::from_millis(if animating { 16 } else { 50 }))
         })
         .map_err(|e| e.to_string())?;
@@ -1003,6 +1008,14 @@ struct Bar {
     /// Transição do texto da barra sem fundo: 0 = texto escuro (fundo claro), 1 = texto
     /// branco (fundo escuro).
     tone_k: f32,
+    /// Volume e brilho mostrados nos deslizantes: seguem os de `status` em ~200 ms
+    /// (`CONTROL_SLIDE`), para a barrinha deslizar até o valor novo de uma tecla.
+    shown_volume: Option<f32>,
+    shown_brightness: Option<f32>,
+    /// Último aperto de volume e de brilho visto no compositor (`launcher state`), e
+    /// se a primeira resposta já veio (ela só é guardada: pode ser de antes da barra).
+    levels_seen: (Option<u64>, Option<u64>),
+    levels_primed: bool,
     clock: String,
     /// Quais itens de `BAR_ITEMS` estão à mostra (para redesenhar quando mudam).
     items: Vec<bool>,
@@ -1131,6 +1144,75 @@ impl Bar {
         (self.tone_k - target).abs() >= f32::EPSILON
     }
 
+    /// Teclas de volume e brilho: o compositor manda o valor que o aviso mostrou
+    /// (`volume <aperto> <nível> <mudo>`, `brightness <aperto> <nível>`). Um aperto
+    /// novo vale na hora (a leitura da barra, junto com rede e Bluetooth, demora até
+    /// 2 s). A primeira resposta só é guardada: pode ser de antes de a barra abrir.
+    fn follow_key_levels(&mut self, reply: &[String]) {
+        let primed = std::mem::replace(&mut self.levels_primed, true);
+        let dragging = self.menu.as_ref().map_or((false, false), |m| (m.dragging_volume, m.dragging_brightness));
+        let dragging = (dragging.0 || !primed, dragging.1 || !primed);
+        let mut changed = false;
+        for line in reply {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words.as_slice() {
+                ["volume", seq, level, muted] => {
+                    let (Ok(seq), Ok(level)) = (seq.parse::<u64>(), level.parse::<f32>()) else { continue };
+                    if self.levels_seen.0.replace(seq) != Some(seq) && !dragging.0 {
+                        self.status.volume = Some((level, *muted == "1"));
+                        tracing::info!("barra: volume da tecla {:.0}%{}", level * 100.0, if *muted == "1" { " (mudo)" } else { "" });
+                        changed = true;
+                    }
+                }
+                ["brightness", seq, level] => {
+                    let (Ok(seq), Ok(level)) = (seq.parse::<u64>(), level.parse::<f32>()) else { continue };
+                    if self.levels_seen.1.replace(seq) != Some(seq) && !dragging.1 {
+                        self.status.brightness = Some(level);
+                        tracing::info!("barra: brilho da tecla {:.0}%", level * 100.0);
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if changed {
+            self.draw_bar();
+            if self.menu.as_ref().is_some_and(|m| m.id.custom()) {
+                self.draw_menu();
+            }
+        }
+    }
+
+    /// Leva os valores mostrados nos deslizantes até os de `status`. Arrastando, ou com
+    /// as transições desligadas, vão direto. Devolve se ainda está andando.
+    fn step_levels(&mut self) -> bool {
+        let volume = self.status.volume.map(|(v, muted)| if muted { 0.0 } else { v.clamp(0.0, 1.0) });
+        let brightness = self.status.brightness.map(|b| b.clamp(0.0, 1.0));
+        let dragging = self.menu.as_ref().map_or((false, false), |m| (m.dragging_volume, m.dragging_brightness));
+        let smooth = mide::settings_file::effect("transitions");
+        // Por quadro de 16 ms: em ~200 ms (`CONTROL_SLIDE`) falta menos de 5%.
+        let k = 1.0 - (-3.0 * 16.0 / mide::motion::CONTROL_SLIDE.as_millis() as f32).exp();
+        let chase = |shown: &mut Option<f32>, target: Option<f32>, snap: bool| -> bool {
+            match (shown.as_mut(), target) {
+                (Some(s), Some(t)) if !snap && (*s - t).abs() > 0.002 => {
+                    *s += (t - *s) * k;
+                    true
+                }
+                _ => {
+                    *shown = target;
+                    false
+                }
+            }
+        };
+        let moving = chase(&mut self.shown_volume, volume, dragging.0 || !smooth);
+        let moving = chase(&mut self.shown_brightness, brightness, dragging.1 || !smooth) || moving;
+        let open = self.menu.as_ref().is_some_and(|m| m.id.custom());
+        if moving && open {
+            self.draw_menu();
+        }
+        moving && open
+    }
+
     fn refresh_launcher(&mut self) {
         let reply = ask_compositor("launcher state").unwrap_or_default();
         let open = reply.first().is_some_and(|l| l == "open");
@@ -1141,6 +1223,7 @@ impl Bar {
             tracing::info!("barra: fundo atrás {}", if tone == Some(true) { "escuro (texto branco)" } else { "claro (texto escuro)" });
             self.tone_dark = tone;
         }
+        self.follow_key_levels(&reply);
         let paused = reply.iter().any(|l| l == "game paused");
         if paused != self.game_paused {
             self.game_paused = paused;
@@ -2639,7 +2722,7 @@ impl Bar {
         draw_speaker_icon(p, 24.0, 58.0, Some((volume, muted)), pal().body);
         let (tx, tw) = (44.0, pw - 64.0);
         fill_rounded(p, tx, 54.0, tw, 8.0, 4.0, pal().ink(30));
-        let level = if muted { 0.0 } else { volume.clamp(0.0, 1.0) };
+        let level = self.shown_volume.unwrap_or(if muted { 0.0 } else { volume.clamp(0.0, 1.0) });
         fill_rounded(p, tx, 54.0, tw * level, 8.0, 4.0, pal().accent_color());
         let kx = tx + tw * level;
         if let Some(knob) = PathBuilder::from_circle(kx, 58.0, 9.0) {
@@ -2995,11 +3078,13 @@ impl Bar {
             regions.push(((tx - 8.0, ty - 3.0, tw + 16.0, th + 6.0), action));
         };
         if let Some(level) = self.status.brightness {
+            let level = self.shown_brightness.unwrap_or(level);
             slider(self, p, y, &tr!("Display"), level, PanelAction::BrightnessTrack);
             y += 60.0 + gap;
         }
         if let Some((volume, muted)) = self.status.volume {
-            slider(self, p, y, &tr!("Sound"), if muted { 0.0 } else { volume.clamp(0.0, 1.0) }, PanelAction::VolumeTrack);
+            let level = self.shown_volume.unwrap_or(if muted { 0.0 } else { volume.clamp(0.0, 1.0) });
+            slider(self, p, y, &tr!("Sound"), level, PanelAction::VolumeTrack);
             y += 60.0 + gap;
         }
         Self::panel_separator(p, pw, y - 6.0);

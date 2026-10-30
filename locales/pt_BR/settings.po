@@ -931,6 +931,9 @@ msgstr "Janela na metade direita"
 msgid "Show desktop"
 msgstr "Mostrar a mesa"
 
+msgid "Show all windows"
+msgstr "Mostrar todas as janelas"
+
 msgid "Lock screen"
 msgstr "Bloquear a tela"
 

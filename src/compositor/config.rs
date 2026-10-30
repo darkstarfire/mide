@@ -43,6 +43,8 @@ pub enum Action {
     SwitchWindowsBack,
     /// Minimiza todas as janelas (mostra a área de trabalho).
     ShowDesktop,
+    /// Visão de todas as janelas (como o Mission Control).
+    Overview,
     /// Bloqueia a tela.
     LockScreen,
     /// Teclas no estilo Mac num terminal: ⌘+letra vira Ctrl+Shift+letra (⌘C copia e ⌘V
@@ -502,6 +504,7 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     ("ctrl+super+f", "toggle_fullscreen"),
     ("alt+f4", "close_window"),
     ("super+d", "show_desktop"),
+    ("super+w", "overview"),
     ("super+a", "toggle_launcher"),
     ("super+l", "lock_screen"),
     // Bloquear como no Mac (Ctrl+⌘+Q; no estilo Mac, o ⌘ é o Alt).
@@ -733,6 +736,7 @@ fn parse_action(action: &str) -> Result<Action, Box<dyn Error>> {
         ("switch_windows", Action::SwitchWindows),
         ("switch_windows_back", Action::SwitchWindowsBack),
         ("show_desktop", Action::ShowDesktop),
+        ("overview", Action::Overview),
         ("lock_screen", Action::LockScreen),
     ];
     if let Some((_, a)) = simple.into_iter().find(|(name, _)| *name == action) {
@@ -767,6 +771,7 @@ impl fmt::Display for Action {
             Action::SwitchWindows => write!(f, "switch_windows"),
             Action::SwitchWindowsBack => write!(f, "switch_windows_back"),
             Action::ShowDesktop => write!(f, "show_desktop"),
+            Action::Overview => write!(f, "overview"),
             Action::LockScreen => write!(f, "lock_screen"),
             Action::SwitchVt(n) => write!(f, "switch_vt:{n}"),
             Action::PowerButton => write!(f, "power_button"),

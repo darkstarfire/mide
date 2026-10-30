@@ -569,3 +569,7 @@
 - **Fontes (2026-10-29):** nunca usar `FontSystem::new()` + `Family::SansSerif` direto para a interface: o padrão do cosmic-text é "Open Sans" e a reserva muda de máquina para máquina. Usar `mide::ui::text::font_system()`. As fontes do Writer (documento) são outra coisa.
 
 - **Cursor no DRM (2026-10-29):** o compositor de teste desenha o cursor na cena; o plano de cursor da placa (`backend_udev`, `Cursors::plan`) só roda na sessão de verdade. Mudança de cursor precisa ser pensada nos dois caminhos; o plano reenvia a imagem só quando o nome muda, então o nome tem de carregar tudo o que muda a imagem.
+
+- **Tela de login (C5, 2026-10-29):** o greeter reaproveita o protocolo de bloqueio: no modo de login, `lock::request` abre o `mide-login` (e não o `mide-lock`) e o `unlock` encerra o compositor. Nos testes, o compositor sai quando a sessão começa, então o roteiro nunca diz "concluído": usar `SCENARIO_WAIT`. Socket do greetd falso em `/run/user/<uid>` (caminho de socket Unix longo demais no scratchpad falha). Com a tela parada o compositor quase não redesenha: peça o quadro cedo (300) com espera longa. `MIDE_LOGIN_TEST_USERS` só vale em compilação de desenvolvimento.
+
+- **Seção 29 sob carga (2026-10-30):** a verificação "captura de tela: o aviso não sai na imagem" falha às vezes só na bateria inteira (6 seções em paralelo) e passa sozinha; tratar como intermitente e rodar a seção de novo antes de investigar.

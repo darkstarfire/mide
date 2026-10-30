@@ -70,3 +70,12 @@ else
     echo "FALHA prévia sob o ponteiro: a janela dela aparece por cima (antes $BEFORE, depois $AFTER)"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$PREV"
+# Lâmpada que inverte: clicar no ícone de novo no meio de minimizar traz a janela de
+# volta de onde a lâmpada está (sem recomeçar).
+check "lâmpada: clique no meio de minimizar inverte" "lâmpada invertida em [0-9]+%" "400 click 611 728; 415 click 611 728; 480 list" "$TERMINAL"
+# Com a ampliação ligada, o alvo da lâmpada é o ícone ampliado (maior que os 40 do
+# tamanho normal), onde ele está no momento.
+LAMPCFG="$(mktemp -d)"; mkdir -p "$LAMPCFG/mide"
+printf '[dock]\nmagnification = true\n' > "$LAMPCFG/mide/config.toml"
+XDG_CONFIG_HOME="$LAMPCFG" check "lâmpada: com a ampliação, o alvo é o ícone ampliado" "alvo no ícone da dock em .* w: ([5-9][0-9]|1[0-9][0-9]), h:" "380 move 600 728; 390 move 611 728; 420 click 611 728; 480 list" "$TERMINAL"
+rm -rf "$LAMPCFG"

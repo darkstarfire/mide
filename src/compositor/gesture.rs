@@ -8,6 +8,10 @@
 //!   tela cheia da tela sob o ponteiro, na ordem em que entraram em tela cheia, com a
 //!   janela chegando de lado. Jogos ficam de fora: não entram na lista e, com um jogo
 //!   em tela cheia em foco, os gestos de três dedos não fazem nada.
+//!
+//! Com quatro dedos (`overview`): para cima, a visão de todas as janelas entra
+//! acompanhando os dedos; para baixo, sai; para os lados, a próxima/anterior janela
+//! comum da tela vem para a frente.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -36,6 +40,10 @@ enum Axis {
     /// Launcher acompanhando os dedos; `from` é onde começou (0 fechado, 1 aberto).
     Launcher { from: f32 },
     Sideways,
+    /// Quatro dedos: a visão das janelas acompanhando (0 fechada, 1 aberta).
+    Overview { from: f32 },
+    /// Quatro dedos para os lados: troca a janela em foco.
+    Cycle,
     /// Gesto que não faz nada (outra direção, jogo em foco, tela bloqueada).
     Ignored,
 }
@@ -43,6 +51,7 @@ enum Axis {
 /// Gesto de três dedos em andamento.
 #[derive(Debug, Clone, Copy)]
 pub struct Swipe {
+    fingers: u32,
     axis: Axis,
     dx: f64,
     dy: f64,
@@ -51,14 +60,14 @@ pub struct Swipe {
 /// Começo de um deslizar com `fingers` dedos.
 pub fn begin(state: &mut State, fingers: u32) {
     state.swipe = None;
-    if fingers != 3 {
+    if fingers != 3 && fingers != 4 {
         return;
     }
     let axis = if state.lock.locked || focused_game(state) { Axis::Ignored } else { Axis::Undecided };
     if axis == Axis::Ignored {
-        tracing::info!("gesto de três dedos ignorado (jogo em tela cheia ou tela bloqueada)");
+        tracing::info!("gesto: {fingers} dedos ignorados (jogo em tela cheia ou tela bloqueada)");
     }
-    state.swipe = Some(Swipe { axis, dx: 0.0, dy: 0.0 });
+    state.swipe = Some(Swipe { fingers, axis, dx: 0.0, dy: 0.0 });
 }
 
 /// Os dedos andaram (`dx`, `dy`), em unidades do touchpad.
@@ -68,6 +77,9 @@ pub fn update(state: &mut State, dx: f64, dy: f64) {
     };
     swipe.dx += dx;
     swipe.dy += dy;
+    if swipe.fingers == 4 && swipe.axis == Axis::Undecided && swipe.dx.hypot(swipe.dy) >= DECIDE {
+        swipe.axis = four_fingers(state, swipe.dx, swipe.dy);
+    }
     if swipe.axis == Axis::Undecided && swipe.dx.hypot(swipe.dy) >= DECIDE {
         swipe.axis = if swipe.dx.abs() > swipe.dy.abs() {
             Axis::Sideways
@@ -94,6 +106,9 @@ pub fn update(state: &mut State, dx: f64, dy: f64) {
             }
         };
     }
+    if let Axis::Overview { from } = swipe.axis {
+        crate::overview::drag(state, (from as f64 - swipe.dy / LAUNCHER_TRAVEL) as f32);
+    }
     if let Axis::Launcher { from } = swipe.axis {
         let p = (from as f64 - swipe.dy / LAUNCHER_TRAVEL).clamp(0.0, 1.0) as f32;
         state.launcher_drag = Some(p);
@@ -119,6 +134,21 @@ pub fn end(state: &mut State, cancelled: bool) {
             };
             settle_launcher(state, p, open);
         }
+        Axis::Overview { from } => {
+            let p = state.overview.as_ref().map_or(from, |o| o.progress());
+            let open = if cancelled {
+                from > 0.5
+            } else if from < 0.5 {
+                p >= OPEN_AT
+            } else {
+                p > 1.0 - CLOSE_AT
+            };
+            crate::overview::settle(state, open);
+        }
+        Axis::Cycle if !cancelled && swipe.dx.abs() >= SWITCH => {
+            // Dedos para a esquerda: a próxima (a de baixo da de cima), como os lados dos três.
+            crate::overview::cycle(state, if swipe.dx < 0.0 { 1 } else { -1 });
+        }
         Axis::Sideways if !cancelled && swipe.dx.abs() >= SWITCH => {
             // Dedos para a esquerda: a próxima (à direita), como os espaços do Mac.
             switch(state, if swipe.dx < 0.0 { 1 } else { -1 });
@@ -126,6 +156,32 @@ pub fn end(state: &mut State, cancelled: bool) {
         _ => {}
     }
     state.wake();
+}
+
+/// Direção dos quatro dedos: para os lados troca a janela; para cima abre a visão
+/// (fechada) e para baixo fecha (aberta).
+fn four_fingers(state: &mut State, dx: f64, dy: f64) -> Axis {
+    if dx.abs() > dy.abs() {
+        return Axis::Cycle;
+    }
+    let open = state.overview.as_ref().is_some_and(|o| o.anim.is_none_or(|(_, _, to)| to > 0.5));
+    match (dy < 0.0, open) {
+        (true, false) => {
+            let Some(output) = state.output_at(state.pointer_location) else {
+                return Axis::Ignored;
+            };
+            tracing::info!("gesto: visão das janelas entrando");
+            crate::overview::open(state, &output, Some(0.0));
+            Axis::Overview { from: 0.0 }
+        }
+        (false, true) => {
+            tracing::info!("gesto: visão das janelas saindo");
+            let p = state.overview.as_ref().map_or(1.0, |o| o.progress());
+            crate::overview::drag(state, p);
+            Axis::Overview { from: p }
+        }
+        _ => Axis::Ignored,
+    }
 }
 
 /// Termina o launcher de onde os dedos o deixaram: abre ou fecha.
@@ -258,6 +314,7 @@ fn switch(state: &mut State, dir: i32) {
             alpha_to: 1.0,
             hide_at_end: false,
             genie: false,
+            follow_icon: false,
             duration: ANIMATION_DURATION,
             start: Instant::now(),
         });

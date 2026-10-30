@@ -1,0 +1,168 @@
+#!/bin/bash
+# Instala (ou remove, com --uninstall) a tela de login do mide (C5): o greetd com o
+# greeter do mide (mide-login), no lugar do gerenciador de login atual (GDM, LightDM,
+# SDDM...). Rode com sudo, de dentro do projeto, depois de compilar (cargo build
+# --release ou data/mide-update):
+#
+#   sudo data/mide-login-install            # instala
+#   sudo data/mide-login-install --uninstall  # volta ao gerenciador de antes
+#
+# Nada da senha passa pelo mide: quem confere é o greetd, pelo PAM do sistema.
+set -euo pipefail
+
+LIB=/usr/local/lib/mide-login
+FONTS=/usr/local/share/mide/fonts
+CONF=/etc/mide/login
+STATE=/var/lib/mide-login
+GREETD_CONF=/etc/greetd/config.toml
+
+passo() { printf '\n==> %s\n' "$*"; }
+falha() { printf 'erro: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || falha "rode com sudo: sudo $0 ${1:-}"
+cd "$(dirname "$(readlink -f "$0")")/.."
+# Quem chamou o sudo: a configuração (telas, escala, teclado, papel de parede) vem dele.
+DONO="${SUDO_USER:-}"
+DONO_HOME="$( [ -n "$DONO" ] && getent passwd "$DONO" | cut -d: -f6 || true)"
+
+# Usuário que roda o greeter: o do greetd instalado (Debian: _greetd; Fedora e Arch:
+# greeter), ou o que já está no config.toml.
+usuario_greeter() {
+    if [ -f "$GREETD_CONF" ] && grep -qE '^\s*user\s*=' "$GREETD_CONF"; then
+        sed -nE 's/^\s*user\s*=\s*"([^"]+)".*/\1/p' "$GREETD_CONF" | head -1
+        return
+    fi
+    for u in _greetd greetd greeter; do
+        getent passwd "$u" >/dev/null && { echo "$u"; return; }
+    done
+    echo greeter
+}
+
+# O gerenciador de login atual (systemd: o display-manager.service).
+gerenciador_atual() {
+    local alvo
+    alvo="$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null || true)"
+    [ -n "$alvo" ] && basename "$alvo" .service
+}
+
+desinstalar() {
+    passo "Voltando ao gerenciador de login de antes"
+    local antes=""
+    [ -f "$STATE/gerenciador-anterior" ] && antes="$(cat "$STATE/gerenciador-anterior")"
+    if command -v systemctl >/dev/null; then
+        systemctl disable greetd.service 2>/dev/null || true
+        if [ -n "$antes" ] && [ "$antes" != greetd ]; then
+            systemctl enable --force "$antes.service"
+            echo "   $antes volta a ser o gerenciador de login (vale no próximo boot)."
+        else
+            echo "   aviso: não sei qual era o gerenciador de antes; ative o seu com: sudo systemctl enable --force gdm (ou lightdm, sddm)"
+        fi
+    fi
+    passo "Restaurando a configuração do greetd"
+    if [ -f "$STATE/config.toml.antes" ]; then
+        cp -a "$STATE/config.toml.antes" "$GREETD_CONF"
+        echo "   $GREETD_CONF restaurado."
+    fi
+    passo "Apagando os arquivos da tela de login do mide"
+    rm -rf "$LIB" "$CONF" "$FONTS"
+    rmdir /usr/local/share/mide 2>/dev/null || true
+    rm -rf "$STATE"
+    echo "   pronto. O pacote greetd continua instalado (remova pelo gerenciador de pacotes se quiser)."
+    exit 0
+}
+
+[ "${1:-}" = "--uninstall" ] && desinstalar
+[ -n "${1:-}" ] && falha "opção desconhecida: $1 (use --uninstall para remover)"
+
+BIN=""
+for d in target/release target/debug; do
+    [ -x "$d/mide" ] && [ -x "$d/mide-login" ] && { BIN="$d"; break; }
+done
+[ -n "$BIN" ] || falha "compile antes: cargo build --release (faltam target/release/mide e mide-login)"
+
+passo "1/6 greetd (o serviço de login que confere a senha pelo PAM)"
+if command -v greetd >/dev/null; then
+    echo "   já instalado."
+elif command -v apt-get >/dev/null; then
+    apt-get install -y greetd
+elif command -v dnf >/dev/null; then
+    dnf install -y greetd
+elif command -v pacman >/dev/null; then
+    pacman -S --needed --noconfirm greetd
+else
+    falha "instale o pacote greetd pelo gerenciador de pacotes da sua distribuição e rode de novo"
+fi
+GREETER="$(usuario_greeter)"
+getent passwd "$GREETER" >/dev/null || falha "o usuário do greeter ($GREETER) não existe; confira o pacote greetd"
+echo "   o greeter roda como o usuário '$GREETER'."
+
+passo "2/6 Programas da tela de login em $LIB"
+# Uma cópia própria: o usuário do greeter não lê a pasta pessoal, e o login continua
+# funcionando enquanto o projeto é recompilado.
+install -d -m755 "$LIB"
+install -m755 "$BIN/mide" "$BIN/mide-login" "$LIB/"
+echo "   copiados de $BIN (rode este script de novo depois de atualizar o mide)."
+
+passo "3/6 Fonte da interface (Noto Sans) em $FONTS"
+install -d -m755 "$FONTS"
+install -m644 data/fonts/*.ttf data/fonts/OFL.txt "$FONTS/"
+
+passo "4/6 Telas, escala, teclado e papel de parede de ${DONO:-ninguém} em $CONF"
+install -d -m755 "$CONF/mide"
+origem="${DONO_HOME:+$DONO_HOME/.config/mide/config.toml}"
+if [ -n "$origem" ] && [ -f "$origem" ]; then
+    install -m644 "$origem" "$CONF/mide/config.toml"
+    # O papel de parede vai junto (o greeter não lê a pasta pessoal).
+    papel="$(sed -nE 's/^\s*wallpaper\s*=\s*"([^"]+)".*/\1/p' "$origem" | head -1)"
+    if [ -n "$papel" ] && [ -f "$papel" ]; then
+        ext="${papel##*.}"
+        install -m644 "$papel" "$CONF/wallpaper.$ext"
+        sed -i -E "s|^(\s*wallpaper\s*=\s*)\"[^\"]*\"|\1\"$CONF/wallpaper.$ext\"|" "$CONF/mide/config.toml"
+        echo "   papel de parede copiado."
+    fi
+    echo "   configuração copiada (a tela de login abre na mesma escala e no mesmo layout)."
+else
+    : > "$CONF/mide/config.toml"
+    echo "   sem configuração do mide para copiar: a tela de login usa os padrões."
+fi
+install -d -m755 -o "$GREETER" "$STATE"
+
+passo "5/6 Configuração do greetd ($GREETD_CONF)"
+install -d -m755 /etc/greetd
+vt=7
+if [ -f "$GREETD_CONF" ]; then
+    [ -f "$STATE/config.toml.antes" ] || cp -a "$GREETD_CONF" "$STATE/config.toml.antes"
+    vt_antes="$(sed -nE 's/^\s*vt\s*=\s*"?([0-9a-z]+)"?.*/\1/p' "$GREETD_CONF" | head -1)"
+    [ -n "$vt_antes" ] && vt="$vt_antes"
+    echo "   cópia de segurança em $STATE/config.toml.antes."
+fi
+cat > "$GREETD_CONF" <<EOF
+# Gerado por data/mide-login-install (tela de login do mide). Volta ao de antes com:
+# sudo data/mide-login-install --uninstall
+[terminal]
+vt = $vt
+
+[default_session]
+command = "env XDG_CONFIG_HOME=$CONF XDG_STATE_HOME=$STATE XDG_DATA_DIRS=/usr/local/share:/usr/share MIDE_BACKEND=drm $LIB/mide --login"
+user = "$GREETER"
+EOF
+echo "   o greetd abre o compositor do mide em modo de login, no terminal virtual $vt."
+
+passo "6/6 Gerenciador de login: greetd no lugar do atual"
+if command -v systemctl >/dev/null; then
+    antes="$(gerenciador_atual || true)"
+    if [ -n "$antes" ] && [ "$antes" != greetd ]; then
+        echo "$antes" > "$STATE/gerenciador-anterior"
+        systemctl disable "$antes.service" || true
+        echo "   $antes desativado (volta com --uninstall)."
+    fi
+    systemctl enable --force greetd.service
+    echo "   greetd ativado. Vale no próximo boot (ou: sudo systemctl restart display-manager,"
+    echo "   que fecha a sessão gráfica aberta agora)."
+else
+    echo "   sem systemd: ative o serviço greetd no seu sistema de inicialização (runit, OpenRC,"
+    echo "   SysVinit) e desative o gerenciador de login atual."
+fi
+
+printf '\nPronto. Se algo der errado no login, entre num terminal (Ctrl+Alt+F3) e rode:\n'
+printf '  sudo %s --uninstall\n' "$0"

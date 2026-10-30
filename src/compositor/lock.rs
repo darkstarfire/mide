@@ -64,6 +64,13 @@ impl SessionLockHandler for State {
     }
 
     fn unlock(&mut self) {
+        // Modo de login: o greeter só "desbloqueia" depois de o greetd aceitar a sessão
+        // escolhida; o compositor sai para o greetd iniciá-la.
+        if crate::login::active() {
+            tracing::info!("login: sessão aceita pelo greetd; saindo");
+            self.quit_requested = true;
+            return;
+        }
         tracing::info!("tela desbloqueada");
         self.lock.locked = false;
         self.lock.surfaces.clear();
@@ -145,7 +152,7 @@ pub fn request(state: &mut State, reason: &str) {
     }
     tracing::info!("bloqueio pedido: {reason}");
     state.lock.spawned = Some(Instant::now());
-    crate::input::spawn("mide-lock");
+    crate::input::spawn(crate::login::lock_program());
 }
 
 /// Duração de `n` minutos da configuração (`MIDE_IDLE_UNIT=seconds` faz os testes

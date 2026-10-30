@@ -19,8 +19,10 @@ mod fullscreen;
 mod dmabuf;
 mod genie;
 mod gesture;
+mod overview;
 mod input;
 mod lock;
+mod login;
 mod osd;
 mod outputs;
 mod record;
@@ -66,7 +68,11 @@ pub fn socket_name() -> &'static str {
 
 fn main() -> Result<(), Box<dyn Error>> {
     session::capture();
+    let login_mode = login::init();
     let _logging = mide::logging::init("mide", "mide=info");
+    if login_mode {
+        tracing::info!("modo de login: só a tela de login (greetd)");
+    }
 
     tracing::info!(
         "mide {} iniciando no socket {}",
@@ -183,26 +189,34 @@ fn main() -> Result<(), Box<dyn Error>> {
         lock::watch_logind(sender, released);
     }
 
-    // Apps X11 dentro do mide (xwayland-satellite); encerrado junto com o mide.
-    let _xwayland = xwayland::start(socket_name());
+    // Apps X11 dentro do mide (xwayland-satellite); encerrado junto com o mide. No
+    // modo de login não há apps.
+    let _xwayland = if login_mode { None } else { xwayland::start(socket_name()) };
 
     if let Err(err) = control::init(&loop_handle, socket_name()) {
         tracing::warn!("canal de controle indisponível: {err}");
     }
 
-    // Sessão de login: ambiente para o D-Bus/systemd e apps de inicialização automática.
-    session::start(socket_name());
+    if login_mode {
+        // Só a tela de login: ela pede o bloqueio da tela ao abrir; sem tempo sem uso
+        // para bloquear (ela já é a tela de bloqueio), mas a tela apaga sem uso.
+        state.idle_lock = true;
+        lock::request(&mut state, "tela de login");
+    } else {
+        // Sessão de login: ambiente para o D-Bus/systemd e apps de inicialização automática.
+        session::start(socket_name());
 
-    // Área de trabalho (ícones) primeiro: fica atrás de tudo.
-    spawn_client("mide-desktop");
-    spawn_client("mide-dock");
-    spawn_client("mide-bar");
-    spawn_client("mide-notifications");
-    if wants_portal() {
-        spawn_client("mide-portal");
-    }
-    if wants_polkit_agent() {
-        spawn_client("mide-polkit-agent");
+        // Área de trabalho (ícones) primeiro: fica atrás de tudo.
+        spawn_client("mide-desktop");
+        spawn_client("mide-dock");
+        spawn_client("mide-bar");
+        spawn_client("mide-notifications");
+        if wants_portal() {
+            spawn_client("mide-portal");
+        }
+        if wants_polkit_agent() {
+            spawn_client("mide-polkit-agent");
+        }
     }
 
     tracing::info!("pronto. Teste com: WAYLAND_DISPLAY={} <app-wayland>", socket_name());
@@ -233,7 +247,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     if reexec {
         reexec_self();
     }
-    session::stop();
+    if !login_mode {
+        session::stop();
+    }
     Ok(())
 }
 

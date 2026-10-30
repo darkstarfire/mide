@@ -29,5 +29,8 @@ if grep -aq "Lento pulando até abrir" "${SCENARIO_OUT:-/tmp/mide-scenario}/mide
 else
     echo "FALHA dock: o ícone pula até o app abrir"; FAIL=$((FAIL + 1))
 fi
+# O pulo inteiro cabe na camada dele: a altura da dock (57) mais o pulo (40) e a
+# folga (8), na mesma largura da dock (antes o topo do ícone era cortado).
+XDG_DATA_DIRS="$PULO:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" check "dock: o pulo cabe inteiro na camada dele" 'camada "mide-dock-pulo" em \([0-9]+, [0-9]+\) [0-9]+x105' "300 click 654 728; 330 list"
 if [ -n "$OLD_XDG_CONFIG_HOME" ]; then export XDG_CONFIG_HOME="$OLD_XDG_CONFIG_HOME"; else unset XDG_CONFIG_HOME; fi
 rm -rf "$DOCKCFG"

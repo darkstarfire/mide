@@ -338,6 +338,11 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 finish_switcher(state, false);
                 return FilterResult::Intercept(None);
             }
+            // Esc com a visão de todas as janelas aberta: fecha sem mudar o foco.
+            if state.overview.is_some() && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape {
+                crate::overview::close(state, None);
+                return FilterResult::Intercept(None);
+            }
             // Esc arrastando uma janela sobre o topo: cancela o encaixe.
             if state.snap.is_some() && keysym.modified_sym() == xkbcommon::xkb::Keysym::Escape {
                 state.snap = None;
@@ -556,6 +561,7 @@ fn run_action(state: &mut State, action: Action) {
         // Como no macOS: as janelas se afastam para as bordas (e voltam no segundo
         // aperto), sem minimizar.
         Action::ShowDesktop => state.toggle_reveal_desktop(),
+        Action::Overview => crate::overview::toggle(state),
         // A tela de bloqueio do mide (`mide-lock`), pelo protocolo de bloqueio.
         Action::LockScreen => crate::lock::request(state, "atalho"),
     }
@@ -677,6 +683,11 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
 
     update_title_tip(state, pos);
 
+    // Visão de todas as janelas: destaca a janela sob o ponteiro.
+    if state.overview.is_some() {
+        crate::overview::hover(state, pos);
+    }
+
     // Prévias da dock: acompanham o ponteiro e somem quando ele sai da dock e do painel.
     if let Some(preview) = state.preview.clone() {
         if crate::preview::keeps_open(state, &preview, pos) {
@@ -793,7 +804,10 @@ fn pointer_target(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface,
     // Barra de título desenhada pelo mide (e as luzes dela): o ponteiro é do mide, sem
     // passar o movimento para a área de trabalho que fica atrás.
     let over_bar = title_bar_under(state, pos).is_some() && top_layer_under(state, pos).is_none() && popup_under(state, pos).is_none();
-    if over_preview || over_bar { None } else { surface_under(state, pos) }
+    // Visão de todas as janelas: o ponteiro é do mide (só a barra e a dock, por cima,
+    // continuam recebendo).
+    let over_overview = state.overview.is_some() && top_layer_under(state, pos).is_none();
+    if over_preview || over_bar || over_overview { None } else { surface_under(state, pos) }
 }
 
 /// Atualiza o foco do ponteiro sem ele ter se mexido: o que está sob ele mudou (Alt+Tab
@@ -837,6 +851,15 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
         }
         pointer.button(state, &ButtonEvent { button: code, state: button_state.into(), serial, time });
         pointer.frame(state);
+        return;
+    }
+
+    // Visão de todas as janelas: o clique escolhe uma janela (ou fecha, no vazio). Na
+    // barra e na dock, por cima, o clique segue para elas.
+    if state.overview.is_some() && top_layer_under(state, pointer.current_location()).is_none() {
+        if button_state == ButtonState::Pressed && state.overview.as_ref().is_some_and(|o| o.settled_open()) {
+            crate::overview::click(state, pointer.current_location());
+        }
         return;
     }
 

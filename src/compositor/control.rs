@@ -537,6 +537,8 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 if state.bar_paused() {
                     reply.push_str("game paused\n");
                 }
+                // Volume e brilho das teclas, para a barra acompanhar na hora.
+                reply.push_str(&crate::osd::levels_for_bar());
                 reply
             }
             Some("close") => {

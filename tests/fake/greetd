@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""greetd falso para os testes da tela de login (nunca o greetd nem o PAM de verdade).
+
+Escuta no socket dado (GREETD_SOCK), fala o protocolo do greetd (tamanho em u32 na
+ordem da máquina + JSON) e registra cada pedido no log (uma linha JSON por pedido).
+Usuários: "ana" e "bruno" com a senha "segredo"; "dois" pede também o código
+"codigo" (como um segundo fator); outros nomes não existem. Ao receber start_session
+responde sucesso e sai.
+"""
+import json
+import os
+import socket
+import struct
+import sys
+
+PASSWORD = "segredo"
+USERS = {"ana", "bruno", "dois"}
+
+
+def send(conn, obj):
+    body = json.dumps(obj).encode()
+    conn.sendall(struct.pack("=I", len(body)) + body)
+
+
+def recv(conn):
+    head = b""
+    while len(head) < 4:
+        chunk = conn.recv(4 - len(head))
+        if not chunk:
+            return None
+        head += chunk
+    (size,) = struct.unpack("=I", head)
+    body = b""
+    while len(body) < size:
+        chunk = conn.recv(size - len(body))
+        if not chunk:
+            return None
+        body += chunk
+    return json.loads(body)
+
+
+def main():
+    path, log_path = sys.argv[1], sys.argv[2]
+    if os.path.exists(path):
+        os.unlink(path)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    server.listen(4)
+    log = open(log_path, "a", buffering=1)
+    while True:
+        conn, _ = server.accept()
+        user, step = None, None
+        while True:
+            req = recv(conn)
+            if req is None:
+                break
+            # A senha não vai ao log (como no greetd de verdade).
+            shown = dict(req)
+            if shown.get("type") == "post_auth_message_response" and step == "password":
+                shown["response"] = "***" if shown.get("response") else shown.get("response")
+            log.write(json.dumps(shown, ensure_ascii=False) + "\n")
+            kind = req.get("type")
+            if kind == "create_session":
+                user = req.get("username")
+                if user not in USERS:
+                    send(conn, {"type": "error", "error_type": "error", "description": "user not known"})
+                    user = None
+                    continue
+                step = "password"
+                send(conn, {"type": "auth_message", "auth_message_type": "secret", "auth_message": "Password: "})
+            elif kind == "post_auth_message_response":
+                answer = req.get("response")
+                if step == "password":
+                    if answer != PASSWORD:
+                        send(conn, {"type": "error", "error_type": "auth_error", "description": "pam_authenticate: AUTH_ERR"})
+                        step = None
+                    elif user == "dois":
+                        step = "code"
+                        send(conn, {"type": "auth_message", "auth_message_type": "visible", "auth_message": "Verification code: "})
+                    else:
+                        step = "done"
+                        send(conn, {"type": "success"})
+                elif step == "code":
+                    if answer == "codigo":
+                        step = "done"
+                        send(conn, {"type": "success"})
+                    else:
+                        step = None
+                        send(conn, {"type": "error", "error_type": "auth_error", "description": "wrong code"})
+                else:
+                    send(conn, {"type": "error", "error_type": "error", "description": "no session"})
+            elif kind == "start_session":
+                if step != "done":
+                    send(conn, {"type": "error", "error_type": "error", "description": "not authenticated"})
+                    continue
+                send(conn, {"type": "success"})
+                log.write("SESSAO " + json.dumps({"user": user, "cmd": req.get("cmd"), "env": req.get("env")}) + "\n")
+            elif kind == "cancel_session":
+                user, step = None, None
+                send(conn, {"type": "success"})
+            else:
+                send(conn, {"type": "error", "error_type": "error", "description": "bad request"})
+        conn.close()
+
+
+if __name__ == "__main__":
+    main()

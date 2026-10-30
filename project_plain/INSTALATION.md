@@ -32,3 +32,39 @@
 - **Senha de administrador gráfica (C7):** programas novos `mide-sudo`, `mide-askpass` e `mide-polkit-agent`, junto com os outros binários (o `mide-sudo` procura o `mide-askpass` ao lado dele). Precisam do `sudo` (com o usuário no grupo `sudo` ou `wheel`) e do polkit com o `polkit-agent-helper-1` setuid de root (pacote `polkitd`/`polkit-1`; procurado em `/usr/lib/polkit-1`, `/usr/libexec`, `/usr/lib/policykit-1` e `/usr/libexec/polkit-1`); `xhost` (pacote `x11-xserver-utils`) para apps root abrirem no XWayland do mide. Nada em `/etc`: o agente se registra sozinho na sessão do mide e o `mide-sudo` usa a regra padrão do sudoers. Para apps em `.desktop` que precisam de root: `Exec=mide-sudo --name XAMPP /opt/lampp/manager-linux-x64.run` (sem terminal, a senha é pedida numa janela do mide; dentro de um terminal, é o sudo normal). **Riscos documentados:** (1) o app roda como root pelo X11 (XWayland), com os poderes de um cliente X sobre as outras janelas X11 (os apps Wayland ficam isolados); e o contrário também vale: **qualquer app X11 aberto na sessão** consegue mandar teclas ao app root (XTEST/XSendEvent) e ler o que ele mostra. Usar só com programas confiáveis e, de preferência, sem apps X11 desconhecidos abertos. (2) A janela de senha pode ser imitada: qualquer app pode abrir uma janela parecida (ou chamar `mide-sudo --name "Atualizações do sistema" ...`); o mide ainda não tem um sinal confiável na tela (fica para depois). (3) O teclado virtual (`zwp_virtual_keyboard`, usado pelo `wtype` e por teclados na tela) aceita qualquer app: um app pode digitar senhas erradas na janela e gastar as tentativas (contando no `pam_faillock`), mas não consegue ler a senha. (4) A tela X11 fica liberada para o root (`xhost +si:localuser:root`) só enquanto algum `mide-sudo` roda; se ele for morto com SIGKILL, a liberação fica até o próximo `mide-sudo` terminar ou o XWayland reiniciar. (5) Sessão com o mide de desenvolvimento (`target/debug`, quando não há release): as variáveis de teste (`MIDE_SUDO_BIN`, `MIDE_POLKIT_HELPER`, `MIDE_POLKIT_BUS`) passam a valer; só quem já controla o ambiente do compositor consegue usar, mas a instalação de verdade deve ser sempre em release. (6) Polkit novo com o `polkit-agent-helper-1` pelo socket do systemd (sem setuid): ainda não suportado pelo agente do mide (o log diz isso); o polkit 126 do Debian 13 ainda é setuid.
 
 - **Diagnóstico:** `mide-logs` é instalado junto aos executáveis do mide e mostra o log combinado de todos os processos; o arquivo rotativo fica em `~/.local/state/mide/logs/mide.log` (ou sob `XDG_STATE_HOME`). Consulte `docs/logs-e-diagnostico.md` para busca, erros e limites.
+
+## Tela de login do mide (greetd + mide-login, C5)
+
+A tela de login do mide é um greeter do `greetd`: o greetd confere a senha pelo PAM do
+sistema e inicia a sessão escolhida; o mide só mostra a tela (compositor em modo de
+login, `mide --login`, com o `mide-login`).
+
+Instalar (depois de compilar, de dentro do projeto):
+
+```sh
+cargo build --release
+sudo data/mide-login-install
+```
+
+O script, explicando cada passo:
+
+1. instala o pacote `greetd` se faltar (apt, dnf ou pacman);
+2. copia `mide` e `mide-login` para `/usr/local/lib/mide-login` (o usuário do greeter
+   não lê a pasta pessoal; rode o script de novo depois de atualizar o mide);
+3. copia a fonte da interface para `/usr/local/share/mide/fonts`;
+4. copia a configuração de quem rodou o sudo (telas, escala, layout de teclado, papel
+   de parede) para `/etc/mide/login`, para a tela de login abrir igual;
+5. escreve `/etc/greetd/config.toml` (cópia de segurança do anterior em
+   `/var/lib/mide-login`), com o mesmo terminal virtual de antes;
+6. desativa o gerenciador de login atual (GDM, LightDM, SDDM...) e ativa o greetd (com
+   systemd; nos outros sistemas de inicialização, o script diz o que fazer).
+
+Vale no próximo boot. Para voltar ao gerenciador de antes:
+
+```sh
+sudo data/mide-login-install --uninstall
+```
+
+Se o login falhar, entre num terminal de texto (Ctrl+Alt+F3) e rode o `--uninstall`.
+As sessões listadas vêm de `/usr/share/wayland-sessions` e `/usr/share/xsessions` (as do
+X11 sobem pelo `startx`); a do mide é a padrão.

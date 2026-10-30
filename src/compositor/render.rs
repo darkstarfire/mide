@@ -108,6 +108,7 @@ impl Scene {
             || !state.animations.is_empty()
             || state.launcher_anim.is_some()
             || state.launcher_drag.is_some()
+            || crate::overview::animating(state)
             || self.wallpapers.values().any(|w| w.busy())
             || !state.ghosts.is_empty()
             || !state.appearing.is_empty()
@@ -158,6 +159,7 @@ impl Scene {
         state.popups.cleanup();
         let now = std::time::Instant::now();
         state.finish_animations(now);
+        crate::overview::tick(state);
         // Modo de jogo (A18): a tela que acabou de entrar solta os desfoques guardados
         // (vidro da barra, da dock, dos menus): enquanto durar, nada disso aparece nela.
         for name in state.refresh_game_mode() {
@@ -231,6 +233,8 @@ impl Scene {
         let (snap_front, snap_back) = crate::snap::elements(state, output, shaders);
         custom.extend(snap_front);
         custom.extend(popup_elements(renderer, state, origin).into_iter().map(MideRenderElement::from));
+        // Visão de todas as janelas: títulos e o destaque da janela sob o ponteiro.
+        custom.extend(crate::overview::elements(renderer, state, output, origin, shaders, titles));
         let before_layers = custom.len();
         let (layers, mut glass, bar) = layer_elements(renderer, output, state, blur, wallpaper);
         for region in &mut glass {
@@ -445,7 +449,10 @@ fn window_elements(
         let geo = window.geometry();
 
         // Posição, tamanho e zoom do conteúdo, interpolados se houver animação.
-        let (draw_loc, zoom, frame_w, frame_h, alpha) = match state.animation_for(toplevel.wl_surface()) {
+        // Visão de todas as janelas: entre o lugar dela e o do mosaico (vale mais que
+        // uma animação em andamento, como a de abrir).
+        let overview = crate::overview::place(state, window, loc, geo.size);
+        let (draw_loc, zoom, frame_w, frame_h, alpha) = match state.animation_for(toplevel.wl_surface()).filter(|_| overview.is_none()) {
             Some(anim) => {
                 let e = anim.eased(now);
                 let lerp = |a: f32, b: f32| a + (b - a) * e;
@@ -458,7 +465,10 @@ fn window_elements(
                 let h = lerp(anim.from_size.h as f32, anim.to_size.h as f32).round() as i32;
                 (loc.into(), zoom, w, h, lerp(anim.alpha_from, anim.alpha_to))
             }
-            None => (loc, 1.0, geo.size.w, geo.size.h, 1.0),
+            None => match overview {
+                Some((at, zoom, w, h)) => (at, zoom, w, h, 1.0),
+                None => (loc, 1.0, geo.size.w, geo.size.h, 1.0),
+            },
         };
         // A área visível começa no deslocamento da geometria (sombra do cliente, p. ex.).
         // No Space, a posição da janela já é o canto da área visível. A moldura e a
@@ -764,6 +774,8 @@ fn window_elements(
         decorations::set_alpha(1.0);
         return (elements, glass);
     }
+    // Visão de todas as janelas: o fundo escurecido atrás delas.
+    elements.extend(crate::overview::dim(state, output, origin, shaders));
     // Camadas de fundo (ícones da área de trabalho): atrás das janelas e na frente
     // do papel de parede.
     {

@@ -112,6 +112,10 @@ pub struct WindowAnimation {
     pub hide_at_end: bool,
     /// Usa o efeito lâmpada em vez de escala (minimizar e restaurar).
     pub genie: bool,
+    /// A ponta da dock (o alvo ao minimizar, a origem ao restaurar e ao abrir) segue o
+    /// ícone do app a cada quadro: com a ampliação ou a dock mudando, o funil vai até
+    /// onde o ícone está agora, não onde estava quando a animação começou.
+    pub follow_icon: bool,
     pub duration: Duration,
     pub start: Instant,
 }
@@ -252,6 +256,8 @@ pub struct State {
     pub launcher_close_pending: bool,
     /// Gesto de três dedos no touchpad em andamento.
     pub swipe: Option<crate::gesture::Swipe>,
+    /// Visão de todas as janelas (quatro dedos para cima, Super+W).
+    pub overview: Option<crate::overview::Overview>,
     /// Algo pode ter mudado na tela (commit de um cliente, comando, entrada): pede um
     /// quadro. Parado, sem nada mudando, o compositor não desenha.
     pub redraw: bool,
@@ -501,6 +507,7 @@ impl State {
             launcher_drag: None,
             launcher_close_pending: false,
             swipe: None,
+            overview: None,
             redraw: true,
             waker: None,
             outputs_info: Vec::new(),
@@ -1612,6 +1619,7 @@ impl State {
 
     /// Encerra as animações que terminaram. As de minimizar tiram a janela do espaço.
     pub fn finish_animations(&mut self, now: Instant) {
+        self.follow_dock_icons();
         // Pedido de fechar sem resposta em 2 s (o app perguntou "salvar?"): esquece.
         self.close_requests.retain(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(2));
         self.ghosts.retain(|(_, _, at, _)| now.duration_since(*at) < CLOSE_FADE);
