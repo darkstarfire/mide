@@ -230,6 +230,10 @@ msgstr "agora"
 msgid "No Apps Found"
 msgstr "Nenhum app encontrado"
 
+msgctxt "launcher"
+msgid "Done"
+msgstr "OK"
+
 msgid "Move to Trash"
 msgstr "Mover para a Lixeira"
 

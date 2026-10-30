@@ -416,6 +416,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         dark_seen: mide::kit::system_dark(),
         titles: Vec::new(),
         over_launcher: false,
+        tablet_large: false,
         launcher_k: 0.0,
         tone_dark: None,
         game_paused: false,
@@ -1003,6 +1004,8 @@ struct Bar {
     titles: Vec<(MenuId, f32, f32)>,
     /// Launcher aberto: barra transparente sobre ele, com texto branco.
     over_launcher: bool,
+    /// Modo tablet com alvos grandes (o compositor diz no `launcher state`).
+    tablet_large: bool,
     /// Transição para o launcher: 0 barra normal, 1 sem fundo e com texto branco.
     launcher_k: f32,
     /// O compositor diz se o que está atrás da barra é escuro (`None`: não disse, vale
@@ -1247,6 +1250,31 @@ impl Bar {
             self.tone_dark = tone;
         }
         self.follow_key_levels(&reply);
+        // Modo tablet: alvos maiores para o dedo.
+        let large = reply.iter().any(|l| l == "tablet large");
+        if large != self.tablet_large {
+            tracing::info!("barra: modo tablet {}", if large { "(alvos maiores)" } else { "desligado" });
+            self.tablet_large = large;
+        }
+        // Pedidos do compositor: gestos dos cantos de cima no modo tablet (central de
+        // controle, notificações) e o botão de ligar.
+        for request in reply.iter().filter_map(|l| l.strip_prefix("request ")) {
+            match request {
+                "control-center" => {
+                    tracing::info!("barra: central de controle (gesto do canto)");
+                    self.open_menu(MenuId::Control);
+                }
+                "notifications" => {
+                    tracing::info!("barra: notificações (gesto do canto)");
+                    self.open_menu(MenuId::Calendar);
+                }
+                "confirm-shutdown" => {
+                    tracing::info!("botão de ligar: confirmação de desligar");
+                    self.open_menu(MenuId::ConfirmShutdown);
+                }
+                _ => {}
+            }
+        }
         let paused = reply.iter().any(|l| l == "game paused");
         if paused != self.game_paused {
             self.game_paused = paused;
@@ -2461,7 +2489,23 @@ impl Bar {
         if x >= LOGO_X - 6.0 && x <= LOGO_X + LOGO_W + 6.0 {
             return Some(MenuId::System);
         }
-        self.titles.iter().find(|(_, x0, x1)| x >= *x0 && x <= *x1).map(|(id, _, _)| *id)
+        if let Some(found) = self.titles.iter().find(|(_, x0, x1)| x >= *x0 && x <= *x1) {
+            return Some(found.0);
+        }
+        // Modo tablet com alvos grandes: o dedo não precisa acertar; vale o item mais
+        // perto (até 22 pontos de distância), e a marca do mide com folga.
+        if !self.tablet_large {
+            return None;
+        }
+        if x >= 0.0 && x <= LOGO_X + LOGO_W + 22.0 {
+            return Some(MenuId::System);
+        }
+        self.titles
+            .iter()
+            .map(|(id, x0, x1)| (*id, if x < *x0 { x0 - x } else { x - x1 }))
+            .filter(|(_, d)| *d <= 22.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
     }
 
     fn run(&mut self, action: MenuAction) {

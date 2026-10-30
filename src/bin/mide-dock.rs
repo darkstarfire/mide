@@ -105,12 +105,19 @@ fn canvas(w: u32, h: u32) -> Option<Pixmap> {
     Pixmap::new(to_px(w), to_px(h))
 }
 
-/// Tamanho dos ícones gravado nas Configurações (ou o padrão).
+/// Modo tablet com alvos grandes (`[tablet] large_targets`): ícones maiores, para o
+/// dedo. O compositor diz (`tablet_large`), perguntado uma vez por segundo.
+static TABLET_LARGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const TABLET_ICON_SIZE: u32 = 58;
+
+/// Tamanho dos ícones gravado nas Configurações (ou o padrão); no modo tablet, pelo
+/// menos o do dedo.
 fn configured_icon_size() -> u32 {
-    match mide::settings_file::get("dock", "icon_size") {
+    let size = match mide::settings_file::get("dock", "icon_size") {
         Some(mide::settings_file::Value::Int(n)) => (n.clamp(32, 64)) as u32,
         _ => DEFAULT_ICON_SIZE,
-    }
+    };
+    if TABLET_LARGE.load(std::sync::atomic::Ordering::Relaxed) { size.max(TABLET_ICON_SIZE) } else { size }
 }
 
 /// O compositor está desenhando o vidro líquido atrás da dock? Precisa do desfoque e
@@ -2344,7 +2351,23 @@ impl Dock {
     /// ícones: recarrega os ícones nesse tamanho e ajusta a dock.
     fn watch_config(&mut self) {
         let mtime = mide::settings_file::config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok());
-        if mtime == self.config_mtime {
+        // Modo tablet entrou ou saiu (ícones do tamanho do dedo).
+        let tablet_changed = {
+            static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+                *last = Some(std::time::Instant::now());
+                let large = ask_compositor("tablet_large").is_some_and(|l| l.first().is_some_and(|w| w == "yes"));
+                let before = TABLET_LARGE.swap(large, std::sync::atomic::Ordering::Relaxed);
+                if before != large {
+                    tracing::info!("dock: modo tablet {}", if large { "(ícones maiores)" } else { "desligado" });
+                }
+                before != large
+            } else {
+                false
+            }
+        };
+        if mtime == self.config_mtime && !tablet_changed {
             return;
         }
         self.config_mtime = mtime;
