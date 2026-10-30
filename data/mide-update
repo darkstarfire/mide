@@ -55,6 +55,12 @@ instalar_icones() {
 }
 instalar_icones || echo "aviso: os ícones do mide não foram instalados (sem rede?); tente de novo depois"
 
+# Fontes do mide (Noto Sans, licença OFL): o texto da interface fica igual em qualquer
+# máquina (sem ela, cada distribuição caía numa fonte diferente, com letras espaçadas).
+fontes="${XDG_DATA_HOME:-$HOME/.local/share}/mide/fonts"
+mkdir -p "$fontes"
+cp -u data/fonts/*.ttf data/fonts/OFL.txt "$fontes/"
+
 # Gravar a tela (OBS e outros): o portal wlr usa a janela do mide para escolher o
 # monitor. O arquivo leva o nome do desktop ("mide"): só vale na sessão do mide.
 portal_wlr="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal-wlr/mide"

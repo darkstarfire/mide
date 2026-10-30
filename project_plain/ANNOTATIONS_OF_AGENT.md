@@ -565,3 +565,5 @@
 
 - **Brilho (2026-10-29):** o caminho certo é o logind (`org.freedesktop.login1.Session.SetBrightness("backlight", nome, valor)` em `/org/freedesktop/login1/session/auto`), como o GNOME; o `brightnessctl` depende de permissão de escrita na luz de fundo, que varia por distribuição.
 - **Agentes em paralelo:** um agente rodando `tests/ui.sh` e outro compilando ao mesmo tempo quebra a regra da bateria; ao dividir trabalho, combinar quem roda a bateria (de preferência só o agente principal, no fim).
+
+- **Fontes (2026-10-29):** nunca usar `FontSystem::new()` + `Family::SansSerif` direto para a interface: o padrão do cosmic-text é "Open Sans" e a reserva muda de máquina para máquina. Usar `mide::ui::text::font_system()`. As fontes do Writer (documento) são outra coisa.

@@ -2199,3 +2199,9 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - Alt+Tab: a janela escolhida na cor de destaque do sistema (contorno cheio e fundo translúcido), seguindo Configurações → Aparência.
 - Teclas e controle de brilho: pelo logind (`Session.SetBrightness`, permitido ao usuário da sessão ativa, sem regra do udev nem grupo `video`), depois escrevendo no arquivo e só então o `brightnessctl`; a luz de fundo escolhida é a do firmware antes da de plataforma e da "raw" (como o GNOME). No Chromebook, as teclas de brilho não funcionavam mesmo com o `brightnessctl` corrigido.
 - Não reproduzido no teste (VS Code espaçado e tela de bloqueio borrada no Chromebook, em 2560x1600 a 150%): no compositor de teste, nesse tamanho, os dois saem nítidos; falta o diagnóstico na máquina.
+
+## Fonte própria da interface (v0.10.31, 2026-10-29)
+
+- Bug do usuário no Chromebook: relógio da tela de bloqueio, título do Terminal ("bash — 86×26") e outros textos com letras espaçadas e outro desenho, enquanto no Acer saíam certos. Causa: o cosmic-text pede a "Open Sans" para `Family::SansSerif` e, sem ela, cai na reserva dele; no Acer a reserva era a Noto Sans, no Chromebook outra fonte.
+- O mide traz a fonte da interface: `data/fonts` com a Noto Sans (normal, semi-negrito, negrito) e a Noto Sans Mono (normal, negrito), licença OFL (`data/fonts/OFL.txt`), instaladas pelo `mide-update` em `~/.local/share/mide/fonts`.
+- mide-ui: `ui::text::font_system()` carrega as fontes do mide (`<pasta de dados>/mide/fonts`) e escolhe a família do texto: a Noto Sans do mide, senão a "sans-serif" do fontconfig (a dos outros apps); o compositor (títulos e dicas) usa a mesma. A de largura fixa continua pelo fontconfig.

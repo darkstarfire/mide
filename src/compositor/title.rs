@@ -105,7 +105,9 @@ pub const TIP_HEIGHT: i32 = 22;
 impl TitleRenderer {
     pub fn new() -> Self {
         Self {
-            fonts: FontSystem::new(),
+            // A mesma fonte da interface dos apps do mide (a Noto Sans do mide, senão a
+            // sans-serif do sistema).
+            fonts: mide::ui::text::font_system(),
             swash: SwashCache::new(),
             images: HashMap::new(),
         }
