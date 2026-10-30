@@ -312,3 +312,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 
 - Dock (ocultar automaticamente com ampliação e prévias) e modo de edição do launcher aprovados pelo usuário: etapas dadas como finalizadas.
 - Atalhos criados pelo launcher na área de trabalho saem com `rwxrwxrwx` e confiados (nome e ícone do app na hora); área de trabalho com o menu do fundo nos monitores externos (`mide-desktop --output NOME`); "+" de Adicionar imagem menor (`Tile::Symbol` do mide-ui).
+- v0.10.39: submenus do mide-ui com o triângulo seguro do macOS (sem dois destaques nem atraso ao trocar de linha).
