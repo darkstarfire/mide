@@ -573,3 +573,9 @@
 - **Tela de login (C5, 2026-10-29):** o greeter reaproveita o protocolo de bloqueio: no modo de login, `lock::request` abre o `mide-login` (e não o `mide-lock`) e o `unlock` encerra o compositor. Nos testes, o compositor sai quando a sessão começa, então o roteiro nunca diz "concluído": usar `SCENARIO_WAIT`. Socket do greetd falso em `/run/user/<uid>` (caminho de socket Unix longo demais no scratchpad falha). Com a tela parada o compositor quase não redesenha: peça o quadro cedo (300) com espera longa. `MIDE_LOGIN_TEST_USERS` só vale em compilação de desenvolvimento.
 
 - **Seção 29 sob carga (2026-10-30):** a verificação "captura de tela: o aviso não sai na imagem" falha às vezes só na bateria inteira (6 seções em paralelo) e passa sozinha; tratar como intermitente e rodar a seção de novo antes de investigar.
+
+## Barra: menus do app sem espaço (2026-10-30, v0.10.35)
+
+- `paint_bar` desenha a direita primeiro (relógio, ícones, bandeja, mídia) e só depois o nome do app e os menus: o limite deles é o menor x0 dos títulos da direita menos 16. `self.titles` passa a ter a direita antes da esquerda (a busca por x não depende da ordem).
+- Os menus que sobram ficam em `Bar::overflow` e entram no menu `App` como `MenuAction::Submenu(id)`; o submenu é um segundo painel (`Menu::child`) na mesma camada do menu, com o vidro pedido para os dois retângulos. `menu_contents(id)` monta os itens de qualquer menu (o mesmo para a barra e o submenu).
+- O `pgrep -f "[c]argo build --bin X"` dentro de um `until` casa com a própria linha de comando do bash que roda o `until` (o texto "cargo build --bin X" aparece literal mais adiante): use um arquivo-marca ou o PID para esperar um build.

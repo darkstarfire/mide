@@ -103,6 +103,9 @@ enum MenuAction {
     Native(i32),
     /// Item do menu de um ícone do tray: o ícone e o número do item.
     Tray(u8, i32),
+    /// Menu do app que não coube na barra (tela pequena): abre o menu dele ao lado,
+    /// como um submenu do menu com o nome do app.
+    Submenu(MenuId),
 }
 
 /// Itens de um menu `dbusmenu` (menu global ou de um ícone do tray). Submenus aparecem
@@ -415,6 +418,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         focused_title: String::new(),
         dark_seen: mide::kit::system_dark(),
         titles: Vec::new(),
+        overflow: Vec::new(),
+        menus_shown: None,
         over_launcher: false,
         launcher_k: 0.0,
         tone_dark: None,
@@ -777,6 +782,107 @@ struct Menu {
     dragging_keyboard_light: bool,
     /// Topo do painel na tela (abaixo da barra; as confirmações ficam no meio).
     panel_top: f32,
+    /// Submenu aberto ao lado (os menus do app que não couberam na barra, dentro do
+    /// menu com o nome do app).
+    child: Option<ChildMenu>,
+}
+
+/// Painel de submenu, ao lado do menu aberto: um menu do app que não coube na barra.
+struct ChildMenu {
+    id: MenuId,
+    items: Vec<MenuItem>,
+    /// Item do menu de cima que abriu este (fica destacado).
+    parent: usize,
+    x: f32,
+    top: f32,
+    w: f32,
+    hovered: Option<usize>,
+}
+
+impl ChildMenu {
+    fn inside(&self, x: f64, y: f64) -> bool {
+        let (x, y) = (x as f32, y as f32);
+        x >= self.x && x <= self.x + self.w && y >= self.top && y <= self.top + items_height(&self.items)
+    }
+}
+
+/// Altura de um painel de lista com estes itens (com as margens de cima e de baixo).
+fn items_height(items: &[MenuItem]) -> f32 {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Entry(..) => ITEM_H,
+            MenuItem::Separator => SEPARATOR_H,
+        })
+        .sum::<f32>()
+        + 2.0 * MENU_PAD
+}
+
+/// Índice do item com ação sob `(x, y)` num painel de lista em `(panel_x, top)` com
+/// largura `w`.
+fn item_index(items: &[MenuItem], panel_x: f32, w: f32, top: f32, x: f64, y: f64) -> Option<usize> {
+    let (x, y) = (x as f32, y as f32);
+    if x < panel_x || x > panel_x + w {
+        return None;
+    }
+    let mut cursor = top + MENU_PAD;
+    for (i, item) in items.iter().enumerate() {
+        let h = match item {
+            MenuItem::Entry(..) => ITEM_H,
+            MenuItem::Separator => SEPARATOR_H,
+        };
+        if y >= cursor && y < cursor + h {
+            return matches!(item, MenuItem::Entry(_, _, Some(_))).then_some(i);
+        }
+        cursor += h;
+    }
+    None
+}
+
+/// Folga para os menus do app voltarem à barra depois de irem para o menu do nome
+/// (histerese): sem ela, o relógio mudando de largura faria um menu ir e voltar.
+const MENU_FIT_SLACK: f32 = 32.0;
+
+/// Quantos menus do app ficam na barra. `start` é onde começa o primeiro título,
+/// `widths` a largura de cada título já com o espaço depois dele e `limit` onde
+/// começam os itens da direita. `previous` é quantos estavam à mostra no quadro
+/// anterior (mesmo app e mesmos menus): só diminui quando não cabe e só aumenta
+/// quando sobra a folga, para não piscar.
+fn menus_that_fit(start: f32, widths: &[f32], limit: f32, previous: Option<usize>) -> usize {
+    let fit_within = |limit: f32| {
+        let mut end = start;
+        let mut n = 0;
+        for w in widths {
+            if end + w - TITLE_GAP > limit {
+                break;
+            }
+            end += w;
+            n += 1;
+        }
+        n
+    };
+    let fit = fit_within(limit);
+    match previous {
+        Some(p) if p > fit => fit,
+        Some(p) => p.max(fit_within(limit - MENU_FIT_SLACK)).min(widths.len()),
+        None => fit,
+    }
+}
+
+/// Encurta `text` com reticências até caber em `max` (medido por `measure`).
+fn ellipsize(text: &str, max: f32, mut measure: impl FnMut(&str) -> f32) -> String {
+    if measure(text) <= max {
+        return text.to_string();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let candidate = format!("{}…", chars.iter().collect::<String>().trim_end());
+        if measure(&candidate) <= max {
+            return candidate;
+        }
+    }
+    "…".to_string()
 }
 
 impl Menu {
@@ -784,39 +890,19 @@ impl Menu {
         if self.id.custom() {
             return self.panel_h;
         }
-        let items: f32 = self
-            .items
-            .iter()
-            .map(|i| match i {
-                MenuItem::Entry(..) => ITEM_H,
-                MenuItem::Separator => SEPARATOR_H,
-            })
-            .sum();
-        items + 2.0 * MENU_PAD
+        items_height(&self.items)
     }
 
     /// Índice do item sob `(x, y)`, se for um item com ação.
     fn item_at(&self, x: f64, y: f64) -> Option<usize> {
-        let (x, y) = (x as f32, y as f32);
-        let top = PANEL_TOP + MENU_PAD;
-        if x < self.x || x > self.x + self.panel_w {
-            return None;
-        }
-        let mut cursor = top;
-        for (i, item) in self.items.iter().enumerate() {
-            let h = match item {
-                MenuItem::Entry(..) => ITEM_H,
-                MenuItem::Separator => SEPARATOR_H,
-            };
-            if y >= cursor && y < cursor + h {
-                return matches!(item, MenuItem::Entry(_, _, Some(_))).then_some(i);
-            }
-            cursor += h;
-        }
-        None
+        item_index(&self.items, self.x, self.panel_w, PANEL_TOP, x, y)
     }
 
+    /// Dentro do painel ou do submenu aberto ao lado dele.
     fn inside_panel(&self, x: f64, y: f64) -> bool {
+        if self.child.as_ref().is_some_and(|c| c.inside(x, y)) {
+            return true;
+        }
         let (x, y) = (x as f32, y as f32);
         let top = self.panel_top;
         x >= self.x && x <= self.x + self.panel_w && y >= top && y <= top + self.panel_height()
@@ -1001,6 +1087,12 @@ struct Bar {
     dark_seen: bool,
     /// Títulos desenhados na barra: menu e faixa x (início, fim), para o clique.
     titles: Vec<(MenuId, f32, f32)>,
+    /// Menus do app que não couberam na barra (tela pequena, menus demais): vão para o
+    /// menu com o nome do app, como submenus.
+    overflow: Vec<(MenuId, String)>,
+    /// Quantos menus do app ficaram na barra no último desenho, com o app e os títulos
+    /// (a histerese de `menus_that_fit` só vale para o mesmo app e os mesmos menus).
+    menus_shown: Option<(String, Vec<String>, usize)>,
     /// Launcher aberto: barra transparente sobre ele, com texto branco.
     over_launcher: bool,
     /// Transição para o launcher: 0 barra normal, 1 sem fundo e com texto branco.
@@ -1811,33 +1903,11 @@ impl Bar {
             pixmap.fill_path(&dot, &dot_paint, FillRule::Winding, tf(), None);
         }
 
-        // Nome do app em foco, em negrito, e os menus dele. O título do menu aberto
-        // fica destacado.
+        // Os itens da direita são desenhados primeiro: o nome do app e os menus dele
+        // ocupam só o que sobra até eles.
         let text_y = (fh - FONT * 1.25) / 2.0;
         let open = self.menu.as_ref().map(|m| m.id);
         self.titles.clear();
-        let mut tx = LOGO_X + LOGO_W + 14.0;
-        let name = self.focused_name.clone();
-        let mut titles: Vec<(MenuId, String, FontWeight)> = vec![(MenuId::App, name, FontWeight::Bold)];
-        if let Some((_, _, top)) = &self.native {
-            // Menus do próprio app (menu global).
-            titles.extend(top.iter().enumerate().take(u8::MAX as usize).map(|(i, item)| (MenuId::Native(i as u8), item.label.clone(), FontWeight::Regular)));
-        } else if !self.focused_id.is_empty() {
-            titles.extend(app_menus().into_iter().map(|(id, t)| (id, t, FontWeight::Regular)));
-        }
-        for (id, title, weight) in titles {
-            let tw = self.text.measure(&title, FONT, weight);
-            if open == Some(id) {
-                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, cap);
-            }
-            self.text.draw(&mut pixmap, &title, tx, text_y, FONT, weight, fg);
-            self.titles.push((id, tx - TITLE_GAP / 2.0, tx + tw + TITLE_GAP / 2.0));
-            tx += tw + TITLE_GAP;
-        }
-        // Sem janela em foco, o nome "mide" não tem menu.
-        if self.focused_id.is_empty() {
-            self.titles.clear();
-        }
 
         // Direita, da direita para a esquerda: relógio (abre o calendário), bateria,
         // Bluetooth, Wi-Fi e som. Cada um abre o seu painel.
@@ -2006,6 +2076,57 @@ impl Bar {
             self.titles.push((MenuId::Media, x0, x1));
         }
 
+        // Nome do app em foco, em negrito, e os menus dele, até os itens da direita
+        // (com folga). Os que não cabem vão para o menu com o nome do app, como
+        // submenus; o nome encolhe com reticências se nem ele cabe. O título do menu
+        // aberto fica destacado.
+        let right_edge = self.titles.iter().map(|t| t.1).fold(fw, f32::min);
+        let limit = right_edge - 16.0;
+        let start = LOGO_X + LOGO_W + 14.0;
+        let name = self.focused_name.clone();
+        let name_full_w = self.text.measure(&name, FONT, FontWeight::Bold);
+        let text = &mut self.text;
+        let name = ellipsize(&name, (limit - start).max(40.0), |t| text.measure(t, FONT, FontWeight::Bold));
+        let mut menus: Vec<(MenuId, String)> = Vec::new();
+        if let Some((_, _, top)) = &self.native {
+            // Menus do próprio app (menu global).
+            menus.extend(top.iter().enumerate().take(u8::MAX as usize).map(|(i, item)| (MenuId::Native(i as u8), item.label.clone())));
+        } else if !self.focused_id.is_empty() {
+            menus.extend(app_menus());
+        }
+        let name_w = self.text.measure(&name, FONT, FontWeight::Bold);
+        let widths: Vec<f32> = menus.iter().map(|(_, t)| self.text.measure(t, FONT, FontWeight::Regular) + TITLE_GAP).collect();
+        let labels: Vec<String> = menus.iter().map(|(_, t)| t.clone()).collect();
+        let previous = self.menus_shown.as_ref().filter(|(app, l, _)| *app == self.focused_id && *l == labels).map(|(_, _, n)| *n);
+        // Nome encurtado: nenhum menu cabe ao lado.
+        let shown = if name_w < name_full_w { 0 } else { menus_that_fit(start + name_w + TITLE_GAP, &widths, limit, previous) };
+        let overflow: Vec<(MenuId, String)> = menus.split_off(shown);
+        if previous != Some(shown) && (!overflow.is_empty() || previous.is_some_and(|p| p < labels.len())) {
+            let names: Vec<&str> = overflow.iter().map(|(_, t)| t.as_str()).collect();
+            tracing::info!(
+                "barra: menus do app sem espaço: {} de {} no menu do nome ({}); limite x={limit:.0}",
+                overflow.len(),
+                labels.len(),
+                names.join(", ")
+            );
+        }
+        self.menus_shown = Some((self.focused_id.clone(), labels, shown));
+        self.overflow = overflow;
+        let mut tx = start;
+        let titles = std::iter::once((MenuId::App, name, FontWeight::Bold)).chain(menus.into_iter().map(|(id, t)| (id, t, FontWeight::Regular)));
+        for (id, title, weight) in titles {
+            let tw = self.text.measure(&title, FONT, weight);
+            if open == Some(id) {
+                fill_rounded(&mut pixmap, tx - 7.0, 3.0, tw + 14.0, fh - 6.0, 5.0, cap);
+            }
+            self.text.draw(&mut pixmap, &title, tx, text_y, FONT, weight, fg);
+            // Sem janela em foco, o nome "mide" não tem menu.
+            if !self.focused_id.is_empty() {
+                self.titles.push((id, tx - TITLE_GAP / 2.0, tx + tw + TITLE_GAP / 2.0));
+            }
+            tx += tw + TITLE_GAP;
+        }
+
         if no_bg {
             // Sombra leve atrás do texto e dos ícones (legíveis em qualquer papel de parede).
             pixmap = with_shadow(&pixmap, if wall_dark { [0, 0, 0, 90] } else { [255, 255, 255, 110] });
@@ -2046,33 +2167,50 @@ impl Bar {
         let (mx, mw, items, menu_id) = (menu.x, menu.panel_w, menu.items.clone(), menu.id);
         let top = PANEL_TOP;
         let ph = menu.panel_height();
+        let child = menu.child.as_ref().map(|c| (c.x, c.top, c.w, c.items.clone(), c.hovered, c.id, c.parent));
+        // Com o submenu aberto, o item que o abriu continua destacado.
+        let hovered = hovered.or(child.as_ref().map(|c| c.6));
 
-        // Painel: vidro claro com borda fina e sombra suave. Tahoe: menus com cantos de
-        // 12 e a central de controle (e os painéis grandes) com 22.
+        // Tahoe: menus com cantos de 12 e a central de controle (e os painéis grandes)
+        // com 22.
         let radius = if menu_id == MenuId::Control { 22.0 } else { 12.0 };
+        let glass = mide::control_client::panel_glass();
+        let mut panels = vec![(mx, top, mw, ph, radius)];
+        if let Some((cx, ctop, cw, citems, ..)) = &child {
+            panels.push((*cx, *ctop, *cw, items_height(citems), 12.0));
+        }
+        self.glass_menu.set("mide-bar-menu", if glass { &panels } else { &[] });
+        let fill = self.paint_panel(&mut pixmap, (mx, top, mw, radius), &items, hovered, menu_id);
+        // Ponta apontando para o título (ou a marca do mide) de onde o menu veio.
+        if let Some(cx) = self.anchor_of(menu_id) {
+            mide::ui::draw::menu_arrow(&mut pixmap, cx.clamp(mx + 18.0, mx + mw - 18.0), top, false, fill);
+        }
+        if let Some((cx, ctop, cw, citems, chovered, cid, _)) = child {
+            self.paint_panel(&mut pixmap, (cx, ctop, cw, 12.0), &citems, chovered, cid);
+        }
+        self.present_layer(&pixmap, false);
+    }
+
+    /// Desenha um painel de lista (vidro claro com borda fina e sombra suave) com os
+    /// itens, em `(x, y, largura, raio)`. Devolve a cor do fundo (para a ponta).
+    fn paint_panel(&mut self, pixmap: &mut Pixmap, (mx, top, mw, radius): (f32, f32, f32, f32), items: &[MenuItem], hovered: Option<usize>, menu_id: MenuId) -> [u8; 4] {
+        let ph = items_height(items);
         for i in 0..6 {
             let spread = 6.0 - i as f32;
-            fill_rounded(&mut pixmap, mx - spread, top - spread + 3.0, mw + 2.0 * spread, ph + 2.0 * spread, radius + spread, rgba(0, 0, 0, 6));
+            fill_rounded(pixmap, mx - spread, top - spread + 3.0, mw + 2.0 * spread, ph + 2.0 * spread, radius + spread, rgba(0, 0, 0, 6));
         }
         let glass = mide::control_client::panel_glass();
-        let panel = [(mx, top, mw, ph, radius)];
-        self.glass_menu.set("mide-bar-menu", if glass { &panel } else { &[] });
         if glass {
-            mide::ui::draw::clear_rounded(&mut pixmap, mx, top, mw, ph, radius);
+            mide::ui::draw::clear_rounded(pixmap, mx, top, mw, ph, radius);
         }
         let fill = pal().panel(if glass { 180 } else { 240 });
-        fill_rounded(&mut pixmap, mx, top, mw, ph, radius, rgba(fill[0], fill[1], fill[2], fill[3]));
+        fill_rounded(pixmap, mx, top, mw, ph, radius, rgba(fill[0], fill[1], fill[2], fill[3]));
         if let Some(path) = rounded_rect(mx + 0.5, top + 0.5, mw - 1.0, ph - 1.0, radius - 0.5) {
             let mut border = Paint::default();
             border.set_color(pal().ink(40));
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke::default(), tf(), None);
         }
-        // Ponta apontando para o título (ou a marca do mide) de onde o menu veio.
-        if let Some(cx) = self.anchor_of(menu_id) {
-            mide::ui::draw::menu_arrow(&mut pixmap, cx.clamp(mx + 18.0, mx + mw - 18.0), top, false, fill);
-        }
-
         let mut y = top + MENU_PAD;
         for (i, item) in items.iter().enumerate() {
             match item {
@@ -2087,7 +2225,7 @@ impl Bar {
                 MenuItem::Entry(label, shortcut, action) => {
                     let active = hovered == Some(i);
                     if active {
-                        fill_rounded(&mut pixmap, mx + 5.0, y, mw - 10.0, ITEM_H, 5.0, pal().accent_color());
+                        fill_rounded(pixmap, mx + 5.0, y, mw - 10.0, ITEM_H, 5.0, pal().accent_color());
                     }
                     let color = match (action.is_some(), active) {
                         (_, true) => [255, 255, 255, 255],
@@ -2099,17 +2237,32 @@ impl Bar {
                         (false, false) => pal().faint,
                     };
                     let ty = y + (ITEM_H - FONT * 1.25) / 2.0;
-                    self.text.draw(&mut pixmap, label, mx + 16.0, ty, FONT, FontWeight::Regular, color);
-                    if !shortcut.is_empty() {
+                    self.text.draw(pixmap, label, mx + 16.0, ty, FONT, FontWeight::Regular, color);
+                    if matches!(action, Some(MenuAction::Submenu(_))) {
+                        // Setinha › de submenu, à direita.
+                        let (cx, cy) = (mx + mw - 18.0, y + ITEM_H / 2.0);
+                        let mut pb = PathBuilder::new();
+                        pb.move_to(cx - 2.5, cy - 4.5);
+                        pb.line_to(cx + 2.0, cy);
+                        pb.line_to(cx - 2.5, cy + 4.5);
+                        if let Some(path) = pb.finish() {
+                            let mut paint = Paint::default();
+                            paint.anti_alias = true;
+                            let c = if active { [255, 255, 255, 255] } else { pal().secondary };
+                            paint.set_color(rgba(c[0], c[1], c[2], c[3]));
+                            let stroke = Stroke { width: 1.6, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+                            pixmap.stroke_path(&path, &paint, &stroke, tf(), None);
+                        }
+                    } else if !shortcut.is_empty() {
                         let sw = self.text.measure(shortcut, FONT - 1.0, FontWeight::Regular);
                         let sc = if active { [230, 236, 255, 255] } else { pal().secondary };
-                        self.text.draw(&mut pixmap, shortcut, mx + mw - 16.0 - sw, ty + 0.5, FONT - 1.0, FontWeight::Regular, sc);
+                        self.text.draw(pixmap, shortcut, mx + mw - 16.0 - sw, ty + 0.5, FONT - 1.0, FontWeight::Regular, sc);
                     }
                     y += ITEM_H;
                 }
             }
         }
-        self.present_layer(&pixmap, false);
+        fill
     }
 
     /// Envia o pixmap para a barra (`bar = true`) ou para o menu.
@@ -2141,6 +2294,119 @@ impl Bar {
         surface.damage_buffer(0, 0, w, h);
         if buffer.attach_to(surface).is_ok() {
             layer.commit();
+        }
+    }
+
+    /// Itens do menu `id` (lidos de novo a cada vez: o app pode ter mudado o menu).
+    fn menu_contents(&mut self, id: MenuId) -> Vec<MenuItem> {
+        let app = self.focused_name.clone();
+        // O menu Janela (o da barra ou o do app): ganha as outras telas e as janelas do app.
+        let window_menu = match id {
+            MenuId::Window => true,
+            MenuId::Native(i) => self.native.as_ref().and_then(|(_, _, top)| top.get(i as usize)).is_some_and(|m| matches!(m.label.replace('_', "").as_str(), "Janela" | "Window")),
+            _ => false,
+        };
+        let mut items = match id {
+            MenuId::Native(i) => self.native_items(i as usize),
+            MenuId::Tray(i) => self.tray_menu_items(i as usize),
+            MenuId::Layout => self.layout_items(),
+            _ => menu_items(id, &app),
+        };
+        // Menus do app que não couberam na barra: no menu do nome, como submenus.
+        if id == MenuId::App && !self.overflow.is_empty() {
+            items.push(MenuItem::Separator);
+            items.extend(self.overflow.iter().map(|(sub, title)| entry(title.clone(), "", Some(MenuAction::Submenu(*sub)))));
+        }
+        // Tela cheia (como no Mac), logo depois de "Centralizar": o texto segue o estado
+        // da janela em foco.
+        if id == MenuId::Window {
+            let on = ask_compositor("fullscreen").and_then(|l| l.into_iter().next()).is_some_and(|l| l.trim() == "on");
+            let label = if on { tr!("Exit Full Screen") } else { tr!("Enter Full Screen") };
+            let at = items.len().min(3);
+            items.insert(at, entry(label, "Ctrl+Super+F", Some(MenuAction::Compositor("window fullscreen".into()))));
+        }
+        if window_menu {
+            items.extend(self.window_extras());
+        }
+        if id == MenuId::Battery
+            && let Some(info) = self.battery_info
+        {
+            let lines = battery_lines(&info, self.battery_times);
+            tracing::info!("menu da bateria: {}", lines.join(" | "));
+            let n = lines.len();
+            for (i, line) in lines.into_iter().enumerate() {
+                items.insert(i, entry(line, "", None));
+            }
+            items.insert(n, MenuItem::Separator);
+        }
+        items
+    }
+
+    /// Largura do painel de lista com estes itens (o texto mais largo, com o atalho ou
+    /// a setinha de submenu).
+    fn menu_width(&mut self, items: &[MenuItem]) -> f32 {
+        items
+            .iter()
+            .map(|i| match i {
+                MenuItem::Entry(label, shortcut, action) => {
+                    let lw = self.text.measure(label, FONT, FontWeight::Regular);
+                    let sw = if matches!(action, Some(MenuAction::Submenu(_))) {
+                        28.0
+                    } else if shortcut.is_empty() {
+                        0.0
+                    } else {
+                        self.text.measure(shortcut, FONT - 1.0, FontWeight::Regular) + 28.0
+                    };
+                    lw + sw + 34.0
+                }
+                MenuItem::Separator => 0.0,
+            })
+            .fold(MENU_MIN_W, f32::max)
+    }
+
+    /// Abre ao lado do menu aberto o submenu do item `index` (um menu do app que não
+    /// coube na barra), à direita dele, ou à esquerda se não couber na tela.
+    fn open_child(&mut self, index: usize) {
+        let Some(menu) = self.menu.as_ref() else {
+            return;
+        };
+        let Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(id)))) = menu.items.get(index).cloned() else {
+            return;
+        };
+        if menu.child.as_ref().is_some_and(|c| c.id == id) {
+            return;
+        }
+        let item_top = PANEL_TOP
+            + MENU_PAD
+            + menu.items[..index]
+                .iter()
+                .map(|i| match i {
+                    MenuItem::Entry(..) => ITEM_H,
+                    MenuItem::Separator => SEPARATOR_H,
+                })
+                .sum::<f32>();
+        let (mx, mw, screen_w, screen_h) = (menu.x, menu.panel_w, self.width as f32, menu.height as f32);
+        // O submenu anterior fecha os submenus GTK dele.
+        self.close_native_submenus();
+        let items = self.menu_contents(id);
+        let w = self.menu_width(&items);
+        let h = items_height(&items);
+        let x = if mx + mw - 4.0 + w <= screen_w - 8.0 { mx + mw - 4.0 } else { (mx - w + 4.0).max(8.0) };
+        // O primeiro item na altura do item que abriu; sem passar do pé da tela.
+        let bottom = if screen_h > 0.0 { screen_h - 8.0 } else { f32::MAX };
+        let top = (item_top - MENU_PAD).min(bottom - h).max(PANEL_TOP);
+        tracing::info!("submenu aberto: {id:?} ({} itens)", items.len());
+        if let Some(menu) = self.menu.as_mut() {
+            menu.child = Some(ChildMenu { id, items, parent: index, x, top, w, hovered: None });
+        }
+        self.draw_menu();
+    }
+
+    /// Fecha o submenu aberto ao lado do menu (se houver).
+    fn close_child(&mut self) {
+        if self.menu.as_mut().and_then(|m| m.child.take()).is_some() {
+            self.close_native_submenus();
+            self.draw_menu();
         }
     }
 
@@ -2184,58 +2450,14 @@ impl Bar {
             self.draw_bar();
             return;
         }
-        let app = self.focused_name.clone();
-        // O menu Janela (o da barra ou o do app): ganha as outras telas e as janelas do app.
-        let window_menu = match id {
-            MenuId::Window => true,
-            MenuId::Native(i) => self.native.as_ref().and_then(|(_, _, top)| top.get(i as usize)).is_some_and(|m| matches!(m.label.replace('_', "").as_str(), "Janela" | "Window")),
-            _ => false,
-        };
-        let mut items = match id {
-            MenuId::Native(i) => self.native_items(i as usize),
-            MenuId::Tray(i) => self.tray_menu_items(i as usize),
-            MenuId::Layout => self.layout_items(),
-            _ => menu_items(id, &app),
-        };
-        // Tela cheia (como no Mac), logo depois de "Centralizar": o texto segue o estado
-        // da janela em foco.
-        if id == MenuId::Window {
-            let on = ask_compositor("fullscreen").and_then(|l| l.into_iter().next()).is_some_and(|l| l.trim() == "on");
-            let label = if on { tr!("Exit Full Screen") } else { tr!("Enter Full Screen") };
-            let at = items.len().min(3);
-            items.insert(at, entry(label, "Ctrl+Super+F", Some(MenuAction::Compositor("window fullscreen".into()))));
-        }
-        if window_menu {
-            items.extend(self.window_extras());
-        }
-        if id == MenuId::Battery
-            && let Some(info) = self.battery_info
-        {
-            let lines = battery_lines(&info, self.battery_times);
-            tracing::info!("menu da bateria: {}", lines.join(" | "));
-            let n = lines.len();
-            for (i, line) in lines.into_iter().enumerate() {
-                items.insert(i, entry(line, "", None));
-            }
-            items.insert(n, MenuItem::Separator);
-        }
+        let items = self.menu_contents(id);
         if id == MenuId::Calendar {
             let today = Local::now().date_naive();
             self.cal_month = (today.year(), today.month());
             self.clock_options = false;
             self.history = mide::notify::read_history();
         }
-        let widest = items
-            .iter()
-            .map(|i| match i {
-                MenuItem::Entry(label, shortcut, _) => {
-                    let lw = self.text.measure(label, FONT, FontWeight::Regular);
-                    let sw = if shortcut.is_empty() { 0.0 } else { self.text.measure(shortcut, FONT - 1.0, FontWeight::Regular) + 28.0 };
-                    lw + sw + 34.0
-                }
-                MenuItem::Separator => 0.0,
-            })
-            .fold(MENU_MIN_W, f32::max);
+        let widest = self.menu_width(&items);
         let widest = if id.custom() { id.custom_width() } else { widest };
         let title = self.titles.iter().find(|(t, _, _)| *t == id).map(|(_, x0, x1)| (*x0, *x1));
         let x = match (id, title) {
@@ -2268,6 +2490,7 @@ impl Bar {
             menu.dragging_brightness = false;
             menu.dragging_keyboard_light = false;
             menu.panel_top = PANEL_TOP;
+            menu.child = None;
             self.draw_menu();
             self.draw_bar();
             return;
@@ -2300,6 +2523,7 @@ impl Bar {
             dragging_volume: false,
             dragging_brightness: false,
             dragging_keyboard_light: false,
+            child: None,
         });
         self.draw_bar();
     }
@@ -2504,6 +2728,8 @@ impl Bar {
             MenuAction::ForceQuit => {
                 let _ = ask_compositor("force_quit");
             }
+            // Abre ao passar o ponteiro (`open_child`), sem chegar aqui.
+            MenuAction::Submenu(_) => {}
             MenuAction::AppWindows(what) => {
                 let mut ids = vec![self.focused_id.to_lowercase()];
                 if let Some(last) = self.focused_id.rsplit('.').next() {
@@ -4144,12 +4370,33 @@ impl PointerHandler for Bar {
                             }
                         }
                     }
+                    // Dentro do submenu aberto ao lado: o destaque é dele.
+                    if let Some(child) = self.menu.as_mut().and_then(|m| m.child.as_mut()).filter(|c| c.inside(x, y)) {
+                        let hovered = item_index(&child.items, child.x, child.w, child.top, x, y);
+                        let changed = child.hovered != hovered;
+                        child.hovered = hovered;
+                        if changed {
+                            self.draw_menu();
+                        }
+                        continue;
+                    }
                     let hovered = self.menu.as_ref().and_then(|m| m.item_at(x, y));
                     if self.menu.as_ref().is_some_and(|m| m.hovered != hovered) {
                         if let Some(menu) = self.menu.as_mut() {
                             menu.hovered = hovered;
                         }
                         self.draw_menu();
+                    }
+                    // Passar por um menu que não coube na barra abre o submenu dele; por
+                    // outro item, fecha o submenu (fora dos itens, ele fica: dá para ir em
+                    // diagonal até ele).
+                    if let Some(i) = hovered {
+                        let submenu = self.menu.as_ref().is_some_and(|m| matches!(m.items.get(i), Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(_))))));
+                        if submenu {
+                            self.open_child(i);
+                        } else {
+                            self.close_child();
+                        }
                     }
                 }
                 // Ícone do tray: clique esquerdo ativa o app (os que só têm menu abrem o
@@ -4186,9 +4433,23 @@ impl PointerHandler for Bar {
                     }
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_menu => {
-                    let item = self.menu.as_ref().and_then(|m| m.item_at(x, y).map(|i| m.items[i].clone()));
+                    // Item do submenu aberto ao lado.
+                    let child = self.menu.as_ref().and_then(|m| m.child.as_ref()).filter(|c| c.inside(x, y));
+                    if let Some(child) = child {
+                        let item = item_index(&child.items, child.x, child.w, child.top, x, y).map(|i| child.items[i].clone());
+                        if let Some(MenuItem::Entry(_, _, Some(action))) = item {
+                            self.run(action);
+                        }
+                        continue;
+                    }
+                    let index = self.menu.as_ref().and_then(|m| m.item_at(x, y));
+                    let item = index.and_then(|i| self.menu.as_ref().map(|m| m.items[i].clone()));
                     let inside = self.menu.as_ref().is_some_and(|m| m.inside_panel(x, y));
-                    if let Some(MenuItem::Entry(_, _, Some(action))) = item {
+                    if let (Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(_)))), Some(i)) = (&item, index) {
+                        // Clique num menu que não coube na barra: abre o submenu (o
+                        // ponteiro pode ter chegado sem passar pelo item).
+                        self.open_child(i);
+                    } else if let Some(MenuItem::Entry(_, _, Some(action))) = item {
                         self.run(action);
                     } else if y < BAR_HEIGHT as f64 && self.title_at(x).is_some() {
                         // Clicar no título do menu aberto fecha; em outro, troca.
@@ -4279,6 +4540,28 @@ mod tests {
         assert_eq!(clock_format(now, false, false, false, true), "09:05:07");
         assert_eq!(clock_format(now, true, true, false, false), "qua 21 out  09:05");
         assert_eq!(clock_format(now, true, true, true, false), "qua 21 out 2026  09:05");
+    }
+
+    #[test]
+    fn menus_do_app_que_nao_cabem_saem_da_barra_sem_piscar() {
+        // Títulos de 60 (com o espaço de 18 depois): o 1º termina em 142, o 2º em 202...
+        let widths = [60.0; 5];
+        assert_eq!(menus_that_fit(100.0, &widths, 1000.0, None), 5);
+        assert_eq!(menus_that_fit(100.0, &widths, 210.0, None), 2);
+        assert_eq!(menus_that_fit(100.0, &widths, 130.0, None), 0);
+        // Não cabe mais: diminui na hora, mesmo com o anterior maior.
+        assert_eq!(menus_that_fit(100.0, &widths, 210.0, Some(4)), 2);
+        // Sobrou pouco (o relógio encolheu): continua com 2; com a folga, volta o 3º.
+        assert_eq!(menus_that_fit(100.0, &widths, 270.0, Some(2)), 2);
+        assert_eq!(menus_that_fit(100.0, &widths, 262.0 + MENU_FIT_SLACK, Some(2)), 3);
+    }
+
+    #[test]
+    fn nome_do_app_encolhe_com_reticencias() {
+        let measure = |t: &str| t.chars().count() as f32 * 10.0;
+        assert_eq!(ellipsize("Visual Studio Code", 500.0, measure), "Visual Studio Code");
+        assert_eq!(ellipsize("Visual Studio Code", 80.0, measure), "Visual…");
+        assert_eq!(ellipsize("Code", 5.0, measure), "…");
     }
 
     #[test]

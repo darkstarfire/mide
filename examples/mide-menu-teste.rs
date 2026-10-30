@@ -3,7 +3,10 @@
 //! Chrome fazem no X11, e a registra no registrar da barra. O clique num item é
 //! gravado no arquivo de `MENU_TESTE_ARQUIVO` (o número do item).
 //!
-//! Menus: "Projeto" (Compilar = 11, Limpar = 12) e "Ajuda" (Sobre = 21).
+//! Menus: "Projeto" (Compilar = 11, Limpar = 12) e "Ajuda" (Sobre = 21). Com
+//! `MENU_TESTE_MUITOS=1`, entre os dois vêm mais 11 menus de nomes longos (como os de
+//! uma IDE), para a barra não ter espaço numa tela pequena; cada um com um item
+//! (id = 100 + posição).
 
 use std::collections::HashMap;
 
@@ -25,15 +28,31 @@ fn node(id: i32, label: &str, children: Vec<Value<'static>>) -> Value<'static> {
     StructureBuilder::new().append_field(Value::I32(id)).append_field(Value::Dict(props)).append_field(Value::Array(array)).build().expect("nó").into()
 }
 
+/// Menus extras do `MENU_TESTE_MUITOS`.
+const MUITOS: [&str; 11] = [
+    "Arquivo e Pastas",
+    "Edição Avançada",
+    "Seleção",
+    "Visualização",
+    "Navegação",
+    "Executar Tarefas",
+    "Terminal Integrado",
+    "Ferramentas",
+    "Refatoração",
+    "Depuração",
+    "Controle de Versão",
+];
+
 fn menu() -> Value<'static> {
-    node(
-        0,
-        "",
-        vec![
-            node(1, "_Projeto", vec![node(11, "_Compilar", vec![]), node(12, "_Limpar", vec![])]),
-            node(2, "A_juda", vec![node(21, "_Sobre", vec![])]),
-        ],
-    )
+    let mut top = vec![node(1, "_Projeto", vec![node(11, "_Compilar", vec![]), node(12, "_Limpar", vec![])])];
+    if std::env::var_os("MENU_TESTE_MUITOS").is_some() {
+        for (i, title) in MUITOS.iter().enumerate() {
+            let id = 3 + i as i32;
+            top.push(node(id, title, vec![node(100 + id, &format!("Item de {title}"), vec![])]));
+        }
+    }
+    top.push(node(2, "A_juda", vec![node(21, "_Sobre", vec![])]));
+    node(0, "", top)
 }
 
 fn find(value: &Value<'static>, id: i32) -> Option<Value<'static>> {
