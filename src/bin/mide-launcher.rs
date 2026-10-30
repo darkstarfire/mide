@@ -87,8 +87,8 @@ const SEARCH_Y: f32 = 46.0;
 const BTN_LEFT: u32 = 0x110;
 const BTN_MIDDLE: u32 = 0x112;
 const BTN_RIGHT: u32 = 0x111;
-/// Menu de contexto de um app instalado pelo mide (E9): largura e altura do item.
-const MENU_W: f32 = 196.0;
+/// Menu de contexto de um app: largura e altura do item.
+const MENU_W: f32 = 236.0;
 const MENU_ITEM_H: f32 = 30.0;
 /// Rolagem acumulada (em pixels) para trocar de página.
 const SCROLL_STEP: f64 = 40.0;
@@ -210,13 +210,26 @@ fn jiggle_angle(index: usize, seconds: f32) -> f32 {
     JIGGLE_DEG * (std::f32::consts::TAU * seconds / period + phase).sin()
 }
 
-/// Menu de contexto aberto (clique direito num AppImage instalado pelo mide): o app
-/// (índice em `apps`), o retângulo do menu e se o ponteiro está no item.
+/// Item do menu de contexto de um app.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MenuAction {
+    /// Fixar na dock.
+    Dock,
+    /// Atalho na área de trabalho.
+    Desktop,
+    /// Remover (só AppImages instalados pelo mide).
+    Trash,
+}
+
+/// Menu de contexto aberto (clique direito num app): o app (índice em `apps`), o
+/// retângulo do menu, os itens (`count` primeiros de `items`) e o item sob o ponteiro.
 #[derive(Debug, Clone, Copy)]
 struct AppMenu {
     app: usize,
     rect: (f32, f32, f32, f32),
-    hover: bool,
+    items: [MenuAction; 3],
+    count: usize,
+    hover: Option<usize>,
 }
 
 /// Durações das animações.
@@ -955,21 +968,48 @@ impl Launcher {
         let Some(Entry::App(i)) = self.entries().get(index).copied() else {
             return;
         };
-        if !self.apps[i].id.starts_with(mide::appimage::DESKTOP_PREFIX) {
-            return;
-        }
-        let h = MENU_ITEM_H + 12.0;
+        let items = [MenuAction::Dock, MenuAction::Desktop, MenuAction::Trash];
+        let count = if self.removable(i) { 3 } else { 2 };
+        let h = MENU_ITEM_H * count as f32 + 12.0 + if count > 2 { 9.0 } else { 0.0 };
         let mx = (x as f32).min(self.width as f32 - MENU_W - 8.0).max(8.0);
         let my = (y as f32).min(self.height as f32 - h - 8.0).max(8.0);
         tracing::info!("menu do app {} ({})", self.apps[i].name, self.apps[i].id);
-        self.menu = Some(AppMenu { app: i, rect: (mx, my, MENU_W, h), hover: false });
+        self.menu = Some(AppMenu { app: i, rect: (mx, my, MENU_W, h), items, count, hover: None });
         self.redraw();
     }
 
-    /// Retângulo do item do menu.
-    fn menu_item_rect(menu: &AppMenu) -> (f32, f32, f32, f32) {
+    /// Retângulo do item `i` do menu (a Lixeira vem depois de uma linha).
+    fn menu_item_rect(menu: &AppMenu, i: usize) -> (f32, f32, f32, f32) {
         let (x, y, w, _) = menu.rect;
-        (x + 6.0, y + 6.0, w - 12.0, MENU_ITEM_H)
+        let gap = if menu.items[i] == MenuAction::Trash { 9.0 } else { 0.0 };
+        (x + 6.0, y + 6.0 + i as f32 * MENU_ITEM_H + gap, w - 12.0, MENU_ITEM_H)
+    }
+
+    /// O item do menu sob (x, y).
+    fn menu_item_at(menu: &AppMenu, x: f64, y: f64) -> Option<usize> {
+        (0..menu.count).find(|&i| {
+            let (ix, iy, iw, ih) = Self::menu_item_rect(menu, i);
+            x >= ix as f64 && x <= (ix + iw) as f64 && y >= iy as f64 && y <= (iy + ih) as f64
+        })
+    }
+
+    /// Faz o que o item do menu pede.
+    fn menu_action(&mut self, app: usize, action: MenuAction) {
+        let Some(id) = self.apps.get(app).map(|a| a.id.clone()) else {
+            return;
+        };
+        match action {
+            MenuAction::Dock => match mide::shell::shortcuts::pin_to_dock(&id) {
+                Ok(true) => tracing::info!("launcher: {id} fixado na dock"),
+                Ok(false) => tracing::info!("launcher: {id} já estava na dock"),
+                Err(err) => tracing::warn!("launcher: não deu para fixar {id} na dock: {err}"),
+            },
+            MenuAction::Desktop => match mide::shell::shortcuts::add_to_desktop(&id) {
+                Ok(path) => tracing::info!("launcher: atalho de {id} na área de trabalho ({})", path.display()),
+                Err(err) => tracing::warn!("launcher: não deu para pôr {id} na área de trabalho: {err}"),
+            },
+            MenuAction::Trash => self.move_to_trash(app),
+        }
     }
 
     /// "Mover para a Lixeira": o instalador do mide pergunta e remove; o launcher fecha.
@@ -1428,7 +1468,8 @@ impl Launcher {
         self.apps.get(app).is_some_and(|a| a.id.starts_with(mide::appimage::DESKTOP_PREFIX))
     }
 
-    /// Menu de contexto: painel escuro com o item "Mover para a Lixeira" em vermelho.
+    /// Menu de contexto: painel escuro com "Adicionar à dock", "Adicionar à área de
+    /// trabalho" e, nos AppImages do mide, "Mover para a Lixeira" em vermelho.
     fn draw_menu(&mut self, pixmap: &mut Pixmap, menu: &AppMenu) {
         let (x, y, w, h) = menu.rect;
         mide::ui::draw::soft_shadow(pixmap, x, y, w, h, 10.0, 12.0, 4.0, 90);
@@ -1439,11 +1480,23 @@ impl Launcher {
             border.anti_alias = true;
             pixmap.stroke_path(&path, &border, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
-        let (ix, iy, iw, ih) = Self::menu_item_rect(menu);
-        if menu.hover {
-            fill_rounded(pixmap, ix, iy, iw, ih, 7.0, rgba(255, 255, 255, 34));
+        for i in 0..menu.count {
+            let (ix, iy, iw, ih) = Self::menu_item_rect(menu, i);
+            let (label, color) = match menu.items[i] {
+                MenuAction::Dock => (tr!("Add to Dock"), [255, 255, 255, 240]),
+                MenuAction::Desktop => (tr!("Add to Desktop"), [255, 255, 255, 240]),
+                MenuAction::Trash => {
+                    fill_rounded(pixmap, ix + 4.0, iy - 5.0, iw - 8.0, 1.0, 0.5, rgba(255, 255, 255, 40));
+                    (tr!("Move to Trash"), [255, 110, 100, 255])
+                }
+            };
+            if menu.hover == Some(i) {
+                let accent = mide::kit::system_accent(true);
+                fill_rounded(pixmap, ix, iy, iw, ih, 7.0, rgba(accent[0], accent[1], accent[2], 255));
+            }
+            let color = if menu.hover == Some(i) { [255, 255, 255, 255] } else { color };
+            self.text.draw(pixmap, &label, ix + 10.0, iy + (ih - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, color);
         }
-        self.text.draw(pixmap, &tr!("Move to Trash"), ix + 10.0, iy + (ih - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, [255, 110, 100, 255]);
     }
 
     /// Desenha uma página de itens na grade. `interactive` liga o destaque de seleção
@@ -1905,8 +1958,7 @@ impl PointerHandler for Launcher {
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } if self.menu.is_some() => {
                     if let Some(menu) = self.menu.as_mut() {
-                        let (ix, iy, iw, ih) = Self::menu_item_rect(menu);
-                        let hover = x >= ix as f64 && x <= (ix + iw) as f64 && y >= iy as f64 && y <= (iy + ih) as f64;
+                        let hover = Self::menu_item_at(menu, x, y);
                         if hover != menu.hover {
                             menu.hover = hover;
                             self.redraw();
@@ -1916,10 +1968,8 @@ impl PointerHandler for Launcher {
                 // Com o menu aberto, o clique é dele: no item, age; fora, fecha o menu.
                 PointerEventKind::Press { button, .. } if self.menu.is_some() => {
                     let Some(menu) = self.menu.take() else { continue };
-                    let (ix, iy, iw, ih) = Self::menu_item_rect(&menu);
-                    let on_item = x >= ix as f64 && x <= (ix + iw) as f64 && y >= iy as f64 && y <= (iy + ih) as f64;
-                    if on_item && button == BTN_LEFT {
-                        self.move_to_trash(menu.app);
+                    if let Some(i) = Self::menu_item_at(&menu, x, y).filter(|_| button == BTN_LEFT) {
+                        self.menu_action(menu.app, menu.items[i]);
                     }
                     self.press = None;
                     self.redraw();
@@ -1936,7 +1986,7 @@ impl PointerHandler for Launcher {
                         self.redraw();
                     }
                 }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT => self.press_at(x, y, false),
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT => self.press_at(x, y),
                 PointerEventKind::Press { button, .. } if button == BTN_MIDDLE => {
                     // Próxima página; da última, volta para a primeira.
                     let pages = self.pages();
@@ -2009,7 +2059,7 @@ impl Launcher {
     }
 
     /// Botão ou dedo apertado em (x, y).
-    fn press_at(&mut self, x: f64, y: f64, touch: bool) {
+    fn press_at(&mut self, x: f64, y: f64) {
         // Clique fora do título encerra a edição do nome (salvando).
         let on_title = self.title_rect.is_some_and(|(tx, ty, tw, th)| x >= tx as f64 && x <= (tx + tw) as f64 && y >= ty as f64 && y <= (ty + th) as f64);
         if self.editing.is_some() && !on_title {
@@ -2030,15 +2080,17 @@ impl Launcher {
         let organized = self.query.trim().is_empty();
         match target {
             Target::Entry(entry) => {
-                // O mouse arrasta o ícone (e entra no modo de edição); o dedo passa a
-                // página, a não ser no modo de edição.
-                if organized && (self.edit.is_some() || !touch) {
+                // Os ícones só se arrastam no modo de edição, que começa segurando um
+                // ícone parado por `EDIT_HOLD` (1 s), com o dedo ou com o botão: assim um
+                // toque ou clique que escorrega não tira o ícone do lugar. Fora dele,
+                // arrastar passa a página.
+                if organized && self.edit.is_some() {
                     self.drag = Some(Drag { entry, start: (x, y), pos: (x, y), active: false });
                 }
                 if organized && self.edit.is_none() {
                     self.hold = Some((entry, std::time::Instant::now(), (x, y)));
                 }
-                if touch && self.edit.is_none() {
+                if self.edit.is_none() {
                     self.swipe = Some(Swipe::new(x, y));
                 }
             }
@@ -2085,10 +2137,8 @@ impl Launcher {
             if !drag.active && moved >= DRAG_THRESHOLD {
                 drag.active = true;
                 tracing::info!("arrastando o item {}", drag.entry);
-                // Como no Launchpad: arrastar um ícone já é o modo de edição.
                 self.hold = None;
                 self.swipe = None;
-                self.begin_edit();
             }
             if self.drag.is_some_and(|d| d.active) {
                 // Perto da borda, troca de página (no máximo a cada 0,7 s).
@@ -2239,7 +2289,7 @@ impl TouchHandler for Launcher {
             self.redraw();
             return;
         }
-        self.press_at(position.0, position.1, true);
+        self.press_at(position.0, position.1);
     }
 
     fn up(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_touch::WlTouch, _: u32, _: u32, id: i32) {

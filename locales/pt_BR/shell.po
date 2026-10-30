@@ -726,3 +726,9 @@ msgstr "Login"
 
 msgid "Rotation Lock"
 msgstr "Trava de rotação"
+
+msgid "Add to Dock"
+msgstr "Adicionar à dock"
+
+msgid "Add to Desktop"
+msgstr "Adicionar à área de trabalho"

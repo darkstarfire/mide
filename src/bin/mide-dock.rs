@@ -22,7 +22,6 @@ use std::{
     error::Error,
     fs,
     num::NonZeroU32,
-    path::PathBuf,
     process::Command,
     time::Duration,
 };
@@ -35,7 +34,6 @@ use mide::{
     ui::draw::{px, tf},
     ui::text::{FontWeight, Text},
 };
-use serde::Deserialize;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     reexports::{
@@ -182,16 +180,6 @@ const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 /// Distância mínima em pixels para um clique virar arrasto.
 const DRAG_THRESHOLD: f64 = 6.0;
-
-/// Apps fixados quando o usuário não definiu nenhum.
-/// Como no macOS, as Configurações do Sistema vêm fixadas.
-const DEFAULT_PINNED: &[&str] = &["mide-terminal", "mide-calculator", "mide-settings"];
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct DockConfig {
-    pinned: Vec<String>,
-}
 
 /// Um app na dock, resolvido a partir do `.desktop`.
 #[derive(Clone)]
@@ -379,6 +367,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         previews_shown: false,
         menu_dirty: false,
         config_mtime: mide::settings_file::config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok()),
+        pins_mtime: pins_mtime(),
         liquid: liquid_glass(),
         autohide,
         shown: 1.0,
@@ -478,44 +467,22 @@ fn icon_x(items: &[DockApp], index: usize) -> u32 {
 /// Posição do Launchpad (sempre a primeira da dock) no lugar de um índice de app.
 const LAUNCHER: usize = usize::MAX;
 
-/// Ids dos apps fixados em `~/.config/mide/dock.toml`, ou os padrões.
+/// Ids dos apps fixados (`~/.config/mide/dock.toml`), ou os padrões.
 fn pinned_ids() -> Vec<String> {
-    let config = config_path()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|text| toml::from_str::<DockConfig>(&text).ok())
-        .unwrap_or_default();
-    if config.pinned.is_empty() {
-        DEFAULT_PINNED.iter().map(|s| s.to_string()).collect()
-    } else {
-        config.pinned
-    }
+    mide::shell::shortcuts::pinned_ids()
 }
 
-/// Grava a lista de fixados em `~/.config/mide/dock.toml`.
+/// Grava a lista de fixados.
 fn save_pinned(ids: &[String]) {
-    let Some(path) = config_path() else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    let list = ids
-        .iter()
-        .map(|id| format!("\"{id}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let text = format!("# Apps fixados na dock, na ordem em que aparecem.\npinned = [{list}]\n");
-    match fs::write(&path, text) {
+    match mide::shell::shortcuts::save_pinned(ids) {
         Ok(()) => tracing::info!("dock salva: {}", ids.join(", ")),
         Err(err) => tracing::warn!("falha ao salvar a dock: {err}"),
     }
 }
 
-fn config_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("mide").join("dock.toml"))
+/// Quando o `dock.toml` mudou por fora (o launcher fixou um app).
+fn pins_mtime() -> Option<std::time::SystemTime> {
+    mide::shell::shortcuts::dock_config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok())
 }
 
 /// Ícone do Launchpad: quadrado claro arredondado com uma grade 3x3 de quadradinhos
@@ -643,6 +610,8 @@ struct Dock {
     menu_dirty: bool,
     /// Última modificação vista do `config.toml` (o tamanho dos ícones vem dele).
     config_mtime: Option<std::time::SystemTime>,
+    /// Última versão do `dock.toml` vista (fixados mudados pelo launcher).
+    pins_mtime: Option<std::time::SystemTime>,
     /// O compositor desenha o vidro líquido atrás da dock (borda e reflexo vêm dele).
     liquid: bool,
     /// Ocultar automaticamente (Configurações → Dock): a dock desce e fica só uma faixa
@@ -891,7 +860,10 @@ impl Dock {
             return;
         };
         self.sliding = true;
-        let step = Duration::from_millis(16);
+        let step = Duration::from_millis(8);
+        // Pelo tempo de verdade entre os passos (o relógio atrasa sob carga): a dock anda
+        // na mesma velocidade sempre, sem engasgar.
+        let mut last = std::time::Instant::now();
         let _ = handle.insert_source(Timer::from_duration(Duration::ZERO), move |_, _, dock: &mut Dock| {
             // Hora de esconder (o ponteiro saiu e não há menu aberto)?
             if dock.hide_at.is_some_and(|at| std::time::Instant::now() >= at) {
@@ -900,12 +872,16 @@ impl Dock {
                     dock.show_target = 0.0;
                 }
             }
-            let delta = step.as_secs_f32() / SLIDE.as_secs_f32();
+            let now = std::time::Instant::now();
+            let delta = now.duration_since(last).as_secs_f32().min(0.05) / SLIDE.as_secs_f32();
+            last = now;
             let before = dock.shown;
             dock.shown = if dock.show_target > dock.shown { (dock.shown + delta).min(dock.show_target) } else { (dock.shown - delta).max(dock.show_target) };
             if dock.shown != before {
-                // Sai e entra com aceleração suave.
-                let k = dock.shown * dock.shown * (3.0 - 2.0 * dock.shown);
+                // Sai e entra com aceleração e freada suaves (curva mais macia que a do
+                // smoothstep: começa e termina devagar, como a dock do Mac).
+                let t = dock.shown;
+                let k = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
                 let hidden = hidden_margin() as f32;
                 let margin = (hidden + (BOTTOM_MARGIN as f32 - hidden) * k).round() as i32;
                 dock.layer.set_margin(0, 0, margin, 0);
@@ -1019,6 +995,37 @@ impl Dock {
         self.layer.commit();
     }
 
+    /// Fixados acrescentados por fora (o launcher, "Adicionar à dock"): entram no fim
+    /// dos fixados; um app aberto que já estava na dock só passa a fixado.
+    fn watch_pins(&mut self) {
+        let mtime = pins_mtime();
+        if mtime == self.pins_mtime {
+            return;
+        }
+        self.pins_mtime = mtime;
+        let wanted = pinned_ids();
+        let mut changed = false;
+        for id in wanted {
+            if self.items.iter().any(|a| a.pinned && a.id == id) {
+                continue;
+            }
+            let pinned_count = self.items.iter().filter(|a| a.pinned).count();
+            let app = match self.items.iter().position(|a| !a.pinned && (a.id == id || a.match_ids.contains(&id.to_lowercase()))) {
+                Some(i) => Some(self.items.remove(i)),
+                None => self.catalog.find(&id, true),
+            };
+            if let Some(mut app) = app {
+                tracing::info!("dock: {} fixado por fora", app.id);
+                app.pinned = true;
+                self.items.insert(pinned_count, app);
+                changed = true;
+            }
+        }
+        if changed {
+            self.resize();
+        }
+    }
+
     /// Ids dos fixados, na ordem atual.
     fn pinned_order(&self) -> Vec<String> {
         self.items.iter().filter(|a| a.pinned).map(|a| a.id.clone()).collect()
@@ -1040,6 +1047,7 @@ impl Dock {
             }
         }
         save_pinned(&self.pinned_order());
+        self.pins_mtime = pins_mtime();
         self.resize();
     }
 
@@ -2350,6 +2358,7 @@ impl Dock {
     /// Com o `config.toml` alterado (Configurações → Dock), aplica o tamanho novo dos
     /// ícones: recarrega os ícones nesse tamanho e ajusta a dock.
     fn watch_config(&mut self) {
+        self.watch_pins();
         let mtime = mide::settings_file::config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok());
         // Modo tablet entrou ou saiu (ícones do tamanho do dedo).
         let tablet_changed = {
@@ -3002,6 +3011,8 @@ impl PointerHandler for Dock {
                         if press.dragged {
                             self.settle_dragged(press.index, press.grab);
                             save_pinned(&self.pinned_order());
+                            self.pins_mtime = pins_mtime();
+        self.pins_mtime = pins_mtime();
                         } else if press.index == LAUNCHER {
                             self.menu = None;
                             tracing::info!("Launchpad");

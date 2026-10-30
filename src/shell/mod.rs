@@ -10,6 +10,7 @@ pub mod launcher_layout;
 pub mod search;
 pub mod scale;
 pub mod lockscreen;
+pub mod shortcuts;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::shell::{appmenu, motion};

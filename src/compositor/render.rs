@@ -1172,11 +1172,13 @@ fn layer_elements(
                 }
             }
             "mide-dock" if state.config.effects.dock_blur => {
-                // Só a parte na tela (a dock que se esconde desliza para fora); a faixa
-                // escondida, pequena demais, fica sem vidro.
+                // O vidro inteiro, no lugar da dock, também quando ela desliza para fora da
+                // tela (ocultar automaticamente): recortado na borda, ele virava uma
+                // pílula que crescia de baixo e não acompanhava os ícones. Escondida (só a
+                // faixa de baixo à mostra), fica sem vidro.
                 let screen = output.current_mode().map(|m| Rectangle::from_size(m.size.to_logical(1))).unwrap_or(geo);
-                if let Some(rect) = geo.intersection(screen) {
-                    glass.push(GlassRegion { at: elements.len(), rect, radius: 15.0, name: "mide-dock".into(), alpha: 1.0 });
+                if geo.intersection(screen).is_some_and(|r| r.size.h >= 6) {
+                    glass.push(GlassRegion { at: elements.len(), rect: geo, radius: 15.0, name: "mide-dock".into(), alpha: 1.0 });
                 }
             }
             namespace if state.config.effects.panel_glass => {

@@ -70,18 +70,25 @@ else
     falha "launcher: o dedo arrastando passa a página"
 fi
 # Segurar um ícone: modo de edição (os ícones balançam); tocar no vazio sai.
-tg_run edita "300 combo ctrl+shift+space; 400 touch down 179 213; 470 touch up; 500 touch down 683 640; 502 touch up; 540 list"
+tg_run edita "300 combo ctrl+shift+space; 400 touch down 179 213; 560 touch up; 590 touch down 683 640; 592 touch up; 630 list"
 if tg_log edita | grep -q "launcher: modo de edição" && tg_log edita | grep -q "launcher: fim do modo de edição" && ! tg_log edita | grep -q "launcher fechado"; then
     ok "launcher: segurar um ícone entra no modo de edição, tocar no vazio sai"
 else
     falha "launcher: segurar um ícone entra no modo de edição, tocar no vazio sai"
 fi
-# Com o mouse: arrastar no vazio passa a página; arrastar um ícone entra no modo de
-# edição (como no Launchpad); Esc sai.
-tg_run mouse "300 combo ctrl+shift+space; 400 press 900 640; 404 move 800 640; 408 move 600 640; 412 release 500 640; 480 press 179 213; 484 move 200 230; 488 move 260 260; 492 release 260 260; 540 key esc; 580 list"
+# Com o mouse: arrastar no vazio passa a página; segurar um ícone 1 s entra no modo de
+# edição e aí ele se arrasta; Esc sai.
+tg_run mouse "300 combo ctrl+shift+space; 400 press 900 640; 404 move 800 640; 408 move 600 640; 412 release 500 640; 480 press 179 213; 640 move 200 230; 644 move 260 260; 648 release 260 260; 700 key esc; 740 list"
 if tg_log mouse | grep -q "página 0 → 1 (com o dedo)" && tg_log mouse | grep -q "launcher: modo de edição" && tg_log mouse | grep -q "launcher: fim do modo de edição"; then
     ok "launcher: o mouse arrasta a página no vazio e o ícone entra no modo de edição"
 else
     falha "launcher: o mouse arrasta a página no vazio e o ícone entra no modo de edição"
+fi
+# Arrastar um ícone sem segurar não o tira do lugar (passa a página, como o dedo).
+tg_run rapido "300 combo ctrl+shift+space; 400 press 179 213; 404 move 150 213; 408 move 100 213; 412 move 60 213; 416 release 60 213; 480 list"
+if ! tg_log rapido | grep -q "launcher: modo de edição\|arrastando o item" && tg_log rapido | grep -q "página arrastada"; then
+    ok "launcher: arrastar um ícone sem segurar passa a página e não entra no modo de edição"
+else
+    falha "launcher: arrastar um ícone sem segurar passa a página e não entra no modo de edição"
 fi
 rm -rf "$TG"

@@ -38,11 +38,23 @@ OLD_LCFG="$XDG_CONFIG_HOME"
 export XDG_CONFIG_HOME="$LCFG"
 # As pastas padrão dependem dos apps instalados: conta as do começo.
 LFOLDERS="$(timeout 150 "$SCEN" "$LAUNCH; 460 list" 2>&1 | grep -oE "e [0-9]+ pasta" | head -1 | grep -oE "[0-9]+")"
-DRAG="460 press 179 210; 465 move 200 210; 470 move 260 210; 475 move 323 210; 480 release 323 210"
-check "arrastar app sobre app cria uma pasta" "pasta .*\(2 apps\)" "$LAUNCH; $DRAG; 520 list"
+# Clique direito num app: o menu abre onde se clicou (itens em y = 231 e 261).
+LDESK="$(mktemp -d)"
+check "clique direito: Adicionar à dock fixa o app e a dock mostra" "dock: .* fixado por fora" "$LAUNCH; 460 rclick 179 210; 480 click 260 231; 640 list"
+MIDE_DESKTOP_DIR="$LDESK" check "clique direito: Adicionar à área de trabalho cria o atalho" "launcher: atalho de .* na área de trabalho" "$LAUNCH; 460 rclick 179 210; 480 click 260 261; 520 list"
+if ls "$LDESK"/*.desktop >/dev/null 2>&1 && [ -x "$(ls "$LDESK"/*.desktop | head -1)" ]; then
+    echo "ok    o atalho na área de trabalho é a cópia executável do .desktop"; PASS=$((PASS + 1))
+else
+    echo "FALHA o atalho na área de trabalho é a cópia executável do .desktop"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$LDESK"
+rm -f "$LCFG/mide/dock.toml"
+# Arrastar só no modo de edição: segurar o ícone 1 s (150 quadros) antes de mover.
+DRAG="460 press 179 210; 610 move 200 210; 615 move 260 210; 620 move 323 210; 625 release 323 210"
+check "arrastar app sobre app cria uma pasta" "pasta .*\(2 apps\)" "$LAUNCH; $DRAG; 680 list"
 check "pasta fica salva" "em [0-9]+ lugar\(es\) e $((LFOLDERS + 1)) pasta" "$LAUNCH; 460 list"
 check "clicar no nome da pasta e renomear" "pasta renomeada para gravar" "$LAUNCH; 460 click 179 210; 490 click 683 258; 510 key backspace; 511 key backspace; 512 key backspace; 513 key backspace; 514 key backspace; 520 type gravar; 530 key enter; 560 list"
-check "arrastar para fora tira o app da pasta" "saiu da pasta gravar" "$LAUNCH; 460 click 179 210; 490 press 611 368; 495 move 560 420; 500 move 400 520; 505 move 200 600; 510 release 150 620; 540 list"
+check "arrastar para fora tira o app da pasta" "saiu da pasta gravar" "$LAUNCH; 460 click 179 210; 490 press 611 368; 640 move 560 420; 645 move 400 520; 650 move 200 600; 655 release 150 620; 700 list"
 # Três dedos no touchpad: o launcher entra acompanhando os dedos e, soltos depois de
 # um terço do caminho, termina de abrir; para baixo, sai; pouco caminho volta.
 check "três dedos para cima abrem o launcher" "gesto: launcher aberto" "400 swipe 0 -200; 404 swipe end; 560 list"
