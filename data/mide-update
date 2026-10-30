@@ -23,6 +23,8 @@ antes="$(mktemp)"
 depois="$(mktemp)"
 trap 'rm -f "$antes" "$depois"' EXIT
 programas > "$antes"
+# A pasta de compilação não para de crescer: limpa antes de encher o disco.
+data/mide-trim-target --full
 cargo build --release
 programas > "$depois"
 mudaram="$(comm -13 "$antes" "$depois" | cut -d' ' -f1 | tr '\n' ' ')"

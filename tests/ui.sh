@@ -42,6 +42,9 @@ if [ ${#SECTIONS[@]} -eq 0 ]; then
     exit 2
 fi
 
+# Compilação incremental grande demais (enche o disco): apaga; os programas ficam.
+data/mide-trim-target
+
 # Trava: a bateria não pode alterar a configuração real do usuário.
 REAL_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/mide"
 cfg_fingerprint() { (cd "$REAL_CFG" 2>/dev/null && ls -A | sort && cat ./* 2>/dev/null) | md5sum; }

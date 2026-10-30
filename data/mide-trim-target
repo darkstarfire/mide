@@ -1,0 +1,35 @@
+#!/bin/sh
+# Limpa a pasta de compilação (target/) antes que ela encha o disco: cada compilação do
+# mide deixa cópias novas e o cargo nunca apaga as velhas (em 2026-10-30 ela chegou a
+# 400 GB e o disco encheu no meio de um commit).
+#
+# Uso: data/mide-trim-target          leve: apaga a compilação incremental quando passa
+#                                       de 30 GB (os programas compilados continuam)
+#      data/mide-trim-target --full   também `cargo clean` quando target/ passa de 150 GB
+#                                       ou o disco tem menos de 15% livre (a próxima
+#                                       compilação começa do zero)
+#
+# Chamado pela bateria de testes (leve) e pelo data/mide-update (completo).
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 0
+[ -d target ] || exit 0
+
+tamanho_gb() { du -s --block-size=1G "$1" 2>/dev/null | cut -f1; }
+
+for perfil in debug release; do
+    pasta="target/$perfil/incremental"
+    [ -d "$pasta" ] || continue
+    gb="$(tamanho_gb "$pasta")"
+    if [ "${gb:-0}" -gt 30 ]; then
+        echo "mide-trim-target: apagando $pasta (${gb} GB)"
+        rm -rf "$pasta"
+    fi
+done
+
+[ "${1:-}" = "--full" ] || exit 0
+total="$(tamanho_gb target)"
+livre="$(df --output=pcent . | tail -1 | tr -dc '0-9')"
+livre=$((100 - ${livre:-0}))
+if [ "${total:-0}" -gt 150 ] || [ "$livre" -lt 15 ]; then
+    echo "mide-trim-target: target/ com ${total} GB e ${livre}% do disco livre: cargo clean"
+    PATH="$HOME/.cargo/bin:$PATH" cargo clean
+fi
