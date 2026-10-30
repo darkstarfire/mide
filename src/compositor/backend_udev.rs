@@ -752,7 +752,11 @@ fn create_head(gpu: &mut Gpu, state: &mut State, c: &Connected, mode: DrmMode, s
 fn set_output_mode(output: &Output, mode: DrmMode, scale: f64) {
     let (w, h) = mode.size();
     let wl_mode = Mode { size: (w as i32, h as i32).into(), refresh: mode.vrefresh() as i32 * 1000 };
-    output.change_current_state(Some(wl_mode), Some(Transform::Normal), Some(output_scale(scale)), None);
+    // A rotação da tela (sensor) continua: a tela refeita (udev, volta da sessão,
+    // Configurações) voltava ao normal sem avisar a rotação, com a cena girada pela
+    // metade (camadas no tamanho girado, imagem não).
+    let transform = output.current_transform();
+    output.change_current_state(Some(wl_mode), Some(transform), Some(output_scale(scale)), None);
     output.set_preferred(wl_mode);
 }
 
@@ -849,7 +853,7 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
         return false;
     }
     // Tela girada: o plano de cursor da placa não gira junto; a cena desenha o cursor.
-    if crate::rotation::rotated(&head.output) {
+    if crate::rotation::via_texture(state, &head.output) {
         hide(head);
         return false;
     }

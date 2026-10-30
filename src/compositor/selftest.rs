@@ -23,8 +23,11 @@
 //! - `swipe dx dy`: três dedos no touchpad andando (dx, dy); `swipe end` solta os dedos
 //! - `swipe4 dx dy` / `swipe4 end`: o mesmo com quatro dedos (visão das janelas)
 //! - `touch down x y` / `touch move x y` / `touch up`: um dedo na tela de toque
+//! - `touch panel down X Y` / `touch panel move X Y`: o dedo em pixels do painel (como no
+//!   quadro salvo), passando pela rotação da tela como o toque de verdade
 //! - `tablet on` / `tablet off`: a chave de modo tablet (tela dobrada para trás)
-//! - `orientation normal|left-up|right-up|bottom-up`: o sensor de orientação
+//! - `orientation normal|left-up|right-up|bottom-up|undefined`: o sensor de orientação
+//!   (`undefined`: o aparelho deitado)
 //! - `unplug HEADLESS-N` / `plug HEADLESS-N`: finge o monitor da tela virtual N
 //!   desconectado ou conectado de novo (a tela sai depois da folga, como no DRM)
 //!
@@ -182,10 +185,17 @@ fn parse_one(part: &str) -> Option<(u32, Step)> {
                     "down" => Step::Touch(0, Some((coord(3)?, coord(4)?))),
                     "move" => Step::Touch(1, Some((coord(3)?, coord(4)?))),
                     "up" => Step::Touch(2, None),
+                    // Em pixels do painel (como no quadro salvo), passando pela rotação
+                    // da tela como um toque de verdade.
+                    "panel" => match *words.get(3)? {
+                        "down" => Step::Touch(3, Some((coord(4)?, coord(5)?))),
+                        "move" => Step::Touch(4, Some((coord(4)?, coord(5)?))),
+                        _ => return None,
+                    },
                     _ => return None,
                 },
                 "tablet" => Step::Tablet(words.get(2) == Some(&"on")),
-                "orientation" => Step::Orientation(["normal", "left-up", "right-up", "bottom-up"].iter().position(|o| words.get(2) == Some(o))? as u8),
+                "orientation" => Step::Orientation(["normal", "left-up", "right-up", "bottom-up", "undefined"].iter().position(|o| words.get(2) == Some(o))? as u8),
                 "swipe" | "swipe4" if words.get(2) == Some(&"end") => Step::Swipe(if words[1] == "swipe4" { 4 } else { 3 }, None),
                 "swipe" | "swipe4" => Step::Swipe(if words[1] == "swipe4" { 4 } else { 3 }, Some((coord(2)?, coord(3)?))),
                 "plug" | "unplug" => {
@@ -247,6 +257,18 @@ fn run(state: &mut State, step: Step, frame: u32) {
             crate::touch::down(state, 0, at(x, y), time);
             crate::touch::frame(state);
         }
+        Step::Touch(kind @ (3 | 4), Some((x, y))) => {
+            let panel = crate::touch::internal_output(state).and_then(|o| o.current_mode()).map(|m| m.size);
+            if let Some(pos) = panel.and_then(|p| crate::touch::panel_to_global(state, x / p.w as f64, y / p.h as f64)) {
+                tracing::info!("autoteste: toque no painel em ({x}, {y}) = ({:.0}, {:.0})", pos.x, pos.y);
+                if kind == 3 {
+                    crate::touch::down(state, 0, pos, time);
+                } else {
+                    crate::touch::motion(state, 0, pos, time);
+                }
+                crate::touch::frame(state);
+            }
+        }
         Step::Touch(_, Some((x, y))) => {
             crate::touch::motion(state, 0, at(x, y), time);
             crate::touch::frame(state);
@@ -260,11 +282,10 @@ fn run(state: &mut State, step: Step, frame: u32) {
             crate::touch::set_tablet_mode(state, on);
         }
         Step::Orientation(i) => {
-            let name = ["normal", "left-up", "right-up", "bottom-up"][i as usize % 4];
+            // `undefined`: o aparelho deitado (fica a última orientação).
+            let name = ["normal", "left-up", "right-up", "bottom-up", "undefined"][i as usize % 5];
             state.touch.sensor = true;
-            state.touch.orientation = Some(name.to_string());
-            tracing::info!("sensor de orientação: {name}");
-            crate::rotation::apply(state);
+            crate::rotation::orientation_changed(state, name.to_string());
         }
         Step::MiddleClick(x, y) => {
             input::pointer_motion(state, at(x, y), time);

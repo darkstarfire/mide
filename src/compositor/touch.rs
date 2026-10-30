@@ -8,9 +8,16 @@
 //! - Modo tablet: a chave do kernel (`SW_TABLET_MODE`, a tela dobrada para trás) liga e
 //!   desliga; o backend desliga o teclado e o touchpad internos enquanto dura (e o
 //!   teclado na tela pergunta `tablet_mode` pelo canal de controle).
+//! - Gestos das bordas no modo tablet, como no iPad (`[tablet] edge_gestures`): da
+//!   borda de baixo para cima, o launcher sobe acompanhando o dedo (a tela de início);
+//!   subindo e parando, a visão de todas as janelas; do canto de cima à direita para
+//!   baixo, a central de controle; do canto de cima à esquerda, as notificações. Um
+//!   toque parado na borda continua sendo um toque comum.
+//! - O launcher e o teclado na tela recebem o toque como `wl_touch` (passar páginas com
+//!   o dedo, segurar para editar, deslizar no espaço para mover o cursor).
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::ButtonState,
@@ -29,6 +36,22 @@ use crate::{
 const LONG_PRESS: Duration = Duration::from_millis(600);
 /// Caminho do dedo (pontos) a partir do qual o toque vira arrasto.
 const DRAG_START: f64 = 8.0;
+/// Faixa das bordas (pontos) onde começam os gestos do modo tablet, e a largura dos
+/// cantos de cima (fração da largura da tela).
+const EDGE: f64 = 22.0;
+const CORNER: f64 = 0.3;
+/// Gesto de baixo: subindo e parando este tempo (depois de subir `HOLD_TRAVEL`), a
+/// visão das janelas no lugar do launcher.
+const HOLD: Duration = Duration::from_millis(280);
+const HOLD_TRAVEL: f64 = 110.0;
+
+/// Borda onde um gesto do modo tablet começou.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    Bottom,
+    TopLeft,
+    TopRight,
+}
 
 /// Um dedo na tela.
 #[derive(Debug, Clone)]
@@ -38,6 +61,9 @@ enum Contact {
     /// Vira ponteiro: onde começou, se o botão já foi apertado (arrasto), se o
     /// botão direito já saiu (segurar) e o número do toque (para o relógio do segurar).
     Pointer { start: Point<f64, Logical>, pressed: bool, long: bool, seq: u64 },
+    /// Gesto de borda: ainda decidindo (`active` falso: pode virar um toque comum),
+    /// acompanhando (o launcher subindo) ou já feito (`done`: o resto do dedo não vale).
+    Edge { edge: Edge, start: Point<f64, Logical>, last: Point<f64, Logical>, active: bool, done: bool, moved_at: Instant, seq: u64 },
 }
 
 /// Estado do toque, do modo tablet e da rotação.
@@ -58,6 +84,20 @@ pub struct Touch {
 /// Dedo encostou em `pos` (coordenadas globais).
 pub fn down(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
     state.wake();
+    if state.touch.contacts.is_empty()
+        && let Some(edge) = edge_at(state, pos)
+    {
+        state.touch.seq += 1;
+        let seq = state.touch.seq;
+        tracing::info!("toque: na borda ({edge:?})");
+        state.touch.contacts.insert(slot, Contact::Edge { edge, start: pos, last: pos, active: false, done: false, moved_at: Instant::now(), seq });
+        return;
+    }
+    start(state, slot, pos, time);
+}
+
+/// Começo de um toque comum (no app como `wl_touch`, ou como ponteiro).
+fn start(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
     if let Some((surface, origin)) = input::touch_app_target(state, pos) {
         // Toque numa janela: ela vem para frente com o foco, como o clique.
         if let Some(window) = state.window_for(&surface) {
@@ -114,6 +154,32 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
                 touch.motion(state, Some((surface, origin)), &MotionEvent { slot: slot_of(slot), location: pos, time });
             }
         }
+        Contact::Edge { edge, start: from, last, active, done, moved_at, seq } => {
+            if done {
+                return;
+            }
+            let d = pos - from;
+            if !active {
+                let along = match edge {
+                    Edge::Bottom => -d.y,
+                    Edge::TopLeft | Edge::TopRight => d.y,
+                };
+                if along >= DRAG_START * 1.5 && along > d.x.abs() {
+                    edge_begin(state, slot, edge, from, pos, seq);
+                } else if d.x.hypot(d.y) >= DRAG_START * 1.5 {
+                    // Outra direção: era um toque comum (rolar, arrastar) perto da borda.
+                    state.touch.contacts.remove(&slot);
+                    start(state, slot, from, time);
+                    motion(state, slot, pos, time);
+                }
+                return;
+            }
+            // Launcher acompanhando o dedo.
+            let step = pos - last;
+            crate::gesture::update(state, step.x, step.y);
+            let moved_at = if step.x.hypot(step.y) > 2.0 { Instant::now() } else { moved_at };
+            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active, done, moved_at, seq });
+        }
         Contact::Pointer { long: true, .. } => {}
         Contact::Pointer { start, pressed, long, seq } => {
             if !pressed {
@@ -138,6 +204,13 @@ pub fn up(state: &mut State, slot: i32, time: u32) {
     };
     state.wake();
     match contact {
+        Contact::Edge { done: true, .. } => {}
+        Contact::Edge { active: true, .. } => crate::gesture::end(state, false),
+        // Parado na borda: um toque comum ali.
+        Contact::Edge { start: from, .. } => {
+            start(state, slot, from, time);
+            up(state, slot, time);
+        }
         Contact::App { .. } => {
             if let Some(touch) = state.seat.get_touch() {
                 touch.up(state, &UpEvent { slot: slot_of(slot), serial: SERIAL_COUNTER.next_serial(), time });
@@ -171,10 +244,98 @@ pub fn cancel(state: &mut State) {
     {
         touch.cancel(state);
     }
+    if contacts.iter().any(|c| matches!(c, Contact::Edge { active: true, done: false, .. })) {
+        crate::gesture::end(state, true);
+    }
     if contacts.iter().any(|c| matches!(c, Contact::Pointer { pressed: true, .. })) {
         let time = state.start_time.elapsed().as_millis() as u32;
         input::button(state, BTN_LEFT, ButtonState::Released, time);
     }
+}
+
+/// Borda de gesto sob `pos` (só no modo tablet, com a opção, sem a tela bloqueada).
+fn edge_at(state: &State, pos: Point<f64, Logical>) -> Option<Edge> {
+    if !state.touch.tablet || !state.config.tablet.edge_gestures || state.lock.locked {
+        return None;
+    }
+    let output = state.output_at(pos)?;
+    let geo = state.space.output_geometry(&output)?.to_f64();
+    let (x, y) = (pos.x - geo.loc.x, pos.y - geo.loc.y);
+    edge_in((geo.size.w, geo.size.h), (x, y))
+}
+
+/// Borda de gesto num ponto `p` de uma tela `size` (pontos).
+fn edge_in(size: (f64, f64), p: (f64, f64)) -> Option<Edge> {
+    if p.1 >= size.1 - EDGE {
+        return Some(Edge::Bottom);
+    }
+    if p.1 <= EDGE {
+        if p.0 <= size.0 * CORNER {
+            return Some(Edge::TopLeft);
+        }
+        if p.0 >= size.0 * (1.0 - CORNER) {
+            return Some(Edge::TopRight);
+        }
+    }
+    None
+}
+
+/// O dedo saiu da borda na direção do gesto: começa.
+fn edge_begin(state: &mut State, slot: i32, edge: Edge, from: Point<f64, Logical>, pos: Point<f64, Logical>, seq: u64) {
+    match edge {
+        Edge::Bottom => {
+            tracing::info!("toque: gesto da borda de baixo (tela de início)");
+            crate::gesture::begin(state, 3);
+            let d = pos - from;
+            crate::gesture::update(state, d.x, d.y);
+            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: false, moved_at: Instant::now(), seq });
+            // Subindo e parando: a visão das janelas.
+            let timer = smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(60));
+            let _ = state.loop_handle.insert_source(timer, move |_, _, state| hold_check(state, slot, seq));
+        }
+        Edge::TopLeft | Edge::TopRight => {
+            let what = if edge == Edge::TopRight { "control-center" } else { "notifications" };
+            tracing::info!("toque: gesto do canto de cima ({what})");
+            state.bar_request = Some(what);
+            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: true, moved_at: Instant::now(), seq });
+        }
+    }
+    state.wake();
+}
+
+/// Gesto de baixo parado depois de subir: troca o launcher pela visão das janelas.
+fn hold_check(state: &mut State, slot: i32, seq: u64) -> smithay::reexports::calloop::timer::TimeoutAction {
+    use smithay::reexports::calloop::timer::TimeoutAction;
+    let Some(Contact::Edge { start: from, last, active: true, done: false, moved_at, seq: current, .. }) = state.touch.contacts.get(&slot).cloned() else {
+        return TimeoutAction::Drop;
+    };
+    if current != seq {
+        return TimeoutAction::Drop;
+    }
+    if from.y - last.y < HOLD_TRAVEL || moved_at.elapsed() < HOLD {
+        return TimeoutAction::ToDuration(Duration::from_millis(50));
+    }
+    tracing::info!("toque: subir e parar (visão das janelas)");
+    if let Some(Contact::Edge { done, .. }) = state.touch.contacts.get_mut(&slot) {
+        *done = true;
+    }
+    // O launcher que vinha subindo volta; a visão das janelas entra.
+    crate::gesture::end(state, true);
+    if let Some(output) = state.output_at(last) {
+        crate::overview::open(state, &output, None);
+    }
+    state.wake();
+    TimeoutAction::Drop
+}
+
+/// No modo tablet, as janelas ocupam a tela (`[tablet] maximize_windows`).
+pub fn maximize_windows(state: &State) -> bool {
+    state.touch.tablet && state.config.tablet.maximize_windows
+}
+
+/// Barra e dock maiores (o modo tablet com `[tablet] large_targets`).
+pub fn large_targets(state: &State) -> bool {
+    state.touch.tablet && state.config.tablet.large_targets
 }
 
 fn slot_of(slot: i32) -> smithay::backend::input::TouchSlot {
@@ -221,14 +382,50 @@ pub fn set_tablet_mode(state: &mut State, on: bool) {
     if let Some(waker) = &state.input_waker {
         waker.ping();
     }
-    // Em modo tablet a tela passa a girar com o sensor (e volta ao normal ao sair).
+    // Em modo tablet a tela passa a girar com o sensor (e volta ao normal ao sair). O
+    // aparelho pode já estar em pé: a orientação é lida de novo na hora.
     crate::rotation::apply(state);
+    if on {
+        crate::rotation::read_now(state);
+        // Apps ocupando a tela, como no iPad.
+        if maximize_windows(state) {
+            maximize_all(state);
+        }
+    }
     state.wake();
+}
+
+/// Põe as janelas abertas ocupando a área útil da tela delas (ao entrar no modo tablet).
+fn maximize_all(state: &mut State) {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+    let windows: Vec<_> = state.space.elements().cloned().collect();
+    for window in windows {
+        let Some(toplevel) = window.toplevel().cloned() else {
+            continue;
+        };
+        if crate::state::fixed_size(&window) || state.fullscreen_entry(&window).is_some() || toplevel.current_state().states.contains(XdgState::Maximized) {
+            continue;
+        }
+        if let Some(area) = state.usable_area_for_surface(toplevel.wl_surface()) {
+            state.maximize_in(&toplevel, area);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bordas_dos_gestos() {
+        let screen = (800.0, 1280.0);
+        assert_eq!(edge_in(screen, (400.0, 1275.0)), Some(Edge::Bottom));
+        assert_eq!(edge_in(screen, (700.0, 5.0)), Some(Edge::TopRight));
+        assert_eq!(edge_in(screen, (40.0, 5.0)), Some(Edge::TopLeft));
+        // No meio da borda de cima (o nome do app na barra): toque comum.
+        assert_eq!(edge_in(screen, (400.0, 5.0)), None);
+        assert_eq!(edge_in(screen, (400.0, 600.0)), None);
+    }
 
     #[test]
     fn painel_para_tela_girada() {

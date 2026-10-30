@@ -29,7 +29,7 @@ use smithay::{
         timer::{TimeoutAction, Timer},
         LoopHandle,
     },
-    utils::{Buffer, DeviceFd, Size, Transform},
+    utils::{Buffer, DeviceFd, Size},
 };
 
 use crate::{
@@ -229,7 +229,7 @@ fn refresh_heads(gpu: &mut Gpu, state: &mut State) -> Result<(), Box<dyn Error>>
             tracing::info!("tela {}: escala {}", head.name, scale.fractional_scale());
         }
         if output.current_mode() != Some(mode) || head.target.is_none() {
-            output.change_current_state(Some(mode), Some(Transform::Normal), Some(scale), None);
+            output.change_current_state(Some(mode), Some(output.current_transform()), Some(scale), None);
             output.set_preferred(mode);
             head.target = Some(Offscreen::<GlesTexture>::create_buffer(&mut gpu.renderer, Fourcc::Abgr8888, Size::<i32, Buffer>::from(size))?);
             head.drawn = false;

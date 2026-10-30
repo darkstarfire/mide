@@ -84,7 +84,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
     // tela; os outros comandos pedem um quadro.
     let query = matches!(
         command.split_whitespace().next(),
-        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs" | "game_mode")
+        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs" | "game_mode" | "tablet_mode" | "tablet_large" | "orientation_sensor")
     ) || matches!(command.trim(), "launcher state" | "shortcuts captured");
     if !query {
         state.wake();
@@ -101,6 +101,8 @@ pub fn handle(state: &mut State, command: &str) -> String {
         Some("game_mode") => if state.game_on_primary() { "on\n".into() } else { "off\n".into() },
         // Modo tablet (tela dobrada para trás): o teclado na tela aparece sozinho nele.
         Some("tablet_mode") => if state.touch.tablet { "on\n".into() } else { "off\n".into() },
+        // Modo tablet com os alvos grandes (`[tablet] large_targets`): a dock aumenta os ícones.
+        Some("tablet_large") => if crate::touch::large_targets(state) { "yes\n".into() } else { "no\n".into() },
         // Há sensor de orientação (a central de controle mostra a trava de rotação).
         Some("orientation_sensor") => if state.touch.sensor { "yes\n".into() } else { "no\n".into() },
         // Onde está o menu da janela em foco (apps GTK e Qt no Wayland): `gtk<TAB>bus
@@ -551,6 +553,15 @@ pub fn handle(state: &mut State, command: &str) -> String {
                 }
                 // Volume e brilho das teclas, para a barra acompanhar na hora.
                 reply.push_str(&crate::osd::levels_for_bar());
+                // Modo tablet com alvos grandes: a barra espaça os ícones para o dedo.
+                if crate::touch::large_targets(state) {
+                    reply.push_str("tablet large\n");
+                }
+                // Pedido para a barra (gestos dos cantos de cima no modo tablet, botão de
+                // ligar): sai uma vez, na hora (a barra pergunta isto a cada 50 ms).
+                if let Some(request) = state.bar_request.take() {
+                    reply.push_str(&format!("request {request}\n"));
+                }
                 reply
             }
             Some("close") => {

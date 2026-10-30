@@ -295,7 +295,7 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
 
 /// Janelas numa tela (pelo ponto do meio do topo, como a conta das janelas perdidas),
 /// com o jeito que estavam nela.
-fn windows_on(
+pub(crate) fn windows_on(
     state: &crate::state::State,
     name: &str,
     geo: smithay::utils::Rectangle<i32, smithay::utils::Logical>,
