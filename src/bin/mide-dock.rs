@@ -381,6 +381,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         magnify: magnify_size(),
         zoom: None,
         zoom_extra: 0,
+        margin: BOTTOM_MARGIN,
         zoom_slots: Vec::new(),
         slides: HashMap::new(),
         slide_timer: false,
@@ -638,6 +639,9 @@ struct Dock {
     /// onde cada casa está agora (índice, esquerda e largura, na dock): os cliques
     /// seguem as posições ampliadas.
     zoom_extra: u32,
+    /// Margem de baixo atual da dock (muda enquanto ela desliza, com ocultar
+    /// automaticamente); a camada da ampliação acompanha.
+    margin: i32,
     zoom_slots: Vec<(usize, f32, f32)>,
     /// Ícones carregados no tamanho da ampliação (nítidos), pelo id do app ou pilha.
     zoom_icons: HashMap<String, Option<Pixmap>>,
@@ -843,6 +847,17 @@ impl Dock {
         }
     }
 
+    /// A dock está sendo usada e não pode se recolher: ponteiro nela, menu aberto,
+    /// botão apertado, ícone ampliado sob o ponteiro ou as prévias das janelas à mostra
+    /// (o ponteiro nelas sai da dock, mas ela continua em uso).
+    fn in_use(&self) -> bool {
+        self.pointer_inside
+            || self.menu.is_some()
+            || self.press.is_some()
+            || self.zoom.as_ref().is_some_and(|z| z.target > 0.0)
+            || (self.previews_shown && ask_compositor("preview state").is_some_and(|l| l.first().is_some_and(|w| w == "open")))
+    }
+
     /// Esconde a dock daqui a pouco (com ocultar automaticamente), se o ponteiro não
     /// voltar e não houver menu aberto.
     fn schedule_hide(&mut self) {
@@ -868,8 +883,14 @@ impl Dock {
             // Hora de esconder (o ponteiro saiu e não há menu aberto)?
             if dock.hide_at.is_some_and(|at| std::time::Instant::now() >= at) {
                 dock.hide_at = None;
-                if dock.autohide && dock.covered && !dock.pointer_inside && dock.menu.is_none() && dock.press.is_none() {
-                    dock.show_target = 0.0;
+                if dock.autohide && dock.covered {
+                    if dock.in_use() {
+                        // Ponteiro num ícone (ampliado) ou nas prévias das janelas:
+                        // confere de novo daqui a pouco.
+                        dock.hide_at = Some(std::time::Instant::now() + HIDE_DELAY);
+                    } else {
+                        dock.show_target = 0.0;
+                    }
                 }
             }
             let now = std::time::Instant::now();
@@ -884,7 +905,18 @@ impl Dock {
                 let k = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
                 let hidden = hidden_margin() as f32;
                 let margin = (hidden + (BOTTOM_MARGIN as f32 - hidden) * k).round() as i32;
+                dock.margin = margin;
                 dock.layer.set_margin(0, 0, margin, 0);
+                // Os ícones ampliados ficam noutra camada: ela desliza junto, senão eles
+                // apareceriam de uma vez no lugar final enquanto a dock ainda sobe.
+                if let Some(zoom) = dock.zoom.as_ref() {
+                    zoom.layer.set_margin(0, 0, margin, 0);
+                    zoom.layer.commit();
+                }
+                if let Some(bounce) = dock.bounce.as_ref() {
+                    bounce.layer.set_margin(0, 0, margin, 0);
+                    bounce.layer.commit();
+                }
                 // Ao começar a aparecer ou terminar de sumir, a imagem muda.
                 if before <= 0.0 || dock.shown <= 0.0 {
                     let qh = dock.qh.clone();
@@ -1392,7 +1424,7 @@ impl Dock {
             let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
             let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-zoom"), None);
             layer.set_anchor(Anchor::BOTTOM);
-            layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
+            layer.set_margin(0, 0, self.margin, 0);
             layer.set_exclusive_zone(-1);
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             layer.set_size(size.0, size.1);
@@ -1575,7 +1607,7 @@ impl Dock {
         // Mesma âncora, largura e margem de baixo da dock: as posições dos ícones são
         // as mesmas; não recebe cliques (passam para a dock embaixo).
         layer.set_anchor(Anchor::BOTTOM);
-        layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
+        layer.set_margin(0, 0, self.margin, 0);
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_size(self.width, dock_height() + BOUNCE_ROOM);

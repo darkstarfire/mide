@@ -45,6 +45,22 @@ if [ "$n" = 1 ]; then
 else
     echo "FALHA dica da dock: uma camada só passeando pelos ícones ($n camadas)"; FAIL=$((FAIL + 1))
 fi
+# Ocultar automaticamente: com o ponteiro nas prévias das janelas (fora da dock), ela
+# não se recolhe; só depois de o ponteiro ir embora.
+AH="$(mktemp -d)"
+mkdir -p "$AH/mide"
+printf '[dock]\nautohide = true\n' > "$AH/mide/config.toml"
+# O roteiro anda por quadros (com a tela parada, não anda): o ponteiro já está nas
+# prévias quando a janela é maximizada por cima da dock; depois, 9 s de espera (sem
+# o ponteiro nas prévias, nesse tempo ela se esconde).
+AHLOG="$(XDG_CONFIG_HOME="$AH" SCENARIO_WAIT=9 timeout 150 "$SCEN" "400 move 623 728; 405 move 611 728; 470 move 520 598; 480 move 503 590; 490 combo super+up; 520 list" -- "$TERMINAL" "$TERMINAL" 2>&1 | grep -E "dock (à mostra|escondida)|prévias: |janela por cima")"
+if echo "$AHLOG" | grep -q "prévias: " && ! echo "$AHLOG" | grep -q "dock escondida"; then
+    echo "ok    ocultar automaticamente: com o ponteiro nas prévias, a dock não se recolhe"; PASS=$((PASS + 1))
+else
+    echo "FALHA ocultar automaticamente: com o ponteiro nas prévias, a dock não se recolhe"; FAIL=$((FAIL + 1))
+    echo "$AHLOG" | tail -5 | sed 's/^/      /'
+fi
+rm -rf "$AH"
 # Prévias no tema escuro: o painel fica grafite (o título vem em letra clara).
 # Espiar: com o ponteiro parado numa prévia, a janela dela aparece por cima das outras
 # (só no desenho); antes dos 400 ms, a ordem é a de sempre.

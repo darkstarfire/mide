@@ -371,6 +371,12 @@ pub fn handle(state: &mut State, command: &str) -> String {
         },
         Some("preview") => {
             let first = words.next();
+            // `preview state`: `open` com as prévias da dock à mostra (a dock não se
+            // recolhe com o ponteiro nelas), senão `closed`.
+            if first == Some("state") {
+                let open = state.preview.as_ref().is_some_and(|p| !p.switcher);
+                return if open { "open\n".into() } else { "closed\n".into() };
+            }
             match first.and_then(|w| w.parse::<i32>().ok()) {
                 Some(dock_x) => {
                     let ids: Vec<u64> = words.filter_map(|w| w.parse().ok()).collect();

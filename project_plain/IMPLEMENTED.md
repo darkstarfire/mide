@@ -2301,3 +2301,9 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Clique direito num app do launcher: "Adicionar à dock" (fixa no fim dos fixados; a dock percebe a mudança do `dock.toml` sozinha) e "Adicionar à área de trabalho" (cópia executável do `.desktop`, que a mesa abre com o nome e o ícone do app, sem perguntar); nos AppImages do mide, "Mover para a Lixeira" depois de uma linha. Módulo `mide::shell::shortcuts` (fixados da dock, achar o `.desktop` de um app, criar o atalho), usado pelo launcher e pela dock.
 - Testes: seções launcher (22 ok, com o menu novo), gestos do tablet (10 ok, com "arrastar sem segurar passa a página"), toque e tablet, dock (as três) e Configurações: 135 ok; unidade do atalho na pasta.
 - Fica para depois: remover o app pelo launcher para qualquer app (depende da instalação de programas pela interface, E6/E7).
+
+## v0.10.37: dock que se esconde com a ampliação e as prévias (2026-10-30)
+
+- Com a ampliação ligada, os ícones (desenhados noutra camada, `mide-dock-zoom`) apareciam de uma vez no lugar final enquanto a dock ainda subia: a camada da ampliação e a do ícone pulando passam a deslizar junto com a dock (a mesma margem de baixo a cada passo).
+- A dock não se recolhe enquanto está em uso: ponteiro nela, menu aberto, botão apertado, ícone ampliado ou as prévias das janelas à mostra (o ponteiro nas prévias sai da dock). Na hora de esconder, se ainda estiver em uso, confere de novo depois. O compositor responde `preview state` (`open`/`closed`) no canal de controle.
+- Testes: seções da dock 50 ok, com o caso novo (ponteiro nas prévias com a janela maximizada por cima: a dock fica; sem ele, ela se esconde, conferido à mão).
