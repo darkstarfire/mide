@@ -2205,3 +2205,8 @@ As instruções de instalação incluem `util-linux` e `udisks2`; `data/mide-che
 - Bug do usuário no Chromebook: relógio da tela de bloqueio, título do Terminal ("bash — 86×26") e outros textos com letras espaçadas e outro desenho, enquanto no Acer saíam certos. Causa: o cosmic-text pede a "Open Sans" para `Family::SansSerif` e, sem ela, cai na reserva dele; no Acer a reserva era a Noto Sans, no Chromebook outra fonte.
 - O mide traz a fonte da interface: `data/fonts` com a Noto Sans (normal, semi-negrito, negrito) e a Noto Sans Mono (normal, negrito), licença OFL (`data/fonts/OFL.txt`), instaladas pelo `mide-update` em `~/.local/share/mide/fonts`.
 - mide-ui: `ui::text::font_system()` carrega as fontes do mide (`<pasta de dados>/mide/fonts`) e escolhe a família do texto: a Noto Sans do mide, senão a "sans-serif" do fontconfig (a dos outros apps); o compositor (títulos e dicas) usa a mesma. A de largura fixa continua pelo fontconfig.
+
+## Tamanho do ponteiro também no plano da placa (v0.10.32, 2026-10-29)
+
+- Bug do usuário: mudar "Tamanho do ponteiro" não aumentava a seta na sessão de verdade. O cursor vai ao plano de cursor da placa (DRM), e o compositor só mandava imagem nova quando o nome mudava ("default" continuava "default"); o teste do agente usava o cursor desenhado na cena, que mudava.
+- Agora a imagem do plano é feita no tamanho em pixels da tela (pontos × escala da tela × crescimento do agito; antes ia em pontos e saía menor em 150%) e o nome mandado à placa leva o tamanho (`default@36`).

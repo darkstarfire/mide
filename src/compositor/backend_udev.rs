@@ -862,7 +862,7 @@ fn hw_cursor(drm: &DrmDevice, gbm: &GbmDevice<DrmDeviceFd>, plane: (u32, u32), h
             (key, &owned, size, hotspot)
         }
         None => {
-            let Some(plan) = scene.cursor_plan(state) else {
+            let Some(plan) = scene.cursor_plan(state, head.output.current_scale().fractional_scale()) else {
                 return false;
             };
             match plan {

@@ -95,8 +95,8 @@ impl Scene {
     }
 
     /// Qual cursor mostrar agora (`None`: a cena não desenha cursor).
-    pub fn cursor_plan(&mut self, state: &State) -> Option<crate::cursor::Plan<'_>> {
-        self.cursors.as_mut().map(|c| c.plan(state))
+    pub fn cursor_plan(&mut self, state: &State, scale: f64) -> Option<crate::cursor::Plan<'_>> {
+        self.cursors.as_mut().map(|c| c.plan(state, scale))
     }
 
     /// Algo na tela está em movimento (animações, papel de parede trocando, janela

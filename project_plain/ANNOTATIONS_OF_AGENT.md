@@ -567,3 +567,5 @@
 - **Agentes em paralelo:** um agente rodando `tests/ui.sh` e outro compilando ao mesmo tempo quebra a regra da bateria; ao dividir trabalho, combinar quem roda a bateria (de preferência só o agente principal, no fim).
 
 - **Fontes (2026-10-29):** nunca usar `FontSystem::new()` + `Family::SansSerif` direto para a interface: o padrão do cosmic-text é "Open Sans" e a reserva muda de máquina para máquina. Usar `mide::ui::text::font_system()`. As fontes do Writer (documento) são outra coisa.
+
+- **Cursor no DRM (2026-10-29):** o compositor de teste desenha o cursor na cena; o plano de cursor da placa (`backend_udev`, `Cursors::plan`) só roda na sessão de verdade. Mudança de cursor precisa ser pensada nos dois caminhos; o plano reenvia a imagem só quando o nome muda, então o nome tem de carregar tudo o que muda a imagem.

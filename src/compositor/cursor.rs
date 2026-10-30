@@ -175,7 +175,7 @@ impl Cursors {
     /// reduzida aqui para cada tamanho inteiro em pixels. Antes ele saía do plano e a
     /// cena inteira era composta em GLES a cada vblank da animação, o que travava a tela
     /// em placas Intel (Chromebook) até suspender e voltar.
-    pub fn plan(&mut self, state: &State) -> Plan<'_> {
+    pub fn plan(&mut self, state: &State, scale: f64) -> Plan<'_> {
         self.sync_size(state);
         let grow = state.shake.scale(std::time::Instant::now());
         let name = match (state.cursor, &state.cursor_status) {
@@ -185,23 +185,27 @@ impl Cursors {
             (CursorShape::Default, CursorImageStatus::Named(icon)) => icon.name().to_string(),
             (shape, _) => shape_name(shape).to_string(),
         };
-        if grow > 1.001 {
-            let px = (self.size as f32 * grow).round().max(1.0) as u32;
-            let key = (name, px);
-            if !self.grown.contains_key(&key) {
-                let (_, full) = self.hidpi(&key.0);
-                let grown = scaled(full, px);
-                self.grown.insert(key.clone(), grown);
-            }
-            let image = &self.grown[&key];
-            return Plan::Image { name: format!("{}@{}", key.0, key.1), pixels: &image.pixels, size: image.size, hotspot: image.hotspot };
+        // Em pixels da tela: o tamanho escolhido (pontos) × a escala da tela × o
+        // crescimento do agito. O nome mandado à placa leva o tamanho: com o mesmo nome,
+        // ela continuava com a imagem antiga ao mudar o tamanho nas Configurações.
+        let px = (self.size as f64 * scale.max(1.0) * grow as f64).round().max(1.0) as u32;
+        // Agito acabado: as etapas dele não servem mais (a próxima agitada refaz as dela).
+        if grow <= 1.001 {
+            self.grown.retain(|(_, size), _| *size == px);
         }
-        // Animação acabou: as etapas não servem mais (a próxima agitada refaz as dela).
-        if !self.grown.is_empty() {
-            self.grown.clear();
+        let natural = self.image(&name).nominal;
+        if px == natural {
+            let image = self.image(&name);
+            return Plan::Image { name: format!("{name}@{px}"), pixels: &image.pixels, size: image.size, hotspot: (image.hotspot.x, image.hotspot.y) };
         }
-        let image = self.image(&name);
-        Plan::Image { name, pixels: &image.pixels, size: image.size, hotspot: (image.hotspot.x, image.hotspot.y) }
+        let key = (name, px);
+        if !self.grown.contains_key(&key) {
+            let (_, full) = self.hidpi(&key.0);
+            let grown = scaled(full, px);
+            self.grown.insert(key.clone(), grown);
+        }
+        let image = &self.grown[&key];
+        Plan::Image { name: format!("{}@{}", key.0, key.1), pixels: &image.pixels, size: image.size, hotspot: image.hotspot }
     }
 
     /// O cursor grande: o maior tamanho do tema e a metade dele (para escalas até 2x,
