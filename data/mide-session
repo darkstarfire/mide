@@ -22,6 +22,15 @@ export _JAVA_AWT_WM_NONREPARENTING=1
 # Apps GTK 3 (e o Firefox fora do flatpak) usam o seletor de arquivos do portal, que na
 # sessão do mide é o do mide (B25). Só nesta sessão: não vai para o systemd do usuário.
 export GTK_USE_PORTAL=1
+# Teclado na tela (mide-keyboard): os campos de texto falam com ele pelo Wayland
+# (text-input v3). Com o IBus da distribuição no meio (GTK_IM_MODULE=ibus, comum no
+# Debian/Ubuntu pelo im-config), os apps GTK nunca avisam o compositor e o teclado na
+# tela não aparece. Quem usa outro método (fcitx, para chinês/japonês) continua com o
+# dele. Qt: sem o QT_IM_MODULE=ibus, ele usa o text-input do Wayland sozinho.
+case "${GTK_IM_MODULE:-}" in
+    ""|ibus) export GTK_IM_MODULE=wayland ;;
+esac
+[ "${QT_IM_MODULE:-}" = ibus ] && unset QT_IM_MODULE
 
 # Ícones e tema (claro/escuro) do mide nos apps GTK e Qt, só nesta sessão: um perfil
 # próprio do dconf põe, por cima da configuração do usuário (que continua valendo e é

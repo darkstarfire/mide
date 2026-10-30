@@ -1198,3 +1198,36 @@ msgstr "Trava de rotação"
 
 msgid "The built-in display does not turn with the device"
 msgstr "A tela embutida não gira com o aparelho"
+
+msgid "Tablet Mode"
+msgstr "Modo tablet"
+
+msgid "Edge gestures"
+msgstr "Gestos das bordas"
+
+msgid "Swipe up from the bottom for the launcher (hold for all windows); down from the top corners for Control Center and notifications"
+msgstr "Deslize de baixo para cima para o launcher (segurando, todas as janelas); dos cantos de cima para baixo, a central de controle e as notificações"
+
+msgid "Apps fill the screen"
+msgstr "Apps ocupam a tela"
+
+msgid "Windows open and stay maximized, as on a tablet"
+msgstr "As janelas abrem e ficam maximizadas, como num tablet"
+
+msgid "Larger touch targets"
+msgstr "Alvos de toque maiores"
+
+msgid "Bigger Dock icons and more forgiving menu bar items"
+msgstr "Ícones maiores na dock e itens da barra superior mais fáceis de acertar"
+
+msgid "Keyboard clicks"
+msgstr "Som das teclas"
+
+msgid "A soft click on each key of the on-screen keyboard"
+msgstr "Um clique suave a cada tecla do teclado na tela"
+
+msgid "“.” shortcut"
+msgstr "Atalho “.”"
+
+msgid "Double-tapping the space bar types a period and a space"
+msgstr "Dois toques no espaço digitam um ponto e um espaço"

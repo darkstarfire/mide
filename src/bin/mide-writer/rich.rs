@@ -2164,6 +2164,8 @@ impl Rich {
         }
         if !blocked {
             self.pointer(ui, area);
+            // O documento é um campo de texto: o teclado na tela aparece nele.
+            ui.wants_text_input(area);
         }
         // Quebra de novo, se mudou, e mantém o cursor à vista.
         let theme = ui.theme().clone();
