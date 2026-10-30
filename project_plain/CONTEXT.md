@@ -299,3 +299,11 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - Modo tablet como no iPad (`[tablet]`, em Configurações → Monitores): gestos das bordas (baixo = launcher, baixo e parar = visão das janelas, cantos de cima = central de controle e notificações), apps em tela inteira, dock e barra com alvos maiores.
 - Teclado na tela: aparece nos apps do mide (o mide-ui fala `text-input-v3`) e nos GTK com o IBus da distribuição (`GTK_IM_MODULE=wayland` na sessão); do iPad: barra de atalhos, flutuante (pinça/botão/alça), trackpad no espaço, números puxando a fileira de cima, ". " com dois espaços, som das teclas.
 - Falta conferir no Chromebook: o giro animado e a nitidez na placa de verdade, o toque girado com a tela de toque de verdade, o aparelho deitado, os gestos das bordas com o dedo, o launcher pelo dedo, o teclado no Chrome/Firefox e o flutuante pela pinça. Ficaram de fora: teclado dividido, teclado na tela de bloqueio/login, o Terminal com o teclado na tela (lê as teclas cruas), mover a janela para o campo de texto não ficar atrás do teclado e o estado inicial da chave de modo tablet.
+
+## v0.10.35 (2026-10-30): telas de login e bloqueio, Usuários e grupos, menu global apertado
+
+- Telas de login e de bloqueio refeitas no estilo do macOS Sonoma/Tahoe (`mide::lockscreen`, `ui.lock_field` no mide-ui): fotos embaixo, campo de vidro com Caps Lock e →, Cancelar/Desligar/Reiniciar/Repousar redondos, sessão/teclado/Wi-Fi/bateria no canto, modo nome e senha, dica de senha depois de três erros, mensagem na tela.
+- Configurações → Usuários e grupos (`mide::accounts`, AccountsService com polkit): foto, nome, dica, tipo de conta, criar/apagar usuário e as opções `[login]` da tela de início de sessão, aplicadas pelo `pkexec mide-login-install --sync`.
+- Barra: menus do app que não cabem vão para o menu com o nome do app (submenus com ›).
+- Falta o usuário conferir: a tela de login instalada de verdade (`sudo data/mide-login-install` de novo, para copiar os binários novos), o "Aplicar à tela de início de sessão…" com a senha de administrador, criar usuário, o VS Code numa tela pequena e o modo tablet no Chromebook.
+- Ficam para depois: troca rápida de usuário, usuário convidado, leitor de digital, teclado na tela nas telas de login e de bloqueio.
