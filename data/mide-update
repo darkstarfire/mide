@@ -26,11 +26,13 @@ depois="$(mktemp)"
 trap 'rm -f "$antes" "$depois"' EXIT
 programas > "$antes"
 # Lixo de compilações anteriores sai antes de compilar de novo: a pasta de debug (os
-# testes recompilam o que precisam) e a compilação de release inteira, porque o cargo
-# guarda cópias das versões antigas e nunca apaga. Custo: a compilação de release é
-# completa a cada atualização, mas o disco não enche (em 2026-10-30 a pasta chegou a 400 GB).
+# testes recompilam o que precisam) e os intermediários da release, porque o cargo
+# guarda cópias das versões antigas e nunca apaga (em 2026-10-30 a pasta chegou a 400 GB).
+# Os programas prontos em target/release/ ficam: a sessão e a tela de login usam o mide
+# de lá, e um `cargo clean --release` deixava a sessão sem o mide se a compilação
+# falhasse (tela preta e volta ao login). O cargo troca cada um quando o novo fica pronto.
 rm -rf target/debug
-cargo clean --release
+rm -rf target/release/deps target/release/build target/release/.fingerprint target/release/incremental target/release/examples
 cargo build --release
 programas > "$depois"
 mudaram="$(comm -13 "$antes" "$depois" | cut -d' ' -f1 | tr '\n' ' ')"

@@ -2349,3 +2349,9 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Causa: a barra desiste da pergunta ao compositor em 300 ms; cada desistência virava WARN, e todo WARN fazia `fsync` do `mide.log` no laço do compositor (eMMC lento, pior durante compilações). Mais lentidão, mais desistências: a tela parava.
 - Correção: `fsync` só para ERROR (`platform/logging.rs`); cliente que desistiu (BrokenPipe, ConnectionReset, tempo esgotado) vai para DEBUG; esperas do canal de controle no laço caem de 200/500 ms para 50/100 ms (`compositor/control.rs`).
 - Testes: `cargo test` ok, clippy sem aviso novo. Falta o usuário conferir no Chromebook com a v0.10.42.
+
+## v0.10.43: mide-update sem apagar o mide em uso (2026-11-01)
+
+- Relato do usuário no Dell (v0.10.41 com o `mide-login`): a senha passa, a tela fica preta e volta ao login. Os logs do Dell ainda não chegaram; no projeto apareceu um defeito que dá esse sintoma: desde a v0.10.40, o `mide-update` rodava `cargo clean --release` antes de compilar, apagando o `target/release/mide` que o `mide-session` usa; com a compilação falhando ou interrompida, a sessão ficava sem o compositor.
+- Agora o `mide-update` apaga só os intermediários (`deps`, `build`, `.fingerprint`, `incremental`, `examples`) e deixa os programas prontos até o cargo trocá-los.
+- Falta: confirmar a causa no Dell com o `session.log` e o journal do greetd.

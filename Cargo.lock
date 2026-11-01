@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "mide"
-version = "0.10.42"
+version = "0.10.43"
 dependencies = [
  "chrono",
  "cosmic-text",
