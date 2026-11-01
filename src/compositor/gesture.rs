@@ -224,7 +224,7 @@ fn launcher_shown(state: &State) -> bool {
 }
 
 /// A janela com o foco do teclado.
-fn focused_window(state: &State) -> Option<Window> {
+pub(crate) fn focused_window(state: &State) -> Option<Window> {
     let focus = state.seat.get_keyboard()?.current_focus()?;
     state.space.elements().find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == &focus)).cloned()
 }

@@ -270,6 +270,32 @@ impl State {
         Some((window.clone(), Rectangle::new((loc.x, y).into(), (window.geometry().size.w, BAR_HEIGHT).into())))
     }
 
+    /// Faixa com os botões da janela sem barra do modo tablet (`State::tablet_strip`),
+    /// em coordenadas globais, enquanto está à mostra na tela `output`.
+    pub fn tablet_strip(&self, output: &Output) -> Option<(Window, Rectangle<i32, Logical>)> {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+        let (window, since) = self.tablet_strip.as_ref()?;
+        if since.elapsed() >= crate::touch::TABLET_STRIP_SHOWN || !crate::state::TABLET_BARLESS.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        let maximized = window.toplevel().is_some_and(|t| t.current_state().states.contains(XdgState::Maximized));
+        if !maximized || self.fullscreen_entry(window).is_some() {
+            return None;
+        }
+        let loc = self.space.element_location(window)?;
+        let screen = self.space.output_geometry(output)?;
+        if !screen.contains(loc) {
+            return None;
+        }
+        Some((window.clone(), Rectangle::new(loc, (window.geometry().size.w, BAR_HEIGHT).into())))
+    }
+
+    /// Faixa do modo tablet sob o ponteiro.
+    pub fn tablet_strip_at(&self, pos: Point<f64, Logical>) -> Option<(Window, Rectangle<i32, Logical>)> {
+        let output = self.output_at(pos)?;
+        self.tablet_strip(&output).filter(|(_, r)| r.to_f64().contains(pos))
+    }
+
     /// Altura da barra superior revelada (medida quando ela desceu).
     pub fn fs_reveal_bar_height(&self) -> i32 {
         self.fs_reveal.bar_h

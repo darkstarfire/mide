@@ -52,7 +52,7 @@ Legenda: **feito**, **parcial**, **falta**.
 |---|---|
 | Canto superior direito para baixo: Central de Controle. | **feito** |
 | Canto superior esquerdo/meio para baixo: Central de Notificações. | **feito** (canto esquerdo) |
-| iPadOS 26: dentro de um app, deslizar do meio de cima para baixo mostra a barra de menus do app. | **falta** |
+| iPadOS 26: dentro de um app, deslizar do meio de cima para baixo mostra a barra de menus do app. | **feito** (a barra superior com os menus do app fica sempre à mostra no modo tablet; o deslizar do meio de cima desce os botões da janela por 4 s; tocar e soltar ali abre os menus normalmente) |
 
 ### Dock
 
@@ -68,7 +68,7 @@ Legenda: **feito**, **parcial**, **falta**.
 | iPadOS | mide |
 |---|---|
 | Modo "Apps em tela cheia" (padrão): todo app ocupa a tela, inclusive os que abrem depois. | **feito** (ao entrar no modo e ao abrir, `wm.rs`) |
-| Sem barra de título; os controles da janela aparecem pela barra de menus (iPadOS 26). | **parcial** (janelas maximizadas sem a barra do mide; falta mostrar os controles ao deslizar do meio de cima) |
+| Sem barra de título; os controles da janela aparecem pela barra de menus (iPadOS 26). | **feito** (janelas maximizadas sem a barra do mide; deslizar do meio de cima mostra a faixa com fechar, minimizar e tela cheia) |
 
 ### Toque, ponteiro e teclado
 
@@ -87,7 +87,7 @@ Legenda: **feito**, **parcial**, **falta**.
 4. ~~Apps em tela cheia também para os que abrem depois.~~ (já existia)
 5. ~~Deslizar na horizontal na borda de baixo troca de app.~~ (2026-11-01)
 6. ~~Pinçar com quatro ou cinco dedos vai ao launcher.~~ (2026-11-01)
-7. Sem barra de título no modo tablet: ~~as janelas maximizadas sem a barra~~ (2026-11-01); falta deslizar do meio de cima mostrar a barra de menus com os controles da janela (fechar, minimizar), como no iPadOS 26.
+7. ~~Sem barra de título no modo tablet, com os controles da janela ao deslizar do meio de cima.~~ (2026-11-01)
 8. Conferir no aparelho tudo o que está marcado "feito" (a bateria não simula toque de vários dedos).
 
 Cada item: testes de unidade quando der, seção da bateria (`tests/ui/`) quando o

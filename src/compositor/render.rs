@@ -1477,12 +1477,18 @@ fn reveal_strip_elements(
     shaders: &decorations::Shaders,
     titles: &mut crate::title::TitleRenderer,
 ) -> Vec<MideRenderElement> {
-    let Some((window, strip)) = state.reveal_strip(output) else {
-        return Vec::new();
+    // A da tela cheia, ou a do modo tablet sem barra (botões comuns, sem o fundo da barra
+    // superior, que continua à mostra no modo tablet).
+    let (window, strip, fullscreen) = match state.reveal_strip(output) {
+        Some((window, strip)) => (window, strip, true),
+        None => match state.tablet_strip(output) {
+            Some((window, strip)) => (window, strip, false),
+            None => return Vec::new(),
+        },
     };
     let bar = Rectangle::new(strip.loc - origin, strip.size);
     let focused = window.toplevel().is_some_and(|t| t.with_pending_state(|s| s.states.contains(XdgState::Activated)));
-    let look = decorations::BarLook { fullscreen: true, alt: false };
+    let look = decorations::BarLook { fullscreen, alt: false };
     let mut out = Vec::new();
     let tip = state
         .title_tip
@@ -1500,6 +1506,9 @@ fn reveal_strip_elements(
     out.extend(decorations::bar_elements(shaders, bar, focused, hovered, &no_clip, look).into_iter().map(MideRenderElement::from));
     if state.config.effects.shadows {
         out.push(MideRenderElement::from(decorations::window_shadow_element(shaders, bar, 1.0, decorations::shadow_strength(true) * 0.6)));
+    }
+    if !fullscreen {
+        return out;
     }
     // Fundo da barra superior revelada (a barra é transparente e ficaria sobre o
     // conteúdo do app): a cor das barras de menu, logo atrás dela.

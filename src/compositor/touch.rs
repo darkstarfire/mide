@@ -51,6 +51,8 @@ const SWITCH_TRAVEL: f64 = 60.0;
 /// Pinça com quatro ou cinco dedos: os dedos chegam a esta fração da abertura inicial.
 const PINCH_HOME: f64 = 0.6;
 const DOCK_REVEAL: Duration = Duration::from_secs(4);
+/// Tempo que a faixa com os botões da janela (deslizar do meio de cima) fica à mostra.
+pub const TABLET_STRIP_SHOWN: Duration = Duration::from_secs(4);
 
 /// Borda onde um gesto do modo tablet começou.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,9 @@ pub enum Edge {
     Bottom,
     TopLeft,
     TopRight,
+    /// Meio da borda de cima (o nome do app e os menus na barra): deslizar para baixo
+    /// mostra os botões da janela sem barra; tocar e soltar é um toque comum na barra.
+    TopCenter,
 }
 
 /// Um dedo na tela.
@@ -302,7 +307,7 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
             if !active {
                 let along = match edge {
                     Edge::Bottom => -d.y,
-                    Edge::TopLeft | Edge::TopRight => d.y,
+                    Edge::TopLeft | Edge::TopRight | Edge::TopCenter => d.y,
                 };
                 if along >= DRAG_START * 1.5 && along > d.x.abs() {
                     edge_begin(state, slot, edge, from, pos, seq);
@@ -439,6 +444,7 @@ fn edge_in(size: (f64, f64), p: (f64, f64)) -> Option<Edge> {
         if p.0 >= size.0 * (1.0 - CORNER) {
             return Some(Edge::TopRight);
         }
+        return Some(Edge::TopCenter);
     }
     None
 }
@@ -456,6 +462,10 @@ fn edge_begin(state: &mut State, slot: i32, edge: Edge, from: Point<f64, Logical
             let timer = smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(60));
             let _ = state.loop_handle.insert_source(timer, move |_, _, state| hold_check(state, slot, seq));
         }
+        Edge::TopCenter => {
+            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: true, moved_at: Instant::now(), seq });
+            show_window_controls(state, from);
+        }
         Edge::TopLeft | Edge::TopRight => {
             let what = if edge == Edge::TopRight { "control-center" } else { "notifications" };
             tracing::info!("toque: gesto do canto de cima ({what})");
@@ -463,6 +473,38 @@ fn edge_begin(state: &mut State, slot: i32, edge: Edge, from: Point<f64, Logical
             state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: true, moved_at: Instant::now(), seq });
         }
     }
+    state.wake();
+}
+
+/// Deslizar do meio de cima no modo tablet sem barra: a faixa com os botões da janela em
+/// foco desce por cima dela por alguns segundos (os controles da janela do iPadOS 26).
+fn show_window_controls(state: &mut State, at: Point<f64, Logical>) {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+    if !crate::state::TABLET_BARLESS.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let Some(output) = state.output_at(at) else {
+        return;
+    };
+    let window = crate::gesture::focused_window(state).filter(|w| {
+        w.toplevel().is_some_and(|t| t.current_state().states.contains(XdgState::Maximized))
+            && state.fullscreen_entry(w).is_none()
+            && state.space.element_location(w).is_some_and(|loc| state.space.output_geometry(&output).is_some_and(|g| g.contains(loc)))
+    });
+    let Some(window) = window else {
+        return;
+    };
+    tracing::info!("toque: meio de cima: botões da janela à mostra");
+    state.tablet_strip = Some((window, Instant::now()));
+    // Some sozinha: um quadro novo quando o tempo acaba.
+    let timer = smithay::reexports::calloop::timer::Timer::from_duration(TABLET_STRIP_SHOWN + Duration::from_millis(20));
+    let _ = state.loop_handle.insert_source(timer, |_, _, state| {
+        if state.tablet_strip.as_ref().is_some_and(|(_, since)| since.elapsed() >= TABLET_STRIP_SHOWN) {
+            state.tablet_strip = None;
+            state.wake();
+        }
+        smithay::reexports::calloop::timer::TimeoutAction::Drop
+    });
     state.wake();
 }
 
@@ -624,8 +666,9 @@ mod tests {
         assert_eq!(edge_in(screen, (400.0, 1275.0)), Some(Edge::Bottom));
         assert_eq!(edge_in(screen, (700.0, 5.0)), Some(Edge::TopRight));
         assert_eq!(edge_in(screen, (40.0, 5.0)), Some(Edge::TopLeft));
-        // No meio da borda de cima (o nome do app na barra): toque comum.
-        assert_eq!(edge_in(screen, (400.0, 5.0)), None);
+        // No meio da borda de cima (o nome do app na barra): deslizar para baixo mostra os
+        // botões da janela; parado, vira toque comum na barra.
+        assert_eq!(edge_in(screen, (400.0, 5.0)), Some(Edge::TopCenter));
         assert_eq!(edge_in(screen, (400.0, 600.0)), None);
     }
 

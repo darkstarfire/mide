@@ -2355,3 +2355,8 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Relato do usuário no Dell (v0.10.41 com o `mide-login`): a senha passa, a tela fica preta e volta ao login. Os logs do Dell ainda não chegaram; no projeto apareceu um defeito que dá esse sintoma: desde a v0.10.40, o `mide-update` rodava `cargo clean --release` antes de compilar, apagando o `target/release/mide` que o `mide-session` usa; com a compilação falhando ou interrompida, a sessão ficava sem o compositor.
 - Agora o `mide-update` apaga só os intermediários (`deps`, `build`, `.fingerprint`, `incremental`, `examples`) e deixa os programas prontos até o cargo trocá-los.
 - Falta: confirmar a causa no Dell com o `session.log` e o journal do greetd.
+
+## v0.10.44: controles da janela no modo tablet, como no iPadOS 26 (2026-11-01)
+
+- Último item do plano `docs/tablet-ipados.md`: no modo tablet sem barra de título, deslizar do meio da borda de cima para baixo mostra, por 4 s, a faixa com os botões da janela em foco (fechar, minimizar, tela cheia) por cima dela (`touch::Edge::TopCenter`, `State::tablet_strip`). Tocar e soltar no meio de cima continua sendo um toque na barra (menus do app). A faixa reaproveita o desenho e os cliques da barra revelada da tela cheia; arrastar o vazio dela não move a janela.
+- Testes: `bordas_dos_gestos` com o meio de cima; `cargo test` ok; clippy sem aviso nas linhas mudadas. Falta o usuário conferir no Chromebook.

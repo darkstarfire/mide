@@ -1117,3 +1117,4 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - No aparelho (falta o usuário): três e quatro dedos na tela; × e arrastar para cima na visão das janelas; deslizar curto da borda de baixo mostra a dock; dock sem ampliação e escondida com o teclado na tela; retrato nas duas posições.
 - v0.10.41: `cargo test pinca_de_quatro_dedos`; no aparelho (falta o usuário): deslizar ao longo da borda de baixo troca de app, pinça de quatro/cinco dedos abre o launcher, janelas maximizadas sem barra no modo tablet e com barra de novo ao sair.
 - v0.10.42: `cargo test` e clippy; na sessão (falta o usuário): `mide-logs --search "Broken pipe"` sem a enxurrada e `mide-logs --search "laço do compositor parado"` sem novos casos.
+- v0.10.44: `cargo test bordas_dos_gestos`; no aparelho (falta o usuário): no modo tablet, deslizar do meio de cima mostra fechar/minimizar/tela cheia da janela por 4 s; tocar no meio de cima abre os menus da barra.

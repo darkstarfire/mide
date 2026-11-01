@@ -1342,6 +1342,10 @@ fn title_bar_under(state: &State, pos: Point<f64, Logical>) -> Option<(Window, d
     if let Some(found) = state.reveal_strip_at(pos) {
         return Some(found);
     }
+    // Faixa do modo tablet (deslizar do meio de cima): os botões da janela sem barra.
+    if let Some(found) = state.tablet_strip_at(pos) {
+        return Some(found);
+    }
     let window = window_on_top_at(state, pos)?;
     let loc = state.visible_origin(&window)?;
     let width = window.geometry().size.w;
@@ -1398,6 +1402,7 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
     state.space.raise_element(&window, true);
     focus_window(state, &window, serial);
     let fullscreen = state.fullscreen_entry(&window).is_some();
+    let tablet_strip = state.tablet_strip_at(pos).is_some();
 
     match decorations::button_at(bar, pos) {
         Some(Button::Close) => {
@@ -1420,7 +1425,8 @@ fn title_bar_press(state: &mut State, pos: Point<f64, Logical>, serial: smithay:
             state.toggle_fullscreen(&toplevel);
         }
         // Faixa da tela cheia: sem arrastar nem maximizar pelo duplo clique.
-        None if fullscreen => {}
+        // Faixa do modo tablet: a janela continua ocupando a tela.
+        None if fullscreen || tablet_strip => {}
         None => {
             let now = Instant::now();
             let double = matches!(

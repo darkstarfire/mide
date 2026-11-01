@@ -350,6 +350,10 @@ pub struct State {
     /// Deslizar curto da borda de baixo no modo tablet: a dock fica à mostra por cima
     /// do app até este momento (como no iPad); depois volta a esconder.
     pub dock_reveal_until: Option<std::time::Instant>,
+    /// Modo tablet sem barra de título: deslizar do meio de cima para baixo mostra, por
+    /// cima da janela em foco, a faixa com os botões dela (fechar, minimizar, tela
+    /// cheia), como os controles da janela do iPadOS 26. A janela e quando apareceu.
+    pub tablet_strip: Option<(Window, std::time::Instant)>,
     /// Capturas de tela pedidas pelos apps (`wlr-screencopy`).
     pub screencopy: crate::screencopy::Screencopy,
     /// Buffers dos apps na GPU (`linux-dmabuf`, A25): anunciado pelo backend.
@@ -558,6 +562,7 @@ impl State {
             cursor_plane: false,
             bar_request: None,
             dock_reveal_until: None,
+            tablet_strip: None,
             screencopy: Default::default(),
             dmabuf: Default::default(),
             xdg_activation_state,
