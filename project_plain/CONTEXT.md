@@ -323,3 +323,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - v0.10.42: tela congelando no Chromebook (fsync do log a cada aviso no laço do compositor); corrigido, falta o usuário conferir. Pendente: login pelo `mide-login` não entra no Dell (aguardando logs do greetd e do mide).
 - v0.10.43: `mide-update` não apaga mais os programas em uso (possível causa do login do Dell: tela preta e volta ao `mide-login`); falta o `session.log` do Dell para confirmar.
 - v0.10.44: controles da janela ao deslizar do meio de cima no modo tablet; o plano do iPadOS (`docs/tablet-ipados.md`) está todo feito, faltando só o teste do usuário no aparelho.
+- v0.10.45: quatro dedos na tela abrem o mosaico (antes o terceiro dedo já decidia pelo launcher); falta o usuário conferir.

@@ -50,6 +50,8 @@ const DOCK_SWIPE: f64 = 90.0;
 const SWITCH_TRAVEL: f64 = 60.0;
 /// Pinça com quatro ou cinco dedos: os dedos chegam a esta fração da abertura inicial.
 const PINCH_HOME: f64 = 0.6;
+/// Até quanto tempo depois do terceiro dedo o quarto ainda conta para o mesmo gesto.
+const LATE_FINGER: Duration = Duration::from_millis(250);
 const DOCK_REVEAL: Duration = Duration::from_secs(4);
 /// Tempo que a faixa com os botões da janela (deslizar do meio de cima) fica à mostra.
 pub const TABLET_STRIP_SHOWN: Duration = Duration::from_secs(4);
@@ -105,6 +107,10 @@ pub struct Multi {
     /// para a pinça; `pinched` quando ela já levou ao launcher.
     spread: Option<f64>,
     pinched: bool,
+    /// Quando o gesto começou e com quantos dedos (o quarto que chega logo depois do
+    /// terceiro passa o gesto a quatro dedos).
+    started: Instant,
+    fingers: u32,
 }
 
 /// Distância média dos dedos ao centro deles.
@@ -128,6 +134,18 @@ fn centroid(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<Point<f64, Logica
 fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
     if let Some(multi) = state.touch.multi.as_mut() {
         multi.pos.insert(slot, pos);
+        // O centro muda com o dedo novo: sem salto no deslizar.
+        multi.last = centroid(&multi.pos);
+        // Os dedos nunca encostam juntos: o gesto começa no terceiro, e o quarto que chega
+        // logo depois faz dele um gesto de quatro dedos (a visão das janelas), em vez de
+        // ficar no de três (o launcher).
+        let count = multi.pos.len() as u32;
+        if multi.fingers == 3 && count == 4 && multi.started.elapsed() < LATE_FINGER {
+            multi.fingers = 4;
+            tracing::info!("toque: quarto dedo: gesto de 4 dedos");
+            crate::gesture::end(state, true);
+            crate::gesture::begin(state, 4);
+        }
         return true;
     }
     let fingers = state.touch.contacts.len() as u32 + 1;
@@ -148,7 +166,7 @@ fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
     cancel(state);
     known.insert(slot, pos);
     let last = centroid(&known);
-    state.touch.multi = Some(Multi { pos: known, last, spread: None, pinched: false });
+    state.touch.multi = Some(Multi { pos: known, last, spread: None, pinched: false, started: Instant::now(), fingers: fingers.min(4) });
     tracing::info!("toque: gesto de {fingers} dedos");
     crate::gesture::begin(state, fingers);
     true

@@ -2360,3 +2360,9 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 
 - Último item do plano `docs/tablet-ipados.md`: no modo tablet sem barra de título, deslizar do meio da borda de cima para baixo mostra, por 4 s, a faixa com os botões da janela em foco (fechar, minimizar, tela cheia) por cima dela (`touch::Edge::TopCenter`, `State::tablet_strip`). Tocar e soltar no meio de cima continua sendo um toque na barra (menus do app). A faixa reaproveita o desenho e os cliques da barra revelada da tela cheia; arrastar o vazio dela não move a janela.
 - Testes: `bordas_dos_gestos` com o meio de cima; `cargo test` ok; clippy sem aviso nas linhas mudadas. Falta o usuário conferir no Chromebook.
+
+## v0.10.45: quatro dedos na tela abrem o mosaico (2026-11-01)
+
+- Relato do usuário no Chromebook: "não está funcionando o mosaico, apenas o launchpad". No log, todo gesto de vários dedos saía como "gesto de 3 dedos": os dedos não encostam juntos, o gesto começava no terceiro e o quarto já não mudava nada.
+- Agora o quarto dedo que chega até 250 ms depois do terceiro cancela o gesto de três (o launcher que começava a subir volta) e começa o de quatro (visão das janelas, troca de app pelos lados). O centro dos dedos é refeito quando um dedo entra, sem salto.
+- Testes: `cargo test` ok, clippy sem aviso novo. Falta o usuário conferir no aparelho.
