@@ -411,13 +411,15 @@ pub fn data_dirs() -> Option<String> {
 }
 
 /// Pasta de dados do mide (`.desktop`, portais): `MIDE_DATA_DIR`, `data/` do projeto
-/// (desenvolvimento) ou `share/mide` da instalação.
+/// (desenvolvimento) ou `share/mide` da instalação. A tela de login instala os programas
+/// em `/usr/local/lib/mide-login` (atalhos em `/usr/local/bin`), e os dados em
+/// `/usr/local/share/mide`: sem esse caminho os apps do mide somem do launcher.
 pub fn mide_data_dir() -> Option<std::path::PathBuf> {
     let bin_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     std::env::var_os("MIDE_DATA_DIR")
         .map(std::path::PathBuf::from)
         .into_iter()
-        .chain([bin_dir.join("../../data"), bin_dir.join("../share/mide")])
+        .chain([bin_dir.join("../../data"), bin_dir.join("../share/mide"), std::path::PathBuf::from("/usr/local/share/mide")])
         .find(|d| d.join("applications").is_dir())?
         .canonicalize()
         .ok()

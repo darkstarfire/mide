@@ -15,7 +15,8 @@
 set -euo pipefail
 
 LIB=/usr/local/lib/mide-login
-FONTS=/usr/local/share/mide/fonts
+DADOS=/usr/local/share/mide
+FONTS=$DADOS/fonts
 CONF=/etc/mide/login
 STATE=/var/lib/mide-login
 GREETD_CONF=/etc/greetd/config.toml
@@ -190,8 +191,8 @@ desinstalar() {
         [ -e "$f" ] && rm -f "/usr/local/bin/$(basename "$f")"
     done
     rm -f /usr/local/bin/mide-session /usr/share/wayland-sessions/mide.desktop
-    rm -rf "$LIB" "$CONF" "$FONTS"
-    rmdir /usr/local/share/mide 2>/dev/null || true
+    rm -rf "$LIB" "$CONF" "$FONTS" "$DADOS/applications" "$DADOS/xdg-desktop-portal"
+    rmdir "$DADOS" 2>/dev/null || true
     rm -rf "$STATE"
     echo "   pronto. O pacote greetd continua instalado (remova pelo gerenciador de pacotes se quiser)."
     exit 0
@@ -244,7 +245,16 @@ install -m755 data/mide-session /usr/local/bin/mide-session
 # A entrada "mide" da tela de login (o `mide-session` acima é o que ela executa).
 install -d -m755 /usr/share/wayland-sessions
 install -m644 data/wayland-sessions/mide.desktop /usr/share/wayland-sessions/mide.desktop
+# Dados do mide (os .desktop dos apps e a configuração dos portais). O compositor procura
+# `data/` ao lado do programa (só existe no projeto), e de $LIB essa pasta não se acha:
+# a cópia vai para $DADOS, que o compositor também procura.
+install -d -m755 "$DADOS"
+for pasta in applications xdg-desktop-portal; do
+    rm -rf "${DADOS:?}/$pasta"
+    cp -r "data/$pasta" "$DADOS/"
+done
 echo "   programas copiados de $BIN para $LIB, com atalhos em /usr/local/bin (rode este script de novo depois de atualizar o mide)."
+echo "   apps (.desktop) e portais copiados de data/ para $DADOS."
 
 passo "3/6 Fonte da interface (Noto Sans) em $FONTS"
 install -d -m755 "$FONTS"
