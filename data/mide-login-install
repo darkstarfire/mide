@@ -220,7 +220,7 @@ passo "2/6 Programas da tela de login em $LIB"
 # Uma cópia própria: o usuário do greeter não lê a pasta pessoal, e o login continua
 # funcionando enquanto o projeto é recompilado.
 install -d -m755 "$LIB"
-install -m755 "$BIN/mide" "$BIN/mide-login" "$LIB/"
+install -m755 "$BIN/mide" "$BIN/mide-login" "$BIN/mide-keyboard" "$LIB/"
 # O próprio instalador também: as Configurações rodam o --sync dele pelo pkexec, e ele
 # precisa estar num lugar só do root (não na pasta do projeto, que o usuário altera).
 install -m755 data/mide-login-install "$LIB/"

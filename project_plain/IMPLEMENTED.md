@@ -2370,3 +2370,9 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 ## v0.10.46: diagnóstico curto da tela de login (2026-11-01)
 
 - O usuário, preso no console de texto do Dell, não conseguia digitar o comando longo de diagnóstico. `data/mide-login-diag` junta tudo em `~/login-falhou.txt` (versão, compositor compilado, sessões, `session.log`, greetd, erros do mide), mostra o resumo e diz o que fazer quando o `target/release/mide` não existe.
+
+## v0.10.47: teclado na tela na senha e Ctrl+Alt+F3 no estilo Mac (2026-11-01)
+
+- Pedido do usuário: no modo tablet, o teclado na tela não aparecia para digitar a senha. Com a tela bloqueada (bloqueio e tela de login), a camada `mide-keyboard` agora é desenhada por cima da tela de bloqueio e é a única que recebe o toque e o ponteiro (`input::osk_layer_under`); o foco do teclado continua no campo de senha. O modo de login também abre o `mide-keyboard`, e o `mide-login-install` copia o programa.
+- Ctrl+Alt+F1…F12 pelas teclas físicas no estilo Mac: o Alt físico vira Ctrl (⌘), o xkb não entregava o `XF86Switch_VT` e a tela de login prendia o usuário (no Dell, só Ctrl+Windows+F3 funcionava).
+- Testes: `cargo test` ok, clippy sem aviso nas linhas mudadas. Falta o usuário conferir: senha com o teclado na tela no modo tablet (bloqueio e login) e Ctrl+Alt+F3 com o estilo Mac.

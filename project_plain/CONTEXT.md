@@ -324,3 +324,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - v0.10.43: `mide-update` não apaga mais os programas em uso (possível causa do login do Dell: tela preta e volta ao `mide-login`); falta o `session.log` do Dell para confirmar.
 - v0.10.44: controles da janela ao deslizar do meio de cima no modo tablet; o plano do iPadOS (`docs/tablet-ipados.md`) está todo feito, faltando só o teste do usuário no aparelho.
 - v0.10.45: quatro dedos na tela abrem o mosaico (antes o terceiro dedo já decidia pelo launcher); falta o usuário conferir.
+- v0.10.47: teclado na tela por cima da senha (bloqueio e login) e Ctrl+Alt+F3 no estilo Mac. Login do Dell: o `session.log` mostrou um mide antigo (enxurrada de "Broken pipe", corrigida na v0.10.42); falta o usuário atualizar (`git pull`, `data/mide-update`, `sudo data/mide-login-install`) e conferir.

@@ -360,6 +360,16 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
                 }
                 return FilterResult::Forward;
             }
+            // Ctrl+Alt+F1…F12 pelas teclas físicas no estilo Mac: o Alt físico vira Ctrl (o
+            // ⌘), o xkb não entrega o XF86Switch_VT, e sem isto a tela de login e a de
+            // bloqueio prendiam a pessoa sem como chegar a um console de texto.
+            if mac && state.mac_keys.ctrl && state.mac_keys.command {
+                let f = keysym.modified_sym().raw();
+                if (xkbcommon::xkb::keysyms::KEY_F1..=xkbcommon::xkb::keysyms::KEY_F12).contains(&f) {
+                    let n = (f - xkbcommon::xkb::keysyms::KEY_F1 + 1) as i32;
+                    return FilterResult::Intercept(Some(Action::SwitchVt(n)));
+                }
+            }
             if locked {
                 let vt = keysym.modified_sym().raw();
                 if (xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1..=xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12).contains(&vt) {
@@ -895,10 +905,11 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
 
     // Tela bloqueada: o clique vai só para a tela de bloqueio (que também pega o teclado).
     if state.lock.locked {
-        if let Some((surface, _)) = lock_surface_under(state, pointer.current_location()) {
-            if let Some(keyboard) = state.seat.get_keyboard() {
-                keyboard.set_focus(state, Some(surface), serial);
-            }
+        // No teclado na tela, o foco do teclado fica no campo de senha.
+        if let Some((surface, _)) = lock_surface_under(state, pointer.current_location()).filter(|_| osk_layer_under(state, pointer.current_location()).is_none())
+            && let Some(keyboard) = state.seat.get_keyboard()
+        {
+            keyboard.set_focus(state, Some(surface), serial);
         }
         pointer.button(state, &ButtonEvent { button: code, state: button_state.into(), serial, time });
         pointer.frame(state);
@@ -1113,7 +1124,12 @@ const TOUCH_LAYERS: &[&str] = &["mide-launcher", "mide-keyboard"];
 /// mide-ui ainda não trata toque).
 pub(crate) fn touch_app_target(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
     use smithay::reexports::wayland_server::Resource;
-    if state.lock.locked || state.overview.is_some() || state.preview.is_some() {
+    // Tela bloqueada: só o teclado na tela recebe o dedo de verdade (a tela de bloqueio
+    // recebe o toque como ponteiro).
+    if state.lock.locked {
+        return osk_layer_under(state, pos);
+    }
+    if state.overview.is_some() || state.preview.is_some() {
         return None;
     }
     // O launcher e o teclado na tela tratam o dedo (passar páginas, segurar para editar,
@@ -1197,10 +1213,26 @@ fn back_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurfac
 
 /// Tela de bloqueio da tela sob `pos`, com a origem dela (o canto da tela).
 fn lock_surface_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    // O teclado na tela fica por cima da tela de bloqueio (para digitar a senha no modo
+    // tablet): é a única camada que recebe o ponteiro com a tela bloqueada.
+    if let Some(found) = osk_layer_under(state, pos) {
+        return Some(found);
+    }
     let output = state.space.output_under(pos).next()?;
     let origin = state.space.output_geometry(output)?.loc.to_f64();
     let surface = state.lock.surface_for(output)?;
     Some((surface.wl_surface().clone(), origin))
+}
+
+/// Teclado na tela (camada `mide-keyboard`) sob `pos`.
+pub(crate) fn osk_layer_under(state: &State, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    let output = state.output_at(pos)?;
+    let screen = state.space.output_geometry(&output)?.loc;
+    let map = layer_map_for_output(&output);
+    let layer = map.layers().find(|l| l.namespace() == "mide-keyboard")?;
+    let loc = map.layer_geometry(layer)?.loc + screen;
+    let (surface, p) = layer.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL)?;
+    Some((surface, (p + loc).to_f64()))
 }
 
 /// Superfície sob `pos`, com a origem dela em coordenadas globais.

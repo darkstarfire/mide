@@ -205,6 +205,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         // para bloquear (ela já é a tela de bloqueio), mas a tela apaga sem uso.
         state.idle_lock = true;
         lock::request(&mut state, "tela de login");
+        // Teclado na tela para a senha no modo tablet.
+        spawn_client("mide-keyboard");
     } else {
         // Sessão de login: ambiente para o D-Bus/systemd e apps de inicialização automática.
         session::start(socket_name());

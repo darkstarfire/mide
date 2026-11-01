@@ -437,6 +437,17 @@ impl Scene {
         // Tela bloqueada: só a tela de bloqueio desta saída (sem ela, tudo escuro).
         // Nada do que está por trás aparece, nem num quadro.
         if state.lock.locked {
+            // O teclado na tela por cima da tela de bloqueio (senha no modo tablet).
+            let osk_output = state.layer_output(output);
+            let osk_map = layer_map_for_output(&osk_output);
+            if let Some(layer) = osk_map.layers().find(|l| l.namespace() == "mide-keyboard")
+                && let Some(geo) = osk_map.layer_geometry(layer)
+            {
+                let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                    render_elements_from_surface_tree(renderer, layer.wl_surface(), crate::clip::phys(geo.loc), crate::clip::scale(), 1.0, Kind::Unspecified);
+                custom.extend(elements.into_iter().map(MideRenderElement::Surface));
+            }
+            drop(osk_map);
             if let Some(surface) = state.lock.surface_for(output) {
                 let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                     render_elements_from_surface_tree(renderer, surface.wl_surface(), Point::from((0, 0)), crate::clip::scale(), 1.0, Kind::Unspecified);
