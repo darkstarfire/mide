@@ -1,0 +1,41 @@
+#!/bin/sh
+# Diagnóstico da tela de login do mide (greetd + mide-login), para rodar num console de
+# texto (Ctrl+Alt+F3) quando a sessão não entra: junta o que importa num arquivo e
+# mostra o resumo na tela.
+#
+#   data/mide-login-diag
+
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
+saida="$HOME/login-falhou.txt"
+estado="${XDG_STATE_HOME:-$HOME/.local/state}/mide"
+
+{
+    echo "== versão do projeto"
+    git log --oneline -1 2>&1
+    echo "== compositor da sessão"
+    ls -l target/release/mide 2>&1
+    echo "== sessões instaladas"
+    grep -H '^Exec' /usr/share/wayland-sessions/*.desktop 2>&1
+    echo "== session.log (última tentativa)"
+    tail -60 "$estado/session.log" 2>&1
+    echo "== greetd"
+    journalctl -b -u greetd --no-pager 2>&1 | tail -40
+    echo "== erros do mide"
+    grep -E "ERROR|WARN|pânico|libseat|DRM|sessão" "$estado/logs/mide.log" 2>&1 | tail -40
+} > "$saida" 2>&1
+
+echo "Diagnóstico gravado em $saida"
+echo
+if [ ! -x target/release/mide ]; then
+    echo "PROBLEMA: o mide não está compilado (target/release/mide não existe)."
+    echo "Conserte com:  data/mide-update"
+    echo "e depois volte à tela de login (Ctrl+Alt+F7) e entre de novo."
+    exit 0
+fi
+echo "O mide está compilado. Últimas linhas da tentativa de entrar:"
+echo
+tail -15 "$estado/session.log" 2>/dev/null
+echo
+echo "Para usar o PC agora com a tela de login de antes:"
+echo "  sudo data/mide-login-install --uninstall && sudo reboot"
+echo "Depois, mande o arquivo $saida."

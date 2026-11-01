@@ -2366,3 +2366,7 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Relato do usuário no Chromebook: "não está funcionando o mosaico, apenas o launchpad". No log, todo gesto de vários dedos saía como "gesto de 3 dedos": os dedos não encostam juntos, o gesto começava no terceiro e o quarto já não mudava nada.
 - Agora o quarto dedo que chega até 250 ms depois do terceiro cancela o gesto de três (o launcher que começava a subir volta) e começa o de quatro (visão das janelas, troca de app pelos lados). O centro dos dedos é refeito quando um dedo entra, sem salto.
 - Testes: `cargo test` ok, clippy sem aviso novo. Falta o usuário conferir no aparelho.
+
+## v0.10.46: diagnóstico curto da tela de login (2026-11-01)
+
+- O usuário, preso no console de texto do Dell, não conseguia digitar o comando longo de diagnóstico. `data/mide-login-diag` junta tudo em `~/login-falhou.txt` (versão, compositor compilado, sessões, `session.log`, greetd, erros do mide), mostra o resumo e diz o que fazer quando o `target/release/mide` não existe.
