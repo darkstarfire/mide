@@ -385,6 +385,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         pop: None,
         opened: started,
         dirty: false,
+        caret: true,
+        // A busca abre com o foco, como no Launchpad do Mac.
+        search_focus: mide::kit::FocusAnim::focused_now(),
         menu: None,
         edit: None,
         done_rect: None,
@@ -487,6 +490,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 launcher.check_hold();
                 launcher.warm_pages();
+                // O cursor da busca pisca: refaz o quadro só quando a fase muda.
+                let phase = launcher.search_focus.caret_visible();
+                if phase != launcher.caret {
+                    launcher.caret = phase;
+                    launcher.redraw();
+                }
             }
             TimeoutAction::ToDuration(Duration::from_millis(16))
         })
@@ -574,6 +583,10 @@ struct Launcher {
     pop: Option<(usize, std::time::Instant)>,
     opened: std::time::Instant,
     dirty: bool,
+    /// Fase do cursor da busca (piscando): o quadro é refeito quando ela muda.
+    caret: bool,
+    /// Foco da busca, com a mesma transição de todos os campos do mide (`FocusAnim`).
+    search_focus: mide::kit::FocusAnim,
     /// Menu de contexto de um AppImage instalado (Mover para a Lixeira).
     menu: Option<AppMenu>,
     /// Modo de edição (ícones balançando), desde quando.
@@ -864,6 +877,7 @@ impl Launcher {
             || self.folder_anim.is_some()
             || self.pop.is_some_and(|(_, t)| Self::elapsed_ms(t) < POP_MS)
             || self.edit.is_some()
+            || self.search_focus.animating()
     }
 
     /// Ícone da pasta `f` na grade principal (página atual), para a transição.
@@ -1656,10 +1670,14 @@ impl Launcher {
     fn draw_search(&mut self, pixmap: &mut Pixmap) {
         let (x, y) = self.search_rect();
         let r = SEARCH_H / 2.0;
-        fill_rounded(pixmap, x, y, SEARCH_W, SEARCH_H, r, rgba(255, 255, 255, if self.query.is_empty() { 34 } else { 52 }));
+        // A busca tem o foco quando o launcher está aberto: fundo e borda mais claros.
+        // Efeito do clique: o anel e o fundo acendem em 220 ms e depois ficam.
+        let focus = self.search_focus.amount();
+        let base = if self.query.is_empty() { 40.0 } else { 60.0 };
+        fill_rounded(pixmap, x, y, SEARCH_W, SEARCH_H, r, rgba(255, 255, 255, (base + 22.0 * focus) as u8));
         if let Some(path) = rounded_rect(x + 0.5, y + 0.5, SEARCH_W - 1.0, SEARCH_H - 1.0, r - 0.5) {
             let mut paint = Paint::default();
-            paint.set_color(rgba(255, 255, 255, 70));
+            paint.set_color(rgba(255, 255, 255, (90.0 + 110.0 * focus) as u8));
             paint.anti_alias = true;
             pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
@@ -1681,12 +1699,21 @@ impl Launcher {
 
         let tx = x + 34.0;
         let ty = y + (SEARCH_H - 14.0 * 1.25) / 2.0;
+        // Cursor de texto: aparece no começo (campo vazio) ou depois do texto, piscando.
+        // Só com foco: aceso logo ao ganhar o foco, depois pisca (`FocusAnim`).
+        let visible = self.search_focus.caret_visible();
+        let caret = |pixmap: &mut Pixmap, cx: f32| {
+            if visible {
+                fill_rounded(pixmap, cx, y + 8.0, 1.5, SEARCH_H - 16.0, 0.5, rgba(255, 255, 255, 230));
+            }
+        };
         if self.query.is_empty() {
-            self.text.draw(pixmap, &tr!("Search Apps"), tx, ty, 14.0, FontWeight::Regular, [255, 255, 255, 150]);
+            caret(pixmap, tx);
+            self.text.draw(pixmap, &tr!("Search Apps"), tx + 4.0, ty, 14.0, FontWeight::Regular, [255, 255, 255, 150]);
         } else {
             let query = self.query.clone();
             let tw = self.text.draw(pixmap, &query, tx, ty, 14.0, FontWeight::Regular, [255, 255, 255, 250]);
-            fill_rounded(pixmap, tx + tw + 1.0, y + 8.0, 1.5, SEARCH_H - 16.0, 0.5, rgba(255, 255, 255, 220));
+            caret(pixmap, tx + tw + 1.0);
         }
     }
 
@@ -1869,6 +1896,11 @@ impl KeyboardHandler for Launcher {
 
 impl Launcher {
     fn key(&mut self, event: KeyEvent) {
+        // Digitar devolve o foco à busca (as teclas vão para ela).
+        if self.editing.is_none() && !self.search_focus.focused() {
+            self.search_focus.set(true);
+            self.redraw();
+        }
         // Renomeando a pasta: as teclas vão para o nome.
         if let Some(name) = self.editing.as_mut() {
             match event.keysym {
@@ -2074,6 +2106,12 @@ impl Launcher {
             return;
         }
         let target = self.target_at(x, y);
+        // Clicar na busca dá o foco; clicar em qualquer outro lugar tira.
+        let on_search = matches!(target, Target::Search);
+        if on_search != self.search_focus.focused() {
+            self.search_focus.set(on_search);
+            self.redraw();
+        }
         self.press = Some(target);
         self.hold = None;
         self.swipe = None;
@@ -2379,3 +2417,4 @@ mod tests {
         assert_eq!(page_count(19, 18), 2);
     }
 }
+

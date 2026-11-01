@@ -84,7 +84,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
     // tela; os outros comandos pedem um quadro.
     let query = matches!(
         command.split_whitespace().next(),
-        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs" | "game_mode" | "tablet_mode" | "tablet_large" | "orientation_sensor")
+        Some("list" | "icons" | "mods" | "windows" | "bindings" | "dock_covered" | "workarea" | "features" | "window-outputs" | "game_mode" | "tablet_mode" | "tablet_large" | "orientation_sensor" | "osk_open")
     ) || matches!(command.trim(), "launcher state" | "shortcuts captured");
     if !query {
         state.wake();
@@ -101,6 +101,11 @@ pub fn handle(state: &mut State, command: &str) -> String {
         Some("game_mode") => if state.game_on_primary() { "on\n".into() } else { "off\n".into() },
         // Modo tablet (tela dobrada para trás): o teclado na tela aparece sozinho nele.
         Some("tablet_mode") => if state.touch.tablet { "on\n".into() } else { "off\n".into() },
+        // Teclado na tela aberto (a camada `mide-keyboard` existe em alguma tela).
+        Some("osk_open") => {
+            let open = state.space.outputs().any(|o| smithay::desktop::layer_map_for_output(o).layers().any(|l| l.namespace() == "mide-keyboard"));
+            if open { "yes\n".into() } else { "no\n".into() }
+        }
         // Modo tablet com os alvos grandes (`[tablet] large_targets`): a dock aumenta os ícones.
         Some("tablet_large") => if crate::touch::large_targets(state) { "yes\n".into() } else { "no\n".into() },
         // Há sensor de orientação (a central de controle mostra a trava de rotação).

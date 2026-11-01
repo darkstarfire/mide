@@ -44,6 +44,9 @@ const CORNER: f64 = 0.3;
 /// visão das janelas no lugar do launcher.
 const HOLD: Duration = Duration::from_millis(280);
 const HOLD_TRAVEL: f64 = 110.0;
+/// Gesto de baixo mais curto que isto (pontos): só mostra a dock, por `DOCK_REVEAL`.
+const DOCK_SWIPE: f64 = 90.0;
+const DOCK_REVEAL: Duration = Duration::from_secs(4);
 
 /// Borda onde um gesto do modo tablet começou.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +74,8 @@ enum Contact {
 pub struct Touch {
     contacts: HashMap<i32, Contact>,
     seq: u64,
+    /// Gesto de três ou quatro dedos na tela em andamento (como no touchpad).
+    multi: Option<Multi>,
     /// Modo tablet ligado (tela dobrada para trás).
     pub tablet: bool,
     /// O aparelho tem a chave de modo tablet (sem ela, a tela gira sempre, como no GNOME).
@@ -81,9 +86,98 @@ pub struct Touch {
     pub orientation: Option<String>,
 }
 
+/// Gesto de três ou quatro dedos na tela: a posição de cada dedo e a média delas (o
+/// centro do grupo), para o deslizar valer como no touchpad.
+#[derive(Debug)]
+pub struct Multi {
+    pos: HashMap<i32, Point<f64, Logical>>,
+    last: Option<Point<f64, Logical>>,
+}
+
+fn centroid(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<Point<f64, Logical>> {
+    if pos.is_empty() {
+        return None;
+    }
+    let n = pos.len() as f64;
+    let (x, y) = pos.values().fold((0.0, 0.0), |(x, y), p| (x + p.x, y + p.y));
+    Some((x / n, y / n).into())
+}
+
+/// Três ou quatro dedos ao mesmo tempo viram um gesto: os toques que já estavam na
+/// tela são cancelados (apps e ponteiro), e o deslizar segue o centro dos dedos.
+/// Devolve `true` quando o dedo foi tomado pelo gesto.
+fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
+    if let Some(multi) = state.touch.multi.as_mut() {
+        multi.pos.insert(slot, pos);
+        return true;
+    }
+    let fingers = state.touch.contacts.len() as u32 + 1;
+    if !(3..=4).contains(&fingers) {
+        return false;
+    }
+    // Posição conhecida dos dedos que já tocavam (o app não diz onde estão os dele).
+    let mut known: HashMap<i32, Point<f64, Logical>> = state
+        .touch
+        .contacts
+        .iter()
+        .filter_map(|(s, c)| match c {
+            Contact::Pointer { start, .. } => Some((*s, *start)),
+            Contact::Edge { last, .. } => Some((*s, *last)),
+            Contact::App { .. } => None,
+        })
+        .collect();
+    cancel(state);
+    known.insert(slot, pos);
+    let last = centroid(&known);
+    state.touch.multi = Some(Multi { pos: known, last });
+    tracing::info!("toque: gesto de {fingers} dedos");
+    crate::gesture::begin(state, fingers);
+    true
+}
+
+/// Um dos dedos do gesto andou: o centro do grupo anda junto (o deslizar).
+fn multi_motion(state: &mut State, slot: i32, pos: Point<f64, Logical>) {
+    let delta = {
+        let Some(multi) = state.touch.multi.as_mut() else {
+            return;
+        };
+        // Dedo que aparece pela primeira vez no gesto: só define a posição (sem salto).
+        let known = multi.pos.insert(slot, pos).is_some();
+        let now = centroid(&multi.pos);
+        let prev = std::mem::replace(&mut multi.last, now);
+        match (known, now, prev) {
+            (true, Some(now), Some(prev)) => Some(now - prev),
+            _ => None,
+        }
+    };
+    if let Some(d) = delta {
+        crate::gesture::update(state, d.x, d.y);
+    }
+    state.wake();
+}
+
+/// Um dedo do gesto saiu: quando o último sai, o gesto termina (abre ou fecha).
+fn multi_up(state: &mut State, slot: i32) {
+    let finished = {
+        let Some(multi) = state.touch.multi.as_mut() else {
+            return;
+        };
+        multi.pos.remove(&slot);
+        multi.pos.is_empty()
+    };
+    if finished {
+        state.touch.multi = None;
+        crate::gesture::end(state, false);
+    }
+    state.wake();
+}
+
 /// Dedo encostou em `pos` (coordenadas globais).
 pub fn down(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
     state.wake();
+    if multi_down(state, slot, pos) {
+        return;
+    }
     if state.touch.contacts.is_empty()
         && let Some(edge) = edge_at(state, pos)
     {
@@ -98,6 +192,11 @@ pub fn down(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
 
 /// Começo de um toque comum (no app como `wl_touch`, ou como ponteiro).
 fn start(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
+    // Tocar a tela esconde o ponteiro até o mouse ou o touchpad se mexer.
+    if state.touch.contacts.is_empty() {
+        state.cursor_status = smithay::input::pointer::CursorImageStatus::Hidden;
+        state.wake();
+    }
     if let Some((surface, origin)) = input::touch_app_target(state, pos) {
         // Toque numa janela: ela vem para frente com o foco, como o clique.
         if let Some(window) = state.window_for(&surface) {
@@ -144,6 +243,10 @@ fn long_press(state: &mut State, slot: i32, seq: u64) {
 
 /// O dedo andou.
 pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
+    if state.touch.multi.is_some() {
+        multi_motion(state, slot, pos);
+        return;
+    }
     let Some(contact) = state.touch.contacts.get(&slot).cloned() else {
         return;
     };
@@ -199,12 +302,23 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
 
 /// O dedo saiu da tela.
 pub fn up(state: &mut State, slot: i32, time: u32) {
+    if state.touch.multi.is_some() {
+        multi_up(state, slot);
+        return;
+    }
     let Some(contact) = state.touch.contacts.remove(&slot) else {
         return;
     };
     state.wake();
     match contact {
         Contact::Edge { done: true, .. } => {}
+        // Borda de baixo, deslizar curto: como no iPad, só mostra a dock por cima do app
+        // (o launcher que começou a subir volta). Mais longo: o launcher (tela de início).
+        Contact::Edge { active: true, edge: Edge::Bottom, start, last, .. } if start.y - last.y < DOCK_SWIPE => {
+            crate::gesture::end(state, true);
+            tracing::info!("toque: deslizar curto da borda de baixo: dock à mostra");
+            state.dock_reveal_until = Some(Instant::now() + DOCK_REVEAL);
+        }
         Contact::Edge { active: true, .. } => crate::gesture::end(state, false),
         // Parado na borda: um toque comum ali.
         Contact::Edge { start: from, .. } => {
@@ -238,6 +352,9 @@ pub fn frame(state: &mut State) {
 
 /// O sistema cancelou o toque (outro gesto tomou conta): solta tudo.
 pub fn cancel(state: &mut State) {
+    if state.touch.multi.take().is_some() {
+        crate::gesture::end(state, true);
+    }
     let contacts: Vec<Contact> = state.touch.contacts.drain().map(|(_, c)| c).collect();
     if contacts.iter().any(|c| matches!(c, Contact::App { .. }))
         && let Some(touch) = state.seat.get_touch()

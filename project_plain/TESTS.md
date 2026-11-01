@@ -1109,3 +1109,9 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - `cargo test shortcuts`: o atalho da mesa sai `rwxrwxrwx` e confiado; um atalho antigo (0644, sem confiança) é acertado sem ser copiado por cima.
 - Na sessão (falta o usuário): "Adicionar à área de trabalho" mostra o ícone e o nome do app na hora e abre sem perguntar; clique direito no papel de parede do monitor externo abre o menu; "+" de Adicionar imagem menor.
 - v0.10.39: `cargo test` no mide-ui (`triangulo_seguro_do_submenu`); cenário do menu da mesa com `move` (subir de Novo arquivo para Nova pasta, descer reto, diagonal até o submenu à esquerda) e captura. Na sessão (falta o usuário): passar entre itens com e sem submenu no Arquivos e na mesa.
+
+## v0.10.40 (2026-11-01)
+
+- `cargo test` (com `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`: com informação de depuração a compilação dos testes passa de 8 GB e encheu o disco do Chromebook), `cargo clippy --all-targets` e `cargo test` no mide-ui.
+- `cargo test orientacao_do_sensor_para_a_tela`: os retratos do Chromebook (`left-up` → `_270`, `right-up` → `_90`).
+- No aparelho (falta o usuário): três e quatro dedos na tela; × e arrastar para cima na visão das janelas; deslizar curto da borda de baixo mostra a dock; dock sem ampliação e escondida com o teclado na tela; retrato nas duas posições.

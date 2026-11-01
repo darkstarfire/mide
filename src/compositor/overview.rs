@@ -30,6 +30,10 @@ const GAP: i32 = 32;
 /// Faixa do título embaixo de cada janela.
 const TITLE_H: i32 = 30;
 const PILL_H: i32 = 22;
+/// Botão de fechar no canto de cima à direita de cada janela do mosaico (raio, pontos).
+const CLOSE_R: i32 = 13;
+/// Quanto um cartão tem de subir (pontos) para a janela fechar, como no seletor do iPad.
+const SWIPE_CLOSE: f64 = 90.0;
 
 /// Uma janela no mosaico.
 #[derive(Debug, Clone)]
@@ -55,6 +59,8 @@ pub struct Overview {
     /// Onde ficou sem gesto nem animação.
     pub value: f32,
     pub hovered: Option<u64>,
+    /// Botão apertado (ou dedo encostado) sobre a visão: a janela sob ele e onde foi.
+    pub press: Option<(Option<u64>, Point<f64, Logical>)>,
 }
 
 impl Overview {
@@ -190,7 +196,7 @@ pub fn open(state: &mut State, output: &Output, p: Option<f32>) {
     let animate = state.config.effects.animations;
     let anim = (p.is_none() && animate).then(|| (Instant::now(), 0.0, 1.0));
     let value = if p.is_none() && !animate { 1.0 } else { 0.0 };
-    state.overview = Some(Overview { output: output.name(), slots, drag: p, anim, value, hovered: None });
+    state.overview = Some(Overview { output: output.name(), slots, drag: p, anim, value, hovered: None, press: None });
     state.wake();
 }
 
@@ -263,6 +269,7 @@ pub fn settle(state: &mut State, open: bool) {
 /// A cada quadro: termina a animação (e some, se fechou).
 pub fn tick(state: &mut State) {
     // Janela aberta ou fechada com a visão aberta: o mosaico se refaz.
+    let mut last_closed = false;
     if let Some(name) = state.overview.as_ref().map(|o| o.output.clone())
         && let Some(output) = state.space.outputs().find(|o| o.name() == name).cloned()
     {
@@ -273,10 +280,16 @@ pub fn tick(state: &mut State) {
         if !same {
             let slots = layout(state, &output, &windows);
             tracing::info!("visão das janelas: mosaico refeito ({} janela(s))", slots.len());
+            let empty = slots.is_empty();
             if let Some(o) = state.overview.as_mut() {
                 o.slots = slots;
             }
+            // A última janela fechou: a visão sai, como o seletor do iPad sem apps.
+            last_closed = empty && state.overview.as_ref().is_some_and(|o| o.settled_open());
         }
+    }
+    if last_closed {
+        close(state, None);
     }
     let Some(o) = state.overview.as_mut() else {
         return;
@@ -339,10 +352,61 @@ pub fn hover(state: &mut State, pos: Point<f64, Logical>) {
     }
 }
 
-/// Clique na visão: a janela sob o ponteiro vem para a frente; no vazio, só fecha.
-pub fn click(state: &mut State, pos: Point<f64, Logical>) {
+/// Botão de fechar de uma janela do mosaico (círculo no canto de cima à direita).
+fn close_button(frame: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+    let d = CLOSE_R * 2;
+    Rectangle::new((frame.loc.x + frame.size.w - d - 6, frame.loc.y + 6).into(), (d, d).into())
+}
+
+/// Janela cujo botão de fechar está sob o ponto (com folga para o dedo).
+fn close_at(state: &State, pos: Point<f64, Logical>) -> Option<u64> {
+    let o = state.overview.as_ref()?;
+    o.slots.iter().find(|s| {
+        let b = close_button(s.frame);
+        let center = (b.loc.x as f64 + CLOSE_R as f64, b.loc.y as f64 + CLOSE_R as f64);
+        (pos.x - center.0).hypot(pos.y - center.1) <= CLOSE_R as f64 + 8.0
+    }).map(|s| s.id)
+}
+
+/// Pede para a janela fechar (o mosaico se refaz quando ela some, em `tick`).
+fn close_window(state: &mut State, id: u64) {
+    let Some(window) = state.space.elements().find(|w| window_id(w) == id).cloned() else {
+        return;
+    };
+    tracing::info!("visão das janelas: fechando a janela {id}");
+    state.request_close(&window);
+    state.wake();
+}
+
+/// Botão apertado ou dedo encostado na visão: o × fecha na hora; o resto espera soltar.
+pub fn press(state: &mut State, pos: Point<f64, Logical>) {
+    if let Some(id) = close_at(state, pos) {
+        close_window(state, id);
+        return;
+    }
     let id = slot_at(state, pos);
-    close(state, id);
+    if let Some(o) = state.overview.as_mut() {
+        o.press = Some((id, pos));
+    }
+}
+
+/// Soltou: um toque escolhe a janela (no vazio, só fecha a visão); um cartão arrastado
+/// para cima fecha a janela, como no seletor de apps do iPad.
+pub fn release(state: &mut State, pos: Point<f64, Logical>) {
+    let Some((id, start)) = state.overview.as_mut().and_then(|o| o.press.take()) else {
+        return;
+    };
+    let (dx, dy) = (pos.x - start.x, pos.y - start.y);
+    if let Some(id) = id
+        && dy <= -SWIPE_CLOSE
+        && dy.abs() > dx.abs()
+    {
+        close_window(state, id);
+        return;
+    }
+    if dx.hypot(dy) < 12.0 {
+        close(state, id);
+    }
 }
 
 /// Fundo escurecido da visão, atrás das janelas e na frente da mesa e do papel de parede.
@@ -394,6 +458,14 @@ pub fn elements(renderer: &mut GlesRenderer, state: &State, output: &Output, ori
         }
         let fill = if dark { [44.0 / 255.0, 44.0 / 255.0, 48.0 / 255.0, 0.92 * alpha] } else { [246.0 / 255.0, 246.0 / 255.0, 248.0 / 255.0, 0.92 * alpha] };
         back.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, pill, fill, PILL_H / 2)));
+        // Botão de fechar: círculo com um × no canto de cima à direita da janela.
+        let button = close_button(Rectangle::new(slot.frame.loc - origin, slot.frame.size));
+        if let Some(mark) = titles.image("✕", true, 40)
+            && let Some(text) = mark.render_element(renderer, (button.loc.x + (button.size.w - mark.width) / 2, button.loc.y + (button.size.h - mark.height) / 2).into(), alpha)
+        {
+            front.insert(0, MideRenderElement::Title(text));
+        }
+        front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, button, fill, CLOSE_R)));
     }
     front.extend(back);
     front

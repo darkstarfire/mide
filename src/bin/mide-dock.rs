@@ -106,6 +106,9 @@ fn canvas(w: u32, h: u32) -> Option<Pixmap> {
 /// Modo tablet com alvos grandes (`[tablet] large_targets`): ícones maiores, para o
 /// dedo. O compositor diz (`tablet_large`), perguntado uma vez por segundo.
 static TABLET_LARGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Modo tablet ligado: sem ampliação dos ícones (o dedo não "passa por cima"), como a
+/// dock do iPad. Perguntado junto com `TABLET_LARGE`.
+static TABLET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const TABLET_ICON_SIZE: u32 = 58;
 
 /// Tamanho dos ícones gravado nas Configurações (ou o padrão); no modo tablet, pelo
@@ -128,6 +131,9 @@ fn liquid_glass() -> bool {
 /// Tamanho máximo dos ícones na ampliação (`[dock] magnification` e `magnify_size`,
 /// como a "Ampliação" do Mac; desligada por padrão). `None` sem ampliação.
 fn magnify_size() -> Option<u32> {
+    if TABLET.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
     if !mide::settings_file::flag("dock", "magnification", false) {
         return None;
     }
@@ -145,15 +151,19 @@ fn configured_autohide() -> bool {
     matches!(mide::settings_file::get("dock", "autohide"), Some(mide::settings_file::Value::Bool(true)))
 }
 
-/// Faixa da dock escondida que fica na tela (invisível) para o ponteiro achar.
-const PEEK: i32 = 2;
+/// Quanto a dock escondida desce abaixo da borda da tela: a dock sai toda da tela, sem
+/// nenhum pixel à mostra (nem o brilho do vidro na borda).
+const HIDDEN_DROP: i32 = 5;
+/// Altura da faixa invisível, na borda de baixo, que revela a dock escondida com o ponteiro.
+const PEEK_HEIGHT: u32 = 2;
 /// Duração do deslizar ao mostrar e esconder, e a espera antes de esconder.
 const SLIDE: Duration = mide::motion::DOCK_SLIDE;
 const HIDE_DELAY: Duration = mide::motion::DOCK_HIDE_DELAY;
 
-/// Margem de baixo com a dock toda escondida (negativa: só `PEEK` pixels na tela).
+/// Margem de baixo com a dock toda escondida: a altura dela mais `HIDDEN_DROP`, para o
+/// topo da dock ficar abaixo da borda da tela (negativa).
 fn hidden_margin() -> i32 {
-    PEEK - dock_height() as i32
+    -(dock_height() as i32 + HIDDEN_DROP)
 }
 
 /// Espaço reservado para a dock (sem ocultar): a altura dela e um respiro de 2 px
@@ -325,6 +335,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let width = dock_width(&items);
     layer.set_size(width, dock_height());
     layer.commit();
+    // A faixa de revelação: sem buffer, nada aparece; só recebe o ponteiro na borda.
+    let peek_surface = compositor.create_surface(&qh);
+    let peek = layer_shell.create_layer_surface(&qh, peek_surface, Layer::Top, Some("mide-dock-peek"), None);
+    peek.set_anchor(Anchor::BOTTOM);
+    peek.set_keyboard_interactivity(KeyboardInteractivity::None);
+    peek.set_exclusive_zone(0);
+    peek.set_size(width, PEEK_HEIGHT);
+    peek.commit();
+    let peek_pool = SlotPool::new((width * PEEK_HEIGHT * 4) as usize, &shm)?;
 
     let pool = SlotPool::new((width * dock_height() * 4) as usize, &shm)?;
     let mut dock = Dock {
@@ -334,6 +353,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         shm,
         pool,
         layer,
+        peek,
+        peek_pool,
         scale,
         width,
         height: dock_height(),
@@ -376,6 +397,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         sliding: false,
         pointer_inside: false,
         covered: false,
+        osk: false,
         game_paused: false,
         dark: mide::kit::system_dark(),
         magnify: magnify_size(),
@@ -421,6 +443,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(250)), |_, _, dock| {
+            if !dock.game_paused {
+                dock.check_keyboard();
+            }
             if dock.autohide && !dock.game_paused {
                 dock.check_covered();
             }
@@ -562,6 +587,11 @@ struct Dock {
     shm: Shm,
     pool: SlotPool,
     layer: LayerSurface,
+    /// Faixa invisível de `PEEK_HEIGHT` px na borda: quando a dock escondida sai toda da
+    /// tela, é ela que recebe o ponteiro e mostra a dock de novo.
+    peek: LayerSurface,
+    /// Buffer transparente da faixa (sem buffer a superfície não recebe o ponteiro).
+    peek_pool: SlotPool,
     /// Escala e viewport da superfície da dock.
     scale: SurfaceScale,
     width: u32,
@@ -630,6 +660,8 @@ struct Dock {
     game_paused: bool,
     /// Há janela onde a dock aparece (só então a dock que se esconde sozinha some).
     covered: bool,
+    /// Teclado na tela aberto: a dock fica escondida atrás dele (como no iPad).
+    osk: bool,
     /// Tema escuro (Configurações → Aparência): véu, separadores e pontos escuros.
     dark: bool,
     /// Ampliação ligada: tamanho máximo dos ícones; e a camada da ampliação aberta.
@@ -828,8 +860,26 @@ impl Dock {
         paused
     }
 
+    /// Teclado na tela abriu ou fechou: a dock some enquanto ele estiver aberto (senão
+    /// ela aparecia por trás das teclas) e volta ao estado de antes quando ele fecha.
+    fn check_keyboard(&mut self) {
+        let open = ask_compositor("osk_open").is_some_and(|l| l.first().is_some_and(|w| w == "yes"));
+        if open == self.osk {
+            return;
+        }
+        self.osk = open;
+        tracing::info!("dock: teclado na tela {}", if open { "aberto (dock escondida)" } else { "fechado" });
+        self.hide_at = None;
+        self.show_target = if open || (self.autohide && self.covered) { 0.0 } else { 1.0 };
+        self.slide();
+    }
+
     /// Confere se há janela sobre a área da dock e mostra ou esconde a dock.
     fn check_covered(&mut self) {
+        // Com o teclado na tela aberto, quem manda é ele (`check_keyboard`).
+        if self.osk {
+            return;
+        }
         let covered = ask_compositor("dock_covered").is_some_and(|l| l.first().is_some_and(|w| w == "yes"));
         if covered == self.covered {
             return;
@@ -2403,7 +2453,12 @@ impl Dock {
                 if before != large {
                     tracing::info!("dock: modo tablet {}", if large { "(ícones maiores)" } else { "desligado" });
                 }
-                before != large
+                let tablet = ask_compositor("tablet_mode").is_some_and(|l| l.first().is_some_and(|w| w == "on"));
+                let was_tablet = TABLET.swap(tablet, std::sync::atomic::Ordering::Relaxed);
+                if was_tablet != tablet {
+                    tracing::info!("dock: modo tablet {} (ampliação {})", if tablet { "ligado" } else { "desligado" }, if tablet { "desligada" } else { "da configuração" });
+                }
+                before != large || was_tablet != tablet
             } else {
                 false
             }
@@ -2862,6 +2917,9 @@ impl OutputHandler for Dock {
 
 impl LayerShellHandler for Dock {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if &self.peek == layer {
+            return;
+        }
         if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
             self.tip = None;
             return;
@@ -2889,6 +2947,19 @@ impl LayerShellHandler for Dock {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
+        if &self.peek == layer {
+            // Faixa transparente: um buffer vazio a deixa mapeada e recebendo o ponteiro.
+            let (w, h) = (self.width, PEEK_HEIGHT);
+            if let Ok((buffer, canvas)) = self.peek_pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) {
+                canvas.fill(0);
+                let surface = layer.wl_surface();
+                surface.damage_buffer(0, 0, w as i32, h as i32);
+                if buffer.attach_to(surface).is_ok() {
+                    layer.commit();
+                }
+            }
+            return;
+        }
         if let Some(tip) = self.tip.as_mut().filter(|t| &t.layer == layer) {
             tip.configured = true;
             self.paint_tip();
@@ -2976,6 +3047,29 @@ impl PointerHandler for Dock {
         for event in events {
             if self.menu.as_ref().is_some_and(|m| &event.surface == m.layer.wl_surface()) {
                 self.menu_pointer(event);
+                continue;
+            }
+            // Faixa de revelação: o ponteiro encostou na borda, a dock volta.
+            if &event.surface == self.peek.wl_surface() {
+                match event.kind {
+                    PointerEventKind::Enter { .. } if !self.osk => {
+                        self.pointer_x = event.position.0;
+                        self.pointer_inside = true;
+                        if self.autohide {
+                            self.hide_at = None;
+                            self.show_target = 1.0;
+                            self.slide();
+                        }
+                    }
+                    // Saiu da faixa sem entrar na dock: a dock esconde de novo.
+                    PointerEventKind::Leave { .. } => {
+                        self.pointer_inside = false;
+                        if self.autohide {
+                            self.hide_at = Some(std::time::Instant::now() + HIDE_DELAY);
+                        }
+                    }
+                    _ => {}
+                }
                 continue;
             }
             if &event.surface != self.layer.wl_surface() {

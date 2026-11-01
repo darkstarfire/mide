@@ -927,6 +927,10 @@ impl State {
     /// Alguma janela (fora as minimizadas) está onde a dock fica quando aparece?
     /// Usado pela dock que se esconde sozinha: só some quando há janela por cima dela.
     pub fn dock_covered(&self) -> bool {
+        // Dock trazida pelo deslizar curto da borda de baixo: fica à mostra um instante.
+        if self.dock_reveal_until.is_some_and(|t| std::time::Instant::now() < t) {
+            return false;
+        }
         let Some(output) = self.primary_output() else {
             return false;
         };

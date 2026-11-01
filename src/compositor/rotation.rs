@@ -85,8 +85,10 @@ impl Anim {
 /// Transformação da tela para a orientação lida do sensor (a mesma do mutter).
 pub fn transform_for(orientation: &str) -> Transform {
     match orientation {
-        "left-up" => Transform::_90,
-        "right-up" => Transform::_270,
+        // No Chromebook (Akali360) o sensor vem invertido nos retratos: medido com o
+        // aparelho em pé, `right-up` precisa de `_90` e `left-up` de `_270`.
+        "left-up" => Transform::_270,
+        "right-up" => Transform::_90,
         "bottom-up" => Transform::_180,
         _ => Transform::Normal,
     }
@@ -410,8 +412,8 @@ mod tests {
     #[test]
     fn orientacao_do_sensor_para_a_tela() {
         assert_eq!(transform_for("normal"), Transform::Normal);
-        assert_eq!(transform_for("left-up"), Transform::_90);
-        assert_eq!(transform_for("right-up"), Transform::_270);
+        assert_eq!(transform_for("left-up"), Transform::_270);
+        assert_eq!(transform_for("right-up"), Transform::_90);
         assert_eq!(transform_for("bottom-up"), Transform::_180);
         assert_eq!(transform_for("undefined"), Transform::Normal);
         // Deitado não gira nada (fica a última).

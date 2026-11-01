@@ -1,0 +1,9 @@
+#!/bin/sh
+# Instala a configuração que impede a suspensão automática (tampa, botão de ligar e
+# tecla de suspender). Precisa de sudo. Uso: sudo data/mide-sem-suspensao
+set -e
+cd "$(dirname "$(readlink -f "$0")")/.."
+install -m 644 data/systemd/60-mide-sem-suspensao.conf /etc/systemd/logind.conf.d/60-mide-sem-suspensao.conf
+# O logind relê a configuração com SIGHUP, sem derrubar a sessão.
+systemctl kill -s HUP systemd-logind
+echo "suspensão automática desligada (tampa, botão de ligar e tecla de suspender)"

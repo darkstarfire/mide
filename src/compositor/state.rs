@@ -347,6 +347,9 @@ pub struct State {
     /// Pedido para a barra (lido por ela com `bar_request`), como a confirmação de
     /// desligar do botão de ligar.
     pub bar_request: Option<&'static str>,
+    /// Deslizar curto da borda de baixo no modo tablet: a dock fica à mostra por cima
+    /// do app até este momento (como no iPad); depois volta a esconder.
+    pub dock_reveal_until: Option<std::time::Instant>,
     /// Capturas de tela pedidas pelos apps (`wlr-screencopy`).
     pub screencopy: crate::screencopy::Screencopy,
     /// Buffers dos apps na GPU (`linux-dmabuf`, A25): anunciado pelo backend.
@@ -554,6 +557,7 @@ impl State {
             render_stalled: false,
             cursor_plane: false,
             bar_request: None,
+            dock_reveal_until: None,
             screencopy: Default::default(),
             dmabuf: Default::default(),
             xdg_activation_state,

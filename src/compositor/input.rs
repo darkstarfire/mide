@@ -66,6 +66,7 @@ pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>,
     match event {
         InputEvent::Keyboard { event } => keyboard_key(state, event),
         InputEvent::PointerMotionAbsolute { event } => {
+            show_pointer(state);
             let pos = event.position_transformed(bounds.size) + bounds.loc.to_f64();
             pointer_motion(state, pos, event.time_msec());
         }
@@ -73,6 +74,7 @@ pub fn handle_event_in<B: InputBackend>(state: &mut State, event: InputEvent<B>,
         // passa entre as telas, mas não sai delas (nem cai num vão entre telas de
         // alturas diferentes).
         InputEvent::PointerMotion { event } => {
+            show_pointer(state);
             let pos = state.pointer_location + event.delta();
             let pos = if state.space.output_under(pos).next().is_some() {
                 pos
@@ -693,6 +695,15 @@ pub(crate) fn spawn(command: &str) {
 }
 
 /// Move o ponteiro para `pos`, independente do backend (winit, DRM ou teste).
+/// Mouse ou touchpad se mexeu: o ponteiro escondido pelo toque volta (como no iPad, o
+/// cursor some ao tocar a tela e volta ao mexer o mouse).
+pub fn show_pointer(state: &mut State) {
+    if matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
+        state.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
+        state.wake();
+    }
+}
+
 pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     let Some(pointer) = state.seat.get_pointer() else {
         return;
@@ -806,7 +817,9 @@ pub fn pointer_motion(state: &mut State, pos: Point<f64, Logical>, time: u32) {
     // app (VS Code) ficava na barra de título e nos apps que não pedem cursor.
     let previous = pointer.current_focus();
     let changed = under.is_none() || under.as_ref().map(|(s, _)| s) != previous.as_ref();
-    if changed && !matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default)) {
+    // Ponteiro escondido pelo toque continua escondido até o mouse se mexer (`show_pointer`).
+    let hidden = matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden);
+    if changed && !hidden && !matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default)) {
         state.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
         state.wake();
     }
@@ -896,7 +909,9 @@ pub fn button(state: &mut State, code: u32, button_state: ButtonState, time: u32
     // barra e na dock, por cima, o clique segue para elas.
     if state.overview.is_some() && top_layer_under(state, pointer.current_location()).is_none() {
         if button_state == ButtonState::Pressed && state.overview.as_ref().is_some_and(|o| o.settled_open()) {
-            crate::overview::click(state, pointer.current_location());
+            crate::overview::press(state, pointer.current_location());
+        } else if button_state == ButtonState::Released {
+            crate::overview::release(state, pointer.current_location());
         }
         return;
     }

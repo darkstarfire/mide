@@ -5,8 +5,10 @@
 #                                (barra, dock, área de trabalho, notificações...), sem
 #                                fechar janelas; o compositor e os apps que mudaram valem
 #                                na próxima vez (entrar de novo / abrir o app de novo)
-#      data/mide-update --all  também o compositor: as janelas dos apps fecham, mas a
-#                                sessão continua (sem voltar ao login)
+#      data/mide-update --all  tudo: o compositor (as janelas dos apps fecham, mas a
+#                                sessão continua, sem voltar ao login) e a tela de login
+#                                (pede a senha de administrador no terminal)
+#      data/mide-update --login  só a tela de login (também pede a senha)
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."
 PATH="$HOME/.cargo/bin:$PATH"
@@ -23,8 +25,12 @@ antes="$(mktemp)"
 depois="$(mktemp)"
 trap 'rm -f "$antes" "$depois"' EXIT
 programas > "$antes"
-# A pasta de compilação não para de crescer: limpa antes de encher o disco.
-data/mide-trim-target --full
+# Lixo de compilações anteriores sai antes de compilar de novo: a pasta de debug (os
+# testes recompilam o que precisam) e a compilação de release inteira, porque o cargo
+# guarda cópias das versões antigas e nunca apaga. Custo: a compilação de release é
+# completa a cada atualização, mas o disco não enche (em 2026-10-30 a pasta chegou a 400 GB).
+rm -rf target/debug
+cargo clean --release
 cargo build --release
 programas > "$depois"
 mudaram="$(comm -13 "$antes" "$depois" | cut -d' ' -f1 | tr '\n' ' ')"
@@ -83,8 +89,24 @@ printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.mide\nExec=%s 
     echo "nota: o seletor de arquivos do mide vale ao entrar de novo na sessão (ou com $0 --all); para não depender da pasta de portais montada pela sessão: sudo install -m644 data/xdg-desktop-portal/portals/mide.portal /usr/share/xdg-desktop-portal/portals/"
 command -v ffmpeg >/dev/null ||
     echo "aviso: para gravar a tela em vídeo pelo mide, instale o ffmpeg (sudo apt install ffmpeg)"
-# --all (o antigo --tudo continua valendo)
+# Tela de login (greetd + mide-login): os binários dela são cópias, então só mudam com
+# a instalação. Precisa de sudo; no terminal o próprio sudo pede a senha.
+atualiza_login() {
+    echo "atualizando a tela de login (pede a senha de administrador)..."
+    if sudo data/mide-login-install; then
+        echo "tela de login atualizada"
+    else
+        echo "aviso: a tela de login não foi atualizada (rode: sudo data/mide-login-install)"
+    fi
+}
+# --login: só a tela de login.
+if [ "${1:-}" = "--login" ]; then
+    atualiza_login
+    exit 0
+fi
+# --all (o antigo --tudo continua valendo): compositor e tela de login.
 if [ "${1:-}" = "--all" ] || [ "${1:-}" = "--tudo" ]; then
+    atualiza_login
     echo "reiniciando o compositor (as janelas abertas vão fechar)..."
     target/release/mide-ctl restart all
     exit 0
