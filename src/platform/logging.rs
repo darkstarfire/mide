@@ -223,8 +223,10 @@ fn append_record(path: &Path, record: &[u8], max_bytes: u64) -> io::Result<()> {
     }
     let mut file = options.open(path)?;
     file.write_all(record)?;
-    // Erros e avisos importantes sobrevivem melhor a uma queda abrupta do sistema.
-    if record.windows(6).any(|w| w == b"ERROR ") || record.windows(5).any(|w| w == b"WARN ") {
+    // Só erros vão ao disco na hora: num eMMC lento, um `fsync` a cada aviso prendia o
+    // laço do compositor (que registra no próprio laço) e a tela congelava. Avisos
+    // seguem pelo journal, que já os guarda.
+    if record.windows(6).any(|w| w == b"ERROR ") {
         file.sync_data()?;
     }
     drop(file);

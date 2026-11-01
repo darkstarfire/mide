@@ -52,8 +52,15 @@ pub fn init(loop_handle: &LoopHandle<'static, State>, socket_name: &str) -> std:
         .insert_source(Generic::new(listener, Interest::READ, Mode::Level), |_, listener, state| {
             crate::watchdog::phase("canal de controle");
             while let Ok((stream, _)) = listener.accept() {
-                if let Err(err) = serve(stream, state) {
-                    tracing::warn!("controle: falha ao responder: {err}");
+                match serve(stream, state) {
+                    Ok(()) => {}
+                    // Quem perguntou desistiu antes da resposta (a barra espera 300 ms): não
+                    // é erro do compositor. Como aviso, cada um ia ao disco e deixava o laço
+                    // mais lento, com mais desistências (a tela congelava).
+                    Err(err) if matches!(err.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                        tracing::debug!("controle: cliente desistiu: {err}");
+                    }
+                    Err(err) => tracing::warn!("controle: falha ao responder: {err}"),
                 }
             }
             Ok(PostAction::Continue)
@@ -65,10 +72,10 @@ pub fn init(loop_handle: &LoopHandle<'static, State>, socket_name: &str) -> std:
 
 fn serve(stream: UnixStream, state: &mut State) -> std::io::Result<()> {
     stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(Duration::from_millis(200)))?;
-    // Quem pediu e não lê a resposta (programa travado ou congelado) não pode prender o
-    // laço do compositor numa escrita sem fim.
-    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    // Tudo isto roda no laço do compositor: quem conecta e não manda o pedido, ou não lê a
+    // resposta (programa travado), só pode prender a tela por pouco tempo.
+    stream.set_read_timeout(Some(Duration::from_millis(50)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(100)))?;
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line)?;
     let reply = handle(state, line.trim());

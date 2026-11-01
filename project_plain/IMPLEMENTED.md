@@ -2342,3 +2342,10 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Pinça com quatro ou cinco dedos na tela: com os dedos a 60% da abertura inicial, o launcher abre (a tela de início do iPad); o deslizar em andamento para.
 - Sem barra de título no modo tablet (com `[tablet] maximize_windows`): as janelas maximizadas ficam sem a barra do mide (`state::TABLET_BARLESS`, lido por `bar_height_for`), e as já maximizadas se refazem ao entrar e ao sair do modo (`touch::refill_maximized`); ao maximizar no modo, o `fill_area` já não reserva a barra.
 - Testes: unidade `pinca_de_quatro_dedos`; `cargo test` ok; clippy sem aviso nas linhas mudadas. Falta o usuário conferir no aparelho.
+
+## v0.10.42: tela congelando no Chromebook (2026-11-01)
+
+- Relato do usuário: "tá congelando toda hora". No log, o vigia mostrou o laço do compositor parado no canal de controle e centenas de "controle: falha ao responder: Broken pipe" por minuto; o sistema continuou de pé (journal até 11:40) com o compositor parado desde 10:44.
+- Causa: a barra desiste da pergunta ao compositor em 300 ms; cada desistência virava WARN, e todo WARN fazia `fsync` do `mide.log` no laço do compositor (eMMC lento, pior durante compilações). Mais lentidão, mais desistências: a tela parava.
+- Correção: `fsync` só para ERROR (`platform/logging.rs`); cliente que desistiu (BrokenPipe, ConnectionReset, tempo esgotado) vai para DEBUG; esperas do canal de controle no laço caem de 200/500 ms para 50/100 ms (`compositor/control.rs`).
+- Testes: `cargo test` ok, clippy sem aviso novo. Falta o usuário conferir no Chromebook com a v0.10.42.
