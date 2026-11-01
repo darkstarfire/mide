@@ -212,6 +212,12 @@ pub fn parse_session(path: &Path, text: &str, wayland: bool) -> Option<Session> 
     if exec.is_empty() {
         return None;
     }
+    // Um Exec com caminho que não existe (pasta antiga de projeto, app desinstalado)
+    // faz o greetd abrir a sessão e fechar na hora: a tela volta ao login sem aviso.
+    // Essa entrada não aparece na lista, e a escolha lembrada cai na próxima.
+    if exec[0].starts_with('/') && !Path::new(&exec[0]).exists() {
+        return None;
+    }
     let id = path.file_stem()?.to_string_lossy().into_owned();
     Some(Session { name: localized.map(|(_, n)| n).unwrap_or(name), id, exec, wayland, desktop_names: names })
 }
@@ -363,6 +369,9 @@ mod tests {
         let x = parse_session(Path::new("/usr/share/xsessions/cinnamon.desktop"), "[Desktop Entry]\nName=Cinnamon\nExec=cinnamon-session-cinnamon\n", false).unwrap();
         assert_eq!(x.command().0, ["startx", "/usr/bin/env", "cinnamon-session-cinnamon"]);
         assert!(parse_session(Path::new("h.desktop"), "[Desktop Entry]\nName=H\nExec=h\nHidden=true\n", true).is_none());
+        // Caminho que não existe: a sessão some da lista (não fica como escolha).
+        assert!(parse_session(Path::new("d.desktop"), "[Desktop Entry]\nName=D\nExec=/nao/existe/mide-session\n", true).is_none());
+        assert!(parse_session(Path::new("e.desktop"), "[Desktop Entry]\nName=E\nExec=/bin/sh\n", true).is_some());
         assert!(parse_session(Path::new("t.desktop"), "[Desktop Entry]\nName=T\nExec=t\nTryExec=/nao/existe/mide\n", true).is_none());
     }
 

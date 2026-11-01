@@ -95,6 +95,9 @@ comando_da_sessao() {
         [ -f "$f" ] || continue
         grep -qE '^DesktopNames=mide;?$' "$f" || continue
         exec_="$(sed -nE 's/^Exec=(.*)$/\1/p' "$f" | head -1)"
+        # Entrada com caminho que não existe (pasta de projeto antiga): não serve.
+        primeira="${exec_%% *}"
+        case "$primeira" in /*) [ -e "$primeira" ] || continue ;; esac
         id="$(basename "$f" .desktop)"
         [ -n "$exec_" ] && break
     done
@@ -183,6 +186,10 @@ desinstalar() {
         echo "   $GREETD_CONF restaurado."
     fi
     passo "Apagando os arquivos da tela de login do mide"
+    for f in "$LIB"/mide*; do
+        [ -e "$f" ] && rm -f "/usr/local/bin/$(basename "$f")"
+    done
+    rm -f /usr/local/bin/mide-session /usr/share/wayland-sessions/mide.desktop
     rm -rf "$LIB" "$CONF" "$FONTS"
     rmdir /usr/local/share/mide 2>/dev/null || true
     rm -rf "$STATE"
@@ -216,15 +223,28 @@ GREETER="$(usuario_greeter)"
 getent passwd "$GREETER" >/dev/null || falha "o usuário do greeter ($GREETER) não existe; confira o pacote greetd"
 echo "   o greeter roda como o usuário '$GREETER'."
 
-passo "2/6 Programas da tela de login em $LIB"
+passo "2/6 Programas do mide em $LIB, no PATH (/usr/local/bin) e a sessão"
 # Uma cópia própria: o usuário do greeter não lê a pasta pessoal, e o login continua
-# funcionando enquanto o projeto é recompilado.
+# funcionando enquanto o projeto é recompilado. Todos os programas do mide vão juntos,
+# porque o compositor procura os auxiliares (barra, dock...) ao lado do próprio executável.
 install -d -m755 "$LIB"
-install -m755 "$BIN/mide" "$BIN/mide-login" "$BIN/mide-keyboard" "$LIB/"
+for f in "$BIN"/mide "$BIN"/mide-*; do
+    case "$f" in *.d) continue ;; esac
+    [ -f "$f" ] && [ -x "$f" ] && install -m755 "$f" "$LIB/"
+done
 # O próprio instalador também: as Configurações rodam o --sync dele pelo pkexec, e ele
 # precisa estar num lugar só do root (não na pasta do projeto, que o usuário altera).
 install -m755 data/mide-login-install "$LIB/"
-echo "   copiados de $BIN (rode este script de novo depois de atualizar o mide)."
+# Atalhos no PATH: `mide`, `mide-session` e os demais programas ficam em /usr/local/bin
+# (links para a cópia de $LIB, que não muda quando o projeto é recompilado ou movido).
+for f in "$LIB"/mide*; do
+    ln -sfn "$f" "/usr/local/bin/$(basename "$f")"
+done
+install -m755 data/mide-session /usr/local/bin/mide-session
+# A entrada "mide" da tela de login (o `mide-session` acima é o que ela executa).
+install -d -m755 /usr/share/wayland-sessions
+install -m644 data/wayland-sessions/mide.desktop /usr/share/wayland-sessions/mide.desktop
+echo "   programas copiados de $BIN para $LIB, com atalhos em /usr/local/bin (rode este script de novo depois de atualizar o mide)."
 
 passo "3/6 Fonte da interface (Noto Sans) em $FONTS"
 install -d -m755 "$FONTS"

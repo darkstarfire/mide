@@ -2376,3 +2376,10 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Pedido do usuário: no modo tablet, o teclado na tela não aparecia para digitar a senha. Com a tela bloqueada (bloqueio e tela de login), a camada `mide-keyboard` agora é desenhada por cima da tela de bloqueio e é a única que recebe o toque e o ponteiro (`input::osk_layer_under`); o foco do teclado continua no campo de senha. O modo de login também abre o `mide-keyboard`, e o `mide-login-install` copia o programa.
 - Ctrl+Alt+F1…F12 pelas teclas físicas no estilo Mac: o Alt físico vira Ctrl (⌘), o xkb não entregava o `XF86Switch_VT` e a tela de login prendia o usuário (no Dell, só Ctrl+Windows+F3 funcionava).
 - Testes: `cargo test` ok, clippy sem aviso nas linhas mudadas. Falta o usuário conferir: senha com o teclado na tela no modo tablet (bloqueio e login) e Ctrl+Alt+F3 com o estilo Mac.
+
+## v0.10.48: tela de login sem sessão quebrada e mide no PATH (2026-11-01)
+
+- Causa do login que voltava ao greeter no Dell: a entrada `mide-dev.desktop` apontava para `/home/fabio/Projetos/projeto_de/data/mide-session`, pasta antiga do projeto. O greetd abria a sessão e ela fechava na hora (o `session.log` não era reescrito), e o greeter lembrava dessa escolha.
+- A tela de login agora ignora sessões cujo `Exec` aponta para um caminho que não existe (não aparecem na lista) e o "entrar automaticamente" também as pula.
+- `data/mide-login-install` copia todos os programas do mide para `/usr/local/lib/mide-login`, cria links deles em `/usr/local/bin` (PATH), instala `mide-session` e a entrada `/usr/share/wayland-sessions/mide.desktop`; `--uninstall` desfaz tudo isso.
+- Testes: `cargo test --bin mide-login` ok (5/5, com teste novo para o caminho inexistente). Falta o usuário rodar `sudo data/mide-login-install` e conferir o login no Dell.
