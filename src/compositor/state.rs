@@ -1411,10 +1411,20 @@ pub fn fixed_size(window: &Window) -> bool {
 
 /// Altura da barra de título desta janela: 30 px se a janela usa decoração de
 /// servidor, 0 se o app desenha a própria barra (GTK4, libadwaita).
+/// Modo tablet com os apps ocupando a tela: as janelas maximizadas ficam sem a barra de
+/// título do mide, como os apps em tela cheia do iPad (fechar e trocar de app pela visão
+/// das janelas e pelos gestos). Ligado e desligado por `touch::set_tablet_mode`.
+pub static TABLET_BARLESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn bar_height_for(window: &Window) -> i32 {
     let Some(toplevel) = window.toplevel() else {
         return 0;
     };
+    if TABLET_BARLESS.load(std::sync::atomic::Ordering::Relaxed)
+        && toplevel.current_state().states.contains(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized)
+    {
+        return 0;
+    }
     let ssd = with_states(toplevel.wl_surface(), |states| {
         states.data_map.get::<SsdMarker>().is_some()
     });

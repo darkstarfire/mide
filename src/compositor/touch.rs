@@ -46,6 +46,10 @@ const HOLD: Duration = Duration::from_millis(280);
 const HOLD_TRAVEL: f64 = 110.0;
 /// Gesto de baixo mais curto que isto (pontos): só mostra a dock, por `DOCK_REVEAL`.
 const DOCK_SWIPE: f64 = 90.0;
+/// Caminho ao longo da borda de baixo (pontos) para trocar de app.
+const SWITCH_TRAVEL: f64 = 60.0;
+/// Pinça com quatro ou cinco dedos: os dedos chegam a esta fração da abertura inicial.
+const PINCH_HOME: f64 = 0.6;
 const DOCK_REVEAL: Duration = Duration::from_secs(4);
 
 /// Borda onde um gesto do modo tablet começou.
@@ -92,6 +96,16 @@ pub struct Touch {
 pub struct Multi {
     pos: HashMap<i32, Point<f64, Logical>>,
     last: Option<Point<f64, Logical>>,
+    /// Abertura dos dedos (distância média ao centro) quando todos já estavam na tela,
+    /// para a pinça; `pinched` quando ela já levou ao launcher.
+    spread: Option<f64>,
+    pinched: bool,
+}
+
+/// Distância média dos dedos ao centro deles.
+fn spread(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<f64> {
+    let c = centroid(pos)?;
+    Some(pos.values().map(|p| (p.x - c.x).hypot(p.y - c.y)).sum::<f64>() / pos.len() as f64)
 }
 
 fn centroid(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<Point<f64, Logical>> {
@@ -112,7 +126,7 @@ fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
         return true;
     }
     let fingers = state.touch.contacts.len() as u32 + 1;
-    if !(3..=4).contains(&fingers) {
+    if !(3..=5).contains(&fingers) {
         return false;
     }
     // Posição conhecida dos dedos que já tocavam (o app não diz onde estão os dele).
@@ -129,7 +143,7 @@ fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
     cancel(state);
     known.insert(slot, pos);
     let last = centroid(&known);
-    state.touch.multi = Some(Multi { pos: known, last });
+    state.touch.multi = Some(Multi { pos: known, last, spread: None, pinched: false });
     tracing::info!("toque: gesto de {fingers} dedos");
     crate::gesture::begin(state, fingers);
     true
@@ -143,6 +157,19 @@ fn multi_motion(state: &mut State, slot: i32, pos: Point<f64, Logical>) {
         };
         // Dedo que aparece pela primeira vez no gesto: só define a posição (sem salto).
         let known = multi.pos.insert(slot, pos).is_some();
+        // Pinça com quatro ou cinco dedos: vai ao launcher (a tela de início do iPad).
+        if multi.pos.len() >= 4 && !multi.pinched {
+            let now = spread(&multi.pos);
+            match (multi.spread, now) {
+                (None, Some(now)) => multi.spread = Some(now),
+                (Some(start), Some(now)) if start > 0.0 && now / start <= PINCH_HOME => {
+                    multi.pinched = true;
+                    pinch_home(state);
+                    return;
+                }
+                _ => {}
+            }
+        }
         let now = centroid(&multi.pos);
         let prev = std::mem::replace(&mut multi.last, now);
         match (known, now, prev) {
@@ -152,6 +179,16 @@ fn multi_motion(state: &mut State, slot: i32, pos: Point<f64, Logical>) {
     };
     if let Some(d) = delta {
         crate::gesture::update(state, d.x, d.y);
+    }
+    state.wake();
+}
+
+/// Pinça de quatro ou cinco dedos: o deslizar em andamento para e o launcher abre.
+fn pinch_home(state: &mut State) {
+    tracing::info!("toque: pinça de vários dedos: launcher");
+    crate::gesture::end(state, true);
+    if !state.launcher_open() {
+        state.toggle_launcher();
     }
     state.wake();
 }
@@ -269,6 +306,15 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
                 };
                 if along >= DRAG_START * 1.5 && along > d.x.abs() {
                     edge_begin(state, slot, edge, from, pos, seq);
+                } else if edge == Edge::Bottom && d.x.abs() > along.abs() {
+                    // Ao longo da borda de baixo: troca de app, como no iPad (para a direita,
+                    // o app usado antes; para a esquerda, volta).
+                    if d.x.abs() >= SWITCH_TRAVEL {
+                        let dir = if d.x > 0.0 { 1 } else { -1 };
+                        tracing::info!("toque: borda de baixo para {}: troca de app", if dir > 0 { "a direita" } else { "a esquerda" });
+                        crate::overview::cycle(state, dir);
+                        state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: true, moved_at, seq });
+                    }
                 } else if d.x.hypot(d.y) >= DRAG_START * 1.5 {
                     // Outra direção: era um toque comum (rolar, arrastar) perto da borda.
                     state.touch.contacts.remove(&slot);
@@ -502,14 +548,35 @@ pub fn set_tablet_mode(state: &mut State, on: bool) {
     // Em modo tablet a tela passa a girar com o sensor (e volta ao normal ao sair). O
     // aparelho pode já estar em pé: a orientação é lida de novo na hora.
     crate::rotation::apply(state);
+    // Apps ocupando a tela sem a barra de título, como no iPad; ao sair, a barra volta.
+    let barless = on && maximize_windows(state);
+    crate::state::TABLET_BARLESS.store(barless, std::sync::atomic::Ordering::Relaxed);
     if on {
         crate::rotation::read_now(state);
-        // Apps ocupando a tela, como no iPad.
         if maximize_windows(state) {
             maximize_all(state);
         }
     }
+    refill_maximized(state);
     state.wake();
+}
+
+/// As janelas já maximizadas ocupam de novo a área útil: com a barra de título saindo
+/// (ou voltando) no modo tablet, o conteúdo cresce (ou encolhe) os 28 pontos dela.
+fn refill_maximized(state: &mut State) {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+    let windows: Vec<_> = state.space.elements().cloned().collect();
+    for window in windows {
+        let Some(toplevel) = window.toplevel().cloned() else {
+            continue;
+        };
+        if !toplevel.current_state().states.contains(XdgState::Maximized) || state.fullscreen_entry(&window).is_some() {
+            continue;
+        }
+        if let Some(area) = state.usable_area_for_surface(toplevel.wl_surface()) {
+            state.maximize_in(&toplevel, area);
+        }
+    }
 }
 
 /// Põe as janelas abertas ocupando a área útil da tela delas (ao entrar no modo tablet).
@@ -532,6 +599,24 @@ fn maximize_all(state: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pinca_de_quatro_dedos() {
+        let dedos = |r: f64| -> HashMap<i32, Point<f64, Logical>> {
+            [(0, (100.0 - r, 100.0)), (1, (100.0 + r, 100.0)), (2, (100.0, 100.0 - r)), (3, (100.0, 100.0 + r))]
+                .into_iter()
+                .map(|(s, p)| (s, Point::from(p)))
+                .collect()
+        };
+        let abertos = dedos(100.0);
+        let c = centroid(&abertos).unwrap();
+        assert!((c.x - 100.0).abs() < 1e-9 && (c.y - 100.0).abs() < 1e-9);
+        assert!((spread(&abertos).unwrap() - 100.0).abs() < 1e-9);
+        // Fechando até 60% da abertura: a pinça vale.
+        assert!(spread(&dedos(60.0)).unwrap() / spread(&abertos).unwrap() <= PINCH_HOME);
+        assert!(spread(&dedos(70.0)).unwrap() / spread(&abertos).unwrap() > PINCH_HOME);
+        assert!(centroid(&HashMap::new()).is_none());
+    }
 
     #[test]
     fn bordas_dos_gestos() {

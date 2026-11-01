@@ -2335,3 +2335,10 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - `data/mide-update`: apaga `target/debug` e a compilação de release antes de compilar (o disco enchia); `--all` também atualiza a tela de login (pede a senha); `--login` só a tela de login.
 - `data/mide-sem-suspensao` (sudo): a tampa, o botão de ligar e a tecla de suspender não mandam dormir (`/etc/systemd/logind.conf.d/60-mide-sem-suspensao.conf`).
 - Testes: `cargo test` ok (todos os testes, nenhuma falha); clippy sem aviso nas linhas mudadas (o projeto tem 272 avisos antigos); mide-ui `cargo test` 120 ok. O usuário confirmou na sessão o foco dos campos e a dock; os gestos na tela, a visão das janelas com o × e a borda de baixo curta faltam conferir no aparelho.
+
+## v0.10.41: mais do iPadOS no modo tablet (2026-11-01)
+
+- Borda de baixo: deslizar 60 pontos na horizontal troca de app (para a direita, o app usado antes; para a esquerda, volta), como no iPad.
+- Pinça com quatro ou cinco dedos na tela: com os dedos a 60% da abertura inicial, o launcher abre (a tela de início do iPad); o deslizar em andamento para.
+- Sem barra de título no modo tablet (com `[tablet] maximize_windows`): as janelas maximizadas ficam sem a barra do mide (`state::TABLET_BARLESS`, lido por `bar_height_for`), e as já maximizadas se refazem ao entrar e ao sair do modo (`touch::refill_maximized`); ao maximizar no modo, o `fill_area` já não reserva a barra.
+- Testes: unidade `pinca_de_quatro_dedos`; `cargo test` ok; clippy sem aviso nas linhas mudadas. Falta o usuário conferir no aparelho.

@@ -27,7 +27,7 @@ Legenda: **feito**, **parcial**, **falta**.
 | Dentro de um app, deslizar para cima um pouco a partir da borda de baixo mostra a Dock por cima do app. | **feito** (menos de 90 pt: a dock fica à mostra por 4 s; `touch.rs`, `dock_reveal_until`) |
 | Deslizar para cima até o meio e soltar vai para a tela inicial (no mide: o launcher). | **feito** (borda de baixo → launcher) |
 | Deslizar para cima e parar no meio abre o seletor de apps (cartões das janelas). | **feito** (borda de baixo e parar → visão das janelas) |
-| Deslizar na horizontal ao longo da borda de baixo troca para o app anterior/seguinte. | **falta** |
+| Deslizar na horizontal ao longo da borda de baixo troca para o app anterior/seguinte. | **feito** (60 pt; direita = app anterior) |
 
 ### Seletor de apps (visão das janelas)
 
@@ -41,7 +41,7 @@ Legenda: **feito**, **parcial**, **falta**.
 
 | iPadOS | mide |
 |---|---|
-| Pinçar com quatro ou cinco dedos vai para a tela inicial. | **falta** (pinça) |
+| Pinçar com quatro ou cinco dedos vai para a tela inicial. | **feito** (na tela; dedos a 60% da abertura abrem o launcher) |
 | Quatro dedos para cima abrem o seletor de apps. | **feito** (tela e touchpad) |
 | Quatro dedos para os lados trocam de app. | **feito** no touchpad; **parcial** na tela (o código é o mesmo, falta conferir) |
 | Três dedos para cima/baixo (pedido do usuário: launcher abre/fecha). | **feito** (tela e touchpad) |
@@ -68,7 +68,7 @@ Legenda: **feito**, **parcial**, **falta**.
 | iPadOS | mide |
 |---|---|
 | Modo "Apps em tela cheia" (padrão): todo app ocupa a tela, inclusive os que abrem depois. | **feito** (ao entrar no modo e ao abrir, `wm.rs`) |
-| Sem barra de título; os controles da janela aparecem pela barra de menus (iPadOS 26). | **falta** |
+| Sem barra de título; os controles da janela aparecem pela barra de menus (iPadOS 26). | **parcial** (janelas maximizadas sem a barra do mide; falta mostrar os controles ao deslizar do meio de cima) |
 
 ### Toque, ponteiro e teclado
 
@@ -85,9 +85,10 @@ Legenda: **feito**, **parcial**, **falta**.
 2. ~~Dock no modo tablet: sem ampliação e escondida com o teclado na tela.~~ (2026-11-01)
 3. ~~Borda de baixo: deslizar curto mostra a Dock por cima do app.~~ (2026-11-01)
 4. ~~Apps em tela cheia também para os que abrem depois.~~ (já existia)
-5. Deslizar na horizontal na borda de baixo troca de app.
-6. Pinçar com quatro ou cinco dedos vai ao launcher.
-7. Sem barra de título no modo tablet; controles e menus do app ao deslizar do meio de cima.
+5. ~~Deslizar na horizontal na borda de baixo troca de app.~~ (2026-11-01)
+6. ~~Pinçar com quatro ou cinco dedos vai ao launcher.~~ (2026-11-01)
+7. Sem barra de título no modo tablet: ~~as janelas maximizadas sem a barra~~ (2026-11-01); falta deslizar do meio de cima mostrar a barra de menus com os controles da janela (fechar, minimizar), como no iPadOS 26.
+8. Conferir no aparelho tudo o que está marcado "feito" (a bateria não simula toque de vários dedos).
 
 Cada item: testes de unidade quando der, seção da bateria (`tests/ui/`) quando o
 roteiro do compositor conseguir simular o toque, e o teste do usuário no Chromebook.

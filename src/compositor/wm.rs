@@ -327,8 +327,11 @@ impl State {
             self.restore_sizes.retain(|(s, _)| s != surface.wl_surface());
             self.restore_sizes.push((surface.wl_surface().clone(), from_size));
         }
-        let to_loc: Point<i32, Logical> = (area.loc.x, area.loc.y + bar_height_for(&window)).into();
-        let bar_h = bar_height_for(&window);
+        // Maximizando no modo tablet sem barra: a janela ainda não está no estado
+        // maximizada, mas já vai ficar sem a barra de título.
+        let barless = tiled.is_none() && crate::state::TABLET_BARLESS.load(std::sync::atomic::Ordering::Relaxed);
+        let bar_h = if barless { 0 } else { bar_height_for(&window) };
+        let to_loc: Point<i32, Logical> = (area.loc.x, area.loc.y + bar_h).into();
         let to_size: Size<i32, Logical> = (area.size.w, (area.size.h - bar_h).max(1)).into();
         if let (Some(from_loc), true) = (from_loc, self.config.effects.animations) {
             self.animations.retain(|a| &a.surface != surface.wl_surface());
