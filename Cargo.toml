@@ -1,6 +1,6 @@
 [package]
 name = "mide"
-version = "0.10.63"
+version = "0.10.64"
 edition = "2024"
 default-run = "mide"
 
@@ -51,6 +51,9 @@ sha-crypt = { version = "0.5", default-features = false }
 # Compactar o conteúdo do PDF do Editor de Texto (já vem com o zip).
 flate2 = "1"
 tree-sitter = { version = "0.25", features = ["wasm"] }
+wasmtime = { version = "29.0.1", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime-wasi = "29.0.1"
+anyhow = "1.0.104"
 
 # Em desenvolvimento, as dependências (desenho de SVG, imagens, texto, shaders)
 # são compiladas otimizadas: sem isso, abrir o launcher ou a dock leva segundos.

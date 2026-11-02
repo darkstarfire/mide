@@ -634,3 +634,6 @@ msgstr "Tema de cores"
 
 msgid "File Icon Theme"
 msgstr "Tema de ícones de arquivo"
+
+msgid "Preparing {server} from the {ext} extension…"
+msgstr "Preparando o {server} pela extensão {ext}…"

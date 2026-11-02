@@ -19,4 +19,5 @@ pub mod session;
 pub mod snippets;
 pub mod syntax;
 pub mod themes;
+pub mod wasm_ext;
 pub mod zed;

@@ -32,9 +32,23 @@ pub struct Server {
     /// Variáveis de ambiente do servidor (o `binary.env` do Zed).
     #[serde(skip)]
     pub env: Vec<(String, String)>,
+    /// Nome mostrado (o do servidor numa extensão, quando o programa é o `node`).
+    #[serde(skip)]
+    pub label: String,
 }
 
 impl Server {
+    /// Chave do servidor rodando (o programa e os argumentos: dois servidores podem
+    /// usar o mesmo `node`).
+    /// Nome para mostrar: o dado pela extensão ou o programa.
+    pub fn name(&self) -> &str {
+        if self.label.is_empty() { self.command.rsplit('/').next().unwrap_or(&self.command) } else { &self.label }
+    }
+
+    pub fn key(&self) -> String {
+        if self.args.is_empty() { self.command.clone() } else { format!("{} {}", self.command, self.args.join(" ")) }
+    }
+
     pub fn new(languages: &[&str], command: &str, args: &[&str]) -> Self {
         Self {
             languages: languages.iter().map(|s| s.to_string()).collect(),
@@ -44,6 +58,7 @@ impl Server {
             settings: serde_json::Value::Null,
             init_options: serde_json::Value::Null,
             env: Vec::new(),
+            label: String::new(),
         }
     }
 }

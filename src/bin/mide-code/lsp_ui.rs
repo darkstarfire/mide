@@ -102,7 +102,7 @@ impl Code {
 
     /// Posições em UTF-8 no servidor da linguagem (senão, UTF-16).
     pub(crate) fn client_utf8(&self, lang: &str) -> bool {
-        self.config.server_for(lang).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8)
+        self.config.server_for(lang).and_then(|s| self.servers.get(&s.key())).is_none_or(|c| c.utf8)
     }
 
     /// Aplica trocas do servidor: nas abas abertas (dá para desfazer) e, nos arquivos
@@ -141,7 +141,7 @@ impl Code {
                     self.last_edit = Some(Instant::now());
                 }
             } else if let Ok((text, crlf)) = read_text(&path) {
-                let utf8 = self.config.server_for(lang::detect(&path, text.lines().next().unwrap_or("")).id).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8);
+                let utf8 = self.config.server_for(lang::detect(&path, text.lines().next().unwrap_or("")).id).and_then(|s| self.servers.get(&s.key())).is_none_or(|c| c.utf8);
                 let new = lsp::apply_edits(&text, edits, utf8);
                 let out = if crlf { new.replace('\n', "\r\n") } else { new };
                 if let Err(err) = mide::files::write_atomic(&path, out.as_bytes()) {

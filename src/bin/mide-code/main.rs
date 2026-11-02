@@ -25,6 +25,7 @@
 //!   tabulação, gaveta e servidores de linguagem.
 //! - Arquivos soltos na janela abrem em abas.
 
+mod ext_servers;
 mod lsp_ui;
 mod term;
 mod tools;
@@ -217,6 +218,8 @@ pub(crate) struct Code {
     theme_names: (Vec<String>, Vec<String>),
     /// Realce por tree-sitter com as gramáticas das extensões do Zed.
     syntax: mide::code::syntax::Syntax,
+    /// Servidores pedidos às extensões do Zed com código.
+    ext_servers: ext_servers::ExtServers,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -259,6 +262,7 @@ impl Code {
             color_theme: None,
             theme_names: (Vec::new(), Vec::new()),
             syntax: mide::code::syntax::Syntax::new(),
+            ext_servers: ext_servers::ExtServers::default(),
             hover: None,
             definition: None,
             message: None,
@@ -380,7 +384,7 @@ impl Code {
                 if mide::code::snippets::user_dir().is_some_and(|d| path.starts_with(d)) {
                     self.tools.snippets.clear();
                 }
-                let cmd = self.config.server_for(doc.lang.id).map(|s| s.command.clone());
+                let cmd = self.config.server_for(doc.lang.id).map(|s| s.key());
                 if let Some(client) = cmd.and_then(|c| self.servers.get_mut(&c)) {
                     client.did_save(&path);
                 }
@@ -444,7 +448,7 @@ impl Code {
             return;
         }
         let doc = self.docs.remove(i);
-        if let (Some(path), Some(cmd)) = (&doc.path, self.config.server_for(doc.lang.id).map(|s| s.command.clone()))
+        if let (Some(path), Some(cmd)) = (&doc.path, self.config.server_for(doc.lang.id).map(|s| s.key()))
             && let Some(client) = self.servers.get_mut(&cmd)
         {
             client.did_close(path);
@@ -497,30 +501,38 @@ impl Code {
 
     /// Servidor de linguagem da aba atual (inicia na primeira vez, se instalado).
     fn client_for_current(&mut self) -> Option<&mut Client> {
-        let lang = self.doc().lang.id;
-        let server: Server = self.config.server_for(lang)?.clone();
-        if self.failed.contains(&server.command) {
+        let lang = self.doc().lang;
+        let server = self.config.server_for(lang.id).cloned();
+        // Sem servidor no PATH para a linguagem: uma extensão com código (do Zed) pode
+        // dizer qual usar (e baixá-lo), sem travar a janela.
+        let usable = server.as_ref().is_some_and(|s| installed(&s.command) && !self.failed.contains(&s.key()));
+        if !usable {
+            self.ask_extension_for_server(lang);
+        }
+        let server: Server = server?;
+        let key = server.key();
+        if self.failed.contains(&key) {
             return None;
         }
-        if !self.servers.contains_key(&server.command) {
+        if !self.servers.contains_key(&key) {
             if !installed(&server.command) {
-                self.failed.insert(server.command.clone());
+                self.failed.insert(key);
                 return None;
             }
             let root = self.root.clone().or_else(|| self.doc().path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf))).unwrap_or_else(mide::places::home_dir);
             match Client::start_with(&server.command, &server.args, &root, &server.env, server.init_options.clone(), server.settings.clone()) {
                 Ok(client) => {
                     tracing::info!("servidor de linguagem: {} ({})", server.command, root.display());
-                    self.servers.insert(server.command.clone(), client);
+                    self.servers.insert(key.clone(), client);
                 }
                 Err(err) => {
                     self.say(tr!("Couldn’t start {command}: {err}", command = server.command, err = err));
-                    self.failed.insert(server.command.clone());
+                    self.failed.insert(key);
                     return None;
                 }
             }
         }
-        self.servers.get_mut(&server.command)
+        self.servers.get_mut(&key)
     }
 
     /// Mantém o servidor a par do texto da aba atual (abre e manda as mudanças depois
@@ -794,7 +806,7 @@ impl Code {
     /// Vai ao próximo (ou anterior) erro ou aviso do servidor de linguagem.
     fn next_problem(&mut self, forward: bool) {
         let lang = self.doc().lang.id;
-        let utf8 = self.config.server_for(lang).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8);
+        let utf8 = self.config.server_for(lang).and_then(|s| self.servers.get(&s.key())).is_none_or(|c| c.utf8);
         let doc = self.doc();
         if doc.diags.is_empty() {
             self.say(tr!("No problems in this file"));
@@ -971,7 +983,7 @@ impl Code {
             doc.colors = (doc.text.version, spans.into_iter().map(|(r, k)| (r, pick(k))).collect());
         }
         let doc = &mut self.docs[i];
-        let utf8 = self.config.server_for(doc.lang.id).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8);
+        let utf8 = self.config.server_for(doc.lang.id).and_then(|s| self.servers.get(&s.key())).is_none_or(|c| c.utf8);
         let mut deco = Decorations { colors: doc.colors.1.clone(), ..Default::default() };
         let mut seen_lines = HashSet::new();
         for d in &doc.diags {
@@ -1475,8 +1487,8 @@ impl Code {
                 });
             }
             // Servidores: um resumo (a lista fica no arquivo, editado no próprio Code).
-            let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
-            let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
+            let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
+            let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
             let mut summary = tr!("{n} configured", n = c.servers.len());
             if !running.is_empty() {
                 summary.push_str(&tr!(" · running: {list}", list = running.join(", ")));
@@ -1977,8 +1989,11 @@ impl App for Code {
             self.shortcuts(ui);
         }
         self.overlay_keys(ui);
-        if self.poll_lsp() {
+        if self.poll_lsp() | self.poll_ext_servers() {
             ui.request_repaint();
+        }
+        if !self.ext_servers_idle() {
+            ui.wake_after(Duration::from_millis(200));
         }
         if !self.servers.is_empty() {
             ui.wake_after(Duration::from_millis(120));
@@ -2290,9 +2305,9 @@ impl App for Code {
         };
         let lang = self.docs[i].lang;
         let lsp_state = match self.config.server_for(lang.id) {
-            Some(s) if self.servers.get(&s.command).is_some_and(|c| c.ready) => format!(" · {}", s.command),
-            Some(s) if self.failed.contains(&s.command) || !installed(&s.command) => tr!(" · {command} not available", command = s.command),
-            Some(s) => tr!(" · {command} starting…", command = s.command),
+            Some(s) if self.servers.get(&s.key()).is_some_and(|c| c.ready) => format!(" · {}", s.name()),
+            Some(s) if self.failed.contains(&s.key()) || !installed(&s.command) => tr!(" · {command} not available", command = s.name()),
+            Some(s) => tr!(" · {command} starting…", command = s.name()),
             None => String::new(),
         };
         let errors = self.docs[i].diags.iter().filter(|d| d.severity == Severity::Error).count();
