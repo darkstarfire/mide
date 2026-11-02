@@ -8,7 +8,7 @@ use std::ops::Range;
 use super::lang::{Family, Language};
 
 /// Tipo de trecho (cada um com a sua cor no tema).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
     Comment,
     String,

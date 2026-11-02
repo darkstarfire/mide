@@ -64,10 +64,40 @@ pub fn folder_icon_name(folder_name: &str, open: bool) -> String {
     if open && svg_of(&format!("{base}-open")).is_some() { format!("{base}-open") } else { base.to_string() }
 }
 
+/// Tema de ícones de uma extensão do Zed escolhido nas Preferências (nenhum: o
+/// Material Icon Theme embutido). Um para o tema claro e outro para o escuro.
+static THEME: std::sync::RwLock<Option<(Option<crate::code::themes::IconTheme>, Option<crate::code::themes::IconTheme>)>> = std::sync::RwLock::new(None);
+
+/// Escolhe o tema de ícones pelo nome ("" ou desconhecido: o embutido). Temas com
+/// versões clara e escura (Catppuccin Latte/Mocha) usam a do mesmo grupo de nomes.
+pub fn set_theme(name: &str) {
+    let chosen = if name.is_empty() {
+        None
+    } else {
+        let all = crate::code::themes::icon_themes();
+        all.iter().find(|t| t.name == name).cloned().map(|picked| {
+            // Par claro/escuro: o tema escolhido e um do mesmo arquivo com a outra
+            // aparência (o primeiro que houver).
+            let other = all.iter().find(|t| t.base == picked.base && t.dark != picked.dark).cloned();
+            if picked.dark { (other, Some(picked)) } else { (Some(picked), other) }
+        })
+    };
+    if let Ok(mut t) = THEME.write() {
+        *t = chosen;
+    }
+}
+
 /// Caminho do ícone (no cache) de um arquivo ou pasta da árvore. `light`: tema claro
 /// (alguns ícones têm uma versão própria para fundo claro).
 pub fn path_icon(path: &Path, is_dir: bool, open: bool, light: bool) -> Option<String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if let Ok(guard) = THEME.read()
+        && let Some((l, d)) = guard.as_ref()
+        && let Some(theme) = if light { l.as_ref().or(d.as_ref()) } else { d.as_ref().or(l.as_ref()) }
+        && let Some(icon) = theme.icon_for(&name, is_dir, open)
+    {
+        return Some(icon);
+    }
     let icon = if is_dir { folder_icon_name(&name, open) } else { file_icon_name(&name).to_string() };
     let light_name = format!("{icon}_light");
     let chosen = if light && svg_of(&light_name).is_some() { light_name } else { icon };

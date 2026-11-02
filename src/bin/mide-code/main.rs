@@ -211,6 +211,10 @@ pub(crate) struct Code {
     tools: tools::Tools,
     /// Atalhos do `keymap.json` do Zed (com as configurações do Zed ligadas).
     zed_keys: Vec<mide::code::zed::Binding>,
+    /// Tema de cores escolhido (de uma extensão do Zed) e os nomes dos temas de cores e
+    /// de ícones instalados (para as Preferências).
+    color_theme: Option<mide::code::themes::ColorTheme>,
+    theme_names: (Vec<String>, Vec<String>),
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -250,6 +254,8 @@ impl Code {
             lsp: lsp_ui::LspUi::default(),
             tools: tools::Tools::default(),
             zed_keys,
+            color_theme: None,
+            theme_names: (Vec::new(), Vec::new()),
             hover: None,
             definition: None,
             message: None,
@@ -290,6 +296,7 @@ impl Code {
         if app.docs.is_empty() {
             app.docs.push(Doc::new(None, String::new(), false));
         }
+        app.apply_themes();
         app
     }
 
@@ -929,12 +936,34 @@ impl Code {
         }
     }
 
+    /// Temas de cores e de ícones das Preferências (das extensões do Zed): lê os
+    /// instalados, aplica os escolhidos e recolore as abas.
+    fn apply_themes(&mut self) {
+        let colors = mide::code::themes::color_themes();
+        self.color_theme = colors.iter().find(|t| t.name == self.config.color_theme).cloned();
+        mide::code::icons::set_theme(&self.config.icon_theme);
+        let icons = mide::code::themes::icon_themes();
+        self.theme_names = (colors.into_iter().map(|t| t.name).collect(), icons.into_iter().map(|t| t.name).collect());
+        for d in &mut self.docs {
+            d.colors.0 = u64::MAX;
+        }
+    }
+
+    /// Cores do editor do tema escolhido, para a área de texto.
+    fn editor_colors(&self) -> Option<mide::kit::TextAreaColors> {
+        let t = self.color_theme.as_ref()?;
+        Some(mide::kit::TextAreaColors { background: t.background, text: t.foreground, gutter: t.gutter.or(t.background), line_number: t.line_number, current_line: t.active_line })
+    }
+
     /// Cores do código e erros da aba `i`, para a área de texto.
     fn decorations(&mut self, i: usize, dark: bool) -> Decorations {
+        let theme = self.color_theme.as_ref().map(|t| t.syntax.clone());
         let doc = &mut self.docs[i];
         if doc.colors.0 != doc.text.version {
             let spans = highlight::highlight(&doc.text.text, doc.lang);
-            doc.colors = (doc.text.version, spans.into_iter().map(|(r, k)| (r, highlight::color(k, dark))).collect());
+            // As cores do tema escolhido; o que ele não tem, as do mide.
+            let pick = |k| theme.as_ref().and_then(|t| t.get(&k).copied()).unwrap_or_else(|| highlight::color(k, dark));
+            doc.colors = (doc.text.version, spans.into_iter().map(|(r, k)| (r, pick(k))).collect());
         }
         let utf8 = self.config.server_for(doc.lang.id).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8);
         let mut deco = Decorations { colors: doc.colors.1.clone(), ..Default::default() };
@@ -1392,10 +1421,24 @@ impl Code {
         let mut font_i = c.font.as_ref().and_then(|f| fonts.iter().position(|x| x == f)).unwrap_or(0);
         let servers_running: Vec<String> = self.servers.keys().cloned().collect();
         let servers_file = "code-servers.toml";
+        // Temas das extensões do Zed (o primeiro de cada lista é o do mide).
+        let color_names: Vec<String> = std::iter::once(tr!("mide (default)").into_owned()).chain(self.theme_names.0.iter().cloned()).collect();
+        let icon_names: Vec<String> = std::iter::once(tr!("Material Icon Theme (default)").into_owned()).chain(self.theme_names.1.iter().cloned()).collect();
+        let mut color_i = color_names.iter().skip(1).position(|n| *n == c.color_theme).map_or(0, |p| p + 1);
+        let mut icon_i = icon_names.iter().skip(1).position(|n| *n == c.icon_theme).map_or(0, |p| p + 1);
+        let mut themes_changed = false;
         ui.page(|ui| {
             ui.card(|ui| {
                 if ui.dropdown(&tr!("Font"), &fonts, &mut font_i).changed() {
                     c.font = (font_i > 0).then(|| fonts[font_i].clone());
+                }
+                if ui.dropdown(&tr!("Color Theme"), &color_names, &mut color_i).changed() {
+                    c.color_theme = if color_i == 0 { String::new() } else { color_names[color_i].clone() };
+                    themes_changed = true;
+                }
+                if ui.dropdown(&tr!("File Icon Theme"), &icon_names, &mut icon_i).changed() {
+                    c.icon_theme = if icon_i == 0 { String::new() } else { icon_names[icon_i].clone() };
+                    themes_changed = true;
                 }
                 let mut size = c.size;
                 ui.slider(&tr!("Font Size"), &mut size, 9.0, 28.0);
@@ -1442,6 +1485,9 @@ impl Code {
                 ui.sized(110.0, |ui| close |= ui.primary_button(&mide::i18n::trc("settings", "Done")).clicked());
             });
         });
+        if themes_changed {
+            self.apply_themes();
+        }
         if edit_servers {
             // O arquivo abre numa aba da janela principal.
             match self.config.ensure_servers_file() {
@@ -1709,11 +1755,12 @@ impl Code {
         let mut deco = Some(deco);
         let mut decorate = move |_: &TextDoc| deco.take().unwrap_or_default();
         let inlays = self.inlays_for(i);
+        let colors = self.editor_colors();
         let before = self.docs[i].text.version;
         let (len_before, cursor_before, modified_before) = (self.docs[i].text.text.len(), self.docs[i].text.edit.cursor, self.docs[i].text.modified);
         let mut out = None;
         ui.at(rect.0, rect.1, rect.2, |ui| {
-            let look = TextAreaLook { line_numbers, size: Some(size), current_line, indent: &indent, decorate: Some(&mut decorate), inlays: &inlays, ..Default::default() };
+            let look = TextAreaLook { line_numbers, size: Some(size), current_line, indent: &indent, decorate: Some(&mut decorate), inlays: &inlays, colors, ..Default::default() };
             out = Some(ui.text_area_with(&mut self.docs[i].text, rect.3, look));
         });
         let r = out.expect("área de texto");

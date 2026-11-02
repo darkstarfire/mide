@@ -2492,3 +2492,13 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - Na primeira vez (antes de existir o `code.toml` do mide): fonte e tamanho do editor, `tab_size`, `hard_tabs`, `format_on_save`, `inlay_hints.enabled`, `show_completions_on_input`, `show_completion_documentation`, números de linha e o modo claro/escuro.
   - `keymap.json`: os atalhos de uma tecla do contexto do editor (ou geral) cujas ações o Code tem (`editor::Rename`, `command_palette::Toggle`, `editor::Format`, `file_finder::Toggle`, `outline::Toggle`, `pane::SplitRight`... mais de 30) valem no Code.
 - Testes: `cargo test` ok (novos: servidores, ordem por linguagem e editor vindos do Zed; atalhos do `keymap.json`); conferido com um cenário em que o `intelephense` do `settings.json` aponta para o servidor de teste e o completar responde.
+
+## v0.10.62: Code usa as extensões do Zed (temas, ícones, trechos e linguagens) (2026-11-02)
+
+- Passo 3 do escopo E14: extensões do Zed sem código, lidas da pasta do mide (`~/.local/share/mide/code/extensions/<id>/`) e, só para leitura, das instaladas no próprio Zed (`~/.local/share/zed/extensions/installed/`), com o manifesto `extension.toml` (`themes`, `icon_themes`, `languages`, `snippets`, servidores e gramáticas):
+  - Temas de cores (`themes/*.json` das extensões e `~/.config/zed/themes/`): o editor ganha o fundo, o texto, a margem, os números e a linha atual do tema, e o realce usa as cores de sintaxe dele (comentário, texto, número, palavra-chave, tipo, função, propriedade, marcação); o que o tema não tem fica com a cor do mide. A área de texto do mide-ui aceita cores próprias (`TextAreaLook::colors`, novo).
+  - Temas de ícones (`icon_themes/*.json`, como o Catppuccin Icons): ícones por nome de arquivo, extensão e nome de pasta (aberta e fechada), na árvore e nas abas; temas com versões clara e escura seguem o tema do mide.
+  - Seletores "Tema de cores" e "Tema de ícones de arquivo" nas Preferências (o primeiro de cada lista é o do mide: as cores dele e o Material Icon Theme).
+  - Trechos das extensões (`snippets/` e o `snippets` do manifesto) entram no completar junto com os do usuário.
+  - Linguagens das extensões que o mide não conhece (`languages/<nome>/config.toml`: nome, `path_suffixes`, `line_comments`) passam a ser reconhecidas pelo nome do arquivo, com o realce da família do comentário e o servidor de linguagem pelo id; extensões compostas (`blade.php`) vêm antes da simples.
+- Testes: `cargo test` ok (novos: tema de cores e tema de ícones no formato do Zed); conferido por captura com o tema Tailwind e os ícones Catppuccin copiados das extensões do Zed do usuário.

@@ -17,4 +17,5 @@ pub mod project;
 pub mod search;
 pub mod session;
 pub mod snippets;
+pub mod themes;
 pub mod zed;

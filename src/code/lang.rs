@@ -142,9 +142,52 @@ pub fn plain() -> &'static Language {
     &LANGUAGES[0]
 }
 
+/// Linguagens trazidas por extensões (do Zed ou do mide), lidas uma vez.
+static EXTRA: std::sync::OnceLock<Vec<&'static Language>> = std::sync::OnceLock::new();
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+/// As linguagens das extensões (`languages/<nome>/config.toml`): nome, extensões
+/// (`path_suffixes`) e comentário (`line_comments`), para as que o mide não conhece.
+/// O realce é o da família do comentário; o id vem do nome ("Blade" → "blade").
+pub fn extension_languages() -> &'static [&'static Language] {
+    EXTRA.get_or_init(|| {
+        let mut out: Vec<&'static Language> = Vec::new();
+        for ext in crate::code::extensions::installed() {
+            for dir in ext.language_dirs() {
+                let Some(cfg) = std::fs::read_to_string(dir.join("config.toml")).ok().and_then(|t| toml::from_str::<toml::Value>(&t).ok()) else {
+                    continue;
+                };
+                let Some(name) = cfg.get("name").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let id = name.to_lowercase().replace(' ', "");
+                let exts: Vec<String> = cfg.get("path_suffixes").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).map(str::to_lowercase).collect()).unwrap_or_default();
+                // Linguagem que o mide já tem (pelo nome ou pelas extensões): fica a dele.
+                let known = LANGUAGES.iter().any(|l| l.id == id || l.name.eq_ignore_ascii_case(name) || exts.iter().any(|e| l.exts.contains(&e.as_str())));
+                if known || exts.is_empty() || out.iter().any(|l| l.id == id) {
+                    continue;
+                }
+                let comment = cfg.get("line_comments").and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                let family = match comment.as_str() {
+                    "//" => Family::CLike,
+                    "#" => Family::Hash,
+                    "--" => Family::Lua,
+                    _ => Family::Plain,
+                };
+                let exts: Vec<&'static str> = exts.into_iter().map(leak).collect();
+                out.push(Box::leak(Box::new(Language { id: leak(id), name: leak(name.to_string()), exts: Box::leak(exts.into_boxed_slice()), files: &[], family, comment: leak(comment), keywords: &[], types: &[] })));
+            }
+        }
+        out
+    })
+}
+
 /// Linguagem pelo id do LSP (`rust`, `python`...).
 pub fn by_id(id: &str) -> Option<&'static Language> {
-    LANGUAGES.iter().find(|l| l.id == id)
+    LANGUAGES.iter().find(|l| l.id == id).or_else(|| extension_languages().iter().find(|l| l.id == id).copied())
 }
 
 /// Linguagem de um arquivo: pelo nome fixo (Makefile, Dockerfile), pela extensão ou,
@@ -155,7 +198,17 @@ pub fn detect(path: &Path, first_line: &str) -> &'static Language {
         return l;
     }
     if let Some(ext) = path.extension().map(|e| e.to_string_lossy().to_lowercase()) {
+        // Linguagens das extensões (as do Zed também): as de extensão composta
+        // (`blade.php`) antes da simples (`php`); depois as do mide; depois o resto.
+        let lower = name.to_lowercase();
+        let ends = |l: &&&Language, compound: bool| l.exts.iter().any(|e| e.contains('.') == compound && lower.ends_with(&format!(".{e}")));
+        if let Some(l) = extension_languages().iter().find(|l| ends(l, true)) {
+            return l;
+        }
         if let Some(l) = LANGUAGES.iter().find(|l| l.exts.contains(&ext.as_str())) {
+            return l;
+        }
+        if let Some(l) = extension_languages().iter().find(|l| ends(l, false)) {
             return l;
         }
     }

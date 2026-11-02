@@ -88,6 +88,10 @@ pub struct Config {
     /// Usar as configurações do Zed (`~/.config/zed/settings.json`): servidores de
     /// linguagem e, na primeira vez, fonte, recuo e as opções do editor.
     pub use_zed_settings: bool,
+    /// Tema de cores do editor (de uma extensão do Zed; "": as cores do mide).
+    pub color_theme: String,
+    /// Tema de ícones de arquivos (de uma extensão do Zed; "": o Material embutido).
+    pub icon_theme: String,
 }
 
 /// O arquivo dos servidores: uma tabela `[[server]]` para cada um.
@@ -121,6 +125,8 @@ impl Default for Config {
             inlay_hints: true,
             format_on_save: false,
             use_zed_settings: true,
+            color_theme: String::new(),
+            icon_theme: String::new(),
         }
     }
 }

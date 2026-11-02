@@ -54,24 +54,22 @@ pub fn user_dir() -> Option<PathBuf> {
     Some(base.join("mide").join("code-snippets"))
 }
 
-/// Pastas com trechos: a do usuário e as das extensões.
-pub fn dirs() -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = user_dir().into_iter().collect();
-    out.extend(crate::code::extensions::installed().into_iter().map(|e| e.dir.join("snippets")));
-    out
-}
-
 /// Os trechos de uma linguagem (pelo id do mide e o nome que o VS Code/Zed usam),
-/// mais os de todas as linguagens.
+/// mais os de todas as linguagens: os do usuário e os das extensões.
 pub fn for_language(lang: &str) -> Vec<Snippet> {
     let names = file_names(lang);
-    let mut out = Vec::new();
-    for dir in dirs() {
-        for name in names.iter().map(String::as_str).chain(["snippets", "global"]) {
-            out.extend(read(&dir.join(format!("{name}.json"))));
-        }
+    let wanted = |path: &Path| path.file_stem().is_some_and(|s| {
+        let s = s.to_string_lossy().to_lowercase();
+        names.contains(&s) || s == "snippets" || s == "global"
+    });
+    let mut files: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = user_dir() {
+        files.extend(std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()));
     }
-    out
+    for ext in crate::code::extensions::installed() {
+        files.extend(ext.snippet_files());
+    }
+    files.into_iter().filter(|p| wanted(p)).flat_map(|p| read(&p)).collect()
 }
 
 fn read(path: &Path) -> Vec<Snippet> {

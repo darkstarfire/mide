@@ -622,3 +622,15 @@ msgstr "Paleta de comandos…"
 
 msgid "Use Zed settings (language servers and keymap)"
 msgstr "Usar as configurações do Zed (servidores de linguagem e atalhos)"
+
+msgid "mide (default)"
+msgstr "mide (padrão)"
+
+msgid "Material Icon Theme (default)"
+msgstr "Material Icon Theme (padrão)"
+
+msgid "Color Theme"
+msgstr "Tema de cores"
+
+msgid "File Icon Theme"
+msgstr "Tema de ícones de arquivo"
