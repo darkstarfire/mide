@@ -70,8 +70,43 @@ impl State {
     /// A janela do app foi destruída: sai do espaço e deixa a foto dela esmaecendo
     /// (a tirada no fechamento pedido pelo mide, ou a última foto, se o app fechou
     /// sozinho).
+    /// Registra que a janela recebeu o foco: vai para o topo da pilha de foco.
+    pub fn note_focus(&mut self, window: &Window) {
+        let id = window_id(window);
+        self.focus_stack.retain(|&i| i != id);
+        self.focus_stack.insert(0, id);
+    }
+
+    /// A janela que deve ter o foco quando `gone` some: a próxima da pilha de foco que
+    /// ainda está na tela; sem nenhuma, a de cima da pilha de janelas.
+    pub fn focus_successor(&self, gone: &WlSurface) -> Option<Window> {
+        let on_screen = |w: &&Window| w.toplevel().is_some_and(|t| t.wl_surface() != gone);
+        self.focus_stack
+            .iter()
+            .find_map(|id| self.space.elements().filter(on_screen).find(|w| window_id(w) == *id))
+            .cloned()
+            .or_else(|| self.space.elements().rev().filter(on_screen).next().cloned())
+    }
+
+    /// Se `gone` tinha o foco do teclado, o foco passa para a sucessora na pilha (ou sai
+    /// do teclado se não sobrou nenhuma janela).
+    pub fn move_focus_from(&mut self, gone: &WlSurface) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        if keyboard.current_focus().as_ref() != Some(gone) {
+            return;
+        }
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        match self.focus_successor(gone) {
+            Some(next) => crate::input::focus_window(self, &next, serial),
+            None => keyboard.set_focus(self, None, serial),
+        }
+    }
+
     pub fn window_closed(&mut self, surface: &ToplevelSurface) {
         if let Some(window) = self.window_for(surface.wl_surface()) {
+            self.focus_stack.retain(|&i| i != window_id(&window));
             // Fechamento pedido pelo mide: a foto da janela esmaece (transição de fechar).
             // Guarda só a posição: o tamanho vem da foto (a geometria aqui já zerou).
             let id = window_id(&window);
@@ -91,6 +126,8 @@ impl State {
             self.commits.remove(&id);
             self.shown.remove(&id);
             self.space.unmap_elem(&window);
+            let gone = surface.wl_surface().clone();
+            self.move_focus_from(&gone);
             tracing::info!("janela fechada");
         } else if let Some(i) = self.hidden.iter().position(|(w, _)| w.toplevel().is_some_and(|t| t == surface)) {
             // Escondida pelo app e agora fechada de vez.
@@ -670,19 +707,9 @@ impl State {
             start,
         });
         }
-        // Se a janela tinha o foco, o foco vai para a janela de cima que sobrou.
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            if keyboard.current_focus().as_ref() == Some(surface) {
-                let next = self
-                    .space
-                    .elements()
-                    .rev()
-                    .find(|w| w.toplevel().map(|t| t.wl_surface()) != Some(surface))
-                    .and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
-                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                keyboard.set_focus(self, next, serial);
-            }
-        }
+        // Se a janela tinha o foco, o foco vai para a próxima da pilha de foco.
+        self.focus_stack.retain(|&i| i != window_id(&window));
+        self.move_focus_from(surface);
         tracing::info!("janela minimizada");
     }
 

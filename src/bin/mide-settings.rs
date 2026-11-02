@@ -640,6 +640,27 @@ impl Settings {
         // ocupando a tela e alvos maiores para o dedo (`[tablet]`, ligados por padrão).
         ui.heading(&tr!("Tablet Mode"));
         ui.card(|ui| {
+            // Qual modo vale: pela chave da tela (automático), desktop ou iPadOS fixo.
+            const MODE_KEYS: [&str; 3] = ["auto", "desktop", "tablet"];
+            let current = match settings_file::get("tablet", "mode") {
+                Some(Value::Text(s)) => MODE_KEYS.iter().position(|k| *k == s).unwrap_or(0),
+                _ => 0,
+            };
+            let mut index = current;
+            let labels = [tr!("Automatic").into_owned(), tr!("Desktop").into_owned(), tr!("Tablet (iPadOS)").into_owned()];
+            let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+            ui.form_row(&tr!("Mode"), 150.0, |ui| {
+                if ui.segmented(&refs, &mut index, Some(340.0)).changed() {
+                    match settings_file::set("tablet", "mode", Some(Value::Text(MODE_KEYS[index].into()))) {
+                        Ok(()) => {
+                            tracing::info!("modo: {}", MODE_KEYS[index]);
+                            ask_compositor("reload");
+                        }
+                        Err(err) => tracing::warn!("modo não gravado: {err}"),
+                    }
+                }
+            });
+            ui.separator();
             let options = [
                 ("edge_gestures", tr!("Edge gestures"), tr!("Swipe up from the bottom for the launcher (hold for all windows); down from the top corners for Control Center and notifications")),
                 ("maximize_windows", tr!("Apps fill the screen"), tr!("Windows open and stay maximized, as on a tablet")),
@@ -2804,8 +2825,13 @@ impl Settings {
         ui.paint_text(|pixmap, text, _| {
             let c = |v: [u8; 4]| tiny_skia::Color::from_rgba8(v[0], v[1], v[2], v[3]);
             if hovered {
-                // A linha inteira, de borda a borda do cartão (o cartão recorta os cantos).
-                mide::ui::draw::fill_rounded(pixmap, rect.0 - 16.0, rect.1 - spacing / 2.0, rect.2 + 32.0, rect.3 + spacing, 0.0, c(t.control));
+                // A linha inteira, de borda a borda do cartão (o cartão recorta os cantos). O
+                // cartão tem 6 pontos de respiro em cima e embaixo: a primeira e a última
+                // linha vão até essa borda, senão sobra uma faixa sem cor.
+                const CARD_PAD: f32 = 6.0;
+                let top = rect.1 - if line { spacing / 2.0 } else { CARD_PAD };
+                let bottom = rect.1 + rect.3 + CARD_PAD.max(spacing / 2.0);
+                mide::ui::draw::fill_rounded(pixmap, rect.0 - 16.0, top, rect.2 + 32.0, bottom - top, 0.0, c(t.control));
             }
             if line {
                 // Divisória recuada até o texto, como nas listas do Tahoe.

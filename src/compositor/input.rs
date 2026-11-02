@@ -1345,6 +1345,7 @@ pub fn focus_window(state: &mut State, window: &Window, serial: smithay::utils::
         }
     }
     keyboard.set_focus(state, Some(target), serial);
+    state.note_focus(window);
     // As luzes e a sombra seguem o foco na hora (sem esperar o app responder).
     state.wake();
 }

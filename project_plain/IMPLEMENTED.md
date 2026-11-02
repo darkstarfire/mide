@@ -2383,3 +2383,14 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - A tela de login agora ignora sessões cujo `Exec` aponta para um caminho que não existe (não aparecem na lista) e o "entrar automaticamente" também as pula.
 - `data/mide-login-install` copia todos os programas do mide para `/usr/local/lib/mide-login`, cria links deles em `/usr/local/bin` (PATH), instala `mide-session` e a entrada `/usr/share/wayland-sessions/mide.desktop`; `--uninstall` desfaz tudo isso.
 - Testes: `cargo test --bin mide-login` ok (5/5, com teste novo para o caminho inexistente). Falta o usuário rodar `sudo data/mide-login-install` e conferir o login no Dell.
+
+## v0.10.49: foco em pilha, modo desktop ou tablet, barra do seletor e tema do launcher (2026-11-01)
+
+- Pilha de foco no modo desktop: a janela que ganha o foco vai para o topo de uma pilha. Ao fechar, minimizar ou esconder a janela em foco, o foco vai para a próxima da pilha que ainda está na tela (`state.focus_stack`, `wm::focus_successor`, `wm::move_focus_from`).
+- Modo de uso escolhido em Configurações → Modo tablet, com `[tablet] mode`: `auto` (a chave da tela decide, como antes), `desktop` (sempre desktop, mesmo com a tela dobrada) ou `tablet` (sempre o modo iPadOS). Aplica na inicialização e ao recarregar a configuração (`touch::apply_tablet_mode`).
+- Launcher (Command+Espaço, `mide-search`) segue o tema claro/escuro e a cor de destaque do sistema; antes saía sempre claro.
+- Hover da linha de usuário (Configurações → Usuários e grupos) vai até a borda do cartão na primeira e na última linha (faltava uma faixa de 6 pontos sem cor).
+- Teclado na tela nas telas de login e bloqueio: a causa era o `mide-ui` antigo do clone local, que não avisava o campo de senha ao compositor. O `mide` já compila com o `mide-ui` 9a0907f, que avisa (text-input v3). Para valer, rode `sudo data/mide-login-install` (copia os programas para `/usr/local/lib/mide-login`).
+- Barra do seletor de arquivos (`mide-ui`, `chooser.rs`): usa a mesma barra do Arquivos (`ui.toolbar`) e busca de 200 pontos, em vez de uma linha de formulário. Sai no `mide` quando o `mide-ui` for publicado.
+- Não feito nesta versão: distorção do zoom no editor de screenshot (não reproduzida com a sonda de escala e recorte; falta o passo a passo de quem vê o erro) e revisão dos gestos do modo tablet contra o iPadOS.
+- Testes: `cargo check` dos programas mexidos ok. Falta o usuário testar no Chromebook: modo desktop/tablet, foco ao fechar janelas, teclado no login e no bloqueio.

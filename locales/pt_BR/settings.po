@@ -1410,6 +1410,18 @@ msgstr "As senhas não são iguais."
 msgid "Tablet Mode"
 msgstr "Modo tablet"
 
+msgid "Mode"
+msgstr "Modo"
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Desktop"
+msgstr "Desktop"
+
+msgid "Tablet (iPadOS)"
+msgstr "Tablet (iPadOS)"
+
 msgid "Edge gestures"
 msgstr "Gestos das bordas"
 

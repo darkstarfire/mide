@@ -87,8 +87,10 @@ pub struct Touch {
     seq: u64,
     /// Gesto de três ou quatro dedos na tela em andamento (como no touchpad).
     multi: Option<Multi>,
-    /// Modo tablet ligado (tela dobrada para trás).
+    /// Modo tablet ligado (tela dobrada para trás, ou escolhido em `[tablet] mode`).
     pub tablet: bool,
+    /// A chave de modo tablet da tela, como o kernel a informa (vale no modo `auto`).
+    pub switch_on: bool,
     /// O aparelho tem a chave de modo tablet (sem ela, a tela gira sempre, como no GNOME).
     pub tablet_switch: bool,
     /// Há sensor de orientação (`iio-sensor-proxy`).
@@ -593,9 +595,21 @@ fn unrotate(transform: Transform, u: f64, v: f64) -> (f64, f64) {
     (p.x, p.y)
 }
 
-/// Liga ou desliga o modo tablet (a chave do kernel ou o roteiro de teste).
+/// Liga ou desliga o modo tablet (a chave do kernel ou o roteiro de teste). Vale só no
+/// modo `auto` de `[tablet] mode`; nos outros, a escolha do usuário manda.
 pub fn set_tablet_mode(state: &mut State, on: bool) {
     state.touch.tablet_switch = true;
+    state.touch.switch_on = on;
+    apply_tablet_mode(state);
+}
+
+/// Põe o modo tablet no que `[tablet] mode` pede (e na chave, no modo `auto`).
+pub fn apply_tablet_mode(state: &mut State) {
+    let on = match state.config.tablet.mode {
+        crate::config::TabletMode::Auto => state.touch.switch_on,
+        crate::config::TabletMode::Desktop => false,
+        crate::config::TabletMode::Tablet => true,
+    };
     if state.touch.tablet == on {
         return;
     }

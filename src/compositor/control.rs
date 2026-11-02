@@ -485,6 +485,8 @@ pub fn handle(state: &mut State, command: &str) -> String {
                     tracing::info!("teclado: repetição depois de {} ms, {} por segundo", repeat.0, repeat.1);
                 }
                 state.config = config;
+                // Modo desktop ou tablet escolhido nas Configurações vale na hora.
+                crate::touch::apply_tablet_mode(state);
                 // Trava de rotação solta: a tela volta a seguir o sensor.
                 crate::rotation::apply(state);
                 // Menus dos apps na barra superior ligados ou desligados: os apps GTK abertos

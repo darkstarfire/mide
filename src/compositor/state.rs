@@ -231,6 +231,10 @@ pub struct State {
     /// continuar em segundo plano), com a posição onde estavam. Voltam quando o app
     /// desenhar de novo.
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
+    /// Pilha de foco (modo desktop): ids das janelas, da que tem o foco para a que o teve
+    /// por último. Quando a janela em foco some (fechada, minimizada, escondida), o foco
+    /// vai para a próxima da pilha que ainda está na tela.
+    pub focus_stack: Vec<u64>,
     /// Janelas que já mostraram um quadro (as outras ainda estão abrindo).
     pub shown: std::collections::HashSet<u64>,
     /// Ícones da dock informados por ela: ids do app e retângulo relativo à dock.
@@ -508,6 +512,7 @@ impl State {
             focus_on_map: None,
             snap: None,
             hidden: Vec::new(),
+            focus_stack: Vec::new(),
             mac_keys: MacKeys::default(),
             file_clipboard: None,
             clipboard_serial: 0,
@@ -808,17 +813,9 @@ impl State {
                 let loc = self.space.element_location(&window).unwrap_or_default();
                 self.space.unmap_elem(&window);
                 self.hidden.push((window.clone(), loc));
-                // O teclado vai para a janela de cima.
-                let top = self.space.elements().last().cloned();
-                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                match top {
-                    Some(top) => crate::input::focus_window(self, &top, serial),
-                    None => {
-                        if let Some(keyboard) = self.seat.get_keyboard() {
-                            keyboard.set_focus(self, None, serial);
-                        }
-                    }
-                }
+                // O teclado vai para a próxima da pilha de foco.
+                self.focus_stack.retain(|&i| i != id);
+                self.move_focus_from(surface);
             }
             if let Some(toplevel) = window.toplevel() {
                 if !toplevel.is_initial_configure_sent() {
@@ -1310,20 +1307,8 @@ impl WlrLayerShellHandler for State {
         }
         self.fit_windows_to_area();
 
-        // Se a camada tinha o foco, o foco volta para a janela do topo.
-        let Some(keyboard) = self.seat.get_keyboard() else {
-            return;
-        };
-        if keyboard.current_focus().as_ref() != Some(&wl) {
-            return;
-        }
-        let top = self
-            .space
-            .elements()
-            .last()
-            .and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
-        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        keyboard.set_focus(self, top, serial);
+        // Se a camada tinha o foco, o foco vai para a próxima janela da pilha de foco.
+        self.move_focus_from(&wl);
     }
 }
 

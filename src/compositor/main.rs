@@ -200,6 +200,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         tracing::warn!("canal de controle indisponível: {err}");
     }
 
+    // Modo escolhido em `[tablet] mode` (desktop ou tablet fixo); no `auto`, a chave da
+    // tela manda quando ela avisar.
+    touch::apply_tablet_mode(&mut state);
+
     if login_mode {
         // Só a tela de login: ela pede o bloqueio da tela ao abrir; sem tempo sem uso
         // para bloquear (ela já é a tela de bloqueio), mas a tela apaga sem uso.

@@ -298,6 +298,9 @@ impl Default for Lock {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct Tablet {
+    /// Qual modo vale: a chave de modo tablet da tela (`auto`), sempre o desktop
+    /// (`desktop`) ou sempre o modo iPadOS (`tablet`).
+    pub mode: TabletMode,
     /// Gestos das bordas com o dedo: de baixo para cima abre o launcher (segurando, a
     /// visão das janelas); do canto de cima à direita, a central de controle; do canto
     /// de cima à esquerda, as notificações.
@@ -308,9 +311,22 @@ pub struct Tablet {
     pub large_targets: bool,
 }
 
+/// Modo de uso (`[tablet] mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabletMode {
+    /// A chave de modo tablet da tela decide (tela dobrada para trás = modo tablet).
+    #[default]
+    Auto,
+    /// Sempre desktop, mesmo com a tela dobrada.
+    Desktop,
+    /// Sempre o modo tablet (iPadOS), mesmo com a tela aberta.
+    Tablet,
+}
+
 impl Default for Tablet {
     fn default() -> Self {
-        Self { edge_gestures: true, maximize_windows: true, large_targets: true }
+        Self { mode: TabletMode::Auto, edge_gestures: true, maximize_windows: true, large_targets: true }
     }
 }
 

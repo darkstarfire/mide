@@ -246,7 +246,8 @@ impl App for Search {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-search", "mide_search=info");
-    let mut theme = Theme::default();
+    // Claro ou escuro (e a cor de destaque) como nos outros apps, não sempre o claro.
+    let mut theme = Theme::system();
     // Campo de busca mais alto e letra maior, como o Spotlight.
     theme.row = 44.0;
     theme.font = 15.0;
