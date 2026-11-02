@@ -2434,3 +2434,11 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Quatro dedos na tela: o gesto virava de quatro dedos (log "quarto dedo"), a visão abria e fechava em 0%, porque o quarto dedo chegava ~140 ms depois do terceiro e o caminho já feito era jogado fora. Agora o caminho médio de cada dedo desde onde foi visto passa ao gesto de quatro.
 - Voltar como no Android: deslizar da borda esquerda ou direita (14 pontos) para dentro e soltar depois de 70 pontos fecha a visão das janelas ou o launcher e, fora deles, manda a tecla Voltar (XF86Back) ao app; o Arquivos passou a entender as teclas Voltar e Avançar.
 - Testes: `bordas_dos_gestos` com as bordas laterais; `cargo test` ok; clippy sem aviso nas linhas mudadas. Falta o usuário conferir no aparelho. Fica para depois: a setinha do Android durante o voltar.
+
+## v0.10.56: menos consumo de bateria (2026-11-02)
+
+- Relato do usuário no Chromebook: a bateria mostrava bem menos tempo que no GNOME (8 h). A estimativa estava certa (dados do EC: 7,4 W com compilação rodando; parado, ~5,9 W); o que gastava eram despertares à toa (medidos em 60 s parado: compositor 6.124, barra 3.718, teclado na tela 3.996, dbus-daemon 5.429).
+- Barra: a leitura do estado (som, Wi-Fi, Bluetooth, brilho, cabo; uns 15 programas externos por leitura) passa de 2 em 2 s para 2 s só com um painel aberto e 10 s no resto (`status_fast`); a ação e a abertura de painel continuam lendo na hora.
+- Teclado na tela: o relógio de 16 ms só roda enquanto o teclado desliza ao aparecer (antes, sempre, mesmo escondido).
+- mide-ui `71e5592`: relógio do app sob demanda (16 ms animando; parado, no próximo quadro agendado ou 1 vez por segundo, em vez de 25) e campos em foco pedindo quadro só nas trocas do cursor (`FocusAnim::next_change`, `Ui::keep_focus_anim`); antes um campo em foco redesenhava o app a cada 16 ms, inclusive na tela de bloqueio.
+- Testes: `cargo test` do mide e do mide-ui ok; clippy sem aviso nas linhas mudadas. Falta o usuário comparar a estimativa da bateria. Efeito: com os painéis fechados, Wi-Fi/Bluetooth mudados por fora aparecem na barra em até 10 s.

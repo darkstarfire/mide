@@ -467,6 +467,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         names: AppNames::load(),
         status: Status::default(),
         status_now: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        status_fast: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cal_month: (2000, 1),
         clock_options: false,
         history: Vec::new(),
@@ -497,9 +498,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .insert(event_loop.handle())
         .map_err(|e| e.to_string())?;
     // Som, Wi-Fi e Bluetooth: lidos numa thread (os comandos levam alguns ms) a cada
-    // 2 s, ou na hora quando a barra pede (depois de uma ação ou ao abrir um painel).
+    // 2 s com um painel aberto e a cada 10 s com a barra parada, ou na hora quando a
+    // barra pede (depois de uma ação ou ao abrir um painel). Cada leitura roda uns 15
+    // programas (wpctl, pactl, nmcli, bluetoothctl...); de 2 em 2 s o tempo todo, isso
+    // gastava bateria (o volume e o brilho das teclas chegam pelo compositor na hora).
     let (status_tx, status_rx) = channel::channel::<Status>();
     let now_flag = bar.status_now.clone();
+    let fast_flag = bar.status_fast.clone();
     std::thread::spawn(move || {
         // Leitura anterior e a última troca automática (como o Mac: fone ligado vira a
         // saída; tirado, volta aos alto-falantes). Uma tentativa por aparelho a cada
@@ -530,8 +535,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             if status_tx.send(status).is_err() {
                 break;
             }
-            for _ in 0..20 {
+            for tick in 0..100 {
                 if now_flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if tick >= 20 && fast_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -591,6 +599,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!("barra pronta");
     while !bar.exit {
         event_loop.dispatch(None, &mut bar)?;
+        bar.status_fast.store(bar.menu.is_some(), std::sync::atomic::Ordering::Relaxed);
         if bar.bar_dirty {
             bar.paint_bar();
         }
@@ -1179,6 +1188,8 @@ struct Bar {
     status: Status,
     /// Pede à thread uma leitura imediata (depois de uma ação).
     status_now: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Um painel da barra está aberto: o estado é lido a cada 2 s (fechado, a cada 10 s).
+    status_fast: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Mês mostrado no calendário (ano, mês).
     cal_month: (i32, u32),
     /// O calendário mostra as opções do formato da hora.

@@ -472,16 +472,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             TimeoutAction::ToDuration(Duration::from_secs(1))
         })
         .map_err(|e| e.to_string())?;
-    // Subindo ao aparecer: um quadro a cada 16 ms enquanto desliza.
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, kbd: &mut Kbd| {
-            if kbd.layer.is_some() && kbd.sliding() {
-                kbd.draw();
-            }
-            TimeoutAction::ToDuration(Duration::from_millis(16))
-        })
-        .map_err(|e| e.to_string())?;
     tracing::info!("teclado na tela pronto");
     loop {
         event_loop.dispatch(None, &mut kbd)?;
@@ -564,6 +554,18 @@ impl Kbd {
         self.layer = Some(layer);
         self.configured = false;
         self.opened_at = Instant::now();
+        // Subindo ao aparecer: um quadro a cada 16 ms só enquanto desliza (um relógio
+        // sempre ligado acordava o processo 60 vezes por segundo com o teclado escondido).
+        let _ = self.handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, kbd: &mut Kbd| {
+            if kbd.layer.is_none() || !kbd.sliding() {
+                if kbd.layer.is_some() {
+                    kbd.draw();
+                }
+                return TimeoutAction::Drop;
+            }
+            kbd.draw();
+            TimeoutAction::ToDuration(Duration::from_millis(16))
+        });
     }
 
     fn close(&mut self) {
