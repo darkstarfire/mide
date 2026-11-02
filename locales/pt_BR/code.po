@@ -637,3 +637,57 @@ msgstr "Tema de ícones de arquivo"
 
 msgid "Preparing {server} from the {ext} extension…"
 msgstr "Preparando o {server} pela extensão {ext}…"
+
+msgid "Extensions"
+msgstr "Extensões"
+
+msgid "Extensions…"
+msgstr "Extensões…"
+
+msgid "Search extensions (Zed registry)"
+msgstr "Buscar extensões (registro do Zed)"
+
+msgid "Couldn’t reach the registry: {err}"
+msgstr "Não foi possível acessar o registro: {err}"
+
+msgid "Searching…"
+msgstr "Buscando…"
+
+msgid "not supported"
+msgstr "não suportada"
+
+msgid "update {v}"
+msgstr "atualizar para {v}"
+
+msgid "installed (Zed)"
+msgstr "instalada (Zed)"
+
+msgid "installed"
+msgstr "instalada"
+
+msgid "{n} downloads"
+msgstr "{n} downloads"
+
+msgid "Working on {id}…"
+msgstr "Trabalhando em {id}…"
+
+msgid "Needs a newer extension interface than the Code has."
+msgstr "Precisa de uma interface de extensões mais nova que a do Code."
+
+msgid "Update"
+msgstr "Atualizar"
+
+msgid "Install"
+msgstr "Instalar"
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "Extension {id}: {err}"
+msgstr "Extensão {id}: {err}"
+
+msgid "Extension {id} removed."
+msgstr "Extensão {id} removida."
+
+msgid "Extension {id} installed. New languages appear the next time the Code opens."
+msgstr "Extensão {id} instalada. Linguagens novas aparecem na próxima vez que o Code abrir."

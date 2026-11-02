@@ -31,6 +31,13 @@ fn extension_for(lang: &Language) -> Option<(extensions::Extension, String)> {
     None
 }
 
+impl ExtServers {
+    /// As extensões mudaram: as linguagens podem ser perguntadas de novo.
+    pub(crate) fn reset(&mut self) {
+        self.asked.clear();
+    }
+}
+
 impl Code {
     /// Pergunta (uma vez por linguagem) a uma extensão com código qual servidor usar.
     pub(crate) fn ask_extension_for_server(&mut self, lang: &'static Language) {

@@ -27,6 +27,7 @@
 
 mod ext_servers;
 mod lsp_ui;
+mod store_ui;
 mod term;
 mod tools;
 mod tree;
@@ -115,6 +116,8 @@ enum Overlay {
     Palette { query: String, sel: usize, focus: bool, items: Vec<tools::PaletteItem> },
     /// Problemas das abas abertas (Ctrl+Shift+M).
     Problems { sel: usize, go: bool },
+    /// Loja de extensões (Ctrl+Shift+X).
+    Extensions { focus: bool },
 }
 
 #[derive(Default)]
@@ -220,6 +223,8 @@ pub(crate) struct Code {
     syntax: mide::code::syntax::Syntax,
     /// Servidores pedidos às extensões do Zed com código.
     ext_servers: ext_servers::ExtServers,
+    /// Loja de extensões.
+    store_ui: store_ui::StoreUi,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -263,6 +268,7 @@ impl Code {
             theme_names: (Vec::new(), Vec::new()),
             syntax: mide::code::syntax::Syntax::new(),
             ext_servers: ext_servers::ExtServers::default(),
+            store_ui: store_ui::StoreUi::default(),
             hover: None,
             definition: None,
             message: None,
@@ -1119,6 +1125,7 @@ impl Code {
                 self.overlay = Overlay::Palette { query: String::new(), sel: 0, focus: true, items };
             }
             "problems" => self.overlay = Overlay::Problems { sel: 0, go: false },
+            "extensions" => self.open_store(),
             "signature" => self.request_signature(),
             "definition" => self.go_to_definition(),
             "hover" => self.show_hover(),
@@ -1246,6 +1253,9 @@ impl Code {
         if shift("m") {
             run.push("problems");
         }
+        if shift("x") {
+            run.push("extensions");
+        }
         // Ctrl+I: dica do símbolo; Ctrl+Shift+I: formatar (como no VS Code).
         if plain("i") {
             run.push("hover");
@@ -1294,7 +1304,7 @@ impl Code {
 
     fn overlays(&mut self, ui: &mut Ui) {
         let esc = ui.input().key(Key::Escape);
-        if self.lsp_overlays(ui, esc) || self.tool_overlays(ui, esc) {
+        if self.lsp_overlays(ui, esc) || self.tool_overlays(ui, esc) || self.store_overlay(ui, esc) {
             return;
         }
         match &mut self.overlay {
@@ -1992,6 +2002,7 @@ impl App for Code {
         if self.poll_lsp() | self.poll_ext_servers() {
             ui.request_repaint();
         }
+        self.poll_store();
         if !self.ext_servers_idle() {
             ui.wake_after(Duration::from_millis(200));
         }
@@ -2422,6 +2433,7 @@ impl App for Code {
                 title: tr!("View").into(),
                 items: vec![
                     MenuItem::action("palette", &tr!("Command Palette…")).shortcut("Ctrl+Shift+P"),
+                    MenuItem::action("extensions", &tr!("Extensions…")).shortcut("Ctrl+Shift+X"),
                     MenuItem::Separator,
                     MenuItem::action("drawer", &tr!("File Drawer")).checked(self.config.drawer),
                     MenuItem::action("line-numbers", &tr!("Line Numbers")).checked(self.config.line_numbers),
