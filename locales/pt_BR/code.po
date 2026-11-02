@@ -550,3 +550,54 @@ msgstr "Letras antes de sugerir"
 
 msgid "Show documentation next to the suggestion"
 msgstr "Mostrar a documentação ao lado da sugestão"
+
+msgid "Renamed: {n} changes in {files} files"
+msgstr "Renomeado: {n} mudanças em {files} arquivos"
+
+msgid "No code actions here."
+msgstr "Nenhuma ação de código aqui."
+
+msgid "Rename needs a language server that supports it."
+msgstr "Renomear precisa de um servidor de linguagem que saiba fazer isso."
+
+msgid "Formatting needs a language server that supports it."
+msgstr "Formatar precisa de um servidor de linguagem que saiba fazer isso."
+
+msgid "Code actions need a language server that supports them."
+msgstr "As ações de código precisam de um servidor de linguagem que as tenha."
+
+msgid "The symbol list needs a language server."
+msgstr "A lista de símbolos precisa de um servidor de linguagem."
+
+msgid "Rename Symbol"
+msgstr "Renomear símbolo"
+
+msgid "New name"
+msgstr "Nome novo"
+
+msgid "Code Actions"
+msgstr "Ações de código"
+
+msgid "Go to Symbol"
+msgstr "Ir para símbolo"
+
+msgid "Symbol name"
+msgstr "Nome do símbolo"
+
+msgid "Rename Symbol…"
+msgstr "Renomear símbolo…"
+
+msgid "Code Actions…"
+msgstr "Ações de código…"
+
+msgid "Format Document"
+msgstr "Formatar documento"
+
+msgid "Go to Symbol…"
+msgstr "Ir para símbolo…"
+
+msgid "Inlay hints (types and parameter names)"
+msgstr "Dicas em linha (tipos e nomes de parâmetro)"
+
+msgid "Format on save"
+msgstr "Formatar ao salvar"

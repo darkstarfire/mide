@@ -25,6 +25,7 @@
 //!   tabulação, gaveta e servidores de linguagem.
 //! - Arquivos soltos na janela abrem em abas.
 
+mod lsp_ui;
 mod term;
 mod tree;
 
@@ -102,6 +103,12 @@ enum Overlay {
     GoToLine { text: String, focus: bool },
     /// Buscar (e substituir) no projeto inteiro.
     ProjectFind(ProjectFind),
+    /// Renomear símbolo (F2): o nome novo.
+    Rename { text: String, focus: bool },
+    /// Ações de código (Ctrl+.): a lista e a escolhida.
+    Actions { actions: Vec<lsp::CodeAction>, sel: usize, go: bool },
+    /// Ir para símbolo do arquivo (Ctrl+R).
+    Symbols { query: String, items: Vec<lsp::Symbol>, sel: usize, focus: bool },
 }
 
 #[derive(Default)]
@@ -193,6 +200,8 @@ pub(crate) struct Code {
     saved_session: Option<Session>,
     /// Alt+Espaço pediu o completar: o espaço que a área de texto digitar sai.
     eat_space: bool,
+    /// Assinatura, renomear, formatar, ações, símbolos e dicas em linha.
+    lsp: lsp_ui::LspUi,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -228,6 +237,7 @@ impl Code {
             dialog: None,
             completion: None,
             resolving: None,
+            lsp: lsp_ui::LspUi::default(),
             hover: None,
             definition: None,
             message: None,
@@ -600,6 +610,7 @@ impl Code {
                     }
                 }
                 Event::Exited(text) => self.say(text),
+                other => self.on_lsp_event(other),
             }
         }
         changed
@@ -949,7 +960,10 @@ impl Code {
             }
             "close-folder" => self.close_folder(),
             "save" => {
-                self.save(false);
+                // Formatar ao salvar (Preferências): grava quando a formatação chegar.
+                if !(self.config.format_on_save && self.doc().path.is_some() && self.format_document(true)) {
+                    self.save(false);
+                }
             }
             "save-all" => self.save_all(),
             "save-as" => {
@@ -1000,6 +1014,13 @@ impl Code {
             "move-up" => self.move_lines(true),
             "move-down" => self.move_lines(false),
             "complete" => self.request_completion(),
+            "rename" => self.rename_symbol(),
+            "code-actions" => self.code_actions(),
+            "format" => {
+                self.format_document(false);
+            }
+            "symbols" => self.request_symbols(true),
+            "signature" => self.request_signature(),
             "definition" => self.go_to_definition(),
             "hover" => self.show_hover(),
             "next-problem" => self.next_problem(true),
@@ -1097,7 +1118,7 @@ impl Code {
         } else if shift("s") {
             run.push("save-as");
         }
-        for (key, action) in [("n", "new"), ("w", "close-tab"), ("q", "quit"), ("t", "goto-file"), ("l", "goto-line"), ("/", "comment"), (",", "prefs"), ("i", "hover"), ("=", "zoom-in"), ("+", "zoom-in"), ("-", "zoom-out"), ("0", "zoom-reset")] {
+        for (key, action) in [("n", "new"), ("w", "close-tab"), ("q", "quit"), ("t", "goto-file"), ("l", "goto-line"), ("/", "comment"), (",", "prefs"), ("=", "zoom-in"), ("+", "zoom-in"), ("-", "zoom-out"), ("0", "zoom-reset"), (".", "code-actions"), ("r", "symbols")] {
             if input.shortcut(key) {
                 run.push(action);
             }
@@ -1120,16 +1141,25 @@ impl Code {
         if shift("d") {
             run.push("duplicate");
         }
+        // Ctrl+I: dica do símbolo; Ctrl+Shift+I: formatar (como no VS Code).
+        if plain("i") {
+            run.push("hover");
+        } else if shift("i") {
+            run.push("format");
+        }
         for p in &input.presses {
             match p.keysym {
                 // Ctrl+Espaço ou Alt+Espaço: completar (na sessão do mide, Ctrl+Espaço
                 // é o buscador e não chega aos apps).
+                // Ctrl+Shift+Espaço: ajuda de assinatura.
+                0x20 if p.ctrl && p.shift => run.push("signature"),
                 0x20 if p.ctrl || p.alt => {
                     self.eat_space = p.alt;
                     run.push("complete");
                 }
-                // F12: definição; F8 (Shift: anterior): próximo problema.
+                // F12: definição; F2: renomear; F8 (Shift: anterior): próximo problema.
                 0xffc9 => run.push("definition"),
+                0xffbf => run.push("rename"),
                 0xffc5 => run.push(if p.shift { "prev-problem" } else { "next-problem" }),
                 // Ctrl+\ divide à direita (Ctrl+Shift+\: embaixo).
                 0x5c | 0x7c if p.ctrl => run.push(if p.shift { "split-down" } else { "split-right" }),
@@ -1154,6 +1184,9 @@ impl Code {
 
     fn overlays(&mut self, ui: &mut Ui) {
         let esc = ui.input().key(Key::Escape);
+        if self.lsp_overlays(ui, esc) {
+            return;
+        }
         match &mut self.overlay {
             Overlay::None => {}
             Overlay::GoToFile { query, files, sel, focus } => {
@@ -1215,6 +1248,7 @@ impl Code {
                 }
             }
             Overlay::ProjectFind(_) => self.project_find(ui, esc),
+            _ => {}
         }
     }
 
@@ -1319,6 +1353,8 @@ impl Code {
                 ui.slider(&tr!("Letters before suggesting"), &mut min, 1.0, 5.0);
                 c.complete_min_chars = min.round() as usize;
                 ui.switch(&tr!("Show documentation next to the suggestion"), &mut c.complete_docs);
+                ui.switch(&tr!("Inlay hints (types and parameter names)"), &mut c.inlay_hints);
+                ui.switch(&tr!("Format on save"), &mut c.format_on_save);
             });
             // Servidores: um resumo (a lista fica no arquivo, editado no próprio Code).
             let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
@@ -1603,11 +1639,12 @@ impl Code {
         let (line_numbers, size, current_line) = (self.config.line_numbers, self.config.size, self.config.current_line);
         let mut deco = Some(deco);
         let mut decorate = move |_: &TextDoc| deco.take().unwrap_or_default();
+        let inlays = self.inlays_for(i);
         let before = self.docs[i].text.version;
         let (len_before, cursor_before, modified_before) = (self.docs[i].text.text.len(), self.docs[i].text.edit.cursor, self.docs[i].text.modified);
         let mut out = None;
         ui.at(rect.0, rect.1, rect.2, |ui| {
-            let look = TextAreaLook { line_numbers, size: Some(size), current_line, indent: &indent, decorate: Some(&mut decorate), ..Default::default() };
+            let look = TextAreaLook { line_numbers, size: Some(size), current_line, indent: &indent, decorate: Some(&mut decorate), inlays: &inlays, ..Default::default() };
             out = Some(ui.text_area_with(&mut self.docs[i].text, rect.3, look));
         });
         let r = out.expect("área de texto");
@@ -1630,8 +1667,13 @@ impl Code {
                 // como `.`, `->`, `::` e `$`).
                 let doc = &self.docs[i].text;
                 let typed = doc.text.len() > len_before && doc.edit.cursor > cursor_before && doc.edit.cursor - cursor_before <= 4;
+                let before_cursor = doc.text[..doc.edit.cursor].to_string();
+                let line_changed = doc.text.get(cursor_before.min(doc.edit.cursor)..doc.edit.cursor).is_none_or(|t| t.contains('\n'));
                 if typed && self.config.auto_complete && self.completion.is_none() && auto_complete_trigger(&doc.text, doc.edit.cursor) {
                     self.complete(true);
+                }
+                if typed {
+                    self.signature_after_typing(&before_cursor, line_changed);
                 }
             }
         }
@@ -1812,6 +1854,7 @@ impl App for Code {
         if !busy {
             self.shortcuts(ui);
         }
+        self.overlay_keys(ui);
         if self.poll_lsp() {
             ui.request_repaint();
         }
@@ -2085,6 +2128,9 @@ impl App for Code {
                 mide::ui::draw::fill_rounded(pixmap, ox + f.0, oy + f.1, f.2, 2.0, 0.0, mide::ui::draw::rgba(t.accent[0], t.accent[1], t.accent[2], 200));
             });
         }
+        if self.completion.is_none() {
+            self.signature_popup(ui, focused_area);
+        }
         self.completion_popup(ui, focused_area);
         // Terminal integrado.
         if term_h > 0.0 {
@@ -2126,13 +2172,18 @@ impl App for Code {
         let errors = self.docs[i].diags.iter().filter(|d| d.severity == Severity::Error).count();
         let warns = self.docs[i].diags.iter().filter(|d| d.severity == Severity::Warning).count();
         let problems = if errors + warns > 0 { format!(" · {}, {}", trn("{n} error", "{n} errors", errors as u64), trn("{n} warning", "{n} warnings", warns as u64)) } else { String::new() };
+        // O caminho dos símbolos em volta do cursor (como os breadcrumbs do VS Code).
+        let crumbs = match self.breadcrumbs() {
+            c if c.is_empty() => String::new(),
+            c => format!(" · {c}"),
+        };
         let tabs = if self.config.soft_tabs { tr!("Spaces: {n}", n = self.config.tab_size) } else { mide::i18n::trc("indent", "Tabs").into_owned() };
         let note = match &self.message {
             Some((m, at)) if at.elapsed() < Duration::from_secs(6) => format!("  —  {m}"),
             _ => String::new(),
         };
         ui.at(left, status_y, win_w - left, |ui| {
-            ui.status_bar(&format!("{} · {} · {tabs}{lsp_state}{problems}{note}", tr!("Line {line}, Column {col}", line = line, col = col), lang.label()));
+            ui.status_bar(&format!("{}{crumbs} · {} · {tabs}{lsp_state}{problems}{note}", tr!("Line {line}, Column {col}", line = line, col = col), lang.label()));
         });
         // Dica do símbolo (Ctrl+I).
         if let Some((_, text)) = &self.hover
@@ -2156,6 +2207,7 @@ impl App for Code {
         self.dialogs(ui);
         // O servidor de linguagem acompanha o texto.
         self.sync_lsp();
+        self.refresh_lsp_extras();
         if self.last_edit.is_some_and(|t| t.elapsed() < Duration::from_millis(400)) {
             ui.wake_after(Duration::from_millis(300));
         }
@@ -2217,6 +2269,9 @@ impl App for Code {
                     MenuItem::action("move-down", &tr!("Move Line Down")).shortcut("Alt+↓"),
                     MenuItem::Separator,
                     MenuItem::action("complete", &tr!("Complete")).shortcut("Alt+Space"),
+                    MenuItem::action("rename", &tr!("Rename Symbol…")).shortcut("F2"),
+                    MenuItem::action("code-actions", &tr!("Code Actions…")).shortcut("Ctrl+."),
+                    MenuItem::action("format", &tr!("Format Document")).shortcut("Ctrl+Shift+I"),
                     MenuItem::action("prefs", &tr!("Settings…")).shortcut("Ctrl+,"),
                     MenuItem::action("edit-servers", &tr!("Language Servers…")),
                 ],
@@ -2247,6 +2302,7 @@ impl App for Code {
                     MenuItem::Separator,
                     MenuItem::action("definition", &tr!("Go to Definition (or Ctrl+Click)")).shortcut("F12"),
                     MenuItem::action("hover", &tr!("Show Symbol Info")).shortcut("Ctrl+I"),
+                    MenuItem::action("symbols", &tr!("Go to Symbol…")).shortcut("Ctrl+R"),
                     MenuItem::action("next-problem", &tr!("Next Problem")).shortcut("F8"),
                     MenuItem::action("prev-problem", &tr!("Previous Problem")).shortcut("Shift+F8"),
                 ],

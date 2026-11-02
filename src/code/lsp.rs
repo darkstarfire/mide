@@ -138,6 +138,165 @@ pub fn expand_snippet(s: &str) -> (String, Option<(usize, usize)>) {
     (out, first.map(|s| (s.1, s.2)))
 }
 
+/// Uma troca de texto num arquivo (`TextEdit` do LSP): de (linha, coluna) até
+/// (linha, coluna), nas unidades do servidor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextEdit {
+    pub start: (u32, u32),
+    pub end: (u32, u32),
+    pub new_text: String,
+}
+
+/// Trocas em vários arquivos (`WorkspaceEdit`): endereço do arquivo e as trocas.
+pub type WorkspaceEdit = Vec<(String, Vec<TextEdit>)>;
+
+/// Ajuda de assinatura: a assinatura, onde está o parâmetro atual (bytes) e a
+/// documentação.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Signature {
+    pub label: String,
+    pub active: Option<(usize, usize)>,
+    pub doc: String,
+}
+
+/// Ação de código (lâmpada): título, trocas e/ou comando a rodar no servidor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodeAction {
+    pub title: String,
+    pub kind: String,
+    pub edit: WorkspaceEdit,
+    pub command: Option<Value>,
+    /// A ação crua, quando falta pedir os detalhes (`codeAction/resolve`).
+    pub raw: Option<Value>,
+}
+
+/// Símbolo do arquivo (função, classe...), com a profundidade na árvore.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Symbol {
+    pub name: String,
+    pub detail: String,
+    pub kind: u8,
+    pub line: u32,
+    pub col: u32,
+    /// Última linha do símbolo (o corpo inteiro), para saber onde o cursor está.
+    pub end_line: u32,
+    pub depth: usize,
+}
+
+/// Dica em linha (`inlayHint`): posição e texto.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlayHint {
+    pub line: u32,
+    pub col: u32,
+    pub label: String,
+    /// Espaço antes/depois da dica.
+    pub pad_left: bool,
+    pub pad_right: bool,
+}
+
+fn position(v: &Value) -> (u32, u32) {
+    (v["line"].as_u64().unwrap_or(0) as u32, v["character"].as_u64().unwrap_or(0) as u32)
+}
+
+fn parse_text_edit(v: &Value) -> Option<TextEdit> {
+    let range = if v["range"].is_object() { &v["range"] } else { &v["insert"] };
+    Some(TextEdit { start: position(&range["start"]), end: position(&range["end"]), new_text: v["newText"].as_str()?.to_string() })
+}
+
+/// Lê um `WorkspaceEdit` (`changes` ou `documentChanges`).
+pub fn parse_workspace_edit(v: &Value) -> WorkspaceEdit {
+    let mut out: WorkspaceEdit = Vec::new();
+    if let Some(changes) = v["changes"].as_object() {
+        for (uri, edits) in changes {
+            let edits = edits.as_array().map(|a| a.iter().filter_map(parse_text_edit).collect()).unwrap_or_default();
+            out.push((uri.clone(), edits));
+        }
+    }
+    if let Some(docs) = v["documentChanges"].as_array() {
+        for d in docs {
+            if let Some(uri) = d["textDocument"]["uri"].as_str() {
+                let edits = d["edits"].as_array().map(|a| a.iter().filter_map(parse_text_edit).collect()).unwrap_or_default();
+                out.push((uri.to_string(), edits));
+            }
+        }
+    }
+    out
+}
+
+/// Aplica trocas a um texto (das últimas para as primeiras, para as posições não
+/// andarem). Devolve o texto novo.
+pub fn apply_edits(text: &str, edits: &[TextEdit], utf8: bool) -> String {
+    let mut spans: Vec<(usize, usize, &str)> = edits
+        .iter()
+        .map(|e| {
+            let a = to_offset(text, e.start.0, e.start.1, utf8);
+            let b = to_offset(text, e.end.0, e.end.1, utf8).max(a);
+            (a, b, e.new_text.as_str())
+        })
+        .collect();
+    spans.sort_by(|x, y| y.0.cmp(&x.0).then(y.1.cmp(&x.1)));
+    let mut out = text.to_string();
+    let mut limit = usize::MAX;
+    for (a, b, t) in spans {
+        // Trocas sobrepostas: a de trás vale.
+        if b > limit {
+            continue;
+        }
+        out.replace_range(a..b, t);
+        limit = a;
+    }
+    out
+}
+
+fn parse_symbols(v: &Value, depth: usize, out: &mut Vec<Symbol>) {
+    for s in v.as_array().into_iter().flatten() {
+        // `DocumentSymbol` (com `selectionRange` e filhos) ou `SymbolInformation`.
+        let range = if s["selectionRange"].is_object() { &s["selectionRange"] } else if s["range"].is_object() { &s["range"] } else { &s["location"]["range"] };
+        let (line, col) = position(&range["start"]);
+        let whole = if s["range"].is_object() { &s["range"] } else { &s["location"]["range"] };
+        let end_line = position(&whole["end"]).0.max(line);
+        out.push(Symbol {
+            end_line,
+            name: s["name"].as_str().unwrap_or_default().to_string(),
+            detail: s["detail"].as_str().or_else(|| s["containerName"].as_str()).unwrap_or_default().to_string(),
+            kind: symbol_to_completion_kind(s["kind"].as_u64().unwrap_or(0)),
+            line,
+            col,
+            depth,
+        });
+        parse_symbols(&s["children"], depth + 1, out);
+    }
+}
+
+/// Os tipos de símbolo (`SymbolKind`) têm outra numeração que os do completar: passa
+/// para a do completar, para usar os mesmos selos.
+pub fn symbol_to_completion_kind(k: u64) -> u8 {
+    match k {
+        1 => 17,
+        2..=4 => 9,
+        5 => 7,
+        6 => 2,
+        7 => 10,
+        8 => 5,
+        9 => 4,
+        10 => 13,
+        11 => 8,
+        12 => 3,
+        13 => 6,
+        14 => 21,
+        15..=18 => 12,
+        19 => 9,
+        20 => 5,
+        21 => 12,
+        22 => 20,
+        23 => 22,
+        24 => 23,
+        25 => 24,
+        26 => 25,
+        _ => 1,
+    }
+}
+
 /// Eventos vindos do servidor.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -145,6 +304,13 @@ pub enum Event {
     Completions { id: u64, items: Vec<Completion> },
     /// Resposta do `completionItem/resolve`: a documentação e o detalhe do item.
     Resolved { id: u64, doc: String, detail: String },
+    Signature { id: u64, signature: Option<Signature> },
+    /// Trocas pedidas (renomear, formatar) ou mandadas pelo servidor (`applyEdit`,
+    /// com `id` 0).
+    Edit { id: u64, edit: WorkspaceEdit },
+    Actions { id: u64, actions: Vec<CodeAction> },
+    Symbols { id: u64, symbols: Vec<Symbol> },
+    Hints { id: u64, hints: Vec<InlayHint> },
     /// Onde está a definição: endereço do arquivo e posição (linha, coluna).
     Definition { id: u64, uri: String, line: u32, col: u32 },
     Hover { id: u64, text: String },
@@ -166,6 +332,11 @@ pub struct Client {
     /// Mensagens que chegaram antes do `initialize` responder (abrir documentos).
     queued: Vec<Value>,
     pub name: String,
+    /// O que o servidor sabe fazer (`capabilities` da resposta ao `initialize`).
+    pub caps: Value,
+    /// Configurações do servidor (respondidas no `workspace/configuration`), como o
+    /// `settings` do Zed.
+    pub settings: Value,
 }
 
 /// Endereço `file://` de um caminho (os `%XX` como o LSP espera).
@@ -256,7 +427,7 @@ impl Client {
                 }
             }
         });
-        let mut client = Self { child, stdin, rx, next_id: 1, pending: HashMap::new(), utf8: false, ready: false, queued: Vec::new(), name: command.to_string() };
+        let mut client = Self { child, stdin, rx, next_id: 1, pending: HashMap::new(), utf8: false, ready: false, queued: Vec::new(), name: command.to_string(), caps: Value::Null, settings: Value::Null };
         let params = json!({
             "processId": std::process::id(),
             "rootUri": uri(root),
@@ -276,8 +447,15 @@ impl Client {
                         "completionItemKind": { "valueSet": (1..=25).collect::<Vec<u32>>() }
                     },
                     "definition": {},
-                    "hover": { "contentFormat": ["plaintext", "markdown"] }
-                }
+                    "hover": { "contentFormat": ["plaintext", "markdown"] },
+                    "signatureHelp": { "signatureInformation": { "documentationFormat": ["markdown", "plaintext"], "parameterInformation": { "labelOffsetSupport": true } } },
+                    "rename": { "prepareSupport": false },
+                    "formatting": {},
+                    "codeAction": { "codeActionLiteralSupport": { "codeActionKind": { "valueSet": ["", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports"] } }, "resolveSupport": { "properties": ["edit"] } },
+                    "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                    "inlayHint": {}
+                },
+                "workspace": { "applyEdit": true, "configuration": true, "workspaceEdit": { "documentChanges": true } }
             }
         });
         client.request("initialize", params)?;
@@ -337,6 +515,56 @@ impl Client {
         self.request("textDocument/completion", params).ok()
     }
 
+    /// O servidor sabe fazer `cap` (`renameProvider`, `inlayHintProvider`...).
+    pub fn can(&self, cap: &str) -> bool {
+        !matches!(self.caps[cap], Value::Null | Value::Bool(false))
+    }
+
+    pub fn signature_help(&mut self, path: &Path, text: &str, offset: usize) -> Option<u64> {
+        let params = self.position_params(path, text, offset);
+        self.request("textDocument/signatureHelp", params).ok()
+    }
+
+    pub fn rename(&mut self, path: &Path, text: &str, offset: usize, new_name: &str) -> Option<u64> {
+        let mut params = self.position_params(path, text, offset);
+        params["newName"] = json!(new_name);
+        self.request("textDocument/rename", params).ok()
+    }
+
+    pub fn formatting(&mut self, path: &Path, tab_size: usize, spaces: bool) -> Option<u64> {
+        self.request("textDocument/formatting", json!({ "textDocument": { "uri": uri(path) }, "options": { "tabSize": tab_size, "insertSpaces": spaces } })).ok()
+    }
+
+    /// Ações de código no trecho (de `from` a `to`), com os problemas que o tocam.
+    pub fn code_actions(&mut self, path: &Path, text: &str, from: usize, to: usize, diags: &[Diagnostic]) -> Option<u64> {
+        let (a, b) = (to_position(text, from, self.utf8), to_position(text, to, self.utf8));
+        let diagnostics: Vec<Value> = diags
+            .iter()
+            .filter(|d| d.start.0 <= b.0 && d.end.0 >= a.0)
+            .map(|d| json!({ "range": { "start": { "line": d.start.0, "character": d.start.1 }, "end": { "line": d.end.0, "character": d.end.1 } }, "message": d.message, "severity": match d.severity { Severity::Error => 1, Severity::Warning => 2, Severity::Info => 3 } }))
+            .collect();
+        let params = json!({ "textDocument": { "uri": uri(path) }, "range": { "start": { "line": a.0, "character": a.1 }, "end": { "line": b.0, "character": b.1 } }, "context": { "diagnostics": diagnostics } });
+        self.request("textDocument/codeAction", params).ok()
+    }
+
+    pub fn resolve_action(&mut self, raw: Value) -> Option<u64> {
+        self.request("codeAction/resolve", raw).ok()
+    }
+
+    pub fn execute_command(&mut self, command: &Value) {
+        let params = json!({ "command": command["command"], "arguments": command.get("arguments").cloned().unwrap_or(json!([])) });
+        let _ = self.request("workspace/executeCommand", params);
+    }
+
+    pub fn document_symbols(&mut self, path: &Path) -> Option<u64> {
+        self.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri(path) } })).ok()
+    }
+
+    /// Dicas em linha das linhas `first` a `last`.
+    pub fn inlay_hints(&mut self, path: &Path, first: u32, last: u32) -> Option<u64> {
+        self.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri(path) }, "range": { "start": { "line": first, "character": 0 }, "end": { "line": last, "character": 0 } } })).ok()
+    }
+
     /// Pede a documentação de um item de completar (`completionItem/resolve`).
     pub fn resolve(&mut self, item: Value) -> Option<u64> {
         self.request("completionItem/resolve", item).ok()
@@ -365,11 +593,23 @@ impl Client {
     }
 
     fn handle(&mut self, msg: Value) -> Vec<Event> {
-        // Pedido do servidor (ex.: workspace/configuration): responde vazio.
+        // Pedido do servidor: configurações (as do usuário, por seção), trocas a
+        // aplicar (`workspace/applyEdit`) e o resto respondido vazio.
         if let (Some(id), Some(method)) = (msg.get("id"), msg.get("method").and_then(Value::as_str)) {
-            let result = if method == "workspace/configuration" { json!([]) } else { Value::Null };
+            let mut events = Vec::new();
+            let result = match method {
+                "workspace/configuration" => {
+                    let items = msg["params"]["items"].as_array().cloned().unwrap_or_default();
+                    Value::Array(items.iter().map(|it| config_section(&self.settings, it["section"].as_str())).collect())
+                }
+                "workspace/applyEdit" => {
+                    events.push(Event::Edit { id: 0, edit: parse_workspace_edit(&msg["params"]["edit"]) });
+                    json!({ "applied": true })
+                }
+                _ => Value::Null,
+            };
             let _ = self.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-            return Vec::new();
+            return events;
         }
         if let Some(method) = msg.get("method").and_then(Value::as_str) {
             if method == "textDocument/publishDiagnostics" {
@@ -390,6 +630,7 @@ impl Client {
         match method {
             "initialize" => {
                 self.utf8 = result["capabilities"]["positionEncoding"].as_str() == Some("utf-8");
+                self.caps = result["capabilities"].clone();
                 self.ready = true;
                 let _ = self.send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
                 for queued in std::mem::take(&mut self.queued) {
@@ -421,6 +662,75 @@ impl Client {
                     })
                     .unwrap_or_default();
                 vec![Event::Completions { id, items }]
+            }
+            "textDocument/signatureHelp" => {
+                let sigs = result["signatures"].as_array().cloned().unwrap_or_default();
+                let active = result["activeSignature"].as_u64().unwrap_or(0) as usize;
+                let signature = sigs.get(active).or(sigs.first()).map(|sig| {
+                    let label = sig["label"].as_str().unwrap_or_default().to_string();
+                    let param = sig["activeParameter"].as_u64().or(result["activeParameter"].as_u64()).unwrap_or(0) as usize;
+                    let p = &sig["parameters"][param];
+                    // O parâmetro vem como texto ou como [início, fim] em UTF-16.
+                    let active = match &p["label"] {
+                        Value::String(t) => label.find(t.as_str()).map(|i| (i, i + t.len())),
+                        Value::Array(r) => {
+                            let at = |n: u64| label.char_indices().scan(0u64, |u, (i, c)| { let here = *u; *u += c.len_utf16() as u64; Some((here, i)) }).find(|(u, _)| *u >= n).map_or(label.len(), |(_, i)| i);
+                            Some((at(r[0].as_u64().unwrap_or(0)), at(r[1].as_u64().unwrap_or(0))))
+                        }
+                        _ => None,
+                    };
+                    let doc = [markup_text(&p["documentation"]), markup_text(&sig["documentation"])].into_iter().filter(|d| !d.is_empty()).collect::<Vec<_>>().join("\n\n");
+                    Signature { label, active, doc }
+                });
+                vec![Event::Signature { id, signature }]
+            }
+            "textDocument/rename" | "textDocument/formatting" => {
+                let edit = if method == "textDocument/formatting" {
+                    // As trocas do arquivo pedido (o endereço fica para quem pediu).
+                    vec![(String::new(), result.as_array().map(|a| a.iter().filter_map(parse_text_edit).collect()).unwrap_or_default())]
+                } else {
+                    parse_workspace_edit(result)
+                };
+                vec![Event::Edit { id, edit }]
+            }
+            "textDocument/codeAction" | "codeAction/resolve" => {
+                let list: Vec<Value> = if method == "codeAction/resolve" { vec![result.clone()] } else { result.as_array().cloned().unwrap_or_default() };
+                let actions = list
+                    .iter()
+                    .map(|a| {
+                        // Um `Command` solto (com `command` em texto) ou uma `CodeAction`.
+                        let command = if a["command"].is_string() { Some(a.clone()) } else { a.get("command").filter(|c| c.is_object()).cloned() };
+                        let edit = parse_workspace_edit(&a["edit"]);
+                        let raw = (edit.is_empty() && command.is_none() && a.get("data").is_some()).then(|| a.clone());
+                        CodeAction { title: a["title"].as_str().unwrap_or_default().to_string(), kind: a["kind"].as_str().unwrap_or_default().to_string(), edit, command, raw }
+                    })
+                    .collect();
+                vec![Event::Actions { id, actions }]
+            }
+            "textDocument/documentSymbol" => {
+                let mut symbols = Vec::new();
+                parse_symbols(result, 0, &mut symbols);
+                vec![Event::Symbols { id, symbols }]
+            }
+            "textDocument/inlayHint" => {
+                let hints = result
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|h| {
+                                let (line, col) = position(&h["position"]);
+                                let label = match &h["label"] {
+                                    Value::String(s) => s.clone(),
+                                    Value::Array(parts) => parts.iter().filter_map(|p| p["value"].as_str()).collect(),
+                                    _ => String::new(),
+                                };
+                                InlayHint { line, col, label, pad_left: h["paddingLeft"].as_bool().unwrap_or(false), pad_right: h["paddingRight"].as_bool().unwrap_or(false) }
+                            })
+                            .filter(|h| !h.label.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                vec![Event::Hints { id, hints }]
             }
             "completionItem/resolve" => {
                 let doc = markup_text(&result["documentation"]);
@@ -599,5 +909,51 @@ mod snippet_tests {
         assert_eq!(stop, Some((10, 10)));
         assert_eq!(expand_snippet("${1|pub,priv|} fn").0, "pub fn");
         assert_eq!(expand_snippet("ok").1, None);
+    }
+}
+
+/// A parte das configurações do servidor pedida no `workspace/configuration`
+/// (`section` com pontos: `"rust-analyzer.cargo"`), ou nulo.
+pub fn config_section(settings: &Value, section: Option<&str>) -> Value {
+    let Some(section) = section.filter(|s| !s.is_empty()) else {
+        return settings.clone();
+    };
+    let mut v = settings;
+    for part in section.split('.') {
+        match v.get(part) {
+            Some(next) => v = next,
+            None => return Value::Null,
+        }
+    }
+    v.clone()
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    #[test]
+    fn trocas_aplicadas_de_tras_para_frente() {
+        let text = "let a = 1;\nlet b = a;\n";
+        let edits = vec![
+            TextEdit { start: (0, 4), end: (0, 5), new_text: "x".into() },
+            TextEdit { start: (1, 8), end: (1, 9), new_text: "x".into() },
+        ];
+        assert_eq!(apply_edits(text, &edits, true), "let x = 1;\nlet b = x;\n");
+    }
+
+    #[test]
+    fn workspace_edit_nos_dois_formatos() {
+        let v = json!({ "changes": { "file:///a": [{ "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } }, "newText": "z" }] } });
+        assert_eq!(parse_workspace_edit(&v).len(), 1);
+        let v = json!({ "documentChanges": [{ "textDocument": { "uri": "file:///b", "version": 1 }, "edits": [] }] });
+        assert_eq!(parse_workspace_edit(&v)[0].0, "file:///b");
+    }
+
+    #[test]
+    fn secao_da_configuracao() {
+        let s = json!({ "rust-analyzer": { "cargo": { "features": "all" } } });
+        assert_eq!(config_section(&s, Some("rust-analyzer.cargo")), json!({ "features": "all" }));
+        assert_eq!(config_section(&s, Some("nada")), Value::Null);
     }
 }

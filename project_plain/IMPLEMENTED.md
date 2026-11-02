@@ -2458,3 +2458,15 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Preferências → nova seção do completar: "Sugerir ao digitar", "Letras antes de sugerir" (1 a 5, padrão 1) e "Mostrar a documentação ao lado da sugestão" (`auto_complete`, `complete_min_chars`, `complete_docs` no `code.toml`).
 - Servidores de linguagem prontos para todas as linguagens que o Code conhece, bastando o programa estar no PATH: além dos de antes, pyright/basedpyright, vtsls, jdtls, kotlin-language-server, sourcekit-lsp, csharp-ls/OmniSharp, vscode-html/css/json-language-server, yaml-language-server, taplo, marksman, lua-language-server, ruby-lsp/solargraph, sqls, docker-langserver e lemminx. Os padrões que faltam no `code-servers.toml` do usuário entram sozinhos, menos para linguagens que ele atende com um servidor próprio.
 - Testes: `cargo test` ok (novos: tabelas de ícones ordenadas, ícones de arquivo e pasta, selos SVG válidos, abrir trechos); conferido por captura com um servidor de linguagem falso (selos, documentação depois do resolve e o trecho `if` com a parada escolhida).
+
+## v0.10.59: Code com assinatura, renomear, formatar, ações de código, símbolos e dicas em linha (2026-11-02)
+
+- Passo 1 do escopo E14 (recursos de editor do VS Code e do Zed), pelo servidor de linguagem:
+  - Ajuda de assinatura: ao digitar `(` ou `,` (e Ctrl+Shift+Espaço), a assinatura aparece em cima da linha com o parâmetro atual destacado (`ui.code_spans`, novo no mide-ui) e a documentação dele e da função; some com `)`, ao sair da linha ou com Esc.
+  - Renomear símbolo (F2): pede o nome novo e aplica as trocas do servidor em todas as abas abertas (com desfazer) e nos arquivos fechados, direto no disco.
+  - Formatar documento (Ctrl+Shift+I) e "Formatar ao salvar" nas Preferências (grava sem formatar se o servidor não responder em 1,5 s).
+  - Ações de código (Ctrl+.): a lista do servidor (correções rápidas, organizar imports...), com as trocas aplicadas, o comando rodado no servidor (`workspace/executeCommand`) e os detalhes pedidos quando faltam (`codeAction/resolve`); o servidor também pode mandar trocas sozinho (`workspace/applyEdit`).
+  - Ir para símbolo (Ctrl+R): os símbolos do arquivo em árvore, com os selos do completar e busca aproximada; o caminho dos símbolos em volta do cursor aparece na barra de status ("Classe › método"), como os breadcrumbs.
+  - Dicas em linha (tipos, nomes de parâmetro), numa cápsula cinza que empurra o resto da linha; o cursor, a seleção e o clique pulam por cima (`TextAreaLook::inlays`, novo no mide-ui). Interruptor nas Preferências.
+  - O cliente responde ao `workspace/configuration` por seção (base para as configurações do Zed, passo 2) e guarda o que o servidor sabe fazer (`caps`).
+- Testes: `cargo test` ok (novos: trocas aplicadas de trás para frente, `WorkspaceEdit` nos dois formatos, seção da configuração, busca aproximada, dicas em bytes); conferido por captura com um servidor de linguagem falso (assinatura, ações aplicadas sem quebrar a linha, renomear, lista de símbolos, dica `: int` e o caminho na barra).

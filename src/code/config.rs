@@ -57,6 +57,10 @@ pub struct Config {
     pub complete_min_chars: usize,
     /// Documentação ao lado da sugestão escolhida.
     pub complete_docs: bool,
+    /// Dicas em linha do servidor (tipos, nomes de parâmetro).
+    pub inlay_hints: bool,
+    /// Formatar pelo servidor antes de gravar.
+    pub format_on_save: bool,
 }
 
 /// O arquivo dos servidores: uma tabela `[[server]]` para cada um.
@@ -87,6 +91,8 @@ impl Default for Config {
             auto_complete: true,
             complete_min_chars: 1,
             complete_docs: true,
+            inlay_hints: true,
+            format_on_save: false,
         }
     }
 }
