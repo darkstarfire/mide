@@ -2502,3 +2502,9 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - Trechos das extensões (`snippets/` e o `snippets` do manifesto) entram no completar junto com os do usuário.
   - Linguagens das extensões que o mide não conhece (`languages/<nome>/config.toml`: nome, `path_suffixes`, `line_comments`) passam a ser reconhecidas pelo nome do arquivo, com o realce da família do comentário e o servidor de linguagem pelo id; extensões compostas (`blade.php`) vêm antes da simples.
 - Testes: `cargo test` ok (novos: tema de cores e tema de ícones no formato do Zed); conferido por captura com o tema Tailwind e os ícones Catppuccin copiados das extensões do Zed do usuário.
+
+## v0.10.63: Code com realce por tree-sitter das gramáticas do Zed (2026-11-02)
+
+- Passo 4 do escopo E14: o realce usa o tree-sitter (`tree-sitter` 0.25 com o recurso `wasm`, decisão do P1) com as gramáticas que as extensões do Zed trazem já compiladas em WebAssembly (`grammars/<nome>.wasm`) e as consultas delas (`languages/<x>/highlights.scm`), também as das extensões instaladas no próprio Zed (php, html, toml, xml, sql, graphql, dockerfile, prisma, scss, csv, hcl...). `mide::code::syntax` acha a gramática pelo nome da linguagem, carrega uma vez por linguagem, transforma as capturas (`keyword`, `function.method`, `string.special`...) nos tipos de realce do mide e deixa os trechos sem sobreposição (o de dentro vale). Linguagem sem gramática nas extensões continua com o realce próprio. As cores seguem o tema escolhido (v0.10.62).
+- O motor de WebAssembly (wasmtime, que vem com o tree-sitter) é o mesmo que o passo 5 usa para as extensões com código.
+- Testes: `cargo test` ok (novos: capturas viram tipos, trechos sem sobreposição e a gramática PHP do Zed em WebAssembly, quando instalada na máquina).

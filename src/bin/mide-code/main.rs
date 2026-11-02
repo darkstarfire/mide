@@ -215,6 +215,8 @@ pub(crate) struct Code {
     /// de ícones instalados (para as Preferências).
     color_theme: Option<mide::code::themes::ColorTheme>,
     theme_names: (Vec<String>, Vec<String>),
+    /// Realce por tree-sitter com as gramáticas das extensões do Zed.
+    syntax: mide::code::syntax::Syntax,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -256,6 +258,7 @@ impl Code {
             zed_keys,
             color_theme: None,
             theme_names: (Vec::new(), Vec::new()),
+            syntax: mide::code::syntax::Syntax::new(),
             hover: None,
             definition: None,
             message: None,
@@ -958,13 +961,16 @@ impl Code {
     /// Cores do código e erros da aba `i`, para a área de texto.
     fn decorations(&mut self, i: usize, dark: bool) -> Decorations {
         let theme = self.color_theme.as_ref().map(|t| t.syntax.clone());
-        let doc = &mut self.docs[i];
-        if doc.colors.0 != doc.text.version {
-            let spans = highlight::highlight(&doc.text.text, doc.lang);
+        if self.docs[i].colors.0 != self.docs[i].text.version {
+            // A gramática tree-sitter das extensões, se houver; senão, o realce próprio.
+            let (text, lang) = (&self.docs[i].text.text, self.docs[i].lang);
+            let spans = self.syntax.highlight(text, lang).unwrap_or_else(|| highlight::highlight(text, lang));
+            let doc = &mut self.docs[i];
             // As cores do tema escolhido; o que ele não tem, as do mide.
             let pick = |k| theme.as_ref().and_then(|t| t.get(&k).copied()).unwrap_or_else(|| highlight::color(k, dark));
             doc.colors = (doc.text.version, spans.into_iter().map(|(r, k)| (r, pick(k))).collect());
         }
+        let doc = &mut self.docs[i];
         let utf8 = self.config.server_for(doc.lang.id).and_then(|s| self.servers.get(&s.command)).is_none_or(|c| c.utf8);
         let mut deco = Decorations { colors: doc.colors.1.clone(), ..Default::default() };
         let mut seen_lines = HashSet::new();
