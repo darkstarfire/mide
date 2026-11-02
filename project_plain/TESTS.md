@@ -1119,3 +1119,4 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - v0.10.42: `cargo test` e clippy; na sessão (falta o usuário): `mide-logs --search "Broken pipe"` sem a enxurrada e `mide-logs --search "laço do compositor parado"` sem novos casos.
 - v0.10.44: `cargo test bordas_dos_gestos`; no aparelho (falta o usuário): no modo tablet, deslizar do meio de cima mostra fechar/minimizar/tela cheia da janela por 4 s; tocar no meio de cima abre os menus da barra.
 - v0.10.45: no aparelho (falta o usuário): quatro dedos para cima na tela abrem a visão das janelas; três abrem o launcher; `mide-logs --search "quarto dedo"` mostra a troca.
+- v0.10.55: `cargo test bordas_dos_gestos`; no aparelho (falta o usuário): subir da borda de baixo e parar abre a visão das janelas; quatro dedos para cima abrem; deslizar da borda lateral para dentro volta no navegador e no Arquivos e fecha o launcher/a visão.

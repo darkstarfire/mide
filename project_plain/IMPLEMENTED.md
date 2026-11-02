@@ -2426,3 +2426,11 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Completar ao digitar: a lista abre sozinha enquanto se digita (letras, depois de `.`, `->`, `::` e `$`; não dentro de números), com as sugestões do servidor de linguagem primeiro e depois as palavras-chave e tipos da linguagem e as palavras do próprio arquivo (sem servidor, a partir de duas letras). Tab vai para a próxima sugestão, Shift+Tab para a anterior, Enter confirma e Esc fecha; a lista acompanha a palavra e fecha quando nada mais casa.
 - Servidores padrão também para PHP (`intelephense --stdio` e `phpactor language-server`); linguagens que faltam no `code-servers.toml` do usuário ganham os padrões, e o primeiro servidor instalado é o escolhido.
 - Testes: `cargo test --bin mide-code` ok (testes novos `completar_abre_ao_digitar` e `palavras_do_arquivo_e_da_linguagem`). Falta o usuário conferir na sessão, com o servidor de linguagem do projeto dele.
+
+## v0.10.55: visão das janelas pela tela de toque e voltar do Android (2026-11-02)
+
+- Relato do usuário no Chromebook: faltava abrir as janelas abertas como no iPad/Android, os quatro dedos na tela nunca funcionavam (no touchpad sim) e faltava um "voltar" como o do Android.
+- Subir da borda de baixo e parar: o tremor do dedo parado reiniciava a contagem do "parado" a cada passo de 2 pontos e a visão das janelas nunca abria; agora passos menores que 8 pontos se juntam e não contam como movimento.
+- Quatro dedos na tela: o gesto virava de quatro dedos (log "quarto dedo"), a visão abria e fechava em 0%, porque o quarto dedo chegava ~140 ms depois do terceiro e o caminho já feito era jogado fora. Agora o caminho médio de cada dedo desde onde foi visto passa ao gesto de quatro.
+- Voltar como no Android: deslizar da borda esquerda ou direita (14 pontos) para dentro e soltar depois de 70 pontos fecha a visão das janelas ou o launcher e, fora deles, manda a tecla Voltar (XF86Back) ao app; o Arquivos passou a entender as teclas Voltar e Avançar.
+- Testes: `bordas_dos_gestos` com as bordas laterais; `cargo test` ok; clippy sem aviso nas linhas mudadas. Falta o usuário conferir no aparelho. Fica para depois: a setinha do Android durante o voltar.

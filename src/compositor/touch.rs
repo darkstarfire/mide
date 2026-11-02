@@ -49,6 +49,11 @@ const CORNER: f64 = 0.3;
 /// visão das janelas no lugar do launcher.
 const HOLD: Duration = Duration::from_millis(280);
 const HOLD_TRAVEL: f64 = 110.0;
+/// Movimento do dedo (pontos) abaixo do qual ele conta como parado (o tremor na tela).
+const STILL: f64 = 8.0;
+/// Faixa das bordas da esquerda e da direita (pontos) e o caminho para dentro que volta.
+const SIDE_EDGE: f64 = 14.0;
+const BACK_TRAVEL: f64 = 70.0;
 /// Gesto de baixo mais curto que isto (pontos): só mostra a dock, por `DOCK_REVEAL`.
 const DOCK_SWIPE: f64 = 90.0;
 /// Caminho ao longo da borda de baixo (pontos) para trocar de app.
@@ -70,6 +75,9 @@ pub enum Edge {
     /// Meio da borda de cima (o nome do app e os menus na barra): deslizar para baixo
     /// mostra os botões da janela sem barra; tocar e soltar é um toque comum na barra.
     TopCenter,
+    /// Bordas da esquerda e da direita: deslizar para dentro volta, como no Android.
+    Left,
+    Right,
 }
 
 /// Um dedo na tela.
@@ -122,12 +130,25 @@ pub struct Multi {
     /// terceiro passa o gesto a quatro dedos).
     started: Instant,
     fingers: u32,
+    /// Onde cada dedo foi visto pela primeira vez (o quarto dedo herda o caminho já feito).
+    firsts: HashMap<i32, Point<f64, Logical>>,
 }
 
 /// Distância média dos dedos ao centro deles.
 fn spread(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<f64> {
     let c = centroid(pos)?;
     Some(pos.values().map(|p| (p.x - c.x).hypot(p.y - c.y)).sum::<f64>() / pos.len() as f64)
+}
+
+/// Caminho médio dos dedos desde onde cada um foi visto pela primeira vez.
+fn travelled(multi: &Multi) -> Option<Point<f64, Logical>> {
+    let moves: Vec<Point<f64, Logical>> = multi.pos.iter().filter_map(|(s, p)| multi.firsts.get(s).map(|f| *p - *f)).collect();
+    if moves.is_empty() {
+        return None;
+    }
+    let n = moves.len() as f64;
+    let (x, y) = moves.iter().fold((0.0, 0.0), |(x, y), p| (x + p.x, y + p.y));
+    Some((x / n, y / n).into())
 }
 
 fn centroid(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<Point<f64, Logical>> {
@@ -144,7 +165,10 @@ fn centroid(pos: &HashMap<i32, Point<f64, Logical>>) -> Option<Point<f64, Logica
 /// Devolve `true` quando o dedo foi tomado pelo gesto.
 fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
     if let Some(multi) = state.touch.multi.as_mut() {
+        // Caminho já feito pelos dedos que estavam na tela (antes do dedo novo mudar o centro).
+        let travelled = travelled(multi);
         multi.pos.insert(slot, pos);
+        multi.firsts.entry(slot).or_insert(pos);
         // O centro muda com o dedo novo: sem salto no deslizar.
         multi.last = centroid(&multi.pos);
         // Os dedos nunca encostam juntos: o gesto começa no terceiro, e o quarto que chega
@@ -156,6 +180,11 @@ fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
             tracing::info!("toque: quarto dedo: gesto de 4 dedos");
             crate::gesture::end(state, true);
             crate::gesture::begin(state, 4);
+            // O caminho dos três primeiros vale para o de quatro: num deslizar rápido, quase
+            // todo o movimento já tinha acontecido e o mosaico abria e fechava em 0%.
+            if let Some(d) = travelled {
+                crate::gesture::update(state, d.x, d.y);
+            }
         }
         return true;
     }
@@ -177,7 +206,8 @@ fn multi_down(state: &mut State, slot: i32, pos: Point<f64, Logical>) -> bool {
     cancel(state);
     known.insert(slot, pos);
     let last = centroid(&known);
-    state.touch.multi = Some(Multi { pos: known, last, spread: None, pinched: false, started: Instant::now(), fingers: fingers.min(4) });
+    let firsts = known.clone();
+    state.touch.multi = Some(Multi { pos: known, last, spread: None, pinched: false, started: Instant::now(), fingers: fingers.min(4), firsts });
     tracing::info!("toque: gesto de {fingers} dedos");
     crate::gesture::begin(state, fingers);
     true
@@ -191,6 +221,7 @@ fn multi_motion(state: &mut State, slot: i32, pos: Point<f64, Logical>) {
         };
         // Dedo que aparece pela primeira vez no gesto: só define a posição (sem salto).
         let known = multi.pos.insert(slot, pos).is_some();
+        multi.firsts.entry(slot).or_insert(pos);
         // Pinça com quatro ou cinco dedos: vai ao launcher (a tela de início do iPad).
         if multi.pos.len() >= 4 && !multi.pinched {
             let now = spread(&multi.pos);
@@ -340,6 +371,8 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
                 let along = match edge {
                     Edge::Bottom => -d.y,
                     Edge::TopLeft | Edge::TopRight | Edge::TopCenter => d.y,
+                    Edge::Left => d.x,
+                    Edge::Right => -d.x,
                 };
                 if along >= DRAG_START * 1.5 && along > d.x.abs() {
                     edge_begin(state, slot, edge, from, pos, seq);
@@ -360,11 +393,16 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
                 }
                 return;
             }
-            // Launcher acompanhando o dedo.
+            // Launcher acompanhando o dedo. Um dedo parado na tela treme alguns pixels o
+            // tempo todo: passos menores que `STILL` se juntam até passar dele, e só então
+            // contam como movimento (antes cada tremor reiniciava o "parado" e o subir e
+            // parar nunca abria a visão das janelas).
             let step = pos - last;
+            if step.x.hypot(step.y) < STILL {
+                return;
+            }
             crate::gesture::update(state, step.x, step.y);
-            let moved_at = if step.x.hypot(step.y) > 2.0 { Instant::now() } else { moved_at };
-            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active, done, moved_at, seq });
+            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active, done, moved_at: Instant::now(), seq });
         }
         Contact::Pointer { long: true, .. } => {}
         Contact::Pointer { start, pressed, long, seq, scrolls, scrolling, last, vel, at } => {
@@ -417,6 +455,14 @@ pub fn up(state: &mut State, slot: i32, time: u32) {
             crate::gesture::end(state, true);
             tracing::info!("toque: deslizar curto da borda de baixo: dock à mostra");
             state.dock_reveal_until = Some(Instant::now() + DOCK_REVEAL);
+        }
+        // Bordas laterais: soltar depois de puxar para dentro volta (como no Android);
+        // puxar pouco não faz nada.
+        Contact::Edge { active: true, edge: edge @ (Edge::Left | Edge::Right), start, last, .. } => {
+            let inward = if edge == Edge::Left { last.x - start.x } else { start.x - last.x };
+            if inward >= BACK_TRAVEL {
+                go_back(state);
+            }
         }
         Contact::Edge { active: true, .. } => crate::gesture::end(state, false),
         // Parado na borda: um toque comum ali.
@@ -526,6 +572,12 @@ fn edge_in(size: (f64, f64), p: (f64, f64)) -> Option<Edge> {
         }
         return Some(Edge::TopCenter);
     }
+    if p.0 <= SIDE_EDGE {
+        return Some(Edge::Left);
+    }
+    if p.0 >= size.0 - SIDE_EDGE {
+        return Some(Edge::Right);
+    }
     None
 }
 
@@ -542,6 +594,9 @@ fn edge_begin(state: &mut State, slot: i32, edge: Edge, from: Point<f64, Logical
             let timer = smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(60));
             let _ = state.loop_handle.insert_source(timer, move |_, _, state| hold_check(state, slot, seq));
         }
+        Edge::Left | Edge::Right => {
+            state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: false, moved_at: Instant::now(), seq });
+        }
         Edge::TopCenter => {
             state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active: true, done: true, moved_at: Instant::now(), seq });
             show_window_controls(state, from);
@@ -555,6 +610,28 @@ fn edge_begin(state: &mut State, slot: i32, edge: Edge, from: Point<f64, Logical
     }
     state.wake();
 }
+
+/// Voltar, como o gesto do Android: a tecla Voltar (XF86Back) vai ao app em foco
+/// (navegadores, apps GTK e o Arquivos do mide entendem). Com o launcher ou a visão das
+/// janelas abertos, fecha-os.
+fn go_back(state: &mut State) {
+    if state.overview.is_some() {
+        tracing::info!("toque: voltar: fecha a visão das janelas");
+        crate::overview::close(state, None);
+    } else if state.launcher_open() {
+        tracing::info!("toque: voltar: fecha o launcher");
+        state.toggle_launcher();
+    } else {
+        tracing::info!("toque: voltar (tecla Voltar ao app)");
+        let time = state.start_time.elapsed().as_millis() as u32;
+        crate::input::evdev_key(state, KEY_BACK, true, time);
+        crate::input::evdev_key(state, KEY_BACK, false, time);
+    }
+    state.wake();
+}
+
+/// Tecla Voltar do evdev (`KEY_BACK`, XF86Back no xkb).
+const KEY_BACK: u32 = 158;
 
 /// Deslizar do meio de cima no modo tablet sem barra: a faixa com os botões da janela em
 /// foco desce por cima dela por alguns segundos (os controles da janela do iPadOS 26).
@@ -762,6 +839,10 @@ mod tests {
         // botões da janela; parado, vira toque comum na barra.
         assert_eq!(edge_in(screen, (400.0, 5.0)), Some(Edge::TopCenter));
         assert_eq!(edge_in(screen, (400.0, 600.0)), None);
+        // Bordas laterais: deslizar para dentro volta (Android).
+        assert_eq!(edge_in(screen, (5.0, 600.0)), Some(Edge::Left));
+        assert_eq!(edge_in(screen, (795.0, 600.0)), Some(Edge::Right));
+        assert_eq!(edge_in(screen, (30.0, 600.0)), None);
     }
 
     #[test]

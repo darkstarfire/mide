@@ -1535,8 +1535,11 @@ impl Files {
     /// à direita, as visualizações (ícones, lista, colunas), o painel de prévia, nova
     /// pasta e a busca.
     fn toolbar(&mut self, ui: &mut Ui) {
-        let mut back = false;
-        let mut forward = false;
+        // Tecla Voltar/Avançar (teclados e mouses com elas, e o deslizar da borda para
+        // dentro no modo tablet, que o compositor manda como Voltar, como no Android).
+        let presses = &ui.input().presses;
+        let mut back = presses.iter().any(|p| p.keysym == xkbcommon::xkb::keysyms::KEY_XF86Back);
+        let mut forward = presses.iter().any(|p| p.keysym == xkbcommon::xkb::keysyms::KEY_XF86Forward);
         let mut mode = None;
         let mut preview = false;
         let mut new_folder = false;
@@ -1584,7 +1587,7 @@ impl Files {
             self.selection.clear();
         }
         self.search = search;
-        if back {
+        if back && can_back {
             self.go_back();
         }
         if forward {

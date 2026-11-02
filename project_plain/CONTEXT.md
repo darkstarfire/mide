@@ -330,3 +330,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 
 - v0.10.50: espaços sobrando no seletor de arquivos e no destaque das linhas dos cartões (mide-ui). v0.10.51: zoom do editor de capturas sem distorção. v0.10.52: foco volta à janela anterior ao fechar. v0.10.53: rolar com o dedo (com inércia) e puxar o launcher para baixo para buscar. v0.10.54: Code com respiro nas bordas e completar ao digitar (Tab/Shift+Tab/Enter).
 - Falta o usuário conferir: tudo isso na sessão; o teclado na tela no login e no bloqueio pede `sudo data/mide-login-install` de novo.
+- v0.10.55: visão das janelas pela tela de toque (subir e parar; quatro dedos) e voltar do Android pelas bordas laterais; falta o usuário conferir.
