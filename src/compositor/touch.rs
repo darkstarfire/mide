@@ -32,6 +32,11 @@ use crate::{
     state::State,
 };
 
+/// Inércia da rolagem com o dedo: velocidade mínima (pontos por ms) para continuar
+/// depois de soltar, passo do relógio e quanto a velocidade cai a cada passo.
+const FLING_MIN: f64 = 0.3;
+const FLING_STEP: Duration = Duration::from_millis(16);
+const FLING_DECAY: f64 = 0.95;
 /// Tempo parado com o dedo para o botão direito.
 const LONG_PRESS: Duration = Duration::from_millis(600);
 /// Caminho do dedo (pontos) a partir do qual o toque vira arrasto.
@@ -74,7 +79,9 @@ enum Contact {
     App { surface: WlSurface, origin: Point<f64, Logical> },
     /// Vira ponteiro: onde começou, se o botão já foi apertado (arrasto), se o
     /// botão direito já saiu (segurar) e o número do toque (para o relógio do segurar).
-    Pointer { start: Point<f64, Logical>, pressed: bool, long: bool, seq: u64 },
+    /// Num app do mide-ui, arrastar na vertical rola (`scrolls`, `scrolling`), como no
+    /// iPad, com a última posição e a velocidade (pontos por ms) para a inércia.
+    Pointer { start: Point<f64, Logical>, pressed: bool, long: bool, seq: u64, scrolls: bool, scrolling: bool, last: Point<f64, Logical>, vel: f64, at: Instant },
     /// Gesto de borda: ainda decidindo (`active` falso: pode virar um toque comum),
     /// acompanhando (o launcher subindo) ou já feito (`done`: o resto do dedo não vale).
     Edge { edge: Edge, start: Point<f64, Logical>, last: Point<f64, Logical>, active: bool, done: bool, moved_at: Instant, seq: u64 },
@@ -87,6 +94,8 @@ pub struct Touch {
     seq: u64,
     /// Gesto de três ou quatro dedos na tela em andamento (como no touchpad).
     multi: Option<Multi>,
+    /// Inércia de uma rolagem com o dedo em andamento (o número do toque).
+    fling: Option<u64>,
     /// Modo tablet ligado (tela dobrada para trás, ou escolhido em `[tablet] mode`).
     pub tablet: bool,
     /// A chave de modo tablet da tela, como o kernel a informa (vale no modo `auto`).
@@ -279,7 +288,10 @@ fn start(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
     state.touch.seq += 1;
     let seq = state.touch.seq;
     input::pointer_motion(state, pos, time);
-    state.touch.contacts.insert(slot, Contact::Pointer { start: pos, pressed: false, long: false, seq });
+    // Um toque novo para a inércia de uma rolagem anterior.
+    state.touch.fling = None;
+    let scrolls = input::touch_scrolls(state, pos);
+    state.touch.contacts.insert(slot, Contact::Pointer { start: pos, pressed: false, long: false, seq, scrolls, scrolling: false, last: pos, vel: 0.0, at: Instant::now() });
     // Segurar parado: botão direito.
     let timer = smithay::reexports::calloop::timer::Timer::from_duration(LONG_PRESS);
     let _ = state.loop_handle.insert_source(timer, move |_, _, state| {
@@ -289,7 +301,7 @@ fn start(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
 }
 
 fn long_press(state: &mut State, slot: i32, seq: u64) {
-    let Some(Contact::Pointer { pressed: false, long, seq: current, .. }) = state.touch.contacts.get_mut(&slot) else {
+    let Some(Contact::Pointer { pressed: false, scrolling: false, long, seq: current, .. }) = state.touch.contacts.get_mut(&slot) else {
         return;
     };
     if *current != seq || *long {
@@ -355,16 +367,32 @@ pub fn motion(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32)
             state.touch.contacts.insert(slot, Contact::Edge { edge, start: from, last: pos, active, done, moved_at, seq });
         }
         Contact::Pointer { long: true, .. } => {}
-        Contact::Pointer { start, pressed, long, seq } => {
+        Contact::Pointer { start, pressed, long, seq, scrolls, scrolling, last, vel, at } => {
+            if scrolling {
+                // Rolando: o conteúdo segue o dedo (dedo para cima, o conteúdo sobe).
+                let dy = pos.y - last.y;
+                let now = Instant::now();
+                let dt = now.duration_since(at).as_secs_f64() * 1000.0;
+                let vel = if dt > 0.5 { 0.6 * (-dy / dt) + 0.4 * vel } else { vel };
+                input::finger_scroll(state, -dy, time, false);
+                state.touch.contacts.insert(slot, Contact::Pointer { start, pressed, long, seq, scrolls, scrolling, last: pos, vel, at: now });
+                return;
+            }
             if !pressed {
                 let d = pos - start;
                 if d.x.hypot(d.y) < DRAG_START {
                     return;
                 }
+                if scrolls && d.y.abs() > d.x.abs() {
+                    tracing::info!("toque: rolar com o dedo");
+                    input::finger_scroll(state, -d.y, time, false);
+                    state.touch.contacts.insert(slot, Contact::Pointer { start, pressed, long, seq, scrolls, scrolling: true, last: pos, vel: 0.0, at: Instant::now() });
+                    return;
+                }
                 // Começou a arrastar: o botão desce onde o dedo encostou.
                 input::pointer_motion(state, start, time);
                 input::button(state, BTN_LEFT, ButtonState::Pressed, time);
-                state.touch.contacts.insert(slot, Contact::Pointer { start, pressed: true, long, seq });
+                state.touch.contacts.insert(slot, Contact::Pointer { start, pressed: true, long, seq, scrolls, scrolling, last: pos, vel, at });
             }
             input::pointer_motion(state, pos, time);
         }
@@ -402,6 +430,15 @@ pub fn up(state: &mut State, slot: i32, time: u32) {
             }
         }
         Contact::Pointer { long: true, .. } => {}
+        // Fim da rolagem: com o dedo ainda rápido, o conteúdo continua e desacelera.
+        Contact::Pointer { scrolling: true, vel, at, seq, .. } => {
+            let recent = at.elapsed() < Duration::from_millis(80);
+            if recent && vel.abs() > FLING_MIN {
+                fling(state, vel, seq);
+            } else {
+                input::finger_scroll(state, 0.0, time, true);
+            }
+        }
         Contact::Pointer { pressed: true, .. } => input::button(state, BTN_LEFT, ButtonState::Released, time),
         // Tocar e soltar: um clique onde o dedo encostou.
         Contact::Pointer { .. } => {
@@ -410,6 +447,29 @@ pub fn up(state: &mut State, slot: i32, time: u32) {
             input::button(state, BTN_LEFT, ButtonState::Released, time);
         }
     }
+}
+
+/// Inércia da rolagem com o dedo: a cada 16 ms o conteúdo anda `vel` × 16 e a
+/// velocidade cai, até parar (um toque novo também para).
+fn fling(state: &mut State, vel: f64, seq: u64) {
+    state.touch.fling = Some(seq);
+    let mut vel = vel;
+    let timer = smithay::reexports::calloop::timer::Timer::from_duration(FLING_STEP);
+    let _ = state.loop_handle.insert_source(timer, move |_, _, state| {
+        let time = state.start_time.elapsed().as_millis() as u32;
+        if state.touch.fling != Some(seq) {
+            return smithay::reexports::calloop::timer::TimeoutAction::Drop;
+        }
+        vel *= FLING_DECAY;
+        if vel.abs() < FLING_MIN / 4.0 {
+            state.touch.fling = None;
+            input::finger_scroll(state, 0.0, time, true);
+            return smithay::reexports::calloop::timer::TimeoutAction::Drop;
+        }
+        input::finger_scroll(state, vel * FLING_STEP.as_secs_f64() * 1000.0, time, false);
+        state.wake();
+        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(FLING_STEP)
+    });
 }
 
 /// Fim de um grupo de eventos de toque (o app desenha depois dele).

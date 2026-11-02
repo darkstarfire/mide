@@ -1092,6 +1092,39 @@ pub fn wheel(state: &mut State, steps: i32, time: u32) {
     pointer.frame(state);
 }
 
+/// Rolagem com o dedo (toque nos apps do mide-ui): `amount` pontos, positivo para
+/// baixo; `stop` avisa o fim (o app pode parar a própria inércia).
+pub fn finger_scroll(state: &mut State, amount: f64, time: u32, stop: bool) {
+    let Some(pointer) = state.seat.get_pointer() else {
+        return;
+    };
+    let mut frame = AxisFrame::new(time).source(AxisSource::Finger);
+    frame = if stop { frame.stop(Axis::Vertical) } else { frame.value(Axis::Vertical, amount) };
+    pointer.axis(state, frame);
+    pointer.frame(state);
+}
+
+/// Arrastar um dedo na vertical sob `pos` rola, como no iPad? Só no conteúdo das
+/// janelas do mide-ui (barra de título, bordas e camadas continuam arrastando), e não
+/// no Editor de Capturas, onde arrastar é desenhar.
+pub(crate) fn touch_scrolls(state: &State, pos: Point<f64, Logical>) -> bool {
+    if state.lock.locked || top_layer_under(state, pos).is_some() || title_bar_under(state, pos).is_some() || resize_target(state, pos).is_some() {
+        return false;
+    }
+    let Some(window) = window_under(state, pos) else {
+        return false;
+    };
+    let app_id = window.toplevel().and_then(|t| {
+        smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+            s.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().and_then(|d| d.lock().ok().and_then(|a| a.app_id.clone()))
+        })
+    });
+    app_id.is_some_and(|id| {
+        let id = id.to_lowercase();
+        id.starts_with("mide") && !id.contains("screenshot-editor")
+    })
+}
+
 /// A janela recebe input? Janelas sendo minimizadas (ainda na animação) não.
 fn interactive(state: &State, window: &Window) -> bool {
     !state.minimized.iter().any(|m| &m.window == window)

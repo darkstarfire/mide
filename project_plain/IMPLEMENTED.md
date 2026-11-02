@@ -2412,3 +2412,10 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 
 - Pedido do usuário: ao fechar a janela em foco, o foco tem de ir para a janela que estava antes dela. A pilha de foco da v0.10.49 só agia se o teclado ainda estivesse na janela fechada; quando o cliente já tinha saído (foco vazio ou numa superfície morta), nada recebia o foco. Agora `wm::move_focus_from` também age nesses casos, traz a próxima janela da pilha para a frente e registra "foco: passa para a próxima janela da pilha (título)".
 - Teste novo na seção `05-varias-janelas`: clicar no Terminal e na Calculadora e fechar a Calculadora com Alt+F4 devolve o foco ao Terminal.
+
+## v0.10.53: rolar com o dedo e buscar puxando o launcher (2026-11-02)
+
+- Revisão dos gestos do modo tablet contra o iPadOS (`docs/tablet-ipados.md`): faltavam rolar listas com um dedo nos apps do mide e o gesto de puxar para baixo para buscar.
+- Rolar com o dedo: nos apps do mide-ui (onde o toque vira ponteiro), arrastar na vertical rola o conteúdo em vez de selecionar, com o conteúdo seguindo o dedo; ao soltar rápido, a rolagem continua e desacelera (inércia, como no iPad); um toque novo para. Fica de fora a barra de título, as bordas de redimensionar, as camadas do shell, a tela bloqueada e o editor de capturas (lá arrastar desenha). Segurar para o botão direito não vale durante a rolagem.
+- Launcher: puxar com o dedo para baixo na grade (sem pasta aberta, fora do modo de edição) abre a busca (`mide-search`), como o deslizar para baixo da tela inicial do iPad.
+- Testes: `cargo test` ok; seção 48 da bateria acertada para o mapeamento de rotação da v0.10.40 (`left-up` = 270°). Falta o usuário conferir no Chromebook: rolar com o dedo no Arquivos, nas Configurações e no Code, a inércia e o puxar para baixo no launcher.

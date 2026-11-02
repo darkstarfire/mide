@@ -279,6 +279,8 @@ struct PageAnim {
 
 /// Distância mínima para um clique virar arrasto.
 const DRAG_THRESHOLD: f64 = 8.0;
+/// Caminho do dedo para baixo (pontos) que abre a busca, como no iPad.
+const SEARCH_SWIPE: f64 = 70.0;
 /// Faixa nas bordas da tela que troca de página durante o arrasto.
 const EDGE: f64 = 28.0;
 
@@ -388,6 +390,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         caret: true,
         // A busca abre com o foco, como no Launchpad do Mac.
         search_focus: mide::kit::FocusAnim::focused_now(),
+        search_swipe: None,
         menu: None,
         edit: None,
         done_rect: None,
@@ -587,6 +590,8 @@ struct Launcher {
     caret: bool,
     /// Foco da busca, com a mesma transição de todos os campos do mide (`FocusAnim`).
     search_focus: mide::kit::FocusAnim,
+    /// Começo de um deslizar para baixo com o dedo que ainda pode abrir a busca.
+    search_swipe: Option<(f64, f64)>,
     /// Menu de contexto de um AppImage instalado (Mover para a Lixeira).
     menu: Option<AppMenu>,
     /// Modo de edição (ícones balançando), desde quando.
@@ -2139,6 +2144,19 @@ impl Launcher {
 
     /// Ponteiro ou dedo andou.
     fn motion_at(&mut self, x: f64, y: f64) {
+        // Dedo descendo no meio da tela: a busca, como o deslizar para baixo na tela de
+        // início do iPad.
+        if let Some(start) = self.search_swipe
+            && y - start.1 >= SEARCH_SWIPE
+        {
+            self.search_swipe = None;
+            tracing::info!("launcher: deslizar para baixo abre a busca");
+            self.close();
+            if mide::control_client::ask_compositor("search").is_none() {
+                tracing::warn!("launcher: o compositor não abriu a busca");
+            }
+            return;
+        }
         if self.hold.is_some_and(|(_, _, at)| ((x - at.0).powi(2) + (y - at.1).powi(2)).sqrt() >= DRAG_THRESHOLD) {
             self.hold = None;
         }
@@ -2152,7 +2170,11 @@ impl Launcher {
                 self.hold = None;
                 tracing::info!("launcher: página arrastada ({})", swipe.to.map_or("sem página ao lado".into(), |p| format!("para a {p}")));
             } else if !swipe.active && dy.abs() >= DRAG_THRESHOLD * 2.0 && dy.abs() > dx.abs() {
-                // Na vertical: não é passar a página (nem um toque).
+                // Na vertical: não é passar a página (nem um toque). Com o dedo, para baixo
+                // e fora de uma pasta, pode virar a busca.
+                if dy > 0.0 && self.touch_id.is_some() && self.open_folder.is_none() && self.edit.is_none() {
+                    self.search_swipe = Some(swipe.start);
+                }
                 self.swipe = None;
                 if self.drag.is_none() {
                     self.press = None;
@@ -2204,6 +2226,7 @@ impl Launcher {
 
     /// Botão ou dedo soltou em (x, y).
     fn release_at(&mut self, x: f64, y: f64) {
+        self.search_swipe = None;
         self.hold = None;
         if let Some(swipe) = self.swipe.take().filter(|s| s.active) {
             self.press = None;

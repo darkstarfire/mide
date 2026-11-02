@@ -76,6 +76,8 @@ Legenda: **feito**, **parcial**, **falta**.
 |---|---|
 | O ponteiro some quando se toca a tela e volta ao mexer o trackpad/mouse (conferir). | **feito** |
 | Tocar e segurar abre o menu de contexto. | **feito** (segurar = botão direito) |
+| Arrastar um dedo rola o conteúdo, com inércia ao soltar rápido. | **feito** nos apps do mide-ui (2026-11-01: arrastar na vertical rola; na horizontal continua arrastando; fora do Editor de Capturas, onde arrastar é desenhar). Apps de fora recebem o toque e rolam sozinhos |
+| Deslizar para baixo no meio da tela de início abre a busca (Spotlight). | **feito** (2026-11-01: no launcher, 70 pontos para baixo fecham o launcher e abrem a busca) |
 | Tocar num campo de texto abre o teclado na tela. | **feito** (`mide-keyboard`) |
 | Girar em todas as orientações, inclusive retrato de cabeça para baixo. | **feito** (mapeamento do Chromebook corrigido em 2026-11-01) |
 
@@ -88,7 +90,8 @@ Legenda: **feito**, **parcial**, **falta**.
 5. ~~Deslizar na horizontal na borda de baixo troca de app.~~ (2026-11-01)
 6. ~~Pinçar com quatro ou cinco dedos vai ao launcher.~~ (2026-11-01)
 7. ~~Sem barra de título no modo tablet, com os controles da janela ao deslizar do meio de cima.~~ (2026-11-01)
-8. Conferir no aparelho tudo o que está marcado "feito" (a bateria não simula toque de vários dedos).
+8. ~~Rolar com um dedo nos apps do mide e deslizar para baixo no launcher para a busca.~~ (2026-11-01)
+9. Conferir no aparelho tudo o que está marcado "feito" (a bateria não simula toque de vários dedos).
 
 Cada item: testes de unidade quando der, seção da bateria (`tests/ui/`) quando o
 roteiro do compositor conseguir simular o toque, e o teste do usuário no Chromebook.
