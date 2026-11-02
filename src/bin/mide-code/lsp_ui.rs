@@ -406,6 +406,17 @@ impl Code {
                 *go = true;
             }
         }
+        if let Overlay::Problems { sel, go } = &mut self.overlay {
+            if ui.take_key(Key::Up) {
+                *sel = sel.saturating_sub(1);
+            }
+            if ui.take_key(Key::Down) {
+                *sel += 1;
+            }
+            if ui.take_key(Key::Enter) {
+                *go = true;
+            }
+        }
     }
 
     /// Os painéis por cima que são deste arquivo. Devolve se tratou o painel aberto.

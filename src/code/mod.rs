@@ -5,11 +5,15 @@
 
 pub mod config;
 pub mod edit;
+pub mod extensions;
+pub mod gitdiff;
 pub mod highlight;
 pub mod icons;
+pub mod jsonc;
 pub mod lang;
 pub mod lsp;
 pub mod panes;
 pub mod project;
 pub mod search;
 pub mod session;
+pub mod snippets;

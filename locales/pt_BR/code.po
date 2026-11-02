@@ -601,3 +601,21 @@ msgstr "Dicas em linha (tipos e nomes de parâmetro)"
 
 msgid "Format on save"
 msgstr "Formatar ao salvar"
+
+msgid "Type a command"
+msgstr "Digite um comando"
+
+msgid "No matching command."
+msgstr "Nenhum comando com esse nome."
+
+msgid "Problems"
+msgstr "Problemas"
+
+msgid "No problems in the open files."
+msgstr "Nenhum problema nos arquivos abertos."
+
+msgid "Problems…"
+msgstr "Problemas…"
+
+msgid "Command Palette…"
+msgstr "Paleta de comandos…"

@@ -2470,3 +2470,16 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - Dicas em linha (tipos, nomes de parâmetro), numa cápsula cinza que empurra o resto da linha; o cursor, a seleção e o clique pulam por cima (`TextAreaLook::inlays`, novo no mide-ui). Interruptor nas Preferências.
   - O cliente responde ao `workspace/configuration` por seção (base para as configurações do Zed, passo 2) e guarda o que o servidor sabe fazer (`caps`).
 - Testes: `cargo test` ok (novos: trocas aplicadas de trás para frente, `WorkspaceEdit` nos dois formatos, seção da configuração, busca aproximada, dicas em bytes); conferido por captura com um servidor de linguagem falso (assinatura, ações aplicadas sem quebrar a linha, renomear, lista de símbolos, dica `: int` e o caminho na barra).
+
+## v0.10.60: Code com paleta de comandos, problemas, dica do ponteiro, Git na margem, ícones nas abas e trechos (2026-11-02)
+
+- Continuação do passo 1 do escopo E14:
+  - Paleta de comandos (Ctrl+Shift+P, menu Visualizar): todos os comandos dos menus com o menu de origem e o atalho, com busca aproximada.
+  - Problemas (Ctrl+Shift+M, menu Navegar): erros e avisos de todas as abas abertas, erros primeiro; Enter ou clique vai até o lugar.
+  - Documentação ao parar o ponteiro 0,7 s sobre um símbolo (`textDocument/hover`), num painel de vidro perto do ponteiro; some ao mexer.
+  - Git na margem: linhas novas em verde, mudadas em azul e um triângulo vermelho onde linhas foram apagadas, comparando com o último commit (`git show HEAD:`) com um diff de linhas próprio (`mide::code::gitdiff`); marcas desenhadas pelo mide-ui (`Decorations::gutter`, novo).
+  - Ícones de arquivo nas abas (`ui.tab_bar_icons`, novo no mide-ui), os mesmos da árvore.
+  - Completar com busca aproximada (as letras em ordem, em qualquer lugar): os que começam com o digitado primeiro, na ordem sugerida pelo servidor (`sortText`, `filterText`).
+  - Trechos (snippets) do usuário em `~/.config/mide/code-snippets/<linguagem>.json` (e `snippets.json` para todas), no formato do VS Code e do Zed, com a descrição ao lado; relidos ao salvar um arquivo de trechos. As extensões (passo 3) entram pela mesma pasta `snippets/`.
+  - Bases para os passos 2 e 3: `mide::code::jsonc` (JSON com comentários e vírgulas sobrando, como o `settings.json` do Zed) e `mide::code::extensions` (manifesto `extension.toml` do Zed lido de `~/.local/share/mide/code/extensions/`).
+- Testes: `cargo test` ok (novos: JSON com comentários, trechos no formato do VS Code, manifesto do Zed, diff de linhas); conferido por captura (ícones nas abas, Git na margem, trecho do usuário com a descrição, paleta).

@@ -51,6 +51,10 @@ pub struct Completion {
     pub snippet: bool,
     /// O item como o servidor mandou (para o `completionItem/resolve`).
     pub raw: Option<Value>,
+    /// Ordem que o servidor sugere (`sortText`; sem ele, o rótulo).
+    pub sort: String,
+    /// Texto usado para filtrar (`filterText`; sem ele, o rótulo).
+    pub filter: String,
 }
 
 /// Texto de uma documentação do LSP (texto puro, `MarkupContent` ou lista).
@@ -647,6 +651,8 @@ impl Client {
                             .filter_map(|it| {
                                 let label = it["label"].as_str()?.to_string();
                                 let insert = it["insertText"].as_str().or_else(|| it["textEdit"]["newText"].as_str()).unwrap_or(&label).to_string();
+                                let sort = it["sortText"].as_str().unwrap_or(&label).to_string();
+                                let filter = it["filterText"].as_str().unwrap_or(&label).to_string();
                                 Some(Completion {
                                     detail: it["detail"].as_str().unwrap_or_default().to_string(),
                                     insert,
@@ -654,6 +660,8 @@ impl Client {
                                     kind: it["kind"].as_u64().unwrap_or(1).min(25) as u8,
                                     doc: markup_text(&it["documentation"]),
                                     snippet: it["insertTextFormat"].as_u64() == Some(2),
+                                    sort,
+                                    filter,
                                     raw: Some(it.clone()),
                                 })
                             })

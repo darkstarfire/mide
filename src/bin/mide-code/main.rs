@@ -27,6 +27,7 @@
 
 mod lsp_ui;
 mod term;
+mod tools;
 mod tree;
 
 use std::{
@@ -109,6 +110,10 @@ enum Overlay {
     Actions { actions: Vec<lsp::CodeAction>, sel: usize, go: bool },
     /// Ir para símbolo do arquivo (Ctrl+R).
     Symbols { query: String, items: Vec<lsp::Symbol>, sel: usize, focus: bool },
+    /// Paleta de comandos (Ctrl+Shift+P).
+    Palette { query: String, sel: usize, focus: bool, items: Vec<tools::PaletteItem> },
+    /// Problemas das abas abertas (Ctrl+Shift+M).
+    Problems { sel: usize, go: bool },
 }
 
 #[derive(Default)]
@@ -202,6 +207,8 @@ pub(crate) struct Code {
     eat_space: bool,
     /// Assinatura, renomear, formatar, ações, símbolos e dicas em linha.
     lsp: lsp_ui::LspUi,
+    /// Paleta, problemas, dica do ponteiro e Git na margem.
+    tools: tools::Tools,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -238,6 +245,7 @@ impl Code {
             completion: None,
             resolving: None,
             lsp: lsp_ui::LspUi::default(),
+            tools: tools::Tools::default(),
             hover: None,
             definition: None,
             message: None,
@@ -353,6 +361,11 @@ impl Code {
             Ok(()) => {
                 doc.text.modified = false;
                 tracing::info!("salvo: {}", path.display());
+                self.tools.git.remove(&path);
+                // Arquivo de trechos gravado: lê os trechos de novo.
+                if mide::code::snippets::user_dir().is_some_and(|d| path.starts_with(d)) {
+                    self.tools.snippets.clear();
+                }
                 let cmd = self.config.server_for(doc.lang.id).map(|s| s.command.clone());
                 if let Some(client) = cmd.and_then(|c| self.servers.get_mut(&c)) {
                     client.did_save(&path);
@@ -558,7 +571,9 @@ impl Code {
                         tracing::info!("completar: {} item(ns)", items.len());
                         // As do servidor primeiro; as palavras do arquivo que ele não trouxe, depois.
                         let local = std::mem::take(list);
+                        // Na ordem que o servidor sugere (`sortText`).
                         let mut merged = items;
+                        merged.sort_by(|a, b| a.sort.cmp(&b.sort));
                         for word in local {
                             if !merged.iter().any(|m| m.label.trim_start_matches('$') == word.label) {
                                 merged.push(word);
@@ -604,6 +619,7 @@ impl Code {
                         }
                     }
                 }
+                Event::Hover { id, ref text } if self.mouse_hover_answer(id, text) => {}
                 Event::Hover { id, text } => {
                     if self.hover.as_ref().is_some_and(|(want, _)| *want == id) {
                         self.hover = Some((id, text));
@@ -634,7 +650,20 @@ impl Code {
         let path = self.doc().path.clone();
         let start = Self::word_start(&text, cursor);
         let lang = self.doc().lang;
-        let local = local_completions(&text, start, cursor, lang.keywords.iter().map(|k| (*k, 14)).chain(lang.types.iter().map(|t| (*t, 7))));
+        let mut local = local_completions(&text, start, cursor, lang.keywords.iter().map(|k| (*k, 14)).chain(lang.types.iter().map(|t| (*t, 7))));
+        // Trechos do usuário e das extensões (`code-snippets/<linguagem>.json`) que
+        // começam com o que foi digitado.
+        let typed_word = text[start..cursor].to_lowercase();
+        if !typed_word.is_empty() {
+            let snippets = self.tools.snippets.entry(lang.id).or_insert_with(|| mide::code::snippets::for_language(lang.id));
+            let mut found: Vec<Completion> = snippets
+                .iter()
+                .filter(|s| s.prefix.to_lowercase().starts_with(&typed_word))
+                .map(|s| Completion { label: s.prefix.clone(), detail: s.name.clone(), insert: s.body.clone(), kind: 15, doc: s.description.clone(), snippet: true, ..Default::default() })
+                .collect();
+            found.append(&mut local);
+            local = found;
+        }
         // Sozinho, só com o mínimo de letras das Preferências (os gatilhos como `.` e
         // `->` abrem sem letra nenhuma).
         let typed = text[start..cursor].chars().count();
@@ -671,9 +700,22 @@ impl Code {
             self.completion = None;
             return;
         }
+        // Busca aproximada (as letras em ordem, em qualquer lugar), como no VS Code: os
+        // que começam com o que foi digitado primeiro, na ordem de antes; depois os
+        // outros, pela pontuação.
         let word = doc.text[*start..cursor].to_lowercase();
         if !word.is_empty() {
-            items.retain(|it| it.label.trim_start_matches('$').to_lowercase().starts_with(&word));
+            let key = |it: &Completion| if it.filter.is_empty() { it.label.clone() } else { it.filter.clone() }.trim_start_matches('$').to_lowercase();
+            let mut scored: Vec<(bool, i32, usize, Completion)> = std::mem::take(items)
+                .into_iter()
+                .enumerate()
+                .filter_map(|(k, it)| {
+                    let text = key(&it);
+                    lsp_ui::fuzzy_score(&text, &word).map(|sc| (text.starts_with(&word), sc, k, it))
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0).then(if a.0 { a.2.cmp(&b.2) } else { b.1.cmp(&a.1) }));
+            *items = scored.into_iter().map(|(_, _, _, it)| it).collect();
         }
         if items.is_empty() && answered {
             self.completion = None;
@@ -912,6 +954,7 @@ impl Code {
                 deco.trailing.push((d.start.0 as usize, d.message.clone(), c));
             }
         }
+        deco.gutter = self.git_marks(i);
         deco
     }
 
@@ -1020,6 +1063,11 @@ impl Code {
                 self.format_document(false);
             }
             "symbols" => self.request_symbols(true),
+            "palette" => {
+                let items = self.palette_items();
+                self.overlay = Overlay::Palette { query: String::new(), sel: 0, focus: true, items };
+            }
+            "problems" => self.overlay = Overlay::Problems { sel: 0, go: false },
             "signature" => self.request_signature(),
             "definition" => self.go_to_definition(),
             "hover" => self.show_hover(),
@@ -1141,6 +1189,12 @@ impl Code {
         if shift("d") {
             run.push("duplicate");
         }
+        if shift("p") {
+            run.push("palette");
+        }
+        if shift("m") {
+            run.push("problems");
+        }
         // Ctrl+I: dica do símbolo; Ctrl+Shift+I: formatar (como no VS Code).
         if plain("i") {
             run.push("hover");
@@ -1184,7 +1238,7 @@ impl Code {
 
     fn overlays(&mut self, ui: &mut Ui) {
         let esc = ui.input().key(Key::Escape);
-        if self.lsp_overlays(ui, esc) {
+        if self.lsp_overlays(ui, esc) || self.tool_overlays(ui, esc) {
             return;
         }
         match &mut self.overlay {
@@ -1946,7 +2000,10 @@ impl App for Code {
             // Abas (com mais de um arquivo); apertar numa começa um arrasto possível.
             if self.docs.len() > 1 {
                 let titles: Vec<String> = self.docs.iter().map(Doc::title).collect();
-                let action = ui.tab_bar(&titles, self.cur);
+                // Ícone de cada arquivo na aba, como na árvore do projeto.
+                let dark = ui.theme().dark;
+                let icons: Vec<String> = self.docs.iter().map(|d| d.path.as_ref().and_then(|p| mide::code::icons::path_icon(p, false, false, !dark)).unwrap_or_default()).collect();
+                let action = ui.tab_bar_icons(&titles, &icons, self.cur);
                 let bar = ui.last_rect();
                 let track_w = bar.2 - 28.0 - 8.0;
                 let tw = (track_w - 4.0) / titles.len() as f32;
@@ -2131,6 +2188,7 @@ impl App for Code {
         if self.completion.is_none() {
             self.signature_popup(ui, focused_area);
         }
+        self.mouse_hover(ui, focused_area);
         self.completion_popup(ui, focused_area);
         // Terminal integrado.
         if term_h > 0.0 {
@@ -2208,6 +2266,7 @@ impl App for Code {
         // O servidor de linguagem acompanha o texto.
         self.sync_lsp();
         self.refresh_lsp_extras();
+        self.refresh_git();
         if self.last_edit.is_some_and(|t| t.elapsed() < Duration::from_millis(400)) {
             ui.wake_after(Duration::from_millis(300));
         }
@@ -2279,6 +2338,8 @@ impl App for Code {
             MenuGroup {
                 title: tr!("View").into(),
                 items: vec![
+                    MenuItem::action("palette", &tr!("Command Palette…")).shortcut("Ctrl+Shift+P"),
+                    MenuItem::Separator,
                     MenuItem::action("drawer", &tr!("File Drawer")).checked(self.config.drawer),
                     MenuItem::action("line-numbers", &tr!("Line Numbers")).checked(self.config.line_numbers),
                     MenuItem::action("terminal", &tr!("Terminal")).shortcut("Ctrl+J").checked(self.terminal_open),
@@ -2303,6 +2364,7 @@ impl App for Code {
                     MenuItem::action("definition", &tr!("Go to Definition (or Ctrl+Click)")).shortcut("F12"),
                     MenuItem::action("hover", &tr!("Show Symbol Info")).shortcut("Ctrl+I"),
                     MenuItem::action("symbols", &tr!("Go to Symbol…")).shortcut("Ctrl+R"),
+                    MenuItem::action("problems", &tr!("Problems…")).shortcut("Ctrl+Shift+M"),
                     MenuItem::action("next-problem", &tr!("Next Problem")).shortcut("F8"),
                     MenuItem::action("prev-problem", &tr!("Previous Problem")).shortcut("Shift+F8"),
                 ],
