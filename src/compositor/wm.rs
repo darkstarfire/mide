@@ -94,12 +94,23 @@ impl State {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
-        if keyboard.current_focus().as_ref() != Some(gone) {
+        // A janela que some tinha o foco se o teclado está nela, ou se ele já ficou sem
+        // dono (o app destrói a janela e o foco pode ter saído antes deste aviso, ou
+        // estar numa superfície morta). Foco numa camada (menu da barra, launcher) fica.
+        use smithay::reexports::wayland_server::Resource;
+        let focus = keyboard.current_focus();
+        let had_focus = focus.as_ref().is_none_or(|f| f == gone || !f.is_alive());
+        if !had_focus {
             return;
         }
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         match self.focus_successor(gone) {
-            Some(next) => crate::input::focus_window(self, &next, serial),
+            Some(next) => {
+                // A próxima da pilha vem para a frente com o foco, como no macOS.
+                self.space.raise_element(&next, true);
+                crate::input::focus_window(self, &next, serial);
+                tracing::info!("foco: passa para a próxima janela da pilha ({})", crate::render::window_title(&next));
+            }
             None => keyboard.set_focus(self, None, serial),
         }
     }

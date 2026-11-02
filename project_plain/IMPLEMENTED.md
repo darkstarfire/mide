@@ -2407,3 +2407,8 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Relato do usuário: com Ctrl+roda, a imagem do editor de capturas esticava e perdia a proporção. Causa: a imagem mostrada era guardada pelo tamanho da área na tela, e não pelo pedaço da captura que aparece; com o zoom mudando, ela não era refeita e era esticada para caber.
 - Agora a imagem mostrada é refeita a partir do pedaço visível da captura (`view_image`): com aumento, desenho bilinear com a mesma escala nos dois eixos; com redução forte, recorte e redução de qualidade. O quadrado vermelho de 100x100 do teste novo (`zoom_mantem_a_proporcao`) continua quadrado do zoom 1 ao 4,5 (até 300% e além).
 - Testes: `cargo test --bin mide-screenshot-editor` ok (10/10).
+
+## v0.10.52: foco volta à janela anterior ao fechar (2026-11-02)
+
+- Pedido do usuário: ao fechar a janela em foco, o foco tem de ir para a janela que estava antes dela. A pilha de foco da v0.10.49 só agia se o teclado ainda estivesse na janela fechada; quando o cliente já tinha saído (foco vazio ou numa superfície morta), nada recebia o foco. Agora `wm::move_focus_from` também age nesses casos, traz a próxima janela da pilha para a frente e registra "foco: passa para a próxima janela da pilha (título)".
+- Teste novo na seção `05-varias-janelas`: clicar no Terminal e na Calculadora e fechar a Calculadora com Alt+F4 devolve o foco ao Terminal.

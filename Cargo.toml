@@ -1,6 +1,6 @@
 [package]
 name = "mide"
-version = "0.10.51"
+version = "0.10.52"
 edition = "2024"
 default-run = "mide"
 
