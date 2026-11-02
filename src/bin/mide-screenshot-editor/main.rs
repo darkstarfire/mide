@@ -930,7 +930,13 @@ impl Editor {
         // mudam.
         let k = mide::ui::draw::scale();
         let (pw, ph) = (((map.display.2 * k).round() as u32).max(1), ((map.display.3 * k).round() as u32).max(1));
-        let content = (std::rc::Rc::as_ptr(&doc.state.base) as usize, [source.0 as i32, source.1 as i32, source.2 as i32, source.3 as i32]);
+        // A chave é o pedaço da imagem que aparece (com o zoom, só uma parte dela), em
+        // oitavos de pixel. Com a parte inteira na chave, o zoom não refazia a imagem e,
+        // quando a área mostrada mudava de forma, a imagem inteira era esticada para
+        // ela (perdendo a proporção).
+        let vs = map.source;
+        let q = |v: f32| (v * 8.0).round() as i32;
+        let content = (std::rc::Rc::as_ptr(&doc.state.base) as usize, [q(vs.0), q(vs.1), q(vs.2), q(vs.3)]);
         let now = std::time::Instant::now();
         let stretched = self.view.as_ref().filter(|v| v.content == content && (v.image.width(), v.image.height()) != (pw, ph)).map(|v| stretch(&v.image, pw, ph));
         if let Some(image) = stretched {
@@ -939,12 +945,7 @@ impl Editor {
         let rebuild = self.view.as_ref().is_none_or(|v| v.content != content || (!v.exact && now.duration_since(v.at) >= RESIZE_SETTLE));
         if rebuild {
             let base = doc.state.base.as_ref();
-            let whole = tiny_skia::IntRect::from_xywh(0, 0, base.width(), base.height());
-            let part = tiny_skia::IntRect::from_xywh(content.1[0], content.1[1], source.2 as u32, source.3 as u32);
-            let image = match part.filter(|p| Some(*p) != whole).and_then(|r| base.clone_rect(r)) {
-                Some(part) => shrink(&part, pw, ph),
-                None => shrink(base, pw, ph),
-            };
+            let image = view_image(base, vs, pw, ph);
             self.view = Some(ViewCache { content, image, exact: true, at: now });
         }
         if let Some(v) = self.view.as_ref().filter(|v| !v.exact) {
@@ -1503,6 +1504,30 @@ pub fn shrink(src: &Pixmap, w: u32, h: u32) -> Pixmap {
     }
 }
 
+/// O pedaço `vs` de `base` (em pixels da imagem, com frações) em `w`×`h` pixels, na
+/// mesma escala nos dois sentidos. Ampliando ou reduzindo pouco, desenha direto com o
+/// filtro bilinear; reduzindo muito, corta o pedaço e reduz por metades (`shrink`), que
+/// não serrilha.
+fn view_image(base: &Pixmap, vs: RectF, w: u32, h: u32) -> Pixmap {
+    let (sx, sy) = (w as f32 / vs.2.max(0.01), h as f32 / vs.3.max(0.01));
+    if sx >= 0.5 && sy >= 0.5 && let Some(mut out) = Pixmap::new(w.max(1), h.max(1)) {
+        let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
+        out.draw_pixmap(0, 0, base.as_ref(), &paint, Transform::from_translate(-vs.0, -vs.1).post_scale(sx, sy), None);
+        return out;
+    }
+    let (bw, bh) = (base.width() as f32, base.height() as f32);
+    let x0 = vs.0.floor().clamp(0.0, bw - 1.0);
+    let y0 = vs.1.floor().clamp(0.0, bh - 1.0);
+    let x1 = (vs.0 + vs.2).ceil().clamp(x0 + 1.0, bw);
+    let y1 = (vs.1 + vs.3).ceil().clamp(y0 + 1.0, bh);
+    let whole = tiny_skia::IntRect::from_xywh(0, 0, base.width(), base.height());
+    let part = tiny_skia::IntRect::from_xywh(x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32);
+    match part.filter(|p| Some(*p) != whole).and_then(|r| base.clone_rect(r)) {
+        Some(part) => shrink(&part, w, h),
+        None => shrink(base, w, h),
+    }
+}
+
 /// A vista com zoom: em 1, a imagem inteira cabendo em `area` (escala `fit_s`); acima
 /// disso, só o pedaço visível de `whole`, em volta de `center` (que fica preso para a
 /// vista não passar da imagem).
@@ -1620,6 +1645,36 @@ mod tests {
         assert!((back.0 - 100.0).abs() < 0.01 && back.1.abs() < 0.01);
         let r = m.rect_to_screen((100.0, 0.0, 1366.0, 768.0));
         assert!((r.2 - m.display.2).abs() < 0.01);
+    }
+
+    #[test]
+    fn zoom_mantem_a_proporcao() {
+        // Imagem com um quadrado vermelho de 100x100 no meio (683, 384); a área é mais
+        // larga que alta, então a altura encosta na borda antes da largura.
+        let mut base = Pixmap::new(1366, 768).unwrap();
+        base.fill(Color::WHITE);
+        let red = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(Color::from_rgba8(255, 0, 0, 255)), ..Default::default() };
+        base.fill_rect(Rect::from_xywh(633.0, 334.0, 100.0, 100.0).unwrap(), &red, Transform::identity(), None);
+        let area = (0.0, 0.0, 1000.0, 500.0);
+        let whole = (0.0, 0.0, 1366.0, 768.0);
+        let fit = Mapping::fit(area, whole, 1.0);
+        for zoom in [1.0, 1.5, 2.0, 3.0, 4.5] {
+            let mut center = None;
+            let map = zoomed(area, whole, fit.s, zoom, &mut center);
+            let (w, h) = (map.display.2.round() as u32, map.display.3.round() as u32);
+            let view = view_image(&base, map.source, w, h);
+            // A mesma escala nos dois sentidos.
+            let (sx, sy) = (w as f32 / map.source.2, h as f32 / map.source.3);
+            assert!((sx - sy).abs() / sx < 0.01, "zoom {zoom}: escalas {sx} e {sy}");
+            // O quadrado continua quadrado na tela, do tamanho certo.
+            let red_px = |x: u32, y: u32| view.pixel(x, y).is_some_and(|p| p.red() > 200 && p.green() < 60);
+            let row = (h / 2).min(h - 1);
+            let col = (w / 2).min(w - 1);
+            let rw = (0..w).filter(|&x| red_px(x, row)).count() as f32;
+            let rh = (0..h).filter(|&y| red_px(col, y)).count() as f32;
+            let want = 100.0 * map.s;
+            assert!((rw - want).abs() <= 3.0 && (rh - want).abs() <= 3.0, "zoom {zoom}: quadrado {rw}x{rh}, esperado {want}");
+        }
     }
 
     #[test]
