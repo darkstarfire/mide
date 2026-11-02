@@ -619,3 +619,6 @@ msgstr "Problemas…"
 
 msgid "Command Palette…"
 msgstr "Paleta de comandos…"
+
+msgid "Use Zed settings (language servers and keymap)"
+msgstr "Usar as configurações do Zed (servidores de linguagem e atalhos)"

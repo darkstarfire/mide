@@ -419,7 +419,13 @@ pub fn to_offset(text: &str, line: u32, col: u32, utf8: bool) -> usize {
 impl Client {
     /// Roda o servidor (`command` com `args`) na pasta do projeto e manda o `initialize`.
     pub fn start(command: &str, args: &[String], root: &Path) -> std::io::Result<Self> {
-        let mut child = Command::new(command).args(args).current_dir(root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+        Self::start_with(command, args, root, &[], Value::Null, Value::Null)
+    }
+
+    /// Como `start`, com o ambiente, as `initializationOptions` e as configurações
+    /// (respondidas no `workspace/configuration` e mandadas depois do `initialized`).
+    pub fn start_with(command: &str, args: &[String], root: &Path, env: &[(String, String)], init_options: Value, settings: Value) -> std::io::Result<Self> {
+        let mut child = Command::new(command).args(args).envs(env.iter().map(|(k, v)| (k, v))).current_dir(root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("sem entrada"))?;
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("sem saída"))?;
         let (tx, rx) = mpsc::channel();
@@ -431,12 +437,13 @@ impl Client {
                 }
             }
         });
-        let mut client = Self { child, stdin, rx, next_id: 1, pending: HashMap::new(), utf8: false, ready: false, queued: Vec::new(), name: command.to_string(), caps: Value::Null, settings: Value::Null };
+        let mut client = Self { child, stdin, rx, next_id: 1, pending: HashMap::new(), utf8: false, ready: false, queued: Vec::new(), name: command.to_string(), caps: Value::Null, settings };
         let params = json!({
             "processId": std::process::id(),
             "rootUri": uri(root),
             "workspaceFolders": [{ "uri": uri(root), "name": root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() }],
             "clientInfo": { "name": "mide-code" },
+            "initializationOptions": init_options,
             "capabilities": {
                 "general": { "positionEncodings": ["utf-8", "utf-16"] },
                 "textDocument": {
@@ -637,6 +644,11 @@ impl Client {
                 self.caps = result["capabilities"].clone();
                 self.ready = true;
                 let _ = self.send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
+                // As configurações do usuário (servidores que não perguntam por elas).
+                if !self.settings.is_null() {
+                    let settings = self.settings.clone();
+                    let _ = self.send(&json!({ "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration", "params": { "settings": settings } }));
+                }
                 for queued in std::mem::take(&mut self.queued) {
                     let _ = self.send(&queued);
                 }

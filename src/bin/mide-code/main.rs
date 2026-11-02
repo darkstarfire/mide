@@ -209,6 +209,8 @@ pub(crate) struct Code {
     lsp: lsp_ui::LspUi,
     /// Paleta, problemas, dica do ponteiro e Git na margem.
     tools: tools::Tools,
+    /// Atalhos do `keymap.json` do Zed (com as configurações do Zed ligadas).
+    zed_keys: Vec<mide::code::zed::Binding>,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -231,6 +233,7 @@ fn comment_prefix(lang: &Language) -> &str {
 
 impl Code {
     fn new(args: Vec<PathBuf>) -> Self {
+        let zed_keys = if Config::load().use_zed_settings { mide::code::zed::keymap() } else { Vec::new() };
         let mut app = Self {
             docs: Vec::new(),
             cur: 0,
@@ -246,6 +249,7 @@ impl Code {
             resolving: None,
             lsp: lsp_ui::LspUi::default(),
             tools: tools::Tools::default(),
+            zed_keys,
             hover: None,
             definition: None,
             message: None,
@@ -494,7 +498,7 @@ impl Code {
                 return None;
             }
             let root = self.root.clone().or_else(|| self.doc().path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf))).unwrap_or_else(mide::places::home_dir);
-            match Client::start(&server.command, &server.args, &root) {
+            match Client::start_with(&server.command, &server.args, &root, &server.env, server.init_options.clone(), server.settings.clone()) {
                 Ok(client) => {
                     tracing::info!("servidor de linguagem: {} ({})", server.command, root.display());
                     self.servers.insert(server.command.clone(), client);
@@ -1225,6 +1229,8 @@ impl Code {
                 _ => {}
             }
         }
+        // Atalhos do `keymap.json` do Zed (rodam junto com os do Code).
+        let zed: Vec<String> = self.zed_keys.iter().filter(|b| input.presses.iter().any(|p| p.ctrl == b.ctrl && p.shift == b.shift && p.alt == b.alt && key_matches(p.keysym, &b.key))).map(|b| b.action.clone()).collect();
         // Ctrl+Tab e Ctrl+Shift+Tab trocam de aba.
         if input.key_events().iter().any(|(k, ctrl, _)| *k == Key::Tab && *ctrl) && self.docs.len() > 1 {
             let back = input.key_events().iter().any(|(k, ctrl, sh)| *k == Key::Tab && *ctrl && *sh);
@@ -1233,6 +1239,9 @@ impl Code {
         }
         for action in run {
             self.command(action, ui);
+        }
+        for action in zed {
+            self.command(&action, ui);
         }
     }
 
@@ -1410,6 +1419,12 @@ impl Code {
                 ui.switch(&tr!("Inlay hints (types and parameter names)"), &mut c.inlay_hints);
                 ui.switch(&tr!("Format on save"), &mut c.format_on_save);
             });
+            // Quem vem do Zed: servidores (`lsp`, `languages`) e atalhos dele valem.
+            if mide::code::zed::load().is_some() {
+                ui.card(|ui| {
+                    ui.switch(&tr!("Use Zed settings (language servers and keymap)"), &mut c.use_zed_settings);
+                });
+            }
             // Servidores: um resumo (a lista fica no arquivo, editado no próprio Code).
             let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
             let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
@@ -2409,6 +2424,37 @@ fn doc_text(doc: &str) -> String {
         out.pop();
     }
     out.join("\n")
+}
+
+/// A tecla `keysym` é a do nome do `keymap.json` do Zed ("p", "f2", "enter", ".")?
+fn key_matches(keysym: u32, key: &str) -> bool {
+    let named = match key {
+        "enter" => Some(0xff0d),
+        "tab" => Some(0xff09),
+        "escape" => Some(0xff1b),
+        "space" => Some(0x20),
+        "backspace" => Some(0xff08),
+        "delete" => Some(0xffff),
+        "up" => Some(0xff52),
+        "down" => Some(0xff54),
+        "left" => Some(0xff51),
+        "right" => Some(0xff53),
+        "home" => Some(0xff50),
+        "end" => Some(0xff57),
+        "pageup" => Some(0xff55),
+        "pagedown" => Some(0xff56),
+        k if k.len() > 1 && k.starts_with('f') => k[1..].parse::<u32>().ok().filter(|n| (1..=24).contains(n)).map(|n| 0xffbe + n - 1),
+        _ => None,
+    };
+    if let Some(code) = named {
+        return keysym == code || (code == 0xff09 && keysym == 0xfe20);
+    }
+    // Letras e sinais: o keysym é o próprio caractere (maiúscula com Shift).
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => char::from_u32(keysym).is_some_and(|k| k.to_lowercase().eq(c.to_lowercase())),
+        _ => false,
+    }
 }
 
 fn auto_complete_trigger(text: &str, cursor: usize) -> bool {

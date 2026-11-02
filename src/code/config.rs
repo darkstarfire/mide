@@ -22,6 +22,30 @@ pub struct Server {
     pub args: Vec<String>,
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// Configurações mandadas ao servidor (`workspace/configuration`), como o
+    /// `lsp.<servidor>.settings` do Zed.
+    #[serde(skip)]
+    pub settings: serde_json::Value,
+    /// `initializationOptions` do `initialize` (o `initialization_options` do Zed).
+    #[serde(skip)]
+    pub init_options: serde_json::Value,
+    /// Variáveis de ambiente do servidor (o `binary.env` do Zed).
+    #[serde(skip)]
+    pub env: Vec<(String, String)>,
+}
+
+impl Server {
+    pub fn new(languages: &[&str], command: &str, args: &[&str]) -> Self {
+        Self {
+            languages: languages.iter().map(|s| s.to_string()).collect(),
+            command: command.into(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            enabled: true,
+            settings: serde_json::Value::Null,
+            init_options: serde_json::Value::Null,
+            env: Vec::new(),
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -61,6 +85,9 @@ pub struct Config {
     pub inlay_hints: bool,
     /// Formatar pelo servidor antes de gravar.
     pub format_on_save: bool,
+    /// Usar as configurações do Zed (`~/.config/zed/settings.json`): servidores de
+    /// linguagem e, na primeira vez, fonte, recuo e as opções do editor.
+    pub use_zed_settings: bool,
 }
 
 /// O arquivo dos servidores: uma tabela `[[server]]` para cada um.
@@ -93,13 +120,14 @@ impl Default for Config {
             complete_docs: true,
             inlay_hints: true,
             format_on_save: false,
+            use_zed_settings: true,
         }
     }
 }
 
 /// Servidores conhecidos (cada um só roda se estiver instalado).
 pub fn default_servers() -> Vec<Server> {
-    let server = |langs: &[&str], command: &str, args: &[&str]| Server { languages: langs.iter().map(|s| s.to_string()).collect(), command: command.into(), args: args.iter().map(|s| s.to_string()).collect(), enabled: true };
+    let server = Server::new;
     vec![
         server(&["rust"], "rust-analyzer", &[]),
         server(&["go"], "gopls", &[]),
@@ -162,6 +190,12 @@ impl Config {
             }
         }
         config.drawer_width = config.drawer_width.clamp(DRAWER_MIN, DRAWER_MAX);
+        // Quem vem do Zed não configura de novo: as configurações dele valem (as do
+        // editor só antes de existir o `code.toml` do mide).
+        if config.use_zed_settings && let Some(zed) = crate::code::zed::load() {
+            let first_run = Self::path().is_none_or(|p| !p.exists());
+            crate::code::zed::apply(&mut config, &zed, first_run);
+        }
         config
     }
 
@@ -283,7 +317,7 @@ mod tests {
 
     #[test]
     fn arquivo_dos_servidores() {
-        let servers = vec![Server { languages: vec!["rust".into()], command: "/tmp/falso.py".into(), args: vec!["--stdio".into()], enabled: true }];
+        let servers = vec![Server::new(&["rust"], "/tmp/falso.py", &["--stdio"])];
         let text = servers_text(&servers);
         assert!(text.starts_with("# Servidores de linguagem"));
         assert_eq!(parse_servers(&text).unwrap(), servers);

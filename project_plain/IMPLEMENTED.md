@@ -2483,3 +2483,12 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - Trechos (snippets) do usuário em `~/.config/mide/code-snippets/<linguagem>.json` (e `snippets.json` para todas), no formato do VS Code e do Zed, com a descrição ao lado; relidos ao salvar um arquivo de trechos. As extensões (passo 3) entram pela mesma pasta `snippets/`.
   - Bases para os passos 2 e 3: `mide::code::jsonc` (JSON com comentários e vírgulas sobrando, como o `settings.json` do Zed) e `mide::code::extensions` (manifesto `extension.toml` do Zed lido de `~/.local/share/mide/code/extensions/`).
 - Testes: `cargo test` ok (novos: JSON com comentários, trechos no formato do VS Code, manifesto do Zed, diff de linhas); conferido por captura (ícones nas abas, Git na margem, trecho do usuário com a descrição, paleta).
+
+## v0.10.61: Code lê as configurações do Zed (2026-11-02)
+
+- Passo 2 do escopo E14: quem vem do Zed não configura de novo. O Code lê `~/.config/zed/settings.json` (JSON com comentários, `mide::code::zed`), com o interruptor "Usar as configurações do Zed" nas Preferências (aparece quando o arquivo existe; ligado por padrão):
+  - `lsp.<servidor>`: caminho do programa e argumentos (`binary.path`, `binary.arguments`), ambiente (`binary.env`), `initialization_options` (mandadas no `initialize`) e `settings` (respondidas no `workspace/configuration` por seção e mandadas no `workspace/didChangeConfiguration`). Servidor que o mide não conhece entra com o caminho dado, para as linguagens que o `languages` liga a ele. Nomes do Zed com outro programa no PATH são traduzidos (`json-language-server` → `vscode-json-language-server`, `pyright` → `pyright-langserver`...).
+  - `languages.<Nome>.language_servers`: a ordem de preferência por linguagem; `!nome` desliga o servidor naquela linguagem.
+  - Na primeira vez (antes de existir o `code.toml` do mide): fonte e tamanho do editor, `tab_size`, `hard_tabs`, `format_on_save`, `inlay_hints.enabled`, `show_completions_on_input`, `show_completion_documentation`, números de linha e o modo claro/escuro.
+  - `keymap.json`: os atalhos de uma tecla do contexto do editor (ou geral) cujas ações o Code tem (`editor::Rename`, `command_palette::Toggle`, `editor::Format`, `file_finder::Toggle`, `outline::Toggle`, `pane::SplitRight`... mais de 30) valem no Code.
+- Testes: `cargo test` ok (novos: servidores, ordem por linguagem e editor vindos do Zed; atalhos do `keymap.json`); conferido com um cenário em que o `intelephense` do `settings.json` aponta para o servidor de teste e o completar responde.
