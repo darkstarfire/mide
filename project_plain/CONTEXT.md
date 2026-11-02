@@ -332,3 +332,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - Falta o usuário conferir: tudo isso na sessão; o teclado na tela no login e no bloqueio pede `sudo data/mide-login-install` de novo.
 - v0.10.55: visão das janelas pela tela de toque (subir e parar; quatro dedos) e voltar do Android pelas bordas laterais; falta o usuário conferir.
 - v0.10.56: menos consumo de bateria (barra lendo o estado a cada 10 s sem painel, teclado na tela e apps do mide-ui sem despertares à toa, cursor sem redesenho contínuo). Pendente: o usuário dizer o que para de funcionar ao voltar do modo tablet.
+- v0.10.57: ponteiro escondido de verdade ao tocar a tela (os apps não trazem a seta de volta até o mouse mexer). Desligamento com 38%: limite de tensão do `cros-ec-battery` (fora do mide), ajuste sugerido ao usuário.

@@ -296,7 +296,10 @@ pub fn down(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
 fn start(state: &mut State, slot: i32, pos: Point<f64, Logical>, time: u32) {
     // Tocar a tela esconde o ponteiro até o mouse ou o touchpad se mexer.
     if state.touch.contacts.is_empty() {
-        state.cursor_status = smithay::input::pointer::CursorImageStatus::Hidden;
+        let shown = std::mem::replace(&mut state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden);
+        if state.touch_hid_cursor.is_none() {
+            state.touch_hid_cursor = Some(shown);
+        }
         state.wake();
     }
     if let Some((surface, origin)) = input::touch_app_target(state, pos) {

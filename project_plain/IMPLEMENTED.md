@@ -2442,3 +2442,9 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - Teclado na tela: o relógio de 16 ms só roda enquanto o teclado desliza ao aparecer (antes, sempre, mesmo escondido).
 - mide-ui `71e5592`: relógio do app sob demanda (16 ms animando; parado, no próximo quadro agendado ou 1 vez por segundo, em vez de 25) e campos em foco pedindo quadro só nas trocas do cursor (`FocusAnim::next_change`, `Ui::keep_focus_anim`); antes um campo em foco redesenhava o app a cada 16 ms, inclusive na tela de bloqueio.
 - Testes: `cargo test` do mide e do mide-ui ok; clippy sem aviso nas linhas mudadas. Falta o usuário comparar a estimativa da bateria. Efeito: com os painéis fechados, Wi-Fi/Bluetooth mudados por fora aparecem na barra em até 10 s.
+
+## v0.10.57: ponteiro escondido de verdade no toque (2026-11-02)
+
+- Pedido do usuário: no modo tablet, a seta do mouse aparecia ao tocar a tela. O toque escondia o ponteiro, mas os apps que recebem o toque como ponteiro (partes do mide e apps do mide-ui) pediam o cursor de novo e a seta voltava. Agora, depois de um toque, os pedidos de cursor dos apps ficam guardados (`State::touch_hid_cursor`) e só valem quando o mouse ou o touchpad se mexem (`input::show_pointer`).
+- Desligamento com 38% no Chromebook: não foi o mide. O serviço `cros-ec-battery` (kit chromebook-linux-fixes, fora do projeto) desliga com tensão abaixo de `POWEROFF_MV_PER_CELL` (3400 mV × 3 células = 10,2 V); com o notebook gastando ~7 W, a 38% a tensão cai até aí. Sugerido ao usuário baixar para 3200 em `/etc/default/chromebook-linux-fixes`.
+- Testes: `cargo test` ok, clippy sem aviso nas linhas mudadas. Falta o usuário conferir no aparelho.

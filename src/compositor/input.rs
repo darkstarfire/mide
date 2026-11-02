@@ -708,7 +708,17 @@ pub(crate) fn spawn(command: &str) {
 /// Mouse ou touchpad se mexeu: o ponteiro escondido pelo toque volta (como no iPad, o
 /// cursor some ao tocar a tela e volta ao mexer o mouse).
 pub fn show_pointer(state: &mut State) {
-    if matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
+    use smithay::reexports::wayland_server::Resource;
+    // Volta o último cursor que o app pediu enquanto o dedo estava na tela.
+    if let Some(wanted) = state.touch_hid_cursor.take() {
+        state.cursor_status = match wanted {
+            smithay::input::pointer::CursorImageStatus::Hidden => smithay::input::pointer::CursorImageStatus::default_named(),
+            // A superfície do cursor pode ter sumido nesse meio tempo.
+            smithay::input::pointer::CursorImageStatus::Surface(s) if !s.is_alive() => smithay::input::pointer::CursorImageStatus::default_named(),
+            other => other,
+        };
+        state.wake();
+    } else if matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
         state.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
         state.wake();
     }

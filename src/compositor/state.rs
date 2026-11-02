@@ -297,6 +297,10 @@ pub struct State {
     pub appearing: Vec<(WlSurface, Instant)>,
     /// Cursor pedido pelo app sob o ponteiro (desenhado pelo mide no DRM).
     pub cursor_status: smithay::input::pointer::CursorImageStatus,
+    /// O toque escondeu o ponteiro: os pedidos de cursor dos apps (que recebem o toque
+    /// como ponteiro) ficam guardados aqui e só voltam quando o mouse ou o touchpad se
+    /// mexem, como no iPad. Antes, o app pedia a seta de volta e ela reaparecia no dedo.
+    pub touch_hid_cursor: Option<smithay::input::pointer::CursorImageStatus>,
     /// Ponteiro agitado (cursor crescendo para ser achado).
     pub shake: crate::shake::Shake,
     /// Ícone de um arrasto entre apps (o app que arrasta manda a superfície) e o
@@ -542,6 +546,7 @@ impl State {
             input_waker: None,
             shell_output: None,
             cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
+            touch_hid_cursor: None,
             shake: Default::default(),
             dnd_icon: None,
             dnd_source: None,
@@ -1029,6 +1034,10 @@ impl SeatHandler for State {
         _seat: &Seat<Self>,
         image: smithay::input::pointer::CursorImageStatus,
     ) {
+        if self.touch_hid_cursor.is_some() {
+            self.touch_hid_cursor = Some(image);
+            return;
+        }
         self.cursor_status = image;
         self.wake();
     }
