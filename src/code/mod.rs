@@ -6,6 +6,7 @@
 pub mod config;
 pub mod edit;
 pub mod highlight;
+pub mod icons;
 pub mod lang;
 pub mod lsp;
 pub mod panes;

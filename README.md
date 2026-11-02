@@ -121,3 +121,8 @@ Os ícones vêm do [mide-icons](https://github.com/fabioaacarneiro/mide-icons), 
 do [WhiteSur icon theme](https://github.com/vinceliuice/WhiteSur-icon-theme) (de Vince
 Liuice, GPL-3.0) sem o logo da Apple e com desenhos próprios no lugar dos que recriavam
 ícones de apps da Apple. O `data/mide-update` instala o tema.
+
+Os ícones de arquivos e pastas do Code (`mide-code`) vêm do
+[Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
+(Material Extensions, licença MIT, em `data/code-icons/LICENSE`), copiados por
+`data/code-icons/gen.py`. Os selos dos tipos de sugestão do completar são desenho próprio.

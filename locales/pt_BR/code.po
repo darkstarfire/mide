@@ -463,3 +463,90 @@ msgstr "servidor {n} ({command}) sem \"languages\""
 
 msgid "keyword"
 msgstr "palavra-chave"
+
+msgid "Word"
+msgstr "Palavra"
+
+msgid "Text"
+msgstr "Texto"
+
+msgid "Method"
+msgstr "Método"
+
+msgid "Function"
+msgstr "Função"
+
+msgid "Constructor"
+msgstr "Construtor"
+
+msgid "Field"
+msgstr "Campo"
+
+msgid "Variable"
+msgstr "Variável"
+
+msgid "Class"
+msgstr "Classe"
+
+msgid "Interface"
+msgstr "Interface"
+
+msgid "Module"
+msgstr "Módulo"
+
+msgid "Property"
+msgstr "Propriedade"
+
+msgid "Unit"
+msgstr "Unidade"
+
+msgid "Value"
+msgstr "Valor"
+
+msgid "Enum"
+msgstr "Enumeração"
+
+msgid "Keyword"
+msgstr "Palavra-chave"
+
+msgid "Snippet"
+msgstr "Trecho"
+
+msgid "Color"
+msgstr "Cor"
+
+msgid "Reference"
+msgstr "Referência"
+
+msgid "Folder"
+msgstr "Pasta"
+
+msgid "Enum Member"
+msgstr "Membro da enumeração"
+
+msgid "Constant"
+msgstr "Constante"
+
+msgid "Struct"
+msgstr "Estrutura"
+
+msgid "Event"
+msgstr "Evento"
+
+msgid "Operator"
+msgstr "Operador"
+
+msgid "Type Parameter"
+msgstr "Parâmetro de tipo"
+
+msgid "type"
+msgstr "tipo"
+
+msgid "Suggest completions while typing"
+msgstr "Sugerir ao digitar"
+
+msgid "Letters before suggesting"
+msgstr "Letras antes de sugerir"
+
+msgid "Show documentation next to the suggestion"
+msgstr "Mostrar a documentação ao lado da sugestão"

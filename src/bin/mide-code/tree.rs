@@ -102,6 +102,7 @@ impl Code {
         let mut clicked: Option<(PathBuf, bool)> = None;
         let mut chosen: Option<TreeAction> = None;
         let mut pressed: Option<PathBuf> = None;
+        let dark = ui.theme().dark;
         let root_name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| root.to_string_lossy().into_owned());
         ui.at(0.0, top, width, |ui| {
             ui.scroll_area_padded(height, 8.0, |ui| {
@@ -114,11 +115,15 @@ impl Code {
                 ui.space(2.0);
                 for (depth, path, is_dir) in &rows {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    let icon = if *is_dir {
-                        "folder".to_string()
-                    } else {
-                        mide::places::icon_name_for(&mide::places::Item { path: path.clone(), name: name.clone(), is_dir: false, modified: std::time::SystemTime::UNIX_EPOCH }).to_string()
-                    };
+                    // Ícones do Material Icon Theme (um por linguagem e por pasta conhecida),
+                    // com o do tema do sistema de reserva.
+                    let icon = mide::code::icons::path_icon(path, *is_dir, self.expanded.contains(path), !dark).unwrap_or_else(|| {
+                        if *is_dir {
+                            "folder".to_string()
+                        } else {
+                            mide::places::icon_name_for(&mide::places::Item { path: path.clone(), name: name.clone(), is_dir: false, modified: std::time::SystemTime::UNIX_EPOCH }).to_string()
+                        }
+                    });
                     // A aba atual na cor de destaque; os outros abertos em cinza leve.
                     let selected = current.as_ref() == Some(path);
                     let opened = !selected && open.contains(path);

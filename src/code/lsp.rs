@@ -35,12 +35,107 @@ pub struct Diagnostic {
 }
 
 /// Item de completar.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Completion {
     pub label: String,
     pub detail: String,
     /// Texto que entra (o `insertText`, ou o rótulo).
     pub insert: String,
+    /// Tipo do item (`CompletionItemKind` do LSP: 3 função, 6 variável, 7 classe,
+    /// 14 palavra-chave, 15 trecho...); 0 = palavra do arquivo.
+    pub kind: u8,
+    /// Documentação (texto ou markdown), quando o servidor manda ou depois do
+    /// `completionItem/resolve`.
+    pub doc: String,
+    /// `insert` é um trecho com marcas (`${1:nome}`, `$0`): ver `expand_snippet`.
+    pub snippet: bool,
+    /// O item como o servidor mandou (para o `completionItem/resolve`).
+    pub raw: Option<Value>,
+}
+
+/// Texto de uma documentação do LSP (texto puro, `MarkupContent` ou lista).
+pub fn markup_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Object(o) => o.get("value").and_then(Value::as_str).unwrap_or_default().to_string(),
+        Value::Array(a) => a.iter().filter_map(|v| v.as_str().map(str::to_string).or_else(|| v["value"].as_str().map(str::to_string))).collect::<Vec<_>>().join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// Abre um trecho (snippet) do LSP: as marcas `${1:nome}` viram o texto delas,
+/// `$1`/`$0` somem e `\$` vira `$`. Devolve o texto e onde fica a primeira parada
+/// (início e fim, em bytes): o texto da `${1:...}` fica escolhido, como no VS Code.
+pub fn expand_snippet(s: &str) -> (String, Option<(usize, usize)>) {
+    let mut out = String::new();
+    // (número da parada, início, fim) de cada marca encontrada.
+    let mut stops: Vec<(u32, usize, usize)> = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    fn number(chars: &[char], i: &mut usize) -> Option<u32> {
+        let start = *i;
+        while *i < chars.len() && chars[*i].is_ascii_digit() {
+            *i += 1;
+        }
+        chars[start..*i].iter().collect::<String>().parse().ok()
+    }
+    // Pilha das marcas `${n:` abertas (número e onde o texto delas começa).
+    let mut open: Vec<(u32, usize)> = Vec::new();
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() {
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if c == '$' && i + 1 < chars.len() {
+            if chars[i + 1].is_ascii_digit() {
+                i += 1;
+                if let Some(n) = number(&chars, &mut i) {
+                    stops.push((n, out.len(), out.len()));
+                }
+                continue;
+            }
+            if chars[i + 1] == '{' {
+                let mut j = i + 2;
+                if let Some(n) = number(&chars, &mut j) {
+                    match chars.get(j) {
+                        Some(':') => {
+                            open.push((n, out.len()));
+                            i = j + 1;
+                            continue;
+                        }
+                        // `${1|um,dois|}`: fica a primeira escolha.
+                        Some('|') => {
+                            let end = chars[j + 1..].iter().position(|&c| c == '|').map_or(chars.len(), |p| j + 1 + p);
+                            let first: String = chars[j + 1..end].iter().collect::<String>().split(',').next().unwrap_or_default().to_string();
+                            let start = out.len();
+                            out.push_str(&first);
+                            stops.push((n, start, out.len()));
+                            i = (end + 2).min(chars.len());
+                            continue;
+                        }
+                        Some('}') => {
+                            stops.push((n, out.len(), out.len()));
+                            i = j + 1;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if c == '}' && let Some((n, start)) = open.pop() {
+            stops.push((n, start, out.len()));
+            i += 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    // A primeira parada é a de menor número maior que zero; sem elas, a `$0`.
+    let first = stops.iter().filter(|s| s.0 > 0).min_by_key(|s| (s.0, s.1)).or_else(|| stops.iter().find(|s| s.0 == 0));
+    (out, first.map(|s| (s.1, s.2)))
 }
 
 /// Eventos vindos do servidor.
@@ -48,6 +143,8 @@ pub struct Completion {
 pub enum Event {
     Diagnostics { uri: String, items: Vec<Diagnostic> },
     Completions { id: u64, items: Vec<Completion> },
+    /// Resposta do `completionItem/resolve`: a documentação e o detalhe do item.
+    Resolved { id: u64, doc: String, detail: String },
     /// Onde está a definição: endereço do arquivo e posição (linha, coluna).
     Definition { id: u64, uri: String, line: u32, col: u32 },
     Hover { id: u64, text: String },
@@ -170,7 +267,14 @@ impl Client {
                 "textDocument": {
                     "synchronization": { "didSave": true },
                     "publishDiagnostics": {},
-                    "completion": { "completionItem": { "snippetSupport": false } },
+                    "completion": {
+                        "completionItem": {
+                            "snippetSupport": true,
+                            "documentationFormat": ["markdown", "plaintext"],
+                            "resolveSupport": { "properties": ["documentation", "detail"] }
+                        },
+                        "completionItemKind": { "valueSet": (1..=25).collect::<Vec<u32>>() }
+                    },
                     "definition": {},
                     "hover": { "contentFormat": ["plaintext", "markdown"] }
                 }
@@ -231,6 +335,11 @@ impl Client {
     pub fn completion(&mut self, path: &Path, text: &str, offset: usize) -> Option<u64> {
         let params = self.position_params(path, text, offset);
         self.request("textDocument/completion", params).ok()
+    }
+
+    /// Pede a documentação de um item de completar (`completionItem/resolve`).
+    pub fn resolve(&mut self, item: Value) -> Option<u64> {
+        self.request("completionItem/resolve", item).ok()
     }
 
     pub fn definition(&mut self, path: &Path, text: &str, offset: usize) -> Option<u64> {
@@ -297,13 +406,26 @@ impl Client {
                             .filter_map(|it| {
                                 let label = it["label"].as_str()?.to_string();
                                 let insert = it["insertText"].as_str().or_else(|| it["textEdit"]["newText"].as_str()).unwrap_or(&label).to_string();
-                                Some(Completion { detail: it["detail"].as_str().unwrap_or_default().to_string(), insert, label })
+                                Some(Completion {
+                                    detail: it["detail"].as_str().unwrap_or_default().to_string(),
+                                    insert,
+                                    label,
+                                    kind: it["kind"].as_u64().unwrap_or(1).min(25) as u8,
+                                    doc: markup_text(&it["documentation"]),
+                                    snippet: it["insertTextFormat"].as_u64() == Some(2),
+                                    raw: Some(it.clone()),
+                                })
                             })
                             .take(200)
                             .collect()
                     })
                     .unwrap_or_default();
                 vec![Event::Completions { id, items }]
+            }
+            "completionItem/resolve" => {
+                let doc = markup_text(&result["documentation"]);
+                let detail = result["detail"].as_str().unwrap_or_default().to_string();
+                vec![Event::Resolved { id, doc, detail }]
             }
             "textDocument/definition" => {
                 let loc = if result.is_array() { result.get(0).cloned().unwrap_or(Value::Null) } else { result.clone() };
@@ -460,5 +582,22 @@ while True:
         assert_eq!(items[0].message, "ruim");
         drop(client);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::expand_snippet;
+
+    #[test]
+    fn trecho_abre_com_a_primeira_parada_escolhida() {
+        let (t, stop) = expand_snippet("foreach (${1:\\$array} as ${2:\\$value}) {\n\t$0\n}");
+        assert_eq!(t, "foreach ($array as $value) {\n\t\n}");
+        assert_eq!(stop, Some((9, 15)));
+        let (t, stop) = expand_snippet("println!(\"$1\")$0");
+        assert_eq!(t, "println!(\"\")");
+        assert_eq!(stop, Some((10, 10)));
+        assert_eq!(expand_snippet("${1|pub,priv|} fn").0, "pub fn");
+        assert_eq!(expand_snippet("ok").1, None);
     }
 }

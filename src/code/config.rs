@@ -51,6 +51,12 @@ pub struct Config {
     /// arquivos antigos; não são mais gravados no `code.toml`).
     #[serde(skip_serializing)]
     pub servers: Vec<Server>,
+    /// Completar abre sozinho enquanto se digita.
+    pub auto_complete: bool,
+    /// Letras digitadas antes de o completar abrir sozinho (1 a 5).
+    pub complete_min_chars: usize,
+    /// Documentação ao lado da sugestão escolhida.
+    pub complete_docs: bool,
 }
 
 /// O arquivo dos servidores: uma tabela `[[server]]` para cada um.
@@ -78,6 +84,9 @@ impl Default for Config {
             drawer_width: 230.0,
             terminal_height: 220.0,
             servers: default_servers(),
+            auto_complete: true,
+            complete_min_chars: 1,
+            complete_docs: true,
         }
     }
 }
@@ -89,11 +98,31 @@ pub fn default_servers() -> Vec<Server> {
         server(&["rust"], "rust-analyzer", &[]),
         server(&["go"], "gopls", &[]),
         server(&["python"], "pylsp", &[]),
+        server(&["python"], "pyright-langserver", &["--stdio"]),
+        server(&["python"], "basedpyright-langserver", &["--stdio"]),
         server(&["c", "cpp"], "clangd", &[]),
         server(&["javascript", "typescript"], "typescript-language-server", &["--stdio"]),
+        server(&["javascript", "typescript"], "vtsls", &["--stdio"]),
         server(&["shellscript"], "bash-language-server", &["start"]),
         server(&["php"], "intelephense", &["--stdio"]),
         server(&["php"], "phpactor", &["language-server"]),
+        server(&["java"], "jdtls", &[]),
+        server(&["kotlin"], "kotlin-language-server", &[]),
+        server(&["swift"], "sourcekit-lsp", &[]),
+        server(&["csharp"], "csharp-ls", &[]),
+        server(&["csharp"], "OmniSharp", &["-lsp"]),
+        server(&["html"], "vscode-html-language-server", &["--stdio"]),
+        server(&["css"], "vscode-css-language-server", &["--stdio"]),
+        server(&["json"], "vscode-json-language-server", &["--stdio"]),
+        server(&["yaml"], "yaml-language-server", &["--stdio"]),
+        server(&["toml"], "taplo", &["lsp", "stdio"]),
+        server(&["markdown"], "marksman", &["server"]),
+        server(&["lua"], "lua-language-server", &[]),
+        server(&["ruby"], "ruby-lsp", &[]),
+        server(&["ruby"], "solargraph", &["stdio"]),
+        server(&["sql"], "sqls", &[]),
+        server(&["dockerfile"], "docker-langserver", &["--stdio"]),
+        server(&["xml"], "lemminx", &[]),
     ]
 }
 
@@ -113,12 +142,17 @@ impl Config {
         let mut config: Self = Self::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
         if let Some(Ok(servers)) = Self::servers_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_servers(&t)) {
             config.servers = servers;
-            // Linguagens que o arquivo do usuário não cita ganham os servidores padrão
-            // (versões novas trazem servidores novos, como o do PHP).
-            for server in default_servers() {
-                if !config.servers.iter().any(|s| s.languages.iter().any(|l| server.languages.contains(l))) {
-                    config.servers.push(server);
-                }
+        }
+        // Os servidores padrão que faltam na lista entram no fim (versões novas trazem
+        // servidores novos; basta o programa estar no PATH), menos para uma linguagem
+        // que o usuário atende com um servidor próprio (fora da lista padrão).
+        let defaults = default_servers();
+        let custom = |s: &Server| !defaults.iter().any(|d| d.command == s.command);
+        for server in default_servers() {
+            let present = config.servers.iter().any(|s| s.command == server.command);
+            let customized = config.servers.iter().any(|s| custom(s) && s.languages.iter().any(|l| server.languages.contains(l)));
+            if !present && !customized {
+                config.servers.push(server);
             }
         }
         config.drawer_width = config.drawer_width.clamp(DRAWER_MIN, DRAWER_MAX);

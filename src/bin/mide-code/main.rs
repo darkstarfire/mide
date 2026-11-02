@@ -174,6 +174,9 @@ pub(crate) struct Code {
     dialog: Option<Dialog>,
     /// Completar: pedido, itens, escolhido e onde começa a palavra.
     completion: Option<(u64, Vec<Completion>, usize, usize)>,
+    /// Pedido de documentação (`completionItem/resolve`) em andamento: o número e o
+    /// rótulo do item.
+    resolving: Option<(u64, String)>,
     hover: Option<(u64, String)>,
     definition: Option<u64>,
     message: Option<(String, Instant)>,
@@ -224,6 +227,7 @@ impl Code {
             find: None,
             dialog: None,
             completion: None,
+            resolving: None,
             hover: None,
             definition: None,
             message: None,
@@ -571,6 +575,25 @@ impl Code {
                         }
                     }
                 }
+                Event::Resolved { id, doc, detail } => {
+                    if let Some((want, label)) = self.resolving.take() {
+                        if want == id
+                            && let Some((_, items, _, _)) = self.completion.as_mut()
+                            && let Some(item) = items.iter_mut().find(|c| c.label == label)
+                        {
+                            if !doc.is_empty() {
+                                item.doc = doc;
+                            }
+                            if item.detail.is_empty() {
+                                item.detail = detail;
+                            }
+                            // Já pedido: não pede de novo para o mesmo item.
+                            item.raw = None;
+                        } else if want != id {
+                            self.resolving = Some((want, label));
+                        }
+                    }
+                }
                 Event::Hover { id, text } => {
                     if self.hover.as_ref().is_some_and(|(want, _)| *want == id) {
                         self.hover = Some((id, text));
@@ -600,7 +623,13 @@ impl Code {
         let path = self.doc().path.clone();
         let start = Self::word_start(&text, cursor);
         let lang = self.doc().lang;
-        let local = local_completions(&text, start, cursor, lang.keywords.iter().chain(lang.types.iter()).copied());
+        let local = local_completions(&text, start, cursor, lang.keywords.iter().map(|k| (*k, 14)).chain(lang.types.iter().map(|t| (*t, 7))));
+        // Sozinho, só com o mínimo de letras das Preferências (os gatilhos como `.` e
+        // `->` abrem sem letra nenhuma).
+        let typed = text[start..cursor].chars().count();
+        if auto && typed > 0 && typed < self.config.complete_min_chars.clamp(1, 5) {
+            return;
+        }
         self.sync_now();
         let id = match (path, self.client_for_current()) {
             (Some(path), Some(client)) => client.completion(&path, &text, cursor).unwrap_or(0),
@@ -610,10 +639,6 @@ impl Code {
             if !auto {
                 self.say(tr!("Completion needs a language server (Settings)."));
             }
-            return;
-        }
-        // Só palavras do arquivo: mais de uma letra digitada (com uma, sugestões demais).
-        if id == 0 && auto && cursor - start < 2 {
             return;
         }
         tracing::info!("completar: pedido ({} do arquivo{})", local.len(), if id != 0 { ", servidor" } else { "" });
@@ -652,11 +677,20 @@ impl Code {
         let cursor = doc.edit.cursor;
         doc.before_change(mide::kit::textarea::Change::Other);
         let from = start.min(cursor);
+        // Trecho (snippet): as marcas viram texto e a primeira parada fica escolhida.
+        let (expanded, stop) = if item.snippet { lsp::expand_snippet(&item.insert) } else { (item.insert.clone(), None) };
         // `$nome` do PHP: o `$` já digitado não se repete.
-        let insert = if from > 0 && doc.text[..from].ends_with('$') { item.insert.trim_start_matches('$') } else { item.insert.as_str() };
+        let dollar = from > 0 && doc.text[..from].ends_with('$') && expanded.starts_with('$');
+        let insert = if dollar { &expanded[1..] } else { expanded.as_str() };
+        let shift = if dollar { 1 } else { 0 };
         doc.text.replace_range(from..cursor, insert);
-        let at = from + insert.len();
-        doc.edit = mide::kit::textedit::Edit { cursor: at, anchor: None };
+        doc.edit = match stop {
+            Some((a, b)) if a >= shift => {
+                let (a, b) = (from + a - shift, from + b - shift);
+                mide::kit::textedit::Edit { cursor: b, anchor: (a != b).then_some(a) }
+            }
+            _ => mide::kit::textedit::Edit { cursor: from + insert.len(), anchor: None },
+        };
         tracing::info!("completado: {}", item.label);
     }
 
@@ -1277,6 +1311,15 @@ impl Code {
                 c.tab_size = tab.round() as usize;
                 ui.switch(&tr!("Project drawer on the left"), &mut c.drawer);
             });
+            // Completar: abre sozinho ao digitar (a partir de quantas letras) e mostra a
+            // documentação ao lado, como no VS Code e no Zed.
+            ui.card(|ui| {
+                ui.switch(&tr!("Suggest completions while typing"), &mut c.auto_complete);
+                let mut min = c.complete_min_chars.clamp(1, 5) as f32;
+                ui.slider(&tr!("Letters before suggesting"), &mut min, 1.0, 5.0);
+                c.complete_min_chars = min.round() as usize;
+                ui.switch(&tr!("Show documentation next to the suggestion"), &mut c.complete_docs);
+            });
             // Servidores: um resumo (a lista fica no arquivo, editado no próprio Code).
             let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
             let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.command)).map(|s| s.command.as_str()).collect();
@@ -1587,7 +1630,7 @@ impl Code {
                 // como `.`, `->`, `::` e `$`).
                 let doc = &self.docs[i].text;
                 let typed = doc.text.len() > len_before && doc.edit.cursor > cursor_before && doc.edit.cursor - cursor_before <= 4;
-                if typed && self.completion.is_none() && auto_complete_trigger(&doc.text, doc.edit.cursor) {
+                if typed && self.config.auto_complete && self.completion.is_none() && auto_complete_trigger(&doc.text, doc.edit.cursor) {
                     self.complete(true);
                 }
             }
@@ -1642,19 +1685,62 @@ impl Code {
         let x = (area.0 + gutter + 8.0 + col * size * 0.6 - doc.scroll_x).min(area.0 + area.2 - 330.0).max(area.0 + 8.0);
         let y = area.1 + 6.0 + (line + 1) as f32 * line_h - doc.scroll;
         let first = panes::window_start(sel, items.len(), 10);
-        let shown: Vec<(String, String)> = items.iter().skip(first).take(10).map(|c| (c.label.clone(), c.detail.clone())).collect();
+        // Ícone de cada tipo (função, variável, classe...), como no VS Code e no Zed.
+        let shown: Vec<(String, String, String)> = items
+            .iter()
+            .skip(first)
+            .take(10)
+            .map(|c| {
+                let icon = mide::code::icons::kind_icon(c.kind).unwrap_or_else(|| "text-x-generic".into());
+                let detail = if c.detail.is_empty() { mide::i18n::tr(mide::code::icons::kind_name(c.kind)).into_owned() } else { c.detail.clone() };
+                (icon, c.label.clone(), detail)
+            })
+            .collect();
+        let chosen = items.get(sel).cloned();
+        let width = 360.0;
+        let py = y.min(area.1 + area.3 - 300.0).max(area.1);
         let mut clicked = None;
-        ui.glass_panel(x, y.min(area.1 + area.3 - 300.0).max(area.1), 320.0, 10.0, |ui| {
-            for (k, (label, detail)) in shown.iter().enumerate() {
+        ui.glass_panel(x, py, width, 10.0, |ui| {
+            for (k, (icon, label, detail)) in shown.iter().enumerate() {
                 let on = first + k == sel;
                 if on {
                     ui.join_selection(false, false);
                 }
-                if ui.list_row("code-function-symbolic", label, &[(detail, 120.0)], on).clicked() {
+                if ui.list_row(icon, label, &[(detail, 130.0)], on).clicked() {
                     clicked = Some(first + k);
                 }
             }
         });
+        // Documentação da sugestão escolhida ao lado (à direita, ou à esquerda se não
+        // couber). Sem ela ainda, pede ao servidor (`completionItem/resolve`).
+        if self.config.complete_docs
+            && let Some(item) = chosen
+        {
+            if item.doc.is_empty()
+                && let Some(raw) = item.raw.clone()
+                && self.resolving.as_ref().is_none_or(|(_, l)| *l != item.label)
+                && let Some(client) = self.client_for_current()
+                && let Some(id) = client.resolve(raw)
+            {
+                self.resolving = Some((id, item.label.clone()));
+            }
+            let doc = doc_text(&item.doc);
+            if !doc.is_empty() || (item.snippet && !item.insert.is_empty()) {
+                let doc_w = 380.0_f32.min(area.2 * 0.45);
+                let dx = if x + width + 6.0 + doc_w <= area.0 + area.2 { x + width + 6.0 } else { (x - 6.0 - doc_w).max(area.0) };
+                ui.glass_panel(dx, py, doc_w, 10.0, |ui| {
+                    if !item.detail.is_empty() {
+                        ui.strong(&item.detail);
+                    }
+                    if !doc.is_empty() {
+                        ui.label(&doc);
+                    } else {
+                        // Trecho sem documentação: o texto que vai entrar.
+                        ui.note(&lsp::expand_snippet(&item.insert).0);
+                    }
+                });
+            }
+        }
         if let Some(k) = clicked
             && let Some(item) = self.completion.take().and_then(|(_, items, _, _)| items.into_iter().nth(k))
         {
@@ -2182,6 +2268,31 @@ impl App for Code {
 /// Onde o próximo item da área atual começa (na janela, para as áreas da raiz).
 /// O texto acabou de ganhar algo que abre o completar? Uma letra de palavra, ou um
 /// gatilho de membro (`.`, `->`, `::`) ou de variável (`$`).
+/// Documentação do LSP (markdown) como texto para ler: sem as cercas de código, sem
+/// `**`/`__`, títulos sem `#`, no máximo 24 linhas.
+fn doc_text(doc: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in doc.lines() {
+        let t = line.trim_end();
+        if t.trim_start().starts_with("```") {
+            continue;
+        }
+        let t = t.trim_start_matches('#').trim_start_matches(' ').replace("**", "").replace("__", "").replace('`', "");
+        // Uma linha vazia só entre parágrafos.
+        if t.trim().is_empty() && out.last().is_none_or(|l| l.is_empty()) {
+            continue;
+        }
+        out.push(t);
+        if out.len() >= 24 {
+            break;
+        }
+    }
+    while out.last().is_some_and(|l| l.is_empty()) {
+        out.pop();
+    }
+    out.join("\n")
+}
+
 fn auto_complete_trigger(text: &str, cursor: usize) -> bool {
     let before = &text[..cursor];
     let Some(c) = before.chars().next_back() else {
@@ -2198,7 +2309,7 @@ fn auto_complete_trigger(text: &str, cursor: usize) -> bool {
 /// Sugestões sem servidor: as palavras do arquivo (três letras ou mais, as mais
 /// frequentes primeiro) e as palavras-chave da linguagem que começam com o que foi
 /// digitado (de `start` a `cursor`), sem a própria palavra.
-fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl Iterator<Item = &'a str>) -> Vec<Completion> {
+fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl Iterator<Item = (&'a str, u8)>) -> Vec<Completion> {
     let typed = text[start..cursor].to_lowercase();
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
@@ -2220,14 +2331,15 @@ fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl
     let mut words: Vec<(&str, usize)> = counts.into_iter().filter(|(w, _)| w.to_lowercase().starts_with(&typed) && w.to_lowercase() != typed).collect();
     words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let mut out: Vec<Completion> = Vec::new();
-    for kw in keywords {
+    for (kw, kind) in keywords {
         if !typed.is_empty() && kw.to_lowercase().starts_with(&typed) && kw.to_lowercase() != typed && !out.iter().any(|c| c.label == kw) {
-            out.push(Completion { label: kw.into(), detail: tr!("keyword").into_owned(), insert: kw.into() });
+            let detail = if kind == 14 { tr!("keyword") } else { tr!("type") }.into_owned();
+            out.push(Completion { label: kw.into(), detail, insert: kw.into(), kind, ..Default::default() });
         }
     }
     for (w, _) in words.into_iter().take(40) {
         if !out.iter().any(|c| c.label == w) {
-            out.push(Completion { label: w.into(), detail: String::new(), insert: w.into() });
+            out.push(Completion { label: w.into(), insert: w.into(), ..Default::default() });
         }
     }
     out
@@ -2289,7 +2401,7 @@ mod tests {
         let text = "$appName = 1;\n$appDescription = 2;\n$appName;\n$teste = app";
         let cursor = text.len();
         let start = Code::word_start(text, cursor);
-        let got = local_completions(text, start, cursor, ["array", "abstract", "as"].into_iter());
+        let got = local_completions(text, start, cursor, ["array", "abstract", "as"].into_iter().map(|k| (k, 14)));
         let labels: Vec<&str> = got.iter().map(|c| c.label.as_str()).collect();
         // Palavras-chave primeiro; das palavras, a mais usada antes; nunca a própria palavra.
         assert_eq!(labels, ["appName", "appDescription"]);
