@@ -325,3 +325,8 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - v0.10.44: controles da janela ao deslizar do meio de cima no modo tablet; o plano do iPadOS (`docs/tablet-ipados.md`) está todo feito, faltando só o teste do usuário no aparelho.
 - v0.10.45: quatro dedos na tela abrem o mosaico (antes o terceiro dedo já decidia pelo launcher); falta o usuário conferir.
 - v0.10.47: teclado na tela por cima da senha (bloqueio e login) e Ctrl+Alt+F3 no estilo Mac. Login do Dell: o `session.log` mostrou um mide antigo (enxurrada de "Broken pipe", corrigida na v0.10.42); falta o usuário atualizar (`git pull`, `data/mide-update`, `sudo data/mide-login-install`) e conferir.
+
+## v0.10.50–v0.10.54 (2026-11-02)
+
+- v0.10.50: espaços sobrando no seletor de arquivos e no destaque das linhas dos cartões (mide-ui). v0.10.51: zoom do editor de capturas sem distorção. v0.10.52: foco volta à janela anterior ao fechar. v0.10.53: rolar com o dedo (com inércia) e puxar o launcher para baixo para buscar. v0.10.54: Code com respiro nas bordas e completar ao digitar (Tab/Shift+Tab/Enter).
+- Falta o usuário conferir: tudo isso na sessão; o teclado na tela no login e no bloqueio pede `sudo data/mide-login-install` de novo.

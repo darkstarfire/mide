@@ -647,7 +647,7 @@ impl Settings {
                 _ => 0,
             };
             let mut index = current;
-            let labels = [tr!("Automatic").into_owned(), tr!("Desktop").into_owned(), tr!("Tablet (iPadOS)").into_owned()];
+            let labels = [tr!("Automatic").into_owned(), tr!("Desktop mode").into_owned(), tr!("Tablet (iPadOS)").into_owned()];
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
             ui.form_row(&tr!("Mode"), 150.0, |ui| {
                 if ui.segmented(&refs, &mut index, Some(340.0)).changed() {
@@ -2791,8 +2791,10 @@ impl Settings {
             if self.users.busy {
                 ui.note(&tr!("Waiting for the administrator password…"));
             }
-            ui.push_right(200.0);
-            ui.sized(200.0, |ui| add = ui.button(&tr!("Add User…")).clicked() && !self.users.busy);
+            let label = tr!("Add User…");
+            let w = ui.button_width(&label);
+            ui.push_right(w);
+            ui.sized(w, |ui| add = ui.button(&label).clicked() && !self.users.busy);
         });
         if let Some(account) = open.filter(|_| !self.users.busy) {
             tracing::info!("usuários: folha de {}", account.login);

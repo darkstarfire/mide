@@ -114,9 +114,9 @@ check "launcher mostra o app instalado (busca)" 'resultados da busca: 1 \(primei
 check "clique direito no app instalado abre o menu" 'menu do app Editor Bonito \(mide-appimage-org.exemplo.Editor\)' "$LAUNCH; 440 type bonito; 470 rclick 179 210; 500 list"
 # O instalador aberto pelo launcher escreve num log que não é o do compositor: a
 # confirmação é conferida pela janela e o resultado, pelos arquivos.
-check "Mover para a Lixeira pede confirmação" 'janela "Mover para a Lixeira"' "$LAUNCH; 440 type bonito; 470 rclick 179 210; 500 click 260 231; 640 list"
+check "Mover para a Lixeira pede confirmação" 'janela "Mover para a Lixeira"' "$LAUNCH; 440 type bonito; 470 rclick 179 210; 500 click 260 300; 640 list"
 file_check "cancelado: nada foi removido" test -x "$INSTALLED" -a -e "$DESK"
-check_count "confirmar (Enter) fecha a janela de confirmação" 'janela "Mover para a Lixeira"' 0 "$LAUNCH; 440 type bonito; 470 rclick 179 210; 500 click 260 231; 660 key enter; 720 list"
+check_count "confirmar (Enter) fecha a janela de confirmação" 'janela "Mover para a Lixeira"' 0 "$LAUNCH; 440 type bonito; 470 rclick 179 210; 500 click 260 300; 660 key enter; 720 list"
 file_check "AppImage na Lixeira, sem atalho nem ícone" sh -c "test ! -e '$INSTALLED' && test ! -e '$DESK' && test ! -e '$XDG_DATA_HOME/mide/appimage-icons/org.exemplo.Editor.svg' && ls '$XDG_DATA_HOME/Trash/files' | grep -q 'Editor Bonito.AppImage'"
 check "app removido some do launcher" 'resultados da busca: 0 ' "$LAUNCH; 440 type bonito; 470 list"
 

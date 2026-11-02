@@ -1416,8 +1416,8 @@ msgstr "Modo"
 msgid "Automatic"
 msgstr "Automático"
 
-msgid "Desktop"
-msgstr "Desktop"
+msgid "Desktop mode"
+msgstr "Modo desktop"
 
 msgid "Tablet (iPadOS)"
 msgstr "Tablet (iPadOS)"

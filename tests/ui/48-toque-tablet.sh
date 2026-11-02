@@ -106,7 +106,7 @@ else
     falha "modo notebook: a tela não gira com o sensor"
 fi
 tt_run tabgira "400 tablet on; 420 orientation right-up; 480 list"
-if tt_log tabgira | grep -q 'camada "mide-bar" em (0, 0) 768x28' && tt_log tabgira | grep -q "rotação: tela HEADLESS-1 em _270"; then
+if tt_log tabgira | grep -q 'camada "mide-bar" em (0, 0) 768x28' && tt_log tabgira | grep -q "rotação: tela HEADLESS-1 em _90"; then
     ok "modo tablet: a tela gira com o sensor"
 else
     falha "modo tablet: a tela gira com o sensor"
@@ -131,18 +131,18 @@ else
 fi
 # Toque com a tela girada: o dedo em pixels do painel passa pela rotação (`touch panel`).
 # Depois do giro a janela "Toque" fica em (26, 91) 400x300 (lógico); o centro dela,
-# (226, 241), fica no painel em (1125, 226) com left-up (_90: o topo da cena na borda
-# direita) e em (241, 542) com right-up (_270).
+# (226, 241), fica no painel em (241, 542) com left-up (_270) e em (1125, 226) com
+# right-up (_90: o topo da cena na borda direita); mapeamento da v0.10.40.
 if [ -x "$JANELA" ]; then
-    tt_run giro90 "350 orientation left-up; 420 touch panel down 1125 226; 424 touch up; 470 list" 460 "$JANELA toque"
-    PIX="$(tt_pixel giro90 1125 226)"
+    tt_run giro90 "350 orientation left-up; 420 touch panel down 241 542; 424 touch up; 470 list" 460 "$JANELA toque"
+    PIX="$(tt_pixel giro90 241 542)"
     if echo "$PIX" | awk -F, '{ exit !($2 > 150 && $1 < 100 && $3 < 120) }'; then
         ok "tela girada (left-up): o toque cai no lugar certo do app"
     else
         falha "tela girada (left-up): o toque cai no lugar certo do app (pixel $PIX)"
     fi
-    tt_run giro270 "350 orientation right-up; 420 touch panel down 241 542; 424 touch up; 470 list" 460 "$JANELA toque"
-    PIX="$(tt_pixel giro270 241 542)"
+    tt_run giro270 "350 orientation right-up; 420 touch panel down 1125 226; 424 touch up; 470 list" 460 "$JANELA toque"
+    PIX="$(tt_pixel giro270 1125 226)"
     if echo "$PIX" | awk -F, '{ exit !($2 > 150 && $1 < 100 && $3 < 120) }'; then
         ok "tela girada (right-up): o toque cai no lugar certo do app"
     else
@@ -167,7 +167,7 @@ fi
 # encolhe, e os cantos do painel ficam pretos.
 MIDE_ROTATE_MS=3000 tt_run anima "300 orientation left-up; 600 list" 330
 CORNER="$(tt_pixel anima 2 2)"
-if tt_log anima | grep -q "rotação: tela HEADLESS-1 em _90" && echo "$CORNER" | awk -F, '{ exit !($1 < 12 && $2 < 12 && $3 < 12) }'; then
+if tt_log anima | grep -q "rotação: tela HEADLESS-1 em _270" && echo "$CORNER" | awk -F, '{ exit !($1 < 12 && $2 < 12 && $3 < 12) }'; then
     ok "o giro da tela é animado (a cena gira no meio)"
 else
     falha "o giro da tela é animado (canto $CORNER)"
