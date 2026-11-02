@@ -542,7 +542,15 @@ impl Code {
                         && *want == id
                     {
                         tracing::info!("completar: {} item(ns)", items.len());
-                        *list = items;
+                        // As do servidor primeiro; as palavras do arquivo que ele não trouxe, depois.
+                        let local = std::mem::take(list);
+                        let mut merged = items;
+                        for word in local {
+                            if !merged.iter().any(|m| m.label.trim_start_matches('$') == word.label) {
+                                merged.push(word);
+                            }
+                        }
+                        *list = merged;
                         *sel = 0;
                         // Filtra pela palavra já digitada.
                         self.filter_completion();
@@ -580,25 +588,47 @@ impl Code {
     }
 
     fn request_completion(&mut self) {
+        self.complete(false);
+    }
+
+    /// Abre o completar: na hora, com as palavras do arquivo e da linguagem; com um
+    /// servidor de linguagem, a resposta dele vem por cima (as dele primeiro). `auto`:
+    /// aberto pela digitação (sem aviso quando não há nada a sugerir).
+    fn complete(&mut self, auto: bool) {
         let cursor = self.doc().text.edit.cursor;
         let text = self.doc().text.text.clone();
         let path = self.doc().path.clone();
+        let start = Self::word_start(&text, cursor);
+        let lang = self.doc().lang;
+        let local = local_completions(&text, start, cursor, lang.keywords.iter().chain(lang.types.iter()).copied());
         self.sync_now();
-        let (Some(path), Some(client)) = (path, self.client_for_current()) else {
-            self.say(tr!("Completion needs a language server (Settings)."));
-            return;
+        let id = match (path, self.client_for_current()) {
+            (Some(path), Some(client)) => client.completion(&path, &text, cursor).unwrap_or(0),
+            _ => 0,
         };
-        if let Some(id) = client.completion(&path, &text, cursor) {
-            self.completion = Some((id, Vec::new(), 0, Self::word_start(&text, cursor)));
+        if id == 0 && local.is_empty() {
+            if !auto {
+                self.say(tr!("Completion needs a language server (Settings)."));
+            }
+            return;
         }
+        // Só palavras do arquivo: mais de uma letra digitada (com uma, sugestões demais).
+        if id == 0 && auto && cursor - start < 2 {
+            return;
+        }
+        tracing::info!("completar: pedido ({} do arquivo{})", local.len(), if id != 0 { ", servidor" } else { "" });
+        self.completion = Some((id, local, 0, start));
     }
 
     /// A lista de completar acompanha a palavra digitada (e some fora dela).
     fn filter_completion(&mut self) {
         let i = self.cur.min(self.docs.len() - 1);
-        let Some((_, items, sel, start)) = self.completion.as_mut() else {
+        let Some((id, items, sel, start)) = self.completion.as_mut() else {
             return;
         };
+        // Já respondido (sem servidor, ou com itens na lista): sem nada que case, fecha
+        // (a próxima letra pede de novo). Esperando o servidor, a lista fica aberta.
+        let answered = *id == 0 || !items.is_empty();
         let doc = &self.docs[i].text;
         let cursor = doc.edit.cursor;
         if cursor < *start || doc.text[*start..cursor].contains(|c: char| !c.is_alphanumeric() && c != '_') {
@@ -607,7 +637,11 @@ impl Code {
         }
         let word = doc.text[*start..cursor].to_lowercase();
         if !word.is_empty() {
-            items.retain(|it| it.label.to_lowercase().starts_with(&word));
+            items.retain(|it| it.label.trim_start_matches('$').to_lowercase().starts_with(&word));
+        }
+        if items.is_empty() && answered {
+            self.completion = None;
+            return;
         }
         *sel = (*sel).min(items.len().saturating_sub(1));
     }
@@ -617,8 +651,11 @@ impl Code {
         let doc = &mut self.doc().text;
         let cursor = doc.edit.cursor;
         doc.before_change(mide::kit::textarea::Change::Other);
-        doc.text.replace_range(start.min(cursor)..cursor, &item.insert);
-        let at = start.min(cursor) + item.insert.len();
+        let from = start.min(cursor);
+        // `$nome` do PHP: o `$` já digitado não se repete.
+        let insert = if from > 0 && doc.text[..from].ends_with('$') { item.insert.trim_start_matches('$') } else { item.insert.as_str() };
+        doc.text.replace_range(from..cursor, insert);
+        let at = from + insert.len();
         doc.edit = mide::kit::textedit::Edit { cursor: at, anchor: None };
         tracing::info!("completado: {}", item.label);
     }
@@ -1546,6 +1583,13 @@ impl Code {
             self.last_edit = Some(Instant::now());
             if i == self.cur {
                 self.filter_completion();
+                // Digitando: o completar abre sozinho (uma letra a mais, ou um gatilho
+                // como `.`, `->`, `::` e `$`).
+                let doc = &self.docs[i].text;
+                let typed = doc.text.len() > len_before && doc.edit.cursor > cursor_before && doc.edit.cursor - cursor_before <= 4;
+                if typed && self.completion.is_none() && auto_complete_trigger(&doc.text, doc.edit.cursor) {
+                    self.complete(true);
+                }
             }
         }
         // Ctrl+clique: vai à definição do que está sob o ponteiro (o F12 é do terminal
@@ -1766,7 +1810,10 @@ impl App for Code {
         // conhecido antes de desenhar: a área do editor é medida depois delas.
         let input = ui.input().clone();
         let mut body_top = top;
-        ui.at(left, top, width, |ui| {
+        // Respiro entre a gaveta e o editor igual ao da gaveta até a borda da janela (o
+        // recuo da barra lateral flutuante), e as abas longe da borda direita.
+        let (cl, cw) = if drawer_on { (left + SIDE_GAP, width - SIDE_GAP) } else { (left, width) };
+        ui.at(cl, top, cw - TABS_RIGHT_GAP, |ui| {
             // Abas (com mais de um arquivo); apertar numa começa um arrasto possível.
             if self.docs.len() > 1 {
                 let titles: Vec<String> = self.docs.iter().map(Doc::title).collect();
@@ -1783,6 +1830,8 @@ impl App for Code {
                         }
                     }
                 }
+                // Respiro entre as abas e o texto.
+                ui.space(TABS_GAP);
                 match action {
                     TabAction::Select(i) => self.cur = i,
                     TabAction::Close(i) => self.close_tab(i, false),
@@ -1856,9 +1905,9 @@ impl App for Code {
         // Editor em cima e terminal embaixo, com a divisória do kit (o ponteiro vira o
         // de redimensionar). Como na gaveta, os painéis são desenhados depois, nas
         // coordenadas da janela; aqui só se medem os retângulos.
-        let body = (left, body_top, width, (status_y - body_top).max(60.0));
+        let body = (cl, body_top, cw, (status_y - body_top).max(60.0));
         let mut editor_rect = body;
-        let mut term_rect = (left, status_y, width, 0.0);
+        let mut term_rect = (cl, status_y, cw, 0.0);
         if self.terminal_open && self.terminal.is_some() {
             let mut height = self.config.terminal_height;
             let max = (body.3 - 120.0).max(80.0);
@@ -2131,6 +2180,67 @@ impl App for Code {
 }
 
 /// Onde o próximo item da área atual começa (na janela, para as áreas da raiz).
+/// O texto acabou de ganhar algo que abre o completar? Uma letra de palavra, ou um
+/// gatilho de membro (`.`, `->`, `::`) ou de variável (`$`).
+fn auto_complete_trigger(text: &str, cursor: usize) -> bool {
+    let before = &text[..cursor];
+    let Some(c) = before.chars().next_back() else {
+        return false;
+    };
+    if c.is_alphanumeric() || c == '_' {
+        // Não no meio de um número.
+        let word: String = before.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        return !word.chars().last().is_some_and(|c| c.is_ascii_digit());
+    }
+    before.ends_with('.') && !before.ends_with("..") || before.ends_with("->") || before.ends_with("::") || c == '$'
+}
+
+/// Sugestões sem servidor: as palavras do arquivo (três letras ou mais, as mais
+/// frequentes primeiro) e as palavras-chave da linguagem que começam com o que foi
+/// digitado (de `start` a `cursor`), sem a própria palavra.
+fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl Iterator<Item = &'a str>) -> Vec<Completion> {
+    let typed = text[start..cursor].to_lowercase();
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut word_at: Option<usize> = None;
+    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        match (word_at, is_word(c) && i < text.len()) {
+            (None, true) => word_at = Some(i),
+            (Some(at), false) => {
+                word_at = None;
+                let word = &text[at..i];
+                // A palavra que está sendo digitada não conta.
+                if at != start && word.chars().count() >= 3 && !word.starts_with(|c: char| c.is_ascii_digit()) {
+                    *counts.entry(word).or_default() += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut words: Vec<(&str, usize)> = counts.into_iter().filter(|(w, _)| w.to_lowercase().starts_with(&typed) && w.to_lowercase() != typed).collect();
+    words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let mut out: Vec<Completion> = Vec::new();
+    for kw in keywords {
+        if !typed.is_empty() && kw.to_lowercase().starts_with(&typed) && kw.to_lowercase() != typed && !out.iter().any(|c| c.label == kw) {
+            out.push(Completion { label: kw.into(), detail: tr!("keyword").into_owned(), insert: kw.into() });
+        }
+    }
+    for (w, _) in words.into_iter().take(40) {
+        if !out.iter().any(|c| c.label == w) {
+            out.push(Completion { label: w.into(), detail: String::new(), insert: w.into() });
+        }
+    }
+    out
+}
+
+/// Respiro entre a gaveta do projeto e o editor (o recuo da barra lateral flutuante).
+const SIDE_GAP: f32 = 8.0;
+/// Respiro à direita da barra de abas (o + não encosta na borda da janela), como o
+/// da barra de ferramentas.
+const TABS_RIGHT_GAP: f32 = 12.0;
+/// Espaço entre as abas e o texto.
+const TABS_GAP: f32 = 6.0;
+
 fn ui_cursor(ui: &Ui) -> f32 {
     let r = ui.region();
     r.1 + r.3 - ui.remaining_height()
@@ -2150,4 +2260,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<PathBuf> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).map(PathBuf::from).collect();
     let window = Window::new("Code").app_id("mide-code").size(1040, 640).min_size(560, 360).full_size_content().accepts_files();
     run(window, Code::new(args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completar_abre_ao_digitar() {
+        let t = "$teste = PD";
+        assert!(auto_complete_trigger(t, t.len()));
+        let t = "obj.";
+        assert!(auto_complete_trigger(t, t.len()));
+        let t = "$this->";
+        assert!(auto_complete_trigger(t, t.len()));
+        let t = "Config::";
+        assert!(auto_complete_trigger(t, t.len()));
+        let t = "$";
+        assert!(auto_complete_trigger(t, t.len()));
+        // Número, espaço, intervalo (`..`) e `-` sozinho não abrem.
+        for t in ["x = 12", "a ", "0..", "a -"] {
+            assert!(!auto_complete_trigger(t, t.len()), "{t}");
+        }
+    }
+
+    #[test]
+    fn palavras_do_arquivo_e_da_linguagem() {
+        let text = "$appName = 1;\n$appDescription = 2;\n$appName;\n$teste = app";
+        let cursor = text.len();
+        let start = Code::word_start(text, cursor);
+        let got = local_completions(text, start, cursor, ["array", "abstract", "as"].into_iter());
+        let labels: Vec<&str> = got.iter().map(|c| c.label.as_str()).collect();
+        // Palavras-chave primeiro; das palavras, a mais usada antes; nunca a própria palavra.
+        assert_eq!(labels, ["appName", "appDescription"]);
+        let t = "ação açúcar aç";
+        let got = local_completions(t, Code::word_start(t, t.len()), t.len(), std::iter::empty());
+        assert_eq!(got.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["ação", "açúcar"]);
+    }
 }

@@ -92,6 +92,8 @@ pub fn default_servers() -> Vec<Server> {
         server(&["c", "cpp"], "clangd", &[]),
         server(&["javascript", "typescript"], "typescript-language-server", &["--stdio"]),
         server(&["shellscript"], "bash-language-server", &["start"]),
+        server(&["php"], "intelephense", &["--stdio"]),
+        server(&["php"], "phpactor", &["language-server"]),
     ]
 }
 
@@ -111,6 +113,13 @@ impl Config {
         let mut config: Self = Self::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
         if let Some(Ok(servers)) = Self::servers_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_servers(&t)) {
             config.servers = servers;
+            // Linguagens que o arquivo do usuário não cita ganham os servidores padrão
+            // (versões novas trazem servidores novos, como o do PHP).
+            for server in default_servers() {
+                if !config.servers.iter().any(|s| s.languages.iter().any(|l| server.languages.contains(l))) {
+                    config.servers.push(server);
+                }
+            }
         }
         config.drawer_width = config.drawer_width.clamp(DRAWER_MIN, DRAWER_MAX);
         config
@@ -144,8 +153,12 @@ impl Config {
     }
 
     /// Servidor ligado para uma linguagem (o primeiro da lista que a atende).
+    /// Com mais de um para a linguagem (PHP: intelephense ou phpactor), o primeiro que
+    /// está instalado.
     pub fn server_for(&self, language: &str) -> Option<&Server> {
-        self.servers.iter().find(|s| s.enabled && s.languages.iter().any(|l| l == language))
+        let mut candidates = self.servers.iter().filter(|s| s.enabled && s.languages.iter().any(|l| l == language)).peekable();
+        let first = *candidates.peek()?;
+        Some(candidates.find(|s| installed(&s.command)).unwrap_or(first))
     }
 }
 

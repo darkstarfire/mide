@@ -460,3 +460,6 @@ msgstr "servidor {n} sem \"command\""
 
 msgid "server {n} ({command}) has no \"languages\""
 msgstr "servidor {n} ({command}) sem \"languages\""
+
+msgid "keyword"
+msgstr "palavra-chave"
