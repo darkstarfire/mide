@@ -1492,6 +1492,16 @@ impl TerminalApp {
         }
     }
 
+    /// O sino visual pisca a janela inteira agora? Na janela comum, com um painel só na
+    /// aba, que tocou o sino há menos de 160 ms.
+    fn window_flash(&self) -> bool {
+        let Some(tab) = self.tabs.get(self.active).filter(|_| self.hotkey.is_none()) else {
+            return false;
+        };
+        let panes = tab.layout.panes();
+        panes.len() == 1 && self.panes.get(&panes[0]).and_then(|p| p.bell_at).is_some_and(|t| t.elapsed() < Duration::from_millis(160))
+    }
+
     /// Transparência das faixas da janela (título, abas, margem de baixo): a do painel
     /// em foco, para o Terminal translúcido ser translúcido por inteiro (com 100%,
     /// tudo opaco).
@@ -1585,6 +1595,9 @@ impl TerminalApp {
             ui.wake_after(Duration::from_millis(530));
         }
         let mut flashing = false;
+        // Sino visual: com um painel só, quem pisca é a janela inteira (`window_flash`,
+        // por cima do título e das margens); com vários, só o painel que tocou.
+        let flash_pane = several || self.hotkey.is_some();
         let dividers = self.tabs.get(self.active).filter(|t| !t.zoom).map(|t| t.layout.dividers(area)).unwrap_or_default();
         let gateways: Vec<PaneId> = self.tmux.iter().map(|s| s.gateway).collect();
         let family = self.font_family.clone();
@@ -1627,8 +1640,8 @@ impl TerminalApp {
                     // cor do fundo aproxima o texto do fundo, no tema claro e no escuro.
                     fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, pane.term.default_bg(), 0.35);
                 }
-                if flash {
-                    fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, [128, 128, 136], 0.25);
+                if flash && flash_pane {
+                    fill_alpha(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, BELL_FLASH, 0.25);
                 }
             }
             for d in &dividers {
@@ -1815,6 +1828,9 @@ impl App for TerminalApp {
         }
         if let Some(rect) = find_bar.filter(|_| self.find.is_some()) {
             self.find_bar(ui, rect);
+        }
+        if self.window_flash() {
+            ui.paint(|pixmap, (ox, oy)| fill_alpha(pixmap, ox, oy, w, h, BELL_FLASH, 0.25));
         }
         self.dialog(ui);
     }
@@ -2565,6 +2581,9 @@ fn fill_alpha(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: Rgb, alpha
         pixmap.fill_rect(rect, &paint, mide::ui::draw::tf(), None);
     }
 }
+
+/// Cor do clarão do sino visual.
+const BELL_FLASH: Rgb = [128, 128, 136];
 
 /// Pinta o retângulo gravando a transparência no pixel (sem misturar com o fundo opaco
 /// da janela), como o fundo dos painéis.
