@@ -1013,6 +1013,9 @@ impl Code {
             }
         }
         deco.gutter = self.git_marks(i);
+        // Avisos do servidor encostados à direita (não embaixo do completar e sem rolar
+        // o texto para mostrá-los).
+        deco.trailing_right = true;
         deco
     }
 
@@ -1889,13 +1892,21 @@ impl Code {
             .take(10)
             .map(|c| {
                 let icon = mide::code::icons::kind_icon(c.kind).unwrap_or_else(|| "text-x-generic".into());
-                let detail = if c.detail.is_empty() { mide::i18n::tr(mide::code::icons::kind_name(c.kind)).into_owned() } else { c.detail.clone() };
-                (icon, c.label.clone(), detail)
+                // À direita, sempre o tipo (função, variável, classe...); o detalhe do
+                // servidor vai para o painel de documentação.
+                let kind = mide::i18n::tr(mide::code::icons::kind_name(c.kind)).into_owned();
+                (icon, c.label.clone(), kind)
             })
             .collect();
         let chosen = items.get(sel).cloned();
         let width = 360.0;
         let py = y.min(area.1 + area.3 - 300.0).max(area.1);
+        // A documentação vai sempre à direita da lista (nunca por cima do texto que se
+        // digita): sem espaço, ela estreita até 220 e, se ainda faltar, a lista anda
+        // para a esquerda.
+        let right = ui.window_size().0 - 8.0;
+        let wants_doc = self.config.complete_docs && chosen.as_ref().is_some_and(|c| !c.doc.is_empty() || !c.detail.is_empty() || c.snippet);
+        let x = if wants_doc && right - (x + width + 6.0) < 220.0 { (right - 220.0 - 6.0 - width).max(area.0 + 8.0).min(x) } else { x };
         let mut clicked = None;
         ui.glass_panel(x, py, width, 10.0, |ui| {
             for (k, (icon, label, detail)) in shown.iter().enumerate() {
@@ -1922,12 +1933,13 @@ impl Code {
                 self.resolving = Some((id, item.label.clone()));
             }
             let doc = doc_text(&item.doc);
-            if !doc.is_empty() || (item.snippet && !item.insert.is_empty()) {
-                let doc_w = 380.0_f32.min(area.2 * 0.45);
-                let dx = if x + width + 6.0 + doc_w <= area.0 + area.2 { x + width + 6.0 } else { (x - 6.0 - doc_w).max(area.0) };
+            if !doc.is_empty() || !item.detail.is_empty() || (item.snippet && !item.insert.is_empty()) {
+                let dx = x + width + 6.0;
+                let doc_w = (right - dx).clamp(160.0, 420.0);
                 ui.glass_panel(dx, py, doc_w, 10.0, |ui| {
                     if !item.detail.is_empty() {
-                        ui.strong(&item.detail);
+                        // A assinatura inteira, quebrando a linha (não cortada).
+                        ui.code_spans(&[(item.detail.as_str(), false)], (size * 0.92).round());
                     }
                     if !doc.is_empty() {
                         ui.label(&doc);
@@ -2206,14 +2218,33 @@ impl App for Code {
         }
         // Painel de símbolos à direita.
         // Só com o que mostrar: servidor de linguagem para o arquivo ou símbolos lidos.
-        let outline_w = if self.config.outline && self.outline_useful() { OUTLINE_W.min(cw * 0.35) } else { 0.0 };
         // Respiro em volta do editor: à direita e embaixo, para o texto não encostar na
         // borda da janela nem na barra de status.
-        let body = (cl, body_top, (cw - EDGE_GAP - outline_w - if outline_w > 0.0 { SIDE_GAP } else { 0.0 }).max(120.0), (status_y - body_top - EDGE_GAP).max(60.0));
-        if outline_w > 0.0 {
-            let rect = (body.0 + body.2 + SIDE_GAP, body_top, outline_w, body.3);
-            self.outline_panel(ui, rect);
+        let total = (cl, body_top, (cw - EDGE_GAP).max(160.0), (status_y - body_top - EDGE_GAP).max(60.0));
+        let mut body = total;
+        if self.config.outline && self.outline_useful() {
+            // Editor e painel de símbolos com a divisória do kit (arrastável, como a da
+            // gaveta); a largura do painel fica guardada.
+            let max_outline = (total.2 - 240.0).max(OUTLINE_MIN);
+            let outline_w = self.config.outline_width.clamp(OUTLINE_MIN, max_outline);
+            let mut left = total.2 - outline_w;
+            let mut outline_rect = (total.0 + left, total.1, outline_w, total.3);
+            let mut moved = None;
+            ui.clip(total, |ui| {
+                moved = Some(ui.split(&mut left, 240.0_f32.min(total.2 - OUTLINE_MIN), total.2 - OUTLINE_MIN, |ui| body = ui.to_window(ui.region()), |ui| outline_rect = ui.to_window(ui.region())));
+            });
+            if let Some(r) = moved {
+                self.config.outline_width = (total.2 - left).clamp(OUTLINE_MIN, max_outline);
+                if r.submitted() {
+                    self.divider_moved();
+                }
+            }
+            // Um respiro entre a divisória e o painel.
+            let outline_rect = (outline_rect.0 + SIDE_GAP / 2.0, outline_rect.1, (outline_rect.2 - SIDE_GAP / 2.0).max(60.0), outline_rect.3);
+            body.2 = (body.2 - SIDE_GAP / 2.0).max(120.0);
+            self.outline_panel(ui, outline_rect);
         }
+        let body = body;
         let mut editor_rect = body;
         let mut term_rect = (cl, status_y, cw, 0.0);
         if self.terminal_open && self.terminal.is_some() {
@@ -2307,11 +2338,6 @@ impl App for Code {
                 mide::ui::draw::fill_rounded(pixmap, ox + f.0, oy + f.1, f.2, 2.0, 0.0, mide::ui::draw::rgba(t.accent[0], t.accent[1], t.accent[2], 200));
             });
         }
-        if self.completion.is_none() {
-            self.signature_popup(ui, focused_area);
-        }
-        self.mouse_hover(ui, focused_area);
-        self.completion_popup(ui, focused_area);
         // Terminal integrado.
         if term_h > 0.0 {
             let size = self.config.size;
@@ -2381,6 +2407,13 @@ impl App for Code {
                 self.hover = None;
             }
         }
+        // Painéis do editor (assinatura, dica do ponteiro, completar) por último, por
+        // cima da barra de status e do resto (antes, o que vinha depois aparecia neles).
+        if self.completion.is_none() {
+            self.signature_popup(ui, focused_area);
+        }
+        self.mouse_hover(ui, focused_area);
+        self.completion_popup(ui, focused_area);
         // Arrasto de arquivos/abas para as bordas do editor.
         self.drag_step(ui, editor_rect);
         self.overlays(ui);
@@ -2520,7 +2553,7 @@ fn doc_text(doc: &str) -> String {
         if t.trim_start().starts_with("```") {
             continue;
         }
-        let t = t.trim_start_matches('#').trim_start_matches(' ').replace("**", "").replace("__", "").replace('`', "");
+        let t = strip_links(&t.trim_start_matches('#').trim_start_matches(' ').replace("**", "").replace("__", "").replace('`', ""));
         // Uma linha vazia só entre parágrafos.
         if t.trim().is_empty() && out.last().is_none_or(|l| l.is_empty()) {
             continue;
@@ -2534,6 +2567,25 @@ fn doc_text(doc: &str) -> String {
         out.pop();
     }
     out.join("\n")
+}
+
+/// Links do markdown só com o nome: "[MDN Reference](https://...)" vira "MDN Reference".
+fn strip_links(t: &str) -> String {
+    let mut out = String::new();
+    let mut rest = t;
+    while let Some(a) = rest.find('[') {
+        let Some(b) = rest[a..].find("](").map(|b| a + b) else {
+            break;
+        };
+        let Some(c) = rest[b..].find(')').map(|c| b + c) else {
+            break;
+        };
+        out.push_str(&rest[..a]);
+        out.push_str(&rest[a + 1..b]);
+        rest = &rest[c + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A tecla `keysym` é a do nome do `keymap.json` do Zed ("p", "f2", "enter", ".")?
@@ -2623,8 +2675,8 @@ fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl
 const EDGE_GAP: f32 = 10.0;
 /// Altura da faixa do caminho em cima do texto.
 const BREADCRUMB_H: f32 = 24.0;
-/// Largura do painel de símbolos.
-const OUTLINE_W: f32 = 270.0;
+/// Menor largura do painel de símbolos.
+const OUTLINE_MIN: f32 = 160.0;
 /// Respiro entre a gaveta do projeto e o editor (o recuo da barra lateral flutuante).
 const SIDE_GAP: f32 = 8.0;
 /// Respiro à direita da barra de abas (o + não encosta na borda da janela), como o

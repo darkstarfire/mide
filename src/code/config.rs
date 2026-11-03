@@ -109,6 +109,8 @@ pub struct Config {
     pub icon_theme: String,
     /// Painel dos símbolos do arquivo à direita (como o outline do Neovim e do Zed).
     pub outline: bool,
+    /// Largura do painel de símbolos (arrastando a divisória).
+    pub outline_width: f32,
     /// Faixa com o caminho (pastas, arquivo e símbolos) em cima do texto.
     pub breadcrumbs: bool,
 }
@@ -147,6 +149,7 @@ impl Default for Config {
             color_theme: String::new(),
             icon_theme: String::new(),
             outline: true,
+            outline_width: 270.0,
             breadcrumbs: true,
         }
     }

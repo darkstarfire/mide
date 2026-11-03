@@ -17,6 +17,8 @@ pub(crate) enum PendingEdit {
 pub(crate) struct LspUi {
     /// Ajuda de assinatura: o pedido e a resposta.
     pub signature: Option<(u64, Option<Signature>)>,
+    /// Onde a assinatura foi pedida: a aba e o ponto do texto (ela some fora dali).
+    pub signature_at: Option<(usize, usize)>,
     pub edits: HashMap<u64, PendingEdit>,
     /// Ações de código pedidas (o número do pedido).
     pub actions_req: Option<u64>,
@@ -164,6 +166,10 @@ impl Code {
         {
             let shown = self.lsp.signature.take().and_then(|(_, s)| s);
             self.lsp.signature = Some((id, shown));
+            // A primeira vez na chamada guarda o lugar; uma vírgula depois não o muda.
+            if self.lsp.signature_at.is_none_or(|(d, _)| d != self.cur) {
+                self.lsp.signature_at = Some((self.cur, cursor));
+            }
         }
     }
 
@@ -172,11 +178,15 @@ impl Code {
     pub(crate) fn signature_after_typing(&mut self, before: &str, line_changed: bool) {
         if line_changed {
             self.lsp.signature = None;
+            self.lsp.signature_at = None;
             return;
         }
         match before.chars().next_back() {
             Some('(' | ',') => self.request_signature(),
-            Some(')') => self.lsp.signature = None,
+            Some(')') => {
+                self.lsp.signature = None;
+                self.lsp.signature_at = None;
+            }
             // Dentro dos parênteses, o parâmetro atual muda com a vírgula: pede de novo
             // só se a ajuda já está à vista.
             Some(_) if self.lsp.signature.as_ref().is_some_and(|(_, s)| s.is_some()) => {}
@@ -186,13 +196,24 @@ impl Code {
 
     /// A ajuda de assinatura em cima da linha do cursor.
     pub(crate) fn signature_popup(&mut self, ui: &mut Ui, area: (f32, f32, f32, f32)) {
+        // Some ao trocar de aba, ao clicar, com Esc, ao sair da linha ou ao voltar para
+        // antes do parêntese da chamada (antes, ficava aberta até em outro arquivo).
+        let away = match self.lsp.signature_at {
+            Some((doc, at)) => {
+                let d = &self.docs[self.cur.min(self.docs.len() - 1)].text;
+                let cursor = d.edit.cursor;
+                doc != self.cur || cursor < at || d.text.get(at.min(cursor)..cursor).is_none_or(|t| t.contains('\n'))
+            }
+            None => true,
+        };
+        if away || ui.input().key(Key::Escape) || ui.input().pressed {
+            self.lsp.signature = None;
+            self.lsp.signature_at = None;
+            return;
+        }
         let Some((_, Some(sig))) = &self.lsp.signature else {
             return;
         };
-        if ui.input().key(Key::Escape) {
-            self.lsp.signature = None;
-            return;
-        }
         let sig = sig.clone();
         let size = self.config.size;
         let doc = &self.docs[self.cur].text;

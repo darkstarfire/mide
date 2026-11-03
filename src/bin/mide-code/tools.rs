@@ -21,6 +21,8 @@ pub(crate) struct Tools {
     pub git: HashMap<PathBuf, GitState>,
     /// Trechos (snippets) lidos de cada linguagem.
     pub snippets: HashMap<&'static str, Vec<mide::code::snippets::Snippet>>,
+    /// Aba da dica do ponteiro (trocar de aba some com ela).
+    pub hover_doc: usize,
 }
 
 /// Um comando da paleta: ação, nome (com o menu) e atalho.
@@ -151,6 +153,12 @@ impl Code {
     /// Documentação ao parar o ponteiro sobre um símbolo (como no VS Code): depois de
     /// 0,7 s parado em cima do texto, pede a dica ao servidor; some ao mexer o ponteiro.
     pub(crate) fn mouse_hover(&mut self, ui: &mut Ui, area: (f32, f32, f32, f32)) {
+        if self.tools.hover_doc != self.cur {
+            self.tools.hover_doc = self.cur;
+            self.tools.mouse_hover = None;
+            self.tools.rest = None;
+            self.hover = None;
+        }
         let Some((px, py)) = ui.pointer() else {
             self.tools.rest = None;
             return;

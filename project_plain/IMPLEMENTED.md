@@ -2534,3 +2534,8 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - **Botões da barra de ferramentas menores** em todos os apps do mide-ui (30 de altura, 32 por botão, ícone de 16; `TOOLBAR_SEG` público para os apps calcularem o espaço).
   - Nas Preferências do Code, os servidores de linguagem ficam no topo.
 - Testes: `cargo test` ok (novo: criar com caminho); bateria das seções do Arquivos, do Editor, das Configurações, da Captura e do Code passando, com as coordenadas acertadas para a barra menor, as abas novas e a faixa do caminho (nos testes do Code o painel de símbolos fica desligado, porque depende de servidor instalado na máquina).
+
+## v0.10.67: Code, correções da revisão do usuário (2026-11-03)
+
+- Revisão do usuário com 9 fotos, registrada em `docs/code-revisao-2026-11-03.md` (a lista de trabalho, com o processo e o resultado de cada item). Feitos nesta versão: o tipo da sugestão sempre na coluna da direita do completar (o detalhe do servidor foi para o painel de documentação, inteiro); a ajuda de assinatura presa à chamada e à aba (antes ficava aberta até em outro arquivo); avisos do servidor encostados à direita do editor, sem rolar o texto (era a causa do "digito e nada acontece": a área rolava para mostrar o aviso inteiro e o texto saía da vista); documentação sempre à direita da lista, estreitando quando falta espaço; os painéis do editor desenhados por último (nada aparece por cima deles); painel de símbolos com a borda arrastável e a largura guardada.
+- Testes: `cargo test` ok; conferido por captura com o servidor de linguagem de teste.
