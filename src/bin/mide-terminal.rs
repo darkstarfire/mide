@@ -1444,13 +1444,14 @@ impl TerminalApp {
         }
         let (active, activity): (usize, Vec<bool>) = (self.active, self.tabs.iter().map(|t| t.activity).collect());
         let c = bar_colors(self.focused().and_then(|id| self.panes.get(&id)).map(|p| p.term.default_bg()));
+        let alpha = self.chrome_alpha();
         ui.paint_text(|pixmap, text, (ox, oy)| {
             let (x0, y0) = (ox + rect.0, oy + rect.1);
-            fill(pixmap, x0, y0, rect.2, rect.3, c.bar);
+            fill_solid(pixmap, x0, y0, rect.2, rect.3, c.bar, alpha);
             // Tahoe: cada aba é uma cápsula; a ativa, mais clara.
             for (i, title) in titles.iter().enumerate() {
                 let x = x0 + i as f32 * width;
-                let pill = |pixmap: &mut Pixmap, col: Rgb| mide::ui::draw::fill_rounded(pixmap, x + 3.0, y0 + 3.0, width - 6.0, rect.3 - 6.0, (rect.3 - 6.0) / 2.0, mide::ui::draw::rgba(col[0], col[1], col[2], 255));
+                let pill = |pixmap: &mut Pixmap, col: Rgb| mide::ui::draw::fill_rounded(pixmap, x + 3.0, y0 + 3.0, width - 6.0, rect.3 - 6.0, (rect.3 - 6.0) / 2.0, mide::ui::draw::rgba(col[0], col[1], col[2], alpha));
                 if i == active {
                     pill(pixmap, c.active);
                 } else if hovered == Some(i) {
@@ -1491,6 +1492,14 @@ impl TerminalApp {
         }
     }
 
+    /// Transparência das faixas da janela (título, abas, margem de baixo): a do painel
+    /// em foco, para o Terminal translúcido ser translúcido por inteiro (com 100%,
+    /// tudo opaco).
+    fn chrome_alpha(&self) -> u8 {
+        let opacity = self.focused().and_then(|id| self.panes.get(&id)).map_or(1.0, |p| p.opacity);
+        (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
     /// Faixa do título do Tahoe: na cor do terminal, os botões da janela à esquerda e o
     /// título no meio ("título — colunas×linhas", como o Terminal do Mac); arrastar move
     /// a janela e o duplo clique maximiza. Embaixo, a margem que deixa o canto livre.
@@ -1499,10 +1508,12 @@ impl TerminalApp {
         let bg = focused.map(|p| p.term.default_bg());
         let c = bar_colors(bg);
         let strip = bg.map_or(c.bar, |b| [b[0], b[1], b[2]]);
+        let alpha = self.chrome_alpha();
         let title = focused.map(|p| format!("{} — {}×{}", p.title(), p.term.cols(), p.term.rows())).unwrap_or_default();
         ui.paint_text(|pixmap, text, (ox, oy)| {
-            fill(pixmap, ox, oy, w, TITLE_BAR, strip);
-            fill(pixmap, ox, oy + h - BOTTOM_INSET, w, BOTTOM_INSET, strip);
+            // Com a transparência do terminal: translúcido, a janela toda fica de vidro.
+            fill_solid(pixmap, ox, oy, w, TITLE_BAR, strip, alpha);
+            fill_solid(pixmap, ox, oy + h - BOTTOM_INSET, w, BOTTOM_INSET, strip, alpha);
             let size = 13.0;
             let label = fit(text, &title, size, w - 200.0);
             let tw = text.measure(&label, size, FontWeight::Semibold);
@@ -1580,7 +1591,14 @@ impl TerminalApp {
         // Painéis translúcidos com vidro: o compositor desfoca o que está atrás. Um
         // vidro só para a área toda (vários, um por painel, deixam emendas).
         if rects.iter().any(|(id, _)| self.panes.get(id).is_some_and(|p| p.opacity < 1.0 && p.blur)) {
-            ui.glass_behind(area, 0.0);
+            // Na janela comum, o vidro vai atrás da janela inteira (o título e as abas
+            // ficam translúcidos junto); o terminal de atalho é só a área dele.
+            if self.hotkey.is_none() {
+                let (ww, wh) = ui.window_size();
+                ui.glass_behind((0.0, 0.0, ww, wh), mide::kit::RADIUS_WINDOW);
+            } else {
+                ui.glass_behind(area, 0.0);
+            }
         }
         ui.paint_text(|pixmap, text, (ox, oy)| {
             text.set_mono_family(Some(&family));
@@ -2546,6 +2564,12 @@ fn fill_alpha(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: Rgb, alpha
         // Em pontos: na escala da tela (a grade passa a escala 1 antes de desenhar).
         pixmap.fill_rect(rect, &paint, mide::ui::draw::tf(), None);
     }
+}
+
+/// Pinta o retângulo gravando a transparência no pixel (sem misturar com o fundo opaco
+/// da janela), como o fundo dos painéis.
+fn fill_solid(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: Rgb, alpha: u8) {
+    mide::ui::draw::paint_rounded_solid(pixmap, x, y, w, h, 0.0, [c[0], c[1], c[2], alpha]);
 }
 
 fn fill_round(pixmap: &mut Pixmap, x: f32, y: f32, d: f32, c: Rgb) {
