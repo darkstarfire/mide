@@ -721,3 +721,81 @@ msgstr "digite um nome"
 
 msgid "“{name}” already exists and is not a folder"
 msgstr "“{name}” já existe e não é uma pasta"
+
+msgid "Editor"
+msgstr "Editor"
+
+msgid "Completion and Code"
+msgstr "Completar e código"
+
+msgid "Panels"
+msgstr "Painéis"
+
+msgid "Language Servers"
+msgstr "Servidores de linguagem"
+
+msgid "Settings File"
+msgstr "Arquivo de configurações"
+
+msgid "Each language uses the first installed server of its list. Programs are found also outside the session PATH (nvm, cargo, go, composer...) and JavaScript servers that are missing are installed by the Code."
+msgstr "Cada linguagem usa o primeiro servidor instalado da lista dela. Os programas são achados também fora do PATH da sessão (nvm, cargo, go, composer...), e os servidores em JavaScript que faltam são instalados pelo Code."
+
+msgid "running"
+msgstr "rodando"
+
+msgid "off"
+msgstr "desligado"
+
+msgid "not installed"
+msgstr "não instalado"
+
+msgid "Extensions in the Zed format: themes, icon themes, snippets, languages and language servers. The ones installed in Zed are used too (read only)."
+msgstr "Extensões no formato do Zed: temas, temas de ícones, trechos, linguagens e servidores de linguagem. As instaladas no Zed também valem (só leitura)."
+
+msgid "Browse Extensions…"
+msgstr "Procurar extensões…"
+
+msgid "No extensions installed."
+msgstr "Nenhuma extensão instalada."
+
+msgid "Zed"
+msgstr "Zed"
+
+msgid "All these settings (and all the language servers) are also in a file you can edit by hand, like the settings.json of Zed and VS Code; it takes effect when saved. Shortcuts are in a keymap file in the Zed format."
+msgstr "Todas estas configurações (e todos os servidores de linguagem) ficam também num arquivo que dá para editar à mão, como o settings.json do Zed e do VS Code; vale ao salvar. Os atalhos ficam num arquivo de atalhos no formato do Zed."
+
+msgid "Open Settings File"
+msgstr "Abrir o arquivo de configurações"
+
+msgid "Open Keymap File"
+msgstr "Abrir o arquivo de atalhos"
+
+msgid "Import Settings from Zed"
+msgstr "Importar as configurações do Zed"
+
+msgid "Couldn’t create the settings file: {err}"
+msgstr "Não foi possível criar o arquivo de configurações: {err}"
+
+msgid "Zed settings imported into the Code settings file."
+msgstr "Configurações do Zed importadas para o arquivo de configurações do Code."
+
+msgid "Keymap updated ({n} shortcuts)"
+msgstr "Atalhos atualizados ({n})"
+
+msgid "Settings updated"
+msgstr "Configurações atualizadas"
+
+msgid "Error in the settings file, {err}"
+msgstr "Erro no arquivo de configurações, {err}"
+
+msgid "line {line}: {err}"
+msgstr "linha {line}: {err}"
+
+msgid "Extensions (Ctrl+Shift+X)"
+msgstr "Extensões (Ctrl+Shift+X)"
+
+msgid "available"
+msgstr "disponível"
+
+msgid "JSON with Comments"
+msgstr "JSON com comentários"

@@ -53,7 +53,7 @@ ok_if "code: arquivo da gaveta solto embaixo divide o editor" grep -q 'editor di
 # Terminal integrado: botão da barra abre o shell na pasta do projeto; Ctrl+J fecha
 # e abre de novo (o mesmo shell).
 new_project
-code_run "300 click 600 400; 330 click 987 99; 400 type touch_criado; 420 key enter; 460 combo ctrl+j; 480 combo ctrl+j; 500 type touch_outro; 510 key enter; 560 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
+code_run "300 click 600 400; 330 click 955 99; 400 type touch_criado; 420 key enter; 460 combo ctrl+j; 480 combo ctrl+j; 500 type touch_outro; 510 key enter; 560 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
 ok_if "code: terminal integrado roda comandos na pasta do projeto" test -f "$CDIR/proj/criado"
 ok_if "code: Ctrl+J fecha e abre o terminal" test -f "$CDIR/proj/outro"
 
@@ -82,8 +82,8 @@ ok_if "code: divisória do terminal arrastável e guardada" grep -q '^terminal_h
 rm -f "$XDG_CONFIG_HOME/mide/code.toml"
 
 # Preferências (Ctrl+,) numa janela filha própria, centrada sobre a principal
-# (moldura 560x500 em (288, 146)), com o vidro pelo nome app:<app_id>><título>.
-check "code: Preferências numa janela filha centrada sobre a principal" 'janela "Preferências do Code" .*moldura=\(288, 146, 560, 500\)' "300 click 600 300; 320 combo ctrl+,; 420 list" "$CODE_BIN '$CDIR/proj'"
+# (moldura 820x590 em (158, 101), com a barra de título), com o vidro pelo nome app:<app_id>><título>.
+check "code: Preferências numa janela filha centrada sobre a principal" 'janela "Preferências do Code" .*moldura=\(158, 101, 820, 590\)' "300 click 600 300; 320 combo ctrl+,; 420 list" "$CODE_BIN '$CDIR/proj'"
 check "code: vidro na janela filha (app:mide-code>Preferências%20do%20Code)" 'vidro: desfoque refeito \([^:]*:app:mide-code>Preferências%20do%20Code:' "300 click 600 300; 320 combo ctrl+,; 420 list" "$CODE_BIN '$CDIR/proj'"
 rm -f "$XDG_CONFIG_HOME/mide/code.toml"
 rm -rf "$CDIR"

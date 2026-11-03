@@ -225,6 +225,10 @@ pub(crate) struct Code {
     ext_servers: ext_servers::ExtServers,
     /// Loja de extensões.
     store_ui: store_ui::StoreUi,
+    /// Seção escolhida nas Preferências e a ação pedida lá (abrir um arquivo...), feita
+    /// na janela principal.
+    prefs_section: usize,
+    pending_prefs_action: Option<&'static str>,
 }
 
 fn read_text(path: &Path) -> std::io::Result<(String, bool)> {
@@ -247,7 +251,8 @@ fn comment_prefix(lang: &Language) -> &str {
 
 impl Code {
     fn new(args: Vec<PathBuf>) -> Self {
-        let zed_keys = if Config::load().use_zed_settings { mide::code::zed::keymap() } else { Vec::new() };
+        // Atalhos do `code-keymap.json` (no formato do `keymap.json` do Zed).
+        let zed_keys = mide::code::settings_json::keymap_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| mide::code::zed::parse_keymap(&t)).unwrap_or_default();
         let mut app = Self {
             docs: Vec::new(),
             cur: 0,
@@ -269,6 +274,8 @@ impl Code {
             syntax: mide::code::syntax::Syntax::new(),
             ext_servers: ext_servers::ExtServers::default(),
             store_ui: store_ui::StoreUi::default(),
+            prefs_section: 0,
+            pending_prefs_action: None,
             hover: None,
             definition: None,
             message: None,
@@ -398,6 +405,14 @@ impl Code {
                 if Config::servers_path().is_some_and(|p| p == path || std::fs::canonicalize(&p).ok().as_ref() == Some(&path)) {
                     self.reload_servers(&text);
                 }
+                // O arquivo de configurações: vale na hora (com erro, diz a linha).
+                if mide::code::settings_json::path().is_some_and(|p| p == path) {
+                    self.reload_settings(&text);
+                }
+                if mide::code::settings_json::keymap_path().is_some_and(|p| p == path) {
+                    self.zed_keys = mide::code::zed::parse_keymap(&text);
+                    self.say(tr!("Keymap updated ({n} shortcuts)", n = self.zed_keys.len()));
+                }
                 true
             }
             Err(err) => {
@@ -420,6 +435,31 @@ impl Code {
             self.say(tr!("{saved}; {unnamed} untitled (use Save As)", saved = trn("{n} file saved", "{n} files saved", n as u64), unnamed = unnamed));
         } else {
             self.say(trn("{n} file saved", "{n} files saved", n as u64));
+        }
+    }
+
+    /// O `code-settings.json` foi salvo: as configurações valem na hora.
+    fn reload_settings(&mut self, text: &str) {
+        match mide::code::settings_json::parse(text) {
+            Ok(v) => {
+                let mut config = Config::load();
+                mide::code::settings_json::apply(&mut config, &v);
+                self.config = config;
+                self.restart_servers();
+                self.apply_themes();
+                self.say(tr!("Settings updated"));
+            }
+            Err(err) => self.say(tr!("Error in the settings file, {err}", err = err)),
+        }
+    }
+
+    /// Os servidores de linguagem abrem de novo (o comando ou as opções mudaram).
+    fn restart_servers(&mut self) {
+        self.servers.clear();
+        self.failed.clear();
+        for doc in &mut self.docs {
+            doc.lsp_seen = None;
+            doc.diags.clear();
         }
     }
 
@@ -1149,14 +1189,28 @@ impl Code {
                 if ui.is_window_open(PREFS) {
                     ui.close_window(PREFS);
                 } else {
-                    ui.open_window(PREFS, Window::new(&tr!("Code Settings")).size(560, 470).min_size(480, 400).glass());
+                    ui.open_window(PREFS, Window::new(&tr!("Code Settings")).size(820, 560).min_size(640, 420).glass());
                 }
             }
-            "edit-servers" => {
+            "edit-servers" | "open-settings-json" => {
                 self.overlay = Overlay::None;
-                match self.config.ensure_servers_file() {
+                // Com tudo o que está valendo agora (todas as opções e servidores).
+                let _ = self.config.save();
+                match mide::code::settings_json::ensure(&self.config) {
                     Ok(path) => self.open_path(path),
-                    Err(err) => self.say(tr!("Couldn’t create the language servers file: {err}", err = err)),
+                    Err(err) => self.say(tr!("Couldn’t create the settings file: {err}", err = err)),
+                }
+            }
+            "open-keymap" => match mide::code::settings_json::ensure_keymap() {
+                Ok(path) => self.open_path(path),
+                Err(err) => self.say(tr!("Couldn’t create the settings file: {err}", err = err)),
+            },
+            "import-zed" => {
+                if mide::code::settings_json::import_zed(&mut self.config) {
+                    let _ = self.config.save();
+                    self.restart_servers();
+                    self.apply_themes();
+                    self.say(tr!("Zed settings imported into the Code settings file."));
                 }
             }
             "drawer" => {
@@ -1450,92 +1504,151 @@ impl Code {
         ui.request_repaint();
     }
 
-    /// Preferências (janela filha `PREFS`): aparência do editor e servidores de
-    /// linguagem. As mudanças valem na hora; o arquivo é gravado ao fechar a janela
-    /// (`window_closed`).
+    /// Preferências (janela filha `PREFS`), em seções escolhidas na barra lateral, como
+    /// nas IDEs grandes (e no visual das Configurações do mide): Editor, Completar e
+    /// código, Painéis, Servidores de linguagem, Extensões e Arquivo de configurações.
+    /// Tudo vai também para o `code-settings.json`, que se edita à mão.
     fn prefs(&mut self, ui: &mut Ui) {
-        let c = &mut self.config;
         let mut close = ui.input().key(Key::Escape);
-        let mut edit_servers = false;
+        let sections = [
+            ("document-new-symbolic", tr!("Editor")),
+            ("edit-find-symbolic", tr!("Completion and Code")),
+            ("view-sidebar-start-symbolic", tr!("Panels")),
+            ("utilities-terminal-symbolic", tr!("Language Servers")),
+            ("application-x-addon-symbolic", tr!("Extensions")),
+            ("document-open-symbolic", tr!("Settings File")),
+        ];
         let fonts: Vec<String> = std::iter::once(tr!("System Font").into_owned()).chain(ui.mono_fonts()).collect();
-        let mut font_i = c.font.as_ref().and_then(|f| fonts.iter().position(|x| x == f)).unwrap_or(0);
-        let servers_running: Vec<String> = self.servers.keys().cloned().collect();
-        let servers_file = "code-servers.toml";
-        // Temas das extensões do Zed (o primeiro de cada lista é o do mide).
         let color_names: Vec<String> = std::iter::once(tr!("mide (default)").into_owned()).chain(self.theme_names.0.iter().cloned()).collect();
         let icon_names: Vec<String> = std::iter::once(tr!("Material Icon Theme (default)").into_owned()).chain(self.theme_names.1.iter().cloned()).collect();
-        let mut color_i = color_names.iter().skip(1).position(|n| *n == c.color_theme).map_or(0, |p| p + 1);
-        let mut icon_i = icon_names.iter().skip(1).position(|n| *n == c.icon_theme).map_or(0, |p| p + 1);
+        let running: Vec<String> = self.servers.keys().cloned().collect();
+        let extensions = mide::code::extensions::installed();
+        let section = std::cell::Cell::new(self.prefs_section.min(sections.len() - 1));
         let mut themes_changed = false;
-        ui.page(|ui| {
-            // Servidores primeiro (o mais procurado): um resumo (a lista fica no arquivo, editado no próprio Code).
-            let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
-            let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
-            let mut summary = tr!("{n} configured", n = c.servers.len());
-            if !running.is_empty() {
-                summary.push_str(&tr!(" · running: {list}", list = running.join(", ")));
+        let mut action: Option<&'static str> = None;
+        let c = &mut self.config;
+        let (_, _, ww, wh) = ui.region();
+        ui.columns(230.0, 12.0, |ui| {
+            ui.space(8.0);
+            for (k, (icon, name)) in sections.iter().enumerate() {
+                if k == section.get() {
+                    ui.join_selection(false, false);
+                }
+                if ui.list_row(icon, name, &[], k == section.get()).clicked() {
+                    section.set(k);
+                }
             }
-            if !ready.is_empty() {
-                summary.push_str(&tr!(" · installed: {list}", list = ready.join(", ")));
-            }
-            ui.note(&tr!("Language servers (LSP): {summary}. They are listed in {file}, which takes effect when saved.", summary = summary, file = servers_file));
-            ui.row(|ui| {
-                edit_servers |= ui.button(&tr!("Edit Language Servers…")).clicked();
-            });
-            ui.card(|ui| {
-                if ui.dropdown(&tr!("Font"), &fonts, &mut font_i).changed() {
-                    c.font = (font_i > 0).then(|| fonts[font_i].clone());
+        }, |ui| {
+            ui.scroll_area_padded((wh - 16.0).max(100.0), 4.0, |ui| {
+                ui.strong(&sections[section.get()].1);
+                match section.get() {
+                    0 => ui.card(|ui| {
+                        let mut font_i = c.font.as_ref().and_then(|f| fonts.iter().position(|x| x == f)).unwrap_or(0);
+                        if ui.dropdown(&tr!("Font"), &fonts, &mut font_i).changed() {
+                            c.font = (font_i > 0).then(|| fonts[font_i].clone());
+                        }
+                        let mut size = c.size;
+                        ui.slider(&tr!("Font Size"), &mut size, 9.0, 28.0);
+                        c.size = size.round();
+                        let mut color_i = color_names.iter().skip(1).position(|n| *n == c.color_theme).map_or(0, |p| p + 1);
+                        if ui.dropdown(&tr!("Color Theme"), &color_names, &mut color_i).changed() {
+                            c.color_theme = if color_i == 0 { String::new() } else { color_names[color_i].clone() };
+                            themes_changed = true;
+                        }
+                        let mut icon_i = icon_names.iter().skip(1).position(|n| *n == c.icon_theme).map_or(0, |p| p + 1);
+                        if ui.dropdown(&tr!("File Icon Theme"), &icon_names, &mut icon_i).changed() {
+                            c.icon_theme = if icon_i == 0 { String::new() } else { icon_names[icon_i].clone() };
+                            themes_changed = true;
+                        }
+                        ui.switch(&tr!("Line numbers"), &mut c.line_numbers);
+                        ui.switch(&tr!("Highlight current line"), &mut c.current_line);
+                        ui.switch(&tr!("Indent with spaces (off: tabs)"), &mut c.soft_tabs);
+                        let mut tab = c.tab_size as f32;
+                        ui.slider(&tr!("Spaces per indent"), &mut tab, 1.0, 8.0);
+                        c.tab_size = tab.round() as usize;
+                    }),
+                    1 => ui.card(|ui| {
+                        ui.switch(&tr!("Suggest completions while typing"), &mut c.auto_complete);
+                        let mut min = c.complete_min_chars.clamp(1, 5) as f32;
+                        ui.slider(&tr!("Letters before suggesting"), &mut min, 1.0, 5.0);
+                        c.complete_min_chars = min.round() as usize;
+                        ui.switch(&tr!("Show documentation next to the suggestion"), &mut c.complete_docs);
+                        ui.switch(&tr!("Inlay hints (types and parameter names)"), &mut c.inlay_hints);
+                        ui.switch(&tr!("Format on save"), &mut c.format_on_save);
+                    }),
+                    2 => ui.card(|ui| {
+                        ui.switch(&tr!("Project drawer on the left"), &mut c.drawer);
+                        ui.switch(&tr!("Symbols Panel"), &mut c.outline);
+                        ui.switch(&tr!("Path Bar"), &mut c.breadcrumbs);
+                    }),
+                    3 => {
+                        ui.note(&tr!("Each language uses the first installed server of its list. Programs are found also outside the session PATH (nvm, cargo, go, composer...) and JavaScript servers that are missing are installed by the Code."));
+                        if ui.button(&tr!("Edit Language Servers…")).clicked() {
+                            action = Some("open-settings-json");
+                        }
+                        ui.card(|ui| {
+                            for srv in &c.servers {
+                                let state = if running.contains(&srv.key()) {
+                                    tr!("running").into_owned()
+                                } else if !srv.enabled {
+                                    tr!("off").into_owned()
+                                } else if installed(&srv.command) {
+                                    tr!("available").into_owned()
+                                } else {
+                                    tr!("not installed").into_owned()
+                                };
+                                let name = format!("{} — {}", mide::code::settings_json::server_name(srv), srv.languages.join(", "));
+                                ui.list_row("utilities-terminal-symbolic", &name, &[(&state, 120.0)], false);
+                            }
+                        });
+                    }
+                    4 => {
+                        ui.note(&tr!("Extensions in the Zed format: themes, icon themes, snippets, languages and language servers. The ones installed in Zed are used too (read only)."));
+                        if ui.primary_button(&tr!("Browse Extensions…")).clicked() {
+                            action = Some("extensions");
+                        }
+                        ui.card(|ui| {
+                            if extensions.is_empty() {
+                                ui.note(&tr!("No extensions installed."));
+                            }
+                            for e in &extensions {
+                                let from = if e.from_zed { tr!("Zed").into_owned() } else { "mide".to_string() };
+                                let label = format!("{} {} — {}", e.manifest.name, e.manifest.version, e.manifest.description);
+                                ui.list_row(&mide::code::icons::kind_icon(9).unwrap_or_default(), &label, &[(&from, 60.0)], false);
+                            }
+                        });
+                    }
+                    _ => {
+                        ui.note(&tr!("All these settings (and all the language servers) are also in a file you can edit by hand, like the settings.json of Zed and VS Code; it takes effect when saved. Shortcuts are in a keymap file in the Zed format."));
+                        ui.card(|ui| {
+                            ui.row(|ui| {
+                                if ui.button(&tr!("Open Settings File")).clicked() {
+                                    action = Some("open-settings-json");
+                                }
+                                if ui.button(&tr!("Open Keymap File")).clicked() {
+                                    action = Some("open-keymap");
+                                }
+                            });
+                            if mide::code::zed::load().is_some() && ui.button(&tr!("Import Settings from Zed")).clicked() {
+                                action = Some("import-zed");
+                            }
+                        });
+                    }
                 }
-                if ui.dropdown(&tr!("Color Theme"), &color_names, &mut color_i).changed() {
-                    c.color_theme = if color_i == 0 { String::new() } else { color_names[color_i].clone() };
-                    themes_changed = true;
-                }
-                if ui.dropdown(&tr!("File Icon Theme"), &icon_names, &mut icon_i).changed() {
-                    c.icon_theme = if icon_i == 0 { String::new() } else { icon_names[icon_i].clone() };
-                    themes_changed = true;
-                }
-                let mut size = c.size;
-                ui.slider(&tr!("Font Size"), &mut size, 9.0, 28.0);
-                c.size = size.round();
-                ui.switch(&tr!("Line numbers"), &mut c.line_numbers);
-                ui.switch(&tr!("Highlight current line"), &mut c.current_line);
-                ui.switch(&tr!("Indent with spaces (off: tabs)"), &mut c.soft_tabs);
-                let mut tab = c.tab_size as f32;
-                ui.slider(&tr!("Spaces per indent"), &mut tab, 1.0, 8.0);
-                c.tab_size = tab.round() as usize;
-                ui.switch(&tr!("Project drawer on the left"), &mut c.drawer);
-            });
-            // Completar: abre sozinho ao digitar (a partir de quantas letras) e mostra a
-            // documentação ao lado, como no VS Code e no Zed.
-            ui.card(|ui| {
-                ui.switch(&tr!("Suggest completions while typing"), &mut c.auto_complete);
-                let mut min = c.complete_min_chars.clamp(1, 5) as f32;
-                ui.slider(&tr!("Letters before suggesting"), &mut min, 1.0, 5.0);
-                c.complete_min_chars = min.round() as usize;
-                ui.switch(&tr!("Show documentation next to the suggestion"), &mut c.complete_docs);
-                ui.switch(&tr!("Inlay hints (types and parameter names)"), &mut c.inlay_hints);
-                ui.switch(&tr!("Format on save"), &mut c.format_on_save);
-            });
-            // Quem vem do Zed: servidores (`lsp`, `languages`) e atalhos dele valem.
-            if mide::code::zed::load().is_some() {
-                ui.card(|ui| {
-                    ui.switch(&tr!("Use Zed settings (language servers and keymap)"), &mut c.use_zed_settings);
+                ui.row(|ui| {
+                    ui.push_right(110.0);
+                    ui.sized(110.0, |ui| close |= ui.primary_button(&mide::i18n::trc("settings", "Done")).clicked());
                 });
-            }
-            ui.row(|ui| {
-                ui.push_right(110.0);
-                ui.sized(110.0, |ui| close |= ui.primary_button(&mide::i18n::trc("settings", "Done")).clicked());
             });
         });
+        let _ = ww;
+        self.prefs_section = section.get();
         if themes_changed {
             self.apply_themes();
         }
-        if edit_servers {
-            // O arquivo abre numa aba da janela principal.
-            match self.config.ensure_servers_file() {
-                Ok(path) => self.open_path(path),
-                Err(err) => self.say(tr!("Couldn’t create the language servers file: {err}", err = err)),
-            }
+        if let Some(a) = action {
+            // Os arquivos abrem numa aba da janela principal.
+            self.pending_prefs_action = Some(a);
             close = true;
         }
         if close {
@@ -2017,6 +2130,9 @@ impl App for Code {
         for action in ui.input().menu.clone() {
             self.command(&action, ui);
         }
+        if let Some(a) = self.pending_prefs_action.take() {
+            self.command(a, ui);
+        }
         let busy = self.dialog.is_some() || !matches!(self.overlay, Overlay::None);
         if !busy {
             self.shortcuts(ui);
@@ -2081,7 +2197,7 @@ impl App for Code {
                     clicked = Some("drawer");
                 }
                 ui.toolbar_title(&title, 360.0);
-                ui.push_right(7.0 * mide::kit::TOOLBAR_SEG + 2.0 * 4.0 + 8.0 + 8.0);
+                ui.push_right(8.0 * mide::kit::TOOLBAR_SEG + 2.0 * 4.0 + 8.0 + 8.0);
                 match ui.tool_group(&[
                     Tool::new("document-open-symbolic", &tr!("Open File (Ctrl+O)")),
                     Tool::new("folder-open-symbolic", &tr!("Open Folder (Ctrl+Shift+O)")),
@@ -2096,12 +2212,14 @@ impl App for Code {
                     Tool::new("edit-find-symbolic", &tr!("Find and Replace (Ctrl+F)")).on(finding),
                     Tool::new("utilities-terminal-symbolic", &tr!("Terminal (Ctrl+J)")).on(term_on),
                     Tool::new("view-sidebar-end-symbolic", &tr!("Symbols Panel")).on(outline_on),
+                    Tool::new("application-x-addon-symbolic", &tr!("Extensions (Ctrl+Shift+X)")),
                     Tool::new("preferences-system-symbolic", &tr!("Settings (Ctrl+,)")),
                 ]) {
                     Some(0) => clicked = Some("find"),
                     Some(1) => clicked = Some("terminal"),
                     Some(2) => clicked = Some("outline"),
-                    Some(3) => clicked = Some("prefs"),
+                    Some(3) => clicked = Some("extensions"),
+                    Some(4) => clicked = Some("prefs"),
                     _ => {}
                 }
             });
@@ -2488,6 +2606,8 @@ impl App for Code {
                     MenuItem::action("format", &tr!("Format Document")).shortcut("Ctrl+Shift+I"),
                     MenuItem::action("prefs", &tr!("Settings…")).shortcut("Ctrl+,"),
                     MenuItem::action("edit-servers", &tr!("Language Servers…")),
+                    MenuItem::action("open-settings-json", &tr!("Open Settings File")),
+                    MenuItem::action("open-keymap", &tr!("Open Keymap File")),
                 ],
             },
             MenuGroup {

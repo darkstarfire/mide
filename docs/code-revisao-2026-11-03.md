@@ -73,3 +73,32 @@ achava).
 - Conferido por captura com o servidor de teste: tipo à direita, documentação à
   direita com a assinatura no alto, aviso comprido à direita sem rolar e a divisória
   arrastada de 270 para 424.
+
+### v0.10.68: itens 6 e 7 e as extensões à vista
+
+- **6 (feito):** o Code tem um arquivo de configurações próprio que se edita à mão,
+  como o `settings.json` do Zed e do VS Code: `~/.config/mide/code-settings.json`
+  (JSON com comentários; `mide::code::settings_json`). As chaves são as do Zed quando
+  ele tem a opção (`buffer_font_size`, `tab_size`, `hard_tabs`, `format_on_save`,
+  `inlay_hints`, `gutter`, `lsp`, `languages`...), então trechos do Zed podem ser
+  copiados. Salvar o arquivo vale na hora (com erro, a barra diz a linha). As
+  Preferências gravam nele; chaves que o Code não conhece ficam. Os atalhos ficam no
+  `code-keymap.json`, no formato do `keymap.json` do Zed. O interruptor "Usar as
+  configurações do Zed" saiu; no lugar, "Importar as configurações do Zed" (copia uma
+  vez, para o arquivo do Code). As extensões do Zed (temas, ícones, trechos,
+  linguagens, servidores) continuam: loja em Visualizar → Extensões, no botão novo da
+  barra (peça de quebra-cabeça) e na seção Extensões das Preferências.
+- **7 (feito):** o arquivo traz todas as opções e todos os servidores de linguagem que
+  vêm por padrão (29), com o programa, os argumentos, as linguagens e se está ligado.
+  As Preferências têm seções numa barra lateral (Editor; Completar e código; Painéis;
+  Servidores de linguagem, com a situação de cada servidor; Extensões, com as
+  instaladas e "Procurar extensões…"; Arquivo de configurações, com "Abrir o arquivo
+  de configurações", "Abrir o arquivo de atalhos" e "Importar as configurações do
+  Zed"), no visual das Configurações do mide, numa janela maior (820x560).
+- Junto: os arquivos de configurações do Code, do Zed e do VS Code e os `tsconfig`
+  abrem como "JSON com comentários" (`jsonc`; o servidor de JSON não acusa os `//`);
+  o estado dos servidores diz "disponível" (não "instalada"); a faixa do caminho mostra
+  só a pasta e o nome para arquivos fora do projeto.
+- Conferido por captura (Preferências em seções, lista dos servidores, arquivo aberto
+  com todas as opções) e na bateria (seções 34 e 35 passando; o teste do arquivo de
+  servidores passou a ser o do `code-settings.json`).

@@ -177,7 +177,7 @@ pub fn default_servers() -> Vec<Server> {
         server(&["csharp"], "OmniSharp", &["-lsp"]),
         server(&["html"], "vscode-html-language-server", &["--stdio"]),
         server(&["css"], "vscode-css-language-server", &["--stdio"]),
-        server(&["json"], "vscode-json-language-server", &["--stdio"]),
+        server(&["json", "jsonc"], "vscode-json-language-server", &["--stdio"]),
         server(&["yaml"], "yaml-language-server", &["--stdio"]),
         server(&["toml"], "taplo", &["lsp", "stdio"]),
         server(&["markdown"], "marksman", &["server"]),
@@ -209,12 +209,11 @@ impl Config {
         }
         config.merge_default_servers();
         config.drawer_width = config.drawer_width.clamp(DRAWER_MIN, DRAWER_MAX);
-        // Quem vem do Zed não configura de novo: as configurações dele valem (as do
-        // editor só antes de existir o `code.toml` do mide).
-        if config.use_zed_settings && let Some(zed) = crate::code::zed::load() {
-            let first_run = Self::path().is_none_or(|p| !p.exists());
-            crate::code::zed::apply(&mut config, &zed, first_run);
+        // O `code-settings.json` (escrito à mão ou pelas Preferências) vale por cima.
+        if let Some(Ok(v)) = crate::code::settings_json::load() {
+            crate::code::settings_json::apply(&mut config, &v);
         }
+        config.drawer_width = config.drawer_width.clamp(DRAWER_MIN, DRAWER_MAX);
         config
     }
 
@@ -253,7 +252,9 @@ impl Config {
             std::fs::create_dir_all(dir)?;
         }
         let body = toml::to_string(self).map_err(std::io::Error::other)?;
-        crate::files::write_atomic(&path, format!("# Preferências do Code do mide (mudadas pela janela de Preferências).\n\n{body}").as_bytes())
+        crate::files::write_atomic(&path, format!("# Preferências do Code do mide (mudadas pela janela de Preferências).\n\n{body}").as_bytes())?;
+        // O arquivo que se edita à mão acompanha.
+        crate::code::settings_json::write(self).map(|_| ())
     }
 
     /// Recuo de uma tecla Tab.

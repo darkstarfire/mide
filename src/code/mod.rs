@@ -16,6 +16,7 @@ pub mod panes;
 pub mod project;
 pub mod search;
 pub mod session;
+pub mod settings_json;
 pub mod snippets;
 pub mod store;
 pub mod syntax;

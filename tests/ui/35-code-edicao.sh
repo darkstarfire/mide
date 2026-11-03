@@ -35,14 +35,16 @@ else
     echo "pulo  code: completar, definição e problemas (sem python3 para o servidor de mentira)"
 fi
 
-# Preferências → "Editar servidores de linguagem…" abre o code-servers.toml no Code;
-# salvar com erro avisa a linha; desfeito o erro, os servidores valem de novo.
-rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml"
-code_run "300 click 600 400; 320 combo ctrl+,; 360 click 435 292; 420 combo ctrl+end; 430 type x; 440 combo ctrl+s; 480 key backspace; 490 combo ctrl+s; 540 list" -- "'$CDIR/proj'"
-ok_if "code: Preferências abrem o code-servers.toml no editor" grep -q 'aberto: .*code-servers.toml' "$CLOG"
-ok_if "code: erro no code-servers.toml mostra a linha" grep -q 'Erro no code-servers.toml, linha' "$CLOG"
-ok_if "code: code-servers.toml salvo vale na hora" grep -Eq 'Servidores de linguagem atualizados \([0-9]+\)' "$CLOG"
-rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml"
+# Preferências → Servidores de linguagem → "Editar servidores de linguagem…" abre o
+# code-settings.json (todas as opções e servidores) no Code; salvar com erro avisa a
+# linha; desfeito o erro, as configurações valem de novo.
+rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml" "$XDG_CONFIG_HOME/mide/code-settings.json"
+code_run "300 click 600 400; 320 combo ctrl+,; 360 click 250 267; 380 click 528 247; 420 combo ctrl+end; 430 type x; 440 combo ctrl+s; 480 key backspace; 490 combo ctrl+s; 540 list" -- "'$CDIR/proj'"
+ok_if "code: Preferências abrem o code-settings.json no editor" grep -q 'aberto: .*code-settings.json' "$CLOG"
+ok_if "code: o code-settings.json traz todos os servidores" grep -q '"intelephense"' "$XDG_CONFIG_HOME/mide/code-settings.json"
+ok_if "code: erro no code-settings.json mostra a linha" grep -q 'Erro no arquivo de configurações, linha' "$CLOG"
+ok_if "code: code-settings.json salvo vale na hora" grep -q 'Configurações atualizadas' "$CLOG"
+rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml" "$XDG_CONFIG_HOME/mide/code-settings.json"
 
 # Buscar no projeto e substituir em todos os arquivos (fechados: gravados no disco).
 printf 'fn main() {\n    println!("oi");\n}\n' > "$CDIR/proj/src/main.rs"

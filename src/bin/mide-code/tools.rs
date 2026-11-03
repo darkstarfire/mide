@@ -293,9 +293,16 @@ impl Code {
         let Some(doc) = self.docs.get(self.cur) else {
             return String::new();
         };
+        // Dentro do projeto, o caminho a partir dele; fora, a pasta e o nome.
+        let short = |p: &Path| -> PathBuf {
+            match (p.parent().and_then(|d| d.file_name()), p.file_name()) {
+                (Some(d), Some(n)) => Path::new(d).join(n),
+                _ => p.to_path_buf(),
+            }
+        };
         let path = match (&doc.path, &self.root) {
-            (Some(p), Some(root)) => p.strip_prefix(root).unwrap_or(p).to_path_buf(),
-            (Some(p), None) => p.file_name().map(PathBuf::from).unwrap_or_default(),
+            (Some(p), Some(root)) if p.starts_with(root) => p.strip_prefix(root).unwrap_or(p).to_path_buf(),
+            (Some(p), _) => short(p),
             _ => PathBuf::from(doc.name()),
         };
         let mut parts: Vec<String> = path.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();

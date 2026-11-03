@@ -1,6 +1,6 @@
 [package]
 name = "mide"
-version = "0.10.67"
+version = "0.10.68"
 edition = "2024"
 default-run = "mide"
 
@@ -25,7 +25,7 @@ resvg = { version = "0.45", default-features = false }
 rustix = { version = "1", features = ["pty", "process", "termios", "fs", "time"] }
 serde = { version = "1.0.229", features = ["derive"] }
 # Mensagens JSON do cliente LSP do mide-code (o cliente é do mide; o serde_json só lê e escreve o JSON).
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop", "renderer_gl", "backend_egl", "backend_winit", "backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev"] }
 smithay-client-toolkit = "0.21"
 tiny-skia = { version = "0.12", features = ["std"] }

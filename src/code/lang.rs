@@ -131,7 +131,10 @@ pub const LANGUAGES: &[Language] = &[
     Language { id: "html", name: "HTML", exts: &["html", "htm", "xhtml"], files: &[], family: Family::Markup, comment: "", keywords: &[], types: &[] },
     Language { id: "xml", name: "XML", exts: &["xml", "svg", "xsd", "plist", "ui", "glade"], files: &[], family: Family::Markup, comment: "", keywords: &[], types: &[] },
     Language { id: "markdown", name: "Markdown", exts: &["md", "markdown", "mdown"], files: &["README"], family: Family::Markdown, comment: "", keywords: &[], types: &[] },
-    Language { id: "json", name: "JSON", exts: &["json", "jsonc", "json5"], files: &[], family: Family::Data, comment: "//", keywords: DATA_KW, types: &[] },
+    Language { id: "json", name: "JSON", exts: &["json", "json5"], files: &[], family: Family::Data, comment: "//", keywords: DATA_KW, types: &[] },
+    // JSON com comentários (o `languageId` do LSP é `jsonc`): configurações do Code, do
+    // Zed e do VS Code e os `tsconfig`, que aceitam `//`.
+    Language { id: "jsonc", name: "JSON with Comments", exts: &["jsonc"], files: &["code-settings.json", "code-keymap.json", "settings.json", "keymap.json", "tsconfig.json", "jsconfig.json", "tasks.json", "launch.json"], family: Family::Data, comment: "//", keywords: DATA_KW, types: &[] },
     Language { id: "toml", name: "TOML", exts: &["toml"], files: &["Cargo.lock"], family: Family::Data, comment: "#", keywords: DATA_KW, types: &[] },
     Language { id: "yaml", name: "YAML", exts: &["yaml", "yml"], files: &[], family: Family::Data, comment: "#", keywords: DATA_KW, types: &[] },
     Language { id: "ini", name: "INI", exts: &["ini", "conf", "cfg", "desktop", "service", "properties"], files: &[".gitconfig", ".editorconfig"], family: Family::Data, comment: "#", keywords: DATA_KW, types: &[] },
