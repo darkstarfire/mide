@@ -691,3 +691,33 @@ msgstr "Extensão {id} removida."
 
 msgid "Extension {id} installed. New languages appear the next time the Code opens."
 msgstr "Extensão {id} instalada. Linguagens novas aparecem na próxima vez que o Code abrir."
+
+msgid "Installing {server} (language server)…"
+msgstr "Instalando o {server} (servidor de linguagem)…"
+
+msgid "Symbols"
+msgstr "Símbolos"
+
+msgid "Reading the symbols…"
+msgstr "Lendo os símbolos…"
+
+msgid "The symbols come from the language server of the file."
+msgstr "Os símbolos vêm do servidor de linguagem do arquivo."
+
+msgid "No symbols in this file."
+msgstr "Nenhum símbolo neste arquivo."
+
+msgid "Symbols Panel"
+msgstr "Painel de símbolos"
+
+msgid "Path Bar"
+msgstr "Barra de caminho"
+
+msgid "the path can’t have “.” or “..”"
+msgstr "o caminho não pode ter “.” nem “..”"
+
+msgid "type a name"
+msgstr "digite um nome"
+
+msgid "“{name}” already exists and is not a folder"
+msgstr "“{name}” já existe e não é uma pasta"

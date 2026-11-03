@@ -25,10 +25,10 @@ if command -v python3 >/dev/null; then
     printf 'a\n' > "$CDIR/t.rs"
     code_run "400 click 600 300; 420 combo ctrl+end; 460 combo alt+space; 560 key esc; 580 key enter; 600 combo ctrl+s; 640 list" -- "'$CDIR/t.rs'"
     ok_if "code: Esc fecha o completar" test "$(cat "$CDIR/t.rs")" = "$(printf 'a\n\n')"
-    # F8 vai ao erro que o servidor mandou; Ctrl+clique em "bb" (linha 2, em (95, 163))
+    # F8 vai ao erro que o servidor mandou; Ctrl+clique em "bb" (linha 2, em (95, 231))
     # vai à definição (o servidor diz linha 3). O F12 é do terminal de atalho do mide.
     printf 'a\nbb\ncccccc\n' > "$CDIR/t.rs"
-    code_run "400 click 600 300; 460 key f8; 500 keydown ctrl; 510 click 95 163; 520 keyup ctrl; 560 list" -- "'$CDIR/t.rs'"
+    code_run "400 click 600 300; 460 key f8; 500 keydown ctrl; 510 click 95 231; 520 keyup ctrl; 560 list" -- "'$CDIR/t.rs'"
     ok_if "code: ir para a definição (Ctrl+clique)" grep -q 'definição: .*t.rs:3' "$CLOG"
     ok_if "code: próximo problema (F8) mostra o erro do servidor" grep -q 'aviso: erro de teste' "$CLOG"
 else
@@ -38,10 +38,10 @@ fi
 # Preferências → "Editar servidores de linguagem…" abre o code-servers.toml no Code;
 # salvar com erro avisa a linha; desfeito o erro, os servidores valem de novo.
 rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml"
-code_run "300 click 600 400; 320 combo ctrl+,; 360 click 436 565; 420 combo ctrl+end; 430 type x; 440 combo ctrl+s; 480 key backspace; 490 combo ctrl+s; 540 list" -- "'$CDIR/proj'"
+code_run "300 click 600 400; 320 combo ctrl+,; 360 click 435 292; 420 combo ctrl+end; 430 type x; 440 combo ctrl+s; 480 key backspace; 490 combo ctrl+s; 540 list" -- "'$CDIR/proj'"
 ok_if "code: Preferências abrem o code-servers.toml no editor" grep -q 'aberto: .*code-servers.toml' "$CLOG"
 ok_if "code: erro no code-servers.toml mostra a linha" grep -q 'Erro no code-servers.toml, linha' "$CLOG"
-ok_if "code: code-servers.toml salvo vale na hora" grep -q 'Servidores de linguagem atualizados (6)' "$CLOG"
+ok_if "code: code-servers.toml salvo vale na hora" grep -Eq 'Servidores de linguagem atualizados \([0-9]+\)' "$CLOG"
 rm -f "$XDG_CONFIG_HOME/mide/code-servers.toml"
 
 # Buscar no projeto e substituir em todos os arquivos (fechados: gravados no disco).

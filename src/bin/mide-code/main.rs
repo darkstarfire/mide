@@ -430,6 +430,7 @@ impl Code {
             Ok(servers) => {
                 tracing::info!("servidores de linguagem lidos: {}", servers.iter().map(|s| s.command.as_str()).collect::<Vec<_>>().join(", "));
                 self.config.servers = servers;
+                self.config.merge_default_servers();
                 // Reinicia todos: o comando ou os argumentos podem ter mudado.
                 self.servers.clear();
                 self.failed.clear();
@@ -1126,6 +1127,14 @@ impl Code {
             }
             "problems" => self.overlay = Overlay::Problems { sel: 0, go: false },
             "extensions" => self.open_store(),
+            "outline" => {
+                self.config.outline = !self.config.outline;
+                let _ = self.config.save();
+            }
+            "breadcrumbs" => {
+                self.config.breadcrumbs = !self.config.breadcrumbs;
+                let _ = self.config.save();
+            }
             "signature" => self.request_signature(),
             "definition" => self.go_to_definition(),
             "hover" => self.show_hover(),
@@ -1456,6 +1465,20 @@ impl Code {
         let mut icon_i = icon_names.iter().skip(1).position(|n| *n == c.icon_theme).map_or(0, |p| p + 1);
         let mut themes_changed = false;
         ui.page(|ui| {
+            // Servidores primeiro (o mais procurado): um resumo (a lista fica no arquivo, editado no próprio Code).
+            let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
+            let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
+            let mut summary = tr!("{n} configured", n = c.servers.len());
+            if !running.is_empty() {
+                summary.push_str(&tr!(" · running: {list}", list = running.join(", ")));
+            }
+            if !ready.is_empty() {
+                summary.push_str(&tr!(" · installed: {list}", list = ready.join(", ")));
+            }
+            ui.note(&tr!("Language servers (LSP): {summary}. They are listed in {file}, which takes effect when saved.", summary = summary, file = servers_file));
+            ui.row(|ui| {
+                edit_servers |= ui.button(&tr!("Edit Language Servers…")).clicked();
+            });
             ui.card(|ui| {
                 if ui.dropdown(&tr!("Font"), &fonts, &mut font_i).changed() {
                     c.font = (font_i > 0).then(|| fonts[font_i].clone());
@@ -1496,19 +1519,7 @@ impl Code {
                     ui.switch(&tr!("Use Zed settings (language servers and keymap)"), &mut c.use_zed_settings);
                 });
             }
-            // Servidores: um resumo (a lista fica no arquivo, editado no próprio Code).
-            let running: Vec<&str> = c.servers.iter().filter(|s| s.enabled && servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
-            let ready: Vec<&str> = c.servers.iter().filter(|s| s.enabled && installed(&s.command) && !servers_running.contains(&s.key())).map(|s| s.command.as_str()).collect();
-            let mut summary = tr!("{n} configured", n = c.servers.len());
-            if !running.is_empty() {
-                summary.push_str(&tr!(" · running: {list}", list = running.join(", ")));
-            }
-            if !ready.is_empty() {
-                summary.push_str(&tr!(" · installed: {list}", list = ready.join(", ")));
-            }
-            ui.note(&tr!("Language servers (LSP): {summary}. They are listed in {file}, which takes effect when saved.", summary = summary, file = servers_file));
             ui.row(|ui| {
-                edit_servers |= ui.button(&tr!("Edit Language Servers…")).clicked();
                 ui.push_right(110.0);
                 ui.sized(110.0, |ui| close |= ui.primary_button(&mide::i18n::trc("settings", "Done")).clicked());
             });
@@ -2051,13 +2062,14 @@ impl App for Code {
         let title = self.docs.get(self.cur).map(Doc::title).unwrap_or_default();
         let finding = self.find.is_some();
         let term_on = self.terminal_open;
+        let outline_on = self.config.outline;
         ui.at(left, 0.0, width, |ui| {
             ui.toolbar(|ui| {
                 if ui.tool_toggle("view-sidebar-start-symbolic", &tr!("Show or hide the project drawer"), drawer_on).clicked() {
                     clicked = Some("drawer");
                 }
                 ui.toolbar_title(&title, 360.0);
-                ui.push_right(2.0 * (3.0 * 40.0 + 4.0) + 8.0 + 8.0);
+                ui.push_right(7.0 * mide::kit::TOOLBAR_SEG + 2.0 * 4.0 + 8.0 + 8.0);
                 match ui.tool_group(&[
                     Tool::new("document-open-symbolic", &tr!("Open File (Ctrl+O)")),
                     Tool::new("folder-open-symbolic", &tr!("Open Folder (Ctrl+Shift+O)")),
@@ -2071,11 +2083,13 @@ impl App for Code {
                 match ui.tool_group(&[
                     Tool::new("edit-find-symbolic", &tr!("Find and Replace (Ctrl+F)")).on(finding),
                     Tool::new("utilities-terminal-symbolic", &tr!("Terminal (Ctrl+J)")).on(term_on),
+                    Tool::new("view-sidebar-end-symbolic", &tr!("Symbols Panel")).on(outline_on),
                     Tool::new("preferences-system-symbolic", &tr!("Settings (Ctrl+,)")),
                 ]) {
                     Some(0) => clicked = Some("find"),
                     Some(1) => clicked = Some("terminal"),
-                    Some(2) => clicked = Some("prefs"),
+                    Some(2) => clicked = Some("outline"),
+                    Some(3) => clicked = Some("prefs"),
                     _ => {}
                 }
             });
@@ -2092,20 +2106,19 @@ impl App for Code {
         let (cl, cw) = if drawer_on { (left + SIDE_GAP, width - SIDE_GAP) } else { (left, width) };
         ui.at(cl, top, cw - TABS_RIGHT_GAP, |ui| {
             // Abas (com mais de um arquivo); apertar numa começa um arrasto possível.
-            if self.docs.len() > 1 {
-                let titles: Vec<String> = self.docs.iter().map(Doc::title).collect();
+            // Abas sempre, mesmo com um arquivo só (como nos editores de código).
+            if !self.docs.is_empty() {
+                let titles: Vec<String> = self.docs.iter().map(Doc::name).collect();
+                let modified: Vec<bool> = self.docs.iter().map(|d| d.text.modified).collect();
                 // Ícone de cada arquivo na aba, como na árvore do projeto.
                 let dark = ui.theme().dark;
                 let icons: Vec<String> = self.docs.iter().map(|d| d.path.as_ref().and_then(|p| mide::code::icons::path_icon(p, false, false, !dark)).unwrap_or_default()).collect();
-                let action = ui.tab_bar_icons(&titles, &icons, self.cur);
-                let bar = ui.last_rect();
-                let track_w = bar.2 - 28.0 - 8.0;
-                let tw = (track_w - 4.0) / titles.len() as f32;
+                let active_bg = self.color_theme.as_ref().and_then(|t| t.background);
+                let (action, rects) = ui.editor_tabs(&titles, &icons, &modified, self.cur, active_bg);
                 if input.pressed && self.drag.is_none() {
-                    for i in 0..titles.len() {
-                        let tab = (bar.0 + 2.0 + i as f32 * tw, bar.1 + 3.0, tw, 26.0);
-                        // Fora do × (que fica à esquerda da aba).
-                        if input.over(tab) && !input.over((tab.0, tab.1, 24.0, tab.3)) {
+                    for (i, tab) in rects.iter().enumerate() {
+                        // Fora do × (que fica à direita da aba).
+                        if input.over(*tab) && !input.over((tab.0 + tab.2 - 28.0, tab.1, 28.0, tab.3)) {
                             self.drag = Some(Drag { what: DragWhat::Doc(i), from: input.pointer.unwrap_or_default(), active: false });
                         }
                     }
@@ -2185,7 +2198,22 @@ impl App for Code {
         // Editor em cima e terminal embaixo, com a divisória do kit (o ponteiro vira o
         // de redimensionar). Como na gaveta, os painéis são desenhados depois, nas
         // coordenadas da janela; aqui só se medem os retângulos.
-        let body = (cl, body_top, cw, (status_y - body_top).max(60.0));
+        // Faixa do caminho (pastas › arquivo › símbolos) em cima do texto.
+        if self.config.breadcrumbs && !self.docs.is_empty() {
+            let crumbs = self.breadcrumb_line();
+            self.breadcrumb_bar(ui, (cl, body_top, cw - EDGE_GAP, BREADCRUMB_H), &crumbs);
+            body_top += BREADCRUMB_H;
+        }
+        // Painel de símbolos à direita.
+        // Só com o que mostrar: servidor de linguagem para o arquivo ou símbolos lidos.
+        let outline_w = if self.config.outline && self.outline_useful() { OUTLINE_W.min(cw * 0.35) } else { 0.0 };
+        // Respiro em volta do editor: à direita e embaixo, para o texto não encostar na
+        // borda da janela nem na barra de status.
+        let body = (cl, body_top, (cw - EDGE_GAP - outline_w - if outline_w > 0.0 { SIDE_GAP } else { 0.0 }).max(120.0), (status_y - body_top - EDGE_GAP).max(60.0));
+        if outline_w > 0.0 {
+            let rect = (body.0 + body.2 + SIDE_GAP, body_top, outline_w, body.3);
+            self.outline_panel(ui, rect);
+        }
         let mut editor_rect = body;
         let mut term_rect = (cl, status_y, cw, 0.0);
         if self.terminal_open && self.terminal.is_some() {
@@ -2433,6 +2461,8 @@ impl App for Code {
                 title: tr!("View").into(),
                 items: vec![
                     MenuItem::action("palette", &tr!("Command Palette…")).shortcut("Ctrl+Shift+P"),
+                    MenuItem::action("outline", &tr!("Symbols Panel")).checked(self.config.outline),
+                    MenuItem::action("breadcrumbs", &tr!("Path Bar")).checked(self.config.breadcrumbs),
                     MenuItem::action("extensions", &tr!("Extensions…")).shortcut("Ctrl+Shift+X"),
                     MenuItem::Separator,
                     MenuItem::action("drawer", &tr!("File Drawer")).checked(self.config.drawer),
@@ -2589,6 +2619,12 @@ fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl
     out
 }
 
+/// Respiro do editor até a borda direita da janela e até a barra de status.
+const EDGE_GAP: f32 = 10.0;
+/// Altura da faixa do caminho em cima do texto.
+const BREADCRUMB_H: f32 = 24.0;
+/// Largura do painel de símbolos.
+const OUTLINE_W: f32 = 270.0;
 /// Respiro entre a gaveta do projeto e o editor (o recuo da barra lateral flutuante).
 const SIDE_GAP: f32 = 8.0;
 /// Respiro à direita da barra de abas (o + não encosta na borda da janela), como o

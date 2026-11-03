@@ -277,3 +277,104 @@ impl Code {
             .collect()
     }
 }
+
+impl Code {
+    /// Texto da faixa do caminho: as pastas do arquivo (a partir do projeto), o nome e
+    /// os símbolos em volta do cursor.
+    pub(crate) fn breadcrumb_line(&self) -> String {
+        let Some(doc) = self.docs.get(self.cur) else {
+            return String::new();
+        };
+        let path = match (&doc.path, &self.root) {
+            (Some(p), Some(root)) => p.strip_prefix(root).unwrap_or(p).to_path_buf(),
+            (Some(p), None) => p.file_name().map(PathBuf::from).unwrap_or_default(),
+            _ => PathBuf::from(doc.name()),
+        };
+        let mut parts: Vec<String> = path.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        let symbols = self.breadcrumbs();
+        if !symbols.is_empty() {
+            parts.push(symbols);
+        }
+        parts.join("  ›  ")
+    }
+
+    /// A faixa do caminho, com o ícone do arquivo.
+    pub(crate) fn breadcrumb_bar(&self, ui: &mut Ui, rect: (f32, f32, f32, f32), text: &str) {
+        let dark = ui.theme().dark;
+        let icon = self.docs.get(self.cur).and_then(|d| d.path.as_ref()).and_then(|p| mide::code::icons::path_icon(p, false, false, !dark));
+        ui.at(rect.0 + 6.0, rect.1, rect.2 - 6.0, |ui| {
+            ui.row(|ui| {
+                if let Some(icon) = &icon {
+                    ui.icon(icon, 14);
+                }
+                ui.note(text);
+            });
+        });
+    }
+
+    /// Painel dos símbolos do arquivo (como o outline do Neovim e do Zed): a árvore
+    /// com os selos de cada tipo, o símbolo do cursor escolhido e o clique levando a ele.
+    pub(crate) fn outline_panel(&mut self, ui: &mut Ui, rect: (f32, f32, f32, f32)) {
+        let t = ui.theme().clone();
+        let bg = self.color_theme.as_ref().and_then(|c| c.background).unwrap_or(t.card);
+        ui.paint(|pixmap, (ox, oy)| {
+            mide::ui::draw::fill_rounded(pixmap, ox + rect.0, oy + rect.1, rect.2, rect.3, 10.0, mide::ui::draw::rgba(bg[0], bg[1], bg[2], 255));
+        });
+        let Some(doc) = self.docs.get(self.cur) else {
+            return;
+        };
+        let symbols = doc.path.as_ref().and_then(|p| self.lsp.symbols.get(p)).map(|(_, s)| s.clone());
+        let starts = doc.text.line_starts();
+        let line = line_of(&starts, doc.text.edit.cursor) as u32;
+        let has_server = self.config.server_for(doc.lang.id).is_some_and(|s| self.servers.contains_key(&s.key()));
+        let mut go: Option<(u32, u32)> = None;
+        ui.at(rect.0 + 6.0, rect.1 + 4.0, rect.2 - 12.0, |ui| {
+            let count = symbols.as_ref().map_or(0, Vec::len);
+            ui.row(|ui| {
+                ui.strong(&tr!("Symbols"));
+                if count > 0 {
+                    ui.note(&count.to_string());
+                }
+            });
+            let Some(symbols) = symbols else {
+                ui.note(&if has_server { tr!("Reading the symbols…") } else { tr!("The symbols come from the language server of the file.") });
+                return;
+            };
+            if symbols.is_empty() {
+                ui.note(&tr!("No symbols in this file."));
+                return;
+            }
+            // O símbolo do cursor: o mais de dentro que contém a linha.
+            let current = symbols.iter().enumerate().filter(|(_, s)| s.line <= line && s.end_line >= line).max_by_key(|(_, s)| s.depth).map(|(k, _)| k);
+            ui.scroll_area_padded(rect.3 - 40.0, 0.0, |ui| {
+                for (k, s) in symbols.iter().enumerate() {
+                    let icon = mide::code::icons::kind_icon(s.kind).unwrap_or_default();
+                    let (r, _) = ui.tree_row(s.depth, false, false, &icon, &s.name, &[], current == Some(k), false);
+                    if r.clicked() {
+                        go = Some((s.line, s.col));
+                    }
+                }
+            });
+        });
+        if let Some((l, c)) = go {
+            let lang = self.doc().lang.id;
+            let utf8 = self.client_utf8(lang);
+            let doc = &mut self.doc().text;
+            let at = lsp::to_offset(&doc.text, l, c, utf8);
+            doc.edit = mide::kit::textedit::Edit { cursor: at, anchor: None };
+            self.start = true;
+        }
+    }
+}
+
+impl Code {
+    /// O painel de símbolos tem o que mostrar para a aba atual?
+    pub(crate) fn outline_useful(&self) -> bool {
+        let Some(doc) = self.docs.get(self.cur) else {
+            return false;
+        };
+        let has_symbols = doc.path.as_ref().and_then(|p| self.lsp.symbols.get(p)).is_some_and(|(_, s)| !s.is_empty());
+        let server = self.config.server_for(doc.lang.id).is_some_and(|s| installed(&s.command) && !self.failed.contains(&s.key()));
+        has_symbols || server || self.servers.keys().any(|k| self.config.server_for(doc.lang.id).is_some_and(|s| s.key() == *k))
+    }
+}

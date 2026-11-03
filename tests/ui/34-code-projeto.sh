@@ -42,7 +42,7 @@ ok_if "code: Mostrar no Arquivos" grep -q "mostrar no Arquivos (teste): $CDIR/pr
 
 # Arrastar uma aba até a borda direita do editor divide lado a lado.
 new_project
-code_run "300 click 600 400; 330 press 240 145; 340 move 260 160; 350 move 700 300; 360 move 1000 400; 370 move 1060 400; 380 release 1060 400; 420 list" -- "'$CDIR/proj/src/main.rs'" "'$CDIR/proj/README.md'"
+code_run "300 click 600 400; 330 press 100 138; 340 move 120 150; 350 move 700 300; 360 move 1000 400; 370 move 1060 400; 380 release 1060 400; 420 list" -- "'$CDIR/proj/src/main.rs'" "'$CDIR/proj/README.md'"
 ok_if "code: aba arrastada para a borda direita divide o editor" grep -q 'editor dividido: Right com main.rs' "$CLOG"
 
 # Arrastar um arquivo da gaveta até a borda de baixo divide em cima/embaixo.
@@ -53,7 +53,7 @@ ok_if "code: arquivo da gaveta solto embaixo divide o editor" grep -q 'editor di
 # Terminal integrado: botão da barra abre o shell na pasta do projeto; Ctrl+J fecha
 # e abre de novo (o mesmo shell).
 new_project
-code_run "300 click 600 400; 330 click 1008 102; 400 type touch_criado; 420 key enter; 460 combo ctrl+j; 480 combo ctrl+j; 500 type touch_outro; 510 key enter; 560 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
+code_run "300 click 600 400; 330 click 987 99; 400 type touch_criado; 420 key enter; 460 combo ctrl+j; 480 combo ctrl+j; 500 type touch_outro; 510 key enter; 560 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
 ok_if "code: terminal integrado roda comandos na pasta do projeto" test -f "$CDIR/proj/criado"
 ok_if "code: Ctrl+J fecha e abre o terminal" test -f "$CDIR/proj/outro"
 
@@ -74,10 +74,10 @@ code_run "300 click 600 300; 330 press 275 400; 340 move 300 400; 350 move 380 4
 ok_if "code: divisória da gaveta arrastável e guardada" grep -q '^drawer_width = 375' "$XDG_CONFIG_HOME/mide/code.toml"
 rm -f "$XDG_CONFIG_HOME/mide/code.toml"
 
-# Divisória do terminal (split_vertical do kit, linha em y=470 com 220 de altura):
-# arrastar de y=470 a y=400 deixa o terminal com 290 (guardado).
+# Divisória do terminal (split_vertical do kit, linha em y=460 com 220 de altura):
+# arrastar de y=460 a y=390 deixa o terminal com 290 (guardado).
 new_project
-code_run "300 click 600 300; 320 combo ctrl+j; 360 press 700 470; 370 move 700 450; 380 move 700 420; 390 move 700 400; 400 release 700 400; 430 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
+code_run "300 click 600 300; 320 combo ctrl+j; 360 press 700 460; 370 move 700 440; 380 move 700 410; 390 move 700 390; 400 release 700 390; 430 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
 ok_if "code: divisória do terminal arrastável e guardada" grep -q '^terminal_height = 290' "$XDG_CONFIG_HOME/mide/code.toml"
 rm -f "$XDG_CONFIG_HOME/mide/code.toml"
 

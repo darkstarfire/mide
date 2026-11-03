@@ -15,20 +15,28 @@ pub(crate) struct ExtServers {
     asked: HashSet<&'static str>,
 }
 
-/// A extensão e o id do servidor que atendem a linguagem.
+/// A extensão e o id do servidor que atendem a linguagem. Primeiro a extensão que
+/// define a linguagem (a do PHP para o PHP), depois as que só ajudam nela (o Emmet
+/// também atende PHP e HTML); dentro da extensão, a ordem do manifesto.
 fn extension_for(lang: &Language) -> Option<(extensions::Extension, String)> {
+    let mut best: Option<(u8, extensions::Extension, String)> = None;
     for ext in extensions::installed() {
         if !ext.dir.join("extension.wasm").exists() {
             continue;
         }
+        let defines = ext.language_dirs().iter().any(|d| {
+            std::fs::read_to_string(d.join("config.toml")).ok().and_then(|t| toml::from_str::<toml::Value>(&t).ok()).and_then(|c| c.get("name").and_then(|n| n.as_str()).map(|n| n.eq_ignore_ascii_case(lang.name))).unwrap_or(false)
+        }) || ext.manifest.id.eq_ignore_ascii_case(lang.id);
+        let rank = if defines { 0 } else { 1 };
         for (id, entry) in &ext.manifest.language_servers {
             let serves = entry.languages.iter().chain(std::iter::once(&entry.language)).any(|l| l.eq_ignore_ascii_case(lang.name) || mide::code::zed::language_id(l) == Some(lang.id));
-            if serves {
-                return Some((ext.clone(), id.clone()));
+            if serves && best.as_ref().is_none_or(|(r, _, _)| rank < *r) {
+                best = Some((rank, ext.clone(), id.clone()));
+                break;
             }
         }
     }
-    None
+    best.map(|(_, e, id)| (e, id))
 }
 
 impl ExtServers {
@@ -45,6 +53,7 @@ impl Code {
             return;
         }
         let Some((ext, server_id)) = extension_for(lang) else {
+            self.install_default_server(lang);
             return;
         };
         let root = self.root.clone().or_else(|| self.doc().path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf))).unwrap_or_else(mide::places::home_dir);
@@ -68,6 +77,27 @@ impl Code {
             let _ = tx.send(result);
         });
         self.ext_servers.jobs.push((lang_id, rx));
+    }
+
+    /// Sem extensão para a linguagem: o primeiro servidor padrão dela que vem do npm é
+    /// instalado sozinho (como o Zed faz com o vtsls e os servidores do VS Code).
+    fn install_default_server(&mut self, lang: &'static Language) {
+        let Some(server) = self.config.servers.iter().find(|s| s.enabled && s.languages.iter().any(|l| l == lang.id) && mide::code::config::npm_package(&s.command).is_some()).cloned() else {
+            return;
+        };
+        let (tx, rx) = channel();
+        self.say(tr!("Installing {server} (language server)…", server = server.command));
+        std::thread::spawn(move || {
+            let result = mide::code::config::install_npm_server(&server.command).map(|path| {
+                tracing::info!("servidor instalado pelo npm: {}", path.display());
+                let mut s = server.clone();
+                s.label = server.command.clone();
+                s.command = path.to_string_lossy().into_owned();
+                s
+            });
+            let _ = tx.send(result);
+        });
+        self.ext_servers.jobs.push((lang.id, rx));
     }
 
     /// Nenhum pedido às extensões esperando resposta.

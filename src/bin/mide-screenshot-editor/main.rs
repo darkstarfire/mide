@@ -1328,9 +1328,10 @@ fn shape_action(kind: ShapeKind) -> &'static str {
     }
 }
 
-/// Retângulo de um botão `i` num grupo de `toolbar_buttons` (40 pontos cada).
+/// Retângulo de um botão `i` num grupo de `toolbar_buttons` (`TOOLBAR_SEG` cada).
 fn segment(group: RectF, i: usize) -> RectF {
-    (group.0 + 2.0 + i as f32 * 40.0, group.1, 40.0, group.3)
+    let seg = mide::kit::TOOLBAR_SEG;
+    (group.0 + 2.0 + i as f32 * seg, group.1, seg, group.3)
 }
 
 /// Bolinha de cor num botão da barra (borda: anel; preenchimento: cheia; sem cor: risco).

@@ -261,8 +261,8 @@ impl Code {
             return true;
         }
         match self.dialog.take() {
-            Some(Dialog::NewItem { dir, folder, name, .. }) => match mide::files::create_named(&dir, &name, folder) {
-                Ok(path) => {
+            Some(Dialog::NewItem { dir, folder, name, .. }) => match create_with_path(&dir, &name, folder) {
+                Ok((path, made)) => {
                     tracing::info!("criado: {}", path.display());
                     if folder {
                         self.expanded.insert(path);
@@ -270,6 +270,8 @@ impl Code {
                         self.open_path(path);
                     }
                     self.expanded.insert(dir);
+                    // As pastas do caminho criadas ficam abertas na árvore.
+                    self.expanded.extend(made);
                 }
                 Err(e) => self.dialog = Some(Dialog::NewItem { dir, folder, name, focus: false, error: Some(e) }),
             },
@@ -295,6 +297,31 @@ impl Code {
     }
 }
 
+/// Cria um item novo aceitando um caminho, como no VS Code: em "html/index.html", as
+/// partes antes da última barra viram pastas (criadas se faltarem) e a última é o
+/// arquivo (ou a pasta, em Nova pasta). Devolve o item e as pastas do caminho.
+pub(crate) fn create_with_path(dir: &Path, name: &str, folder: bool) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let parts: Vec<&str> = name.trim().trim_matches('/').split('/').map(str::trim).filter(|p| !p.is_empty()).collect();
+    if parts.iter().any(|p| *p == "." || *p == "..") {
+        return Err(tr!("the path can’t have “.” or “..”").into_owned());
+    }
+    let Some((last, folders)) = parts.split_last() else {
+        return Err(tr!("type a name").into_owned());
+    };
+    let mut parent = dir.to_path_buf();
+    let mut made = Vec::new();
+    for f in folders {
+        parent = parent.join(f);
+        if parent.exists() && !parent.is_dir() {
+            return Err(tr!("“{name}” already exists and is not a folder", name = f));
+        }
+        std::fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
+        made.push(parent.clone());
+    }
+    let path = mide::files::create_named(&parent, last, folder)?;
+    Ok((path, made))
+}
+
 /// Mostra o item no Arquivos do mide, escolhido (nos testes, só registra).
 pub fn show_in_files(path: &Path) {
     if std::env::var_os("MIDE_OPEN_DRY_RUN").is_some() {
@@ -309,5 +336,24 @@ pub fn show_in_files(path: &Path) {
             tracing::info!("mostrando no Arquivos: {}", path.display());
         }
         Err(err) => tracing::warn!("não abriu o Arquivos: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn criar_com_caminho() {
+        let dir = std::env::temp_dir().join(format!("mide-code-novo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (file, made) = create_with_path(&dir, "html/css/index.html", false).unwrap();
+        assert_eq!(file, dir.join("html/css/index.html"));
+        assert!(file.is_file());
+        assert_eq!(made, vec![dir.join("html"), dir.join("html/css")]);
+        let (folder, _) = create_with_path(&dir, "src/app", true).unwrap();
+        assert!(folder.is_dir());
+        assert!(create_with_path(&dir, "../fora.txt", false).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

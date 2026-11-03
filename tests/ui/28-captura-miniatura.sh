@@ -102,12 +102,12 @@ for x in range(200):
 img.save(sys.argv[1])" "$1"
 }
 EDITOR="$PWD/target/debug/mide-screenshot-editor"
-# Recortar (R) arrastando a bolinha de cima à esquerda de (348, 267) para (448, 317):
+# Recortar (R) arrastando a bolinha de cima à esquerda de (348, 264) para (448, 314):
 # fica a área de (100, 50) a (400, 300); Enter recorta e Ctrl+S substitui o arquivo.
 make_png "$ED/recorte.png"
-SCENARIO_OUT="$MIN/recorte" timeout 150 "$SCEN" "400 key r; 450 press 348 267; 460 move 390 290; 470 move 448 317; 480 release 448 317; 520 key enter; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/recorte.png' >'$ED/recorte.log' 2>&1" >/dev/null 2>&1
+SCENARIO_OUT="$MIN/recorte" timeout 150 "$SCEN" "400 key r; 450 press 348 264; 460 move 390 287; 470 move 448 314; 480 release 448 314; 520 key enter; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/recorte.png' >'$ED/recorte.log' 2>&1" >/dev/null 2>&1
 LOG="$(sed 's/\x1b\[[0-9;]*m//g' "$ED/recorte.log")"
-if echo "$LOG" | grep -q "editor: imagem em (300, 191) 400x300" && echo "$LOG" | grep -q "editor: recortado em 300x250 a partir de (100, 50)" && python3 -c "
+if echo "$LOG" | grep -q "editor: imagem em (300, 188) 400x300" && echo "$LOG" | grep -q "editor: recortado em 300x250 a partir de (100, 50)" && python3 -c "
 import sys
 from PIL import Image
 img = Image.open(sys.argv[1]).convert('RGB')
@@ -117,10 +117,10 @@ sys.exit(0 if ok else 'tamanho %s' % (img.size,))" "$ED/recorte.png"; then
 else
     echo "FALHA editor: recortar e salvar ($(echo "$LOG" | grep -m1 'editor: imagem em'))"; FAIL=$((FAIL + 1))
 fi
-# Lápis (L, hoje o Esboço: a reta vira linha) atravessando a imagem na altura y=420 (linha 153 da imagem): os pixels
+# Lápis (L, hoje o Esboço: a reta vira linha) atravessando a imagem na altura y=417 (linha 153 da imagem): os pixels
 # ficam vermelhos ali e só ali; Ctrl+Z desfaz e Ctrl+Shift+Z refaz antes de salvar.
 make_png "$ED/lapis.png"
-SCENARIO_OUT="$MIN/lapis" timeout 150 "$SCEN" "400 key l; 450 press 380 420; 460 move 480 420; 470 move 580 420; 480 move 680 420; 490 release 680 420; 520 combo ctrl+z; 540 combo ctrl+shift+z; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/lapis.png' >'$ED/lapis.log' 2>&1" >/dev/null 2>&1
+SCENARIO_OUT="$MIN/lapis" timeout 150 "$SCEN" "400 key l; 450 press 380 417; 460 move 480 417; 470 move 580 417; 480 move 680 417; 490 release 680 417; 520 combo ctrl+z; 540 combo ctrl+shift+z; 560 combo ctrl+s; 620 list" -- "$EDITOR '$ED/lapis.png' >'$ED/lapis.log' 2>&1" >/dev/null 2>&1
 LOG="$(sed 's/\x1b\[[0-9;]*m//g' "$ED/lapis.log")"
 if echo "$LOG" | grep -Eq "editor: (lápis desenhado|esboço reconhecido como Line)" && echo "$LOG" | grep -q "editor: desfeito" && echo "$LOG" | grep -q "editor: refeito" && python3 -c "
 import sys

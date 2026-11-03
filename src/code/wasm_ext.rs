@@ -146,6 +146,46 @@ fn run(program: &str, args: &[&str], dir: Option<&Path>) -> Result<Vec<u8>, Stri
     }
 }
 
+/// Pasta com o `node` e o `npm`: a do PATH; sem ela (a sessão gráfica não carrega o
+/// `nvm` do terminal), a versão mais nova do `nvm` e, por último, o Node que o Zed
+/// baixou (só leitura).
+fn node_bin_dir() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    if let Some(d) = std::env::split_paths(&path).find(|d| d.join("node").is_file() && d.join("npm").exists()) {
+        return Some(d);
+    }
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let newest = |dir: PathBuf, sub: &str| -> Option<PathBuf> {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path().join(sub)).filter(|b| b.join("node").is_file()).collect();
+        found.sort_by(|a, b| {
+            let v = |p: &PathBuf| p.parent().and_then(|x| x.file_name()).map(|n| n.to_string_lossy().trim_start_matches(['v', 'n', 'o', 'd', 'e', '-']).to_string()).unwrap_or_default();
+            if crate::code::store::newer(&v(a), &v(b)) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
+        });
+        found.pop()
+    };
+    let nvm = std::env::var_os("NVM_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".nvm"));
+    newest(nvm.join("versions/node"), "bin").or_else(|| newest(home.join(".local/share/zed/node"), "bin")).or_else(|| std::env::split_paths(&path).find(|d| d.join("node").is_file()))
+}
+
+/// Roda o `npm` da pasta do Node achada, com ela no PATH (o `npm` é um script que
+/// chama o `node`).
+fn npm(args: &[&str], dir: &Path) -> Result<Vec<u8>, String> {
+    let bin = node_bin_dir().ok_or("o Node.js não está instalado (npm)")?;
+    let npm = bin.join("npm");
+    let npm = if npm.exists() { npm } else { PathBuf::from("npm") };
+    let mut path = std::ffi::OsString::from(&bin);
+    if let Some(old) = std::env::var_os("PATH") {
+        path.push(":");
+        path.push(old);
+    }
+    let out = std::process::Command::new(&npm).args(args).env("PATH", path).current_dir(dir).stdin(Stdio::null()).output().map_err(|e| format!("{}: {e}", npm.display()))?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        Err(format!("npm {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
 /// Um caminho dentro da pasta de trabalho (sem sair dela com `..`).
 fn inside(work: &Path, rel: &str) -> Result<PathBuf, String> {
     let rel = rel.trim_start_matches("./");
@@ -239,11 +279,12 @@ impl HostWorktree for HostState {
         std::fs::read_to_string(self.root.join(path)).map_err(|e| e.to_string())
     }
     fn which(&mut self, _w: Resource<Worktree>, name: String) -> Option<String> {
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path).map(|d| d.join(&name)).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
+        crate::code::config::find_program(&name).map(|p| p.to_string_lossy().into_owned())
     }
     fn shell_env(&mut self, _w: Resource<Worktree>) -> Vec<(String, String)> {
-        std::env::vars().collect()
+        // O ambiente com o PATH do terminal (nvm, cargo, go...), como o Zed lê do shell.
+        let path = crate::code::config::server_path_env().to_string_lossy().into_owned();
+        std::env::vars().map(|(k, v)| if k == "PATH" { (k, path.clone()) } else { (k, v) }).collect()
     }
     fn drop(&mut self, _w: Resource<Worktree>) -> wasmtime::Result<()> {
         Ok(())
@@ -299,6 +340,7 @@ impl process::Host for HostState {
     fn run_command(&mut self, command: process::Command) -> Result<process::Output, String> {
         let out = std::process::Command::new(&command.command)
             .args(&command.args)
+            .env("PATH", crate::code::config::server_path_env())
             .envs(command.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&self.work_dir)
             .stdin(Stdio::null())
@@ -310,20 +352,10 @@ impl process::Host for HostState {
 
 impl nodejs::Host for HostState {
     fn node_binary_path(&mut self) -> Result<String, String> {
-        // O `node` do sistema; sem ele, o que o Zed baixou (só leitura).
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        if let Some(p) = std::env::split_paths(&path).map(|d| d.join("node")).find(|p| p.is_file()) {
-            return Ok(p.to_string_lossy().into_owned());
-        }
-        let zed_node = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/zed/node"));
-        zed_node
-            .and_then(|d| std::fs::read_dir(d).ok())
-            .and_then(|mut r| r.find_map(|e| e.ok().map(|e| e.path().join("bin/node")).filter(|p| p.is_file())))
-            .map(|p| p.to_string_lossy().into_owned())
-            .ok_or_else(|| "o Node.js não está instalado (node)".into())
+        node_bin_dir().map(|d| d.join("node").to_string_lossy().into_owned()).ok_or_else(|| "o Node.js não está instalado (node)".into())
     }
     fn npm_package_latest_version(&mut self, name: String) -> Result<String, String> {
-        let out = run("npm", &["view", &name, "version", "--json"], Some(&self.work_dir))?;
+        let out = npm(&["view", &name, "version", "--json"], &self.work_dir)?;
         let v: serde_json::Value = serde_json::from_slice(&out).map_err(|e| e.to_string())?;
         v.as_str().map(str::to_string).ok_or_else(|| format!("versão de {name} não encontrada"))
     }
@@ -338,7 +370,7 @@ impl nodejs::Host for HostState {
     fn npm_install_package(&mut self, name: String, version: String) -> Result<(), String> {
         tracing::info!("extensão: npm install {name}@{version}");
         let work = self.work_dir.to_string_lossy().into_owned();
-        run("npm", &["install", "--prefix", &work, "--no-save", "--no-audit", "--no-fund", &format!("{name}@{version}")], Some(&self.work_dir)).map(|_| ())
+        npm(&["install", "--prefix", &work, "--no-save", "--no-audit", "--no-fund", &format!("{name}@{version}")], &self.work_dir).map(|_| ())
     }
 }
 

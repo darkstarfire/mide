@@ -3126,7 +3126,8 @@ fn body_size(doc: &Doc) -> f32 {
 
 /// Retângulo do botão `i` de um grupo de `toolbar_buttons`.
 fn seg(group: (f32, f32, f32, f32), i: usize) -> (f32, f32, f32, f32) {
-    (group.0 + 2.0 + i as f32 * 40.0, group.1, 40.0, group.3)
+    let seg = mide::kit::TOOLBAR_SEG;
+    (group.0 + 2.0 + i as f32 * seg, group.1, seg, group.3)
 }
 
 /// Altura da lista rolável de um popover: o que cabe abaixo do botão na janela, entre 80 e 300.

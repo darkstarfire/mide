@@ -425,7 +425,10 @@ impl Client {
     /// Como `start`, com o ambiente, as `initializationOptions` e as configurações
     /// (respondidas no `workspace/configuration` e mandadas depois do `initialized`).
     pub fn start_with(command: &str, args: &[String], root: &Path, env: &[(String, String)], init_options: Value, settings: Value) -> std::io::Result<Self> {
-        let mut child = Command::new(command).args(args).envs(env.iter().map(|(k, v)| (k, v))).current_dir(root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+        // O programa achado também fora do PATH da sessão (nvm, cargo, go...), com essas
+        // pastas no PATH dele.
+        let program = crate::code::config::find_program(command).unwrap_or_else(|| command.into());
+        let mut child = Command::new(program).args(args).env("PATH", crate::code::config::server_path_env()).envs(env.iter().map(|(k, v)| (k, v))).current_dir(root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("sem entrada"))?;
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("sem saída"))?;
         let (tx, rx) = mpsc::channel();

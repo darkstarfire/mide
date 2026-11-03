@@ -107,6 +107,10 @@ pub struct Config {
     pub color_theme: String,
     /// Tema de ícones de arquivos (de uma extensão do Zed; "": o Material embutido).
     pub icon_theme: String,
+    /// Painel dos símbolos do arquivo à direita (como o outline do Neovim e do Zed).
+    pub outline: bool,
+    /// Faixa com o caminho (pastas, arquivo e símbolos) em cima do texto.
+    pub breadcrumbs: bool,
 }
 
 /// O arquivo dos servidores: uma tabela `[[server]]` para cada um.
@@ -142,6 +146,8 @@ impl Default for Config {
             use_zed_settings: true,
             color_theme: String::new(),
             icon_theme: String::new(),
+            outline: true,
+            breadcrumbs: true,
         }
     }
 }
@@ -198,18 +204,7 @@ impl Config {
         if let Some(Ok(servers)) = Self::servers_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_servers(&t)) {
             config.servers = servers;
         }
-        // Os servidores padrão que faltam na lista entram no fim (versões novas trazem
-        // servidores novos; basta o programa estar no PATH), menos para uma linguagem
-        // que o usuário atende com um servidor próprio (fora da lista padrão).
-        let defaults = default_servers();
-        let custom = |s: &Server| !defaults.iter().any(|d| d.command == s.command);
-        for server in default_servers() {
-            let present = config.servers.iter().any(|s| s.command == server.command);
-            let customized = config.servers.iter().any(|s| custom(s) && s.languages.iter().any(|l| server.languages.contains(l)));
-            if !present && !customized {
-                config.servers.push(server);
-            }
-        }
+        config.merge_default_servers();
         config.drawer_width = config.drawer_width.clamp(DRAWER_MIN, DRAWER_MAX);
         // Quem vem do Zed não configura de novo: as configurações dele valem (as do
         // editor só antes de existir o `code.toml` do mide).
@@ -218,6 +213,22 @@ impl Config {
             crate::code::zed::apply(&mut config, &zed, first_run);
         }
         config
+    }
+
+    /// Os servidores padrão que faltam na lista entram no fim (versões novas trazem
+    /// servidores novos; basta o programa estar instalado), menos para uma linguagem que
+    /// o usuário atende com um servidor próprio (fora da lista padrão): o arquivo do
+    /// usuário manda no que ele escreveu, e o resto já funciona sozinho.
+    pub fn merge_default_servers(&mut self) {
+        let defaults = default_servers();
+        let custom = |s: &Server| !defaults.iter().any(|d| d.command == s.command);
+        for server in default_servers() {
+            let present = self.servers.iter().any(|s| s.command == server.command);
+            let customized = self.servers.iter().any(|s| custom(s) && s.languages.iter().any(|l| server.languages.contains(l)));
+            if !present && !customized {
+                self.servers.push(server);
+            }
+        }
     }
 
     /// Garante que o arquivo dos servidores existe (com os servidores atuais e a
@@ -308,10 +319,126 @@ pub fn servers_text(servers: &[Server]) -> String {
 
 /// O programa existe no PATH (ou é um caminho executável)?
 pub fn installed(command: &str) -> bool {
-    if command.contains('/') {
-        return std::path::Path::new(command).is_file();
+    find_program(command).is_some()
+}
+
+/// Pastas onde os servidores de linguagem costumam ficar além do PATH: a sessão
+/// gráfica não carrega o `.bashrc` (nvm, npm global, cargo, go, composer, pipx),
+/// então o PATH dela é menor que o do terminal. A versão mais nova do nvm primeiro.
+pub fn extra_dirs() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let nvm = std::env::var_os("NVM_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".nvm"));
+    if let Ok(entries) = std::fs::read_dir(nvm.join("versions/node")) {
+        let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        versions.sort_by(|a, b| {
+            let v = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().trim_start_matches('v').to_string()).unwrap_or_default();
+            if crate::code::store::newer(&v(a), &v(b)) { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
+        });
+        out.extend(versions.into_iter().map(|v| v.join("bin")));
     }
-    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(command).is_file()))
+    for d in [
+        ".local/bin",
+        ".npm-global/bin",
+        ".local/share/npm/bin",
+        ".cargo/bin",
+        "go/bin",
+        ".config/composer/vendor/bin",
+        ".composer/vendor/bin",
+        ".local/share/pnpm",
+        ".bun/bin",
+        ".deno/bin",
+        ".dotnet/tools",
+        ".rbenv/shims",
+        ".pyenv/shims",
+        ".ghcup/bin",
+    ] {
+        out.push(home.join(d));
+    }
+    // Servidores em JavaScript que o mide instalou sozinho (`npm_package`) e os que o
+    // Zed baixou (só leitura).
+    if let Some(dir) = servers_dir() {
+        out.push(dir.join("node_modules/.bin"));
+    }
+    if let Ok(entries) = std::fs::read_dir(home.join(".local/share/zed/languages")) {
+        out.extend(entries.flatten().map(|e| e.path().join("node_modules/.bin")));
+    }
+    // O Node que o Zed baixou (só leitura), para servidores feitos em JavaScript.
+    if let Ok(entries) = std::fs::read_dir(home.join(".local/share/zed/node")) {
+        out.extend(entries.flatten().map(|e| e.path().join("bin")));
+    }
+    out.retain(|d| d.is_dir());
+    out
+}
+
+/// Pasta onde o Code instala sozinho os servidores feitos em JavaScript.
+pub fn servers_dir() -> Option<PathBuf> {
+    Some(crate::code::extensions::root()?.parent()?.join("servers"))
+}
+
+/// Pacote do npm de um servidor de linguagem feito em JavaScript (o primeiro é o do
+/// programa; os outros vão junto), para o Code instalar sozinho quando faltar, como
+/// o Zed faz.
+pub fn npm_package(command: &str) -> Option<&'static [&'static str]> {
+    Some(match command {
+        "typescript-language-server" => &["typescript-language-server", "typescript"],
+        "vtsls" => &["@vtsls/language-server", "typescript"],
+        "vscode-html-language-server" | "vscode-css-language-server" | "vscode-json-language-server" => &["vscode-langservers-extracted"],
+        "yaml-language-server" => &["yaml-language-server"],
+        "bash-language-server" => &["bash-language-server"],
+        "intelephense" => &["intelephense"],
+        "pyright-langserver" => &["pyright"],
+        "docker-langserver" => &["dockerfile-language-server-nodejs"],
+        _ => return None,
+    })
+}
+
+/// Instala pelo npm o servidor `command` na pasta do Code (pode levar segundos: rodar
+/// fora da janela). Devolve o caminho do programa instalado.
+pub fn install_npm_server(command: &str) -> Result<PathBuf, String> {
+    let packages = npm_package(command).ok_or_else(|| format!("{command} não vem do npm"))?;
+    let dir = servers_dir().ok_or("sem pasta de dados")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = server_path_env();
+    let npm = std::env::split_paths(&path).map(|d| d.join("npm")).find(|p| p.is_file()).ok_or("o npm (Node.js) não está instalado")?;
+    let out = std::process::Command::new(&npm)
+        .args(["install", "--prefix"])
+        .arg(&dir)
+        .args(["--no-audit", "--no-fund", "--save=false"])
+        .args(packages)
+        .env("PATH", &path)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("npm falhou").to_string());
+    }
+    let bin = dir.join("node_modules/.bin").join(command);
+    if bin.exists() { Ok(bin) } else { Err(format!("{command} não apareceu depois do npm install")) }
+}
+
+/// Caminho completo de um programa: pelo PATH e pelas pastas de `extra_dirs`.
+pub fn find_program(command: &str) -> Option<PathBuf> {
+    if command.contains('/') {
+        let p = PathBuf::from(command);
+        return p.is_file().then_some(p);
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).chain(extra_dirs()).map(|d| d.join(command)).find(|p| p.is_file())
+}
+
+/// PATH para os servidores: o da sessão mais as pastas de `extra_dirs` (um servidor
+/// feito em JavaScript chama o `node` pelo `#!/usr/bin/env node`).
+pub fn server_path_env() -> std::ffi::OsString {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    for d in extra_dirs() {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or_default()
 }
 
 #[cfg(test)]

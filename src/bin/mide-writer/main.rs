@@ -287,7 +287,7 @@ impl Editor {
         let finding = self.find.is_some() || self.rich.as_ref().is_some_and(|r| r.find.is_some());
         ui.toolbar(|ui| {
             ui.toolbar_title(&title, 420.0);
-            ui.push_right(2.0 * 40.0 + 4.0 + 10.0 + 40.0 + 4.0);
+            ui.push_right(3.0 * mide::kit::TOOLBAR_SEG + 2.0 * 4.0 + 10.0);
             match ui.tool_group(&[Tool::new("document-open-symbolic", &tr!("Open (Ctrl+O)")), Tool::new("document-save-symbolic", &tr!("Save (Ctrl+S)"))]) {
                 Some(0) => clicked = Some("abrir"),
                 Some(1) => clicked = Some("salvar"),

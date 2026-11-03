@@ -16,6 +16,10 @@ code_run() {
     done
     [ "${1:-}" = "--" ] && shift
     rm -f "$CLOG"
+    # Sem o painel de símbolos (ele só aparece com servidor de linguagem instalado, o
+    # que mudaria as posições de uma máquina para outra).
+    mkdir -p "$XDG_CONFIG_HOME/mide"
+    grep -q '^outline' "$XDG_CONFIG_HOME/mide/code.toml" 2>/dev/null || echo 'outline = false' >> "$XDG_CONFIG_HOME/mide/code.toml"
     timeout 150 "$SCEN" "$script" -- "RUST_LOG=mide_code=info,mide_ui=info $envs $CODE_BIN $* >'$CLOG' 2>&1" >/dev/null 2>&1
 }
 
