@@ -77,7 +77,7 @@ impl Code {
         self.tools.snippets.clear();
         self.ext_servers.reset();
         for d in &mut self.docs {
-            d.colors.0 = u64::MAX;
+            d.recolor();
         }
     }
 

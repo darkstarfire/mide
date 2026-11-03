@@ -75,8 +75,80 @@ struct Doc {
     /// `text.version` da última vez que o servidor soube do texto.
     lsp_seen: Option<u64>,
     diags: Vec<Diagnostic>,
-    /// Cores do texto e a versão para a qual foram feitas.
+    /// Muda a cada lista nova de diagnósticos (para refazer os sublinhados só então).
+    diags_rev: u64,
+    /// Número fixo do documento (para a thread das cores).
+    id: u64,
+    /// Cores e avisos prontos para a área de texto.
+    paint: DocPaint,
+}
+
+/// O que a área de texto pinta por cima do texto: as cores (feitas na thread das
+/// cores) e os avisos dos diagnósticos. Fica à parte do texto para ser montado depois
+/// da tecla (no `decorate` da área de texto), já com o texto novo.
+#[derive(Default)]
+struct DocPaint {
+    /// Cores do texto e a versão para a qual foram feitas (enquanto a da versão de
+    /// agora não chega, as de antes deslocadas pela edição).
     colors: (u64, Vec<Span>),
+    /// O texto em que as cores de `colors` valem.
+    colors_text: String,
+    /// A versão cujas cores já foram pedidas à thread.
+    colors_asked: Option<u64>,
+    /// Sublinhados e avisos dos diagnósticos, da versão do texto e da lista de agora.
+    diags: Option<DiagPaint>,
+}
+
+/// Sublinhados e avisos de uma versão do texto (versão, lista, sublinhados, avisos por
+/// linha com a cor).
+type DiagPaint = (u64, u64, Vec<Range<usize>>, Vec<(usize, String, [u8; 4])>);
+
+impl DocPaint {
+    /// As decorações do texto `doc` (já com a tecla do quadro): as cores andam junto
+    /// com a edição e os avisos são refeitos só com texto ou lista nova.
+    fn decorations(&mut self, doc: &TextDoc, diags: &[Diagnostic], diags_rev: u64, utf8: bool, gutter: Vec<(usize, [u8; 4], bool)>) -> Decorations {
+        if self.colors.0 != doc.version && self.colors_text != doc.text {
+            mide::code::colorizer::shift_spans(&mut self.colors.1, &self.colors_text, &doc.text);
+            self.colors_text = doc.text.clone();
+        }
+        if self.diags.as_ref().is_none_or(|(v, rev, ..)| *v != doc.version || *rev != diags_rev) {
+            let text = &doc.text;
+            let starts = doc.line_starts();
+            // Posição pelo começo da linha (antes, contava as linhas do começo do texto
+            // para cada aviso, a cada quadro).
+            let at = |line: u32, col: u32| match starts.get(line as usize) {
+                Some(&s) => s + lsp::to_offset(&text[s..], 0, col, utf8),
+                None => text.len(),
+            };
+            let (mut underlines, mut trailing) = (Vec::new(), Vec::new());
+            let mut seen_lines = HashSet::new();
+            for d in diags {
+                let a = at(d.start.0, d.start.1);
+                let mut b = at(d.end.0, d.end.1);
+                if b <= a {
+                    // Diagnóstico sem largura: sublinha até o fim da palavra.
+                    b = text[a..].find(|c: char| !c.is_alphanumeric() && c != '_').map_or(text.len(), |e| a + e.max(1));
+                }
+                if b > a {
+                    underlines.push(a..b.min(text.len()));
+                }
+                if seen_lines.insert(d.start.0) {
+                    let c = match d.severity {
+                        Severity::Error => [215, 58, 73, 255],
+                        Severity::Warning => [200, 140, 0, 255],
+                        Severity::Info => [120, 120, 130, 255],
+                    };
+                    trailing.push((d.start.0 as usize, d.message.clone(), c));
+                }
+            }
+            underlines.sort_by_key(|r| (r.start, r.end));
+            self.diags = Some((doc.version, diags_rev, underlines, trailing));
+        }
+        let (_, _, underlines, trailing) = self.diags.as_ref().expect("feito acima");
+        // Avisos do servidor encostados à direita (não embaixo do completar e sem rolar
+        // o texto para mostrá-los).
+        Decorations { colors: self.colors.1.clone(), underlines: underlines.clone(), trailing: trailing.clone(), gutter, trailing_right: true }
+    }
 }
 
 /// Trecho colorido do texto (bytes e cor).
@@ -86,7 +158,26 @@ impl Doc {
     fn new(path: Option<PathBuf>, text: String, crlf: bool) -> Self {
         let first = text.lines().next().unwrap_or("").to_string();
         let lang = path.as_ref().map_or(lang::plain(), |p| lang::detect(p, &first));
-        Self { path, text: TextDoc::new(text), lang, crlf, lsp_version: 1, lsp_seen: None, diags: Vec::new(), colors: (u64::MAX, Vec::new()) }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            path,
+            text: TextDoc::new(text),
+            lang,
+            crlf,
+            lsp_version: 1,
+            lsp_seen: None,
+            diags: Vec::new(),
+            diags_rev: 0,
+            id,
+            paint: DocPaint { colors: (u64::MAX, Vec::new()), ..Default::default() },
+        }
+    }
+
+    /// As cores são refeitas (outro tema, outra linguagem, extensões novas).
+    fn recolor(&mut self) {
+        self.paint.colors.0 = u64::MAX;
+        self.paint.colors_asked = None;
     }
 
     fn name(&self) -> String {
@@ -220,7 +311,9 @@ pub(crate) struct Code {
     color_theme: Option<mide::code::themes::ColorTheme>,
     theme_names: (Vec<String>, Vec<String>),
     /// Realce por tree-sitter com as gramáticas das extensões do Zed.
-    syntax: mide::code::syntax::Syntax,
+    /// A thread que faz as cores do código (aberta no primeiro quadro, com o
+    /// despertador da janela).
+    colorizer: Option<mide::code::colorizer::Colorizer>,
     /// Servidores pedidos às extensões do Zed com código.
     ext_servers: ext_servers::ExtServers,
     /// Loja de extensões.
@@ -271,7 +364,7 @@ impl Code {
             zed_keys,
             color_theme: None,
             theme_names: (Vec::new(), Vec::new()),
-            syntax: mide::code::syntax::Syntax::new(),
+            colorizer: None,
             ext_servers: ext_servers::ExtServers::default(),
             store_ui: store_ui::StoreUi::default(),
             prefs_section: 0,
@@ -460,6 +553,7 @@ impl Code {
         for doc in &mut self.docs {
             doc.lsp_seen = None;
             doc.diags.clear();
+            doc.diags_rev += 1;
         }
     }
 
@@ -477,6 +571,7 @@ impl Code {
                 for doc in &mut self.docs {
                     doc.lsp_seen = None;
                     doc.diags.clear();
+                    doc.diags_rev += 1;
                 }
                 let n = self.config.servers.len();
                 self.say(tr!("Language servers updated ({n})", n = n));
@@ -495,6 +590,9 @@ impl Code {
             return;
         }
         let doc = self.docs.remove(i);
+        if let Some(c) = &self.colorizer {
+            c.forget(doc.id);
+        }
         if let (Some(path), Some(cmd)) = (&doc.path, self.config.server_for(doc.lang.id).map(|s| s.key()))
             && let Some(client) = self.servers.get_mut(&cmd)
         {
@@ -635,6 +733,7 @@ impl Code {
                     if let Some(doc) = self.docs.iter_mut().find(|d| d.path.as_ref().is_some_and(|p| lsp::uri(p) == uri)) {
                         tracing::info!("diagnósticos: {} em {}", items.len(), doc.name());
                         doc.diags = items;
+                        doc.diags_rev += 1;
                     }
                 }
                 Event::Completions { id, items } => {
@@ -1007,7 +1106,7 @@ impl Code {
         let icons = mide::code::themes::icon_themes();
         self.theme_names = (colors.into_iter().map(|t| t.name).collect(), icons.into_iter().map(|t| t.name).collect());
         for d in &mut self.docs {
-            d.colors.0 = u64::MAX;
+            d.recolor();
         }
     }
 
@@ -1018,45 +1117,51 @@ impl Code {
     }
 
     /// Cores do código e erros da aba `i`, para a área de texto.
-    fn decorations(&mut self, i: usize, dark: bool) -> Decorations {
-        let theme = self.color_theme.as_ref().map(|t| t.syntax.clone());
-        if self.docs[i].colors.0 != self.docs[i].text.version {
-            // A gramática tree-sitter das extensões, se houver; senão, o realce próprio.
-            let (text, lang) = (&self.docs[i].text.text, self.docs[i].lang);
-            let spans = self.syntax.highlight(text, lang).unwrap_or_else(|| highlight::highlight(text, lang));
-            let doc = &mut self.docs[i];
-            // As cores do tema escolhido; o que ele não tem, as do mide.
-            let pick = |k| theme.as_ref().and_then(|t| t.get(&k).copied()).unwrap_or_else(|| highlight::color(k, dark));
-            doc.colors = (doc.text.version, spans.into_iter().map(|(r, k)| (r, pick(k))).collect());
+    /// As cores prontas na thread das cores entram nas abas (deslocadas até o texto de
+    /// agora, se já digitaram mais). Devolve se alguma entrou.
+    fn take_colors(&mut self, dark: bool) -> bool {
+        let Some(colorizer) = &self.colorizer else {
+            return false;
+        };
+        let ready = colorizer.poll();
+        if ready.is_empty() {
+            return false;
         }
+        let theme = self.color_theme.as_ref().map(|t| &t.syntax);
+        // As cores do tema escolhido; o que ele não tem, as do mide.
+        let pick = |k| theme.and_then(|t| t.get(&k).copied()).unwrap_or_else(|| highlight::color(k, dark));
+        for done in ready {
+            let Some(doc) = self.docs.iter_mut().find(|d| d.id == done.doc) else {
+                continue;
+            };
+            let p = &mut doc.paint;
+            p.colors = (done.version, done.spans.into_iter().map(|(r, k)| (r, pick(k))).collect());
+            p.colors_text = done.text;
+            if p.colors_text != doc.text.text {
+                mide::code::colorizer::shift_spans(&mut p.colors.1, &p.colors_text, &doc.text.text);
+                p.colors_text = doc.text.text.clone();
+            }
+        }
+        true
+    }
+
+    /// Pede à thread as cores da versão de agora do texto da aba `i` (uma vez por
+    /// versão). Sem a thread (antes do primeiro quadro), o realce próprio na hora.
+    fn ask_colors(&mut self, i: usize, dark: bool) {
         let doc = &mut self.docs[i];
-        let utf8 = self.config.server_for(doc.lang.id).and_then(|s| self.servers.get(&s.key())).is_none_or(|c| c.utf8);
-        let mut deco = Decorations { colors: doc.colors.1.clone(), ..Default::default() };
-        let mut seen_lines = HashSet::new();
-        for d in &doc.diags {
-            let a = lsp::to_offset(&doc.text.text, d.start.0, d.start.1, utf8);
-            let mut b = lsp::to_offset(&doc.text.text, d.end.0, d.end.1, utf8);
-            if b <= a {
-                // Diagnóstico sem largura: sublinha até o fim da palavra.
-                b = doc.text.text[a..].find(|c: char| !c.is_alphanumeric() && c != '_').map_or(doc.text.text.len(), |e| a + e.max(1));
-            }
-            if b > a {
-                deco.underlines.push(a..b.min(doc.text.text.len()));
-            }
-            if seen_lines.insert(d.start.0) {
-                let c = match d.severity {
-                    Severity::Error => [215, 58, 73, 255],
-                    Severity::Warning => [200, 140, 0, 255],
-                    Severity::Info => [120, 120, 130, 255],
-                };
-                deco.trailing.push((d.start.0 as usize, d.message.clone(), c));
+        let version = doc.text.version;
+        if doc.paint.colors.0 == version || doc.paint.colors_asked == Some(version) {
+            return;
+        }
+        match &self.colorizer {
+            Some(c) => c.request(doc.id, version, doc.text.text.clone(), doc.lang),
+            None => {
+                let pick = |k| self.color_theme.as_ref().and_then(|t| t.syntax.get(&k).copied()).unwrap_or_else(|| highlight::color(k, dark));
+                doc.paint.colors = (version, highlight::highlight(&doc.text.text, doc.lang).into_iter().map(|(r, k)| (r, pick(k))).collect());
+                doc.paint.colors_text = doc.text.text.clone();
             }
         }
-        deco.gutter = self.git_marks(i);
-        // Avisos do servidor encostados à direita (não embaixo do completar e sem rolar
-        // o texto para mostrá-los).
-        deco.trailing_right = true;
-        deco
+        doc.paint.colors_asked = Some(version);
     }
 
     /// Abre (ou mostra) o terminal integrado, em `dir` ou na pasta do projeto. Devolve
@@ -1250,9 +1355,10 @@ impl Code {
                     if let Some(l) = lang::by_id(id) {
                         let doc = self.doc();
                         doc.lang = l;
-                        doc.colors.0 = u64::MAX;
+                        doc.recolor();
                         doc.lsp_seen = None;
                         doc.diags.clear();
+                        doc.diags_rev += 1;
                     }
                 } else if let Some(i) = other.strip_prefix("tab:").and_then(|n| n.parse::<usize>().ok())
                     && i < self.docs.len()
@@ -1693,7 +1799,7 @@ impl Code {
                         let doc = self.doc();
                         doc.path = Some(path.clone());
                         doc.lang = lang::detect(&path, &first);
-                        doc.colors.0 = u64::MAX;
+                        doc.recolor();
                         doc.lsp_seen = None;
                         if self.save(false) && then_close {
                             self.close_tab(self.cur, true);
@@ -1904,21 +2010,29 @@ impl Code {
     /// Um painel do editor: a área de texto da aba `i` em `rect`, com o menu de
     /// contexto. Devolve a resposta da área de texto.
     fn editor_pane(&mut self, ui: &mut Ui, i: usize, rect: (f32, f32, f32, f32), dark: bool) -> mide::kit::TextAreaResponse {
-        let deco = self.decorations(i, dark);
         let indent = self.config.indent();
         let (line_numbers, size, current_line) = (self.config.line_numbers, self.config.size, self.config.current_line);
-        let mut deco = Some(deco);
-        let mut decorate = move |_: &TextDoc| deco.take().unwrap_or_default();
         let inlays = self.inlays_for(i);
         let colors = self.editor_colors();
+        let gutter = self.git_marks(i);
+        let utf8 = self.config.server_for(self.docs[i].lang.id).and_then(|s| self.servers.get(&s.key())).is_none_or(|c| c.utf8);
         let before = self.docs[i].text.version;
         let (len_before, cursor_before, modified_before) = (self.docs[i].text.text.len(), self.docs[i].text.edit.cursor, self.docs[i].text.modified);
         let mut out = None;
+        // O texto e as decorações são partes separadas da aba: a área de texto edita um
+        // e chama o `decorate` depois da tecla, com o texto novo (as cores já certas no
+        // mesmo quadro).
+        let Doc { text, paint, diags, diags_rev, .. } = &mut self.docs[i];
+        let mut gutter = Some(gutter);
+        let mut decorate = |doc: &TextDoc| paint.decorations(doc, diags, *diags_rev, utf8, gutter.take().unwrap_or_default());
         ui.at(rect.0, rect.1, rect.2, |ui| {
-            let look = TextAreaLook { line_numbers, size: Some(size), current_line, indent: &indent, decorate: Some(&mut decorate), inlays: &inlays, colors, ..Default::default() };
-            out = Some(ui.text_area_with(&mut self.docs[i].text, rect.3, look));
+            // A tecla aparece com uma passada só; abas, caminho e símbolos se acertam no
+            // quadro logo depois (o das cores, ou o despertar abaixo).
+            let look = TextAreaLook { line_numbers, size: Some(size), current_line, indent: &indent, decorate: Some(&mut decorate), inlays: &inlays, colors, single_pass_edits: true, ..Default::default() };
+            out = Some(ui.text_area_with(text, rect.3, look));
         });
         let r = out.expect("área de texto");
+        self.ask_colors(i, dark);
         if i == self.cur && std::mem::take(&mut self.eat_space) {
             // O espaço do Alt+Espaço (o atalho do completar) não fica no texto.
             let doc = &mut self.docs[i].text;
@@ -1932,6 +2046,7 @@ impl Code {
         }
         if self.docs[i].text.version != before {
             self.last_edit = Some(Instant::now());
+            ui.wake_after(Duration::from_millis(1));
             if i == self.cur {
                 self.filter_completion();
                 // Digitando: o completar abre sozinho (uma letra a mais, ou um gatilho
@@ -2110,6 +2225,15 @@ impl Code {
 
 impl App for Code {
     fn view(&mut self, ui: &mut Ui) {
+        // A thread das cores, com o despertador da janela (as cores prontas acordam a
+        // janela para entrar).
+        if self.colorizer.is_none()
+            && let Some(waker) = ui.waker()
+        {
+            self.colorizer = Some(mide::code::colorizer::Colorizer::new(move || waker.wake()));
+        }
+        // As cores entram antes do desenho desta passagem (sem pedir outra).
+        self.take_colors(ui.theme().dark);
         let doc_title = self.docs.get(self.cur).map(Doc::title).unwrap_or_default();
         ui.set_title(&format!("{doc_title} — Code"));
         ui.set_mono_font(self.config.font.as_deref());
@@ -2346,16 +2470,13 @@ impl App for Code {
             let max_outline = (total.2 - 240.0).max(OUTLINE_MIN);
             let outline_w = self.config.outline_width.clamp(OUTLINE_MIN, max_outline);
             let mut left = total.2 - outline_w;
-            let mut outline_rect = (total.0 + left, total.1, outline_w, total.3);
-            let mut moved = None;
-            ui.clip(total, |ui| {
-                moved = Some(ui.split(&mut left, 240.0_f32.min(total.2 - OUTLINE_MIN), total.2 - OUTLINE_MIN, |ui| body = ui.to_window(ui.region()), |ui| outline_rect = ui.to_window(ui.region())));
-            });
-            if let Some(r) = moved {
-                self.config.outline_width = (total.2 - left).clamp(OUTLINE_MIN, max_outline);
-                if r.submitted() {
-                    self.divider_moved();
-                }
+            // Só a divisória: os dois lados são desenhados depois, nos retângulos dela
+            // (a divisão com sub-áreas copiava a área do editor inteira a cada quadro).
+            let (r, editor_side, outline_rect) = ui.split_divider(total, &mut left, 240.0_f32.min(total.2 - OUTLINE_MIN), total.2 - OUTLINE_MIN);
+            body = editor_side;
+            self.config.outline_width = (total.2 - left).clamp(OUTLINE_MIN, max_outline);
+            if r.submitted() {
+                self.divider_moved();
             }
             // Um respiro entre a divisória e o painel.
             let outline_rect = (outline_rect.0 + SIDE_GAP / 2.0, outline_rect.1, (outline_rect.2 - SIDE_GAP / 2.0).max(60.0), outline_rect.3);
@@ -2363,23 +2484,14 @@ impl App for Code {
             self.outline_panel(ui, outline_rect);
         }
         let body = body;
-        let mut editor_rect = body;
-        let mut term_rect = (cl, status_y, cw, 0.0);
+        let (mut editor_rect, mut term_rect) = (body, (cl, status_y, cw, 0.0));
         if self.terminal_open && self.terminal.is_some() {
             let mut height = self.config.terminal_height;
             let max = (body.3 - 120.0).max(80.0);
-            let mut moved = None;
-            ui.clip(body, |ui| {
-                moved = Some(ui.split_vertical(
-                    &mut height,
-                    80.0,
-                    max,
-                    |ui| editor_rect = ui.to_window(ui.region()),
-                    |ui| term_rect = ui.to_window(ui.region()),
-                ));
-            });
+            let r;
+            (r, editor_rect, term_rect) = ui.split_vertical_divider(body, &mut height, 80.0, max);
             self.config.terminal_height = height;
-            if moved.is_some_and(|r| r.submitted()) {
+            if r.submitted() {
                 self.divider_moved();
             }
         }
@@ -2398,21 +2510,12 @@ impl App for Code {
         // Painéis do editor (um ou dois), com a divisória do kit entre eles.
         let panes_rects: Vec<(usize, (f32, f32, f32, f32))> = match self.split.as_mut() {
             Some(s) => {
-                let (mut a, mut b) = (editor_rect, editor_rect);
                 let along = if s.side_by_side { editor_rect.2 } else { editor_rect.3 }.max(1.0);
                 // O kit guarda o tamanho do primeiro painel (lado a lado) ou do de baixo.
                 let mut size = if s.side_by_side { s.ratio } else { 1.0 - s.ratio } * along;
                 let (min, max) = (along * 0.15, along * 0.85);
-                let mut moved = false;
-                ui.clip(editor_rect, |ui| {
-                    let r = if s.side_by_side {
-                        ui.split(&mut size, min, max, |ui| a = ui.to_window(ui.region()), |ui| b = ui.to_window(ui.region()))
-                    } else {
-                        ui.split_vertical(&mut size, min, max, |ui| a = ui.to_window(ui.region()), |ui| b = ui.to_window(ui.region()))
-                    };
-                    moved = r.changed();
-                });
-                if moved {
+                let (r, a, b) = if s.side_by_side { ui.split_divider(editor_rect, &mut size, min, max) } else { ui.split_vertical_divider(editor_rect, &mut size, min, max) };
+                if r.changed() {
                     s.ratio = if s.side_by_side { size / along } else { 1.0 - size / along }.clamp(0.15, 0.85);
                 }
                 vec![(s.docs[0].min(self.docs.len() - 1), a), (s.docs[1].min(self.docs.len() - 1), b)]
@@ -2759,6 +2862,16 @@ fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl
     let typed = text[start..cursor].to_lowercase();
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    // Só as palavras que começam com o que foi digitado entram na contagem (antes, todas
+    // as do arquivo iam para o mapa e eram filtradas depois).
+    let matches = |w: &str| {
+        if typed.is_ascii() {
+            w.len() > typed.len() && w.as_bytes()[..typed.len()].eq_ignore_ascii_case(typed.as_bytes())
+        } else {
+            let lower = w.to_lowercase();
+            lower.starts_with(&typed) && lower != typed
+        }
+    };
     let mut word_at: Option<usize> = None;
     for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
         match (word_at, is_word(c) && i < text.len()) {
@@ -2767,7 +2880,7 @@ fn local_completions<'a>(text: &str, start: usize, cursor: usize, keywords: impl
                 word_at = None;
                 let word = &text[at..i];
                 // A palavra que está sendo digitada não conta.
-                if at != start && word.chars().count() >= 3 && !word.starts_with(|c: char| c.is_ascii_digit()) {
+                if at != start && matches(word) && word.chars().count() >= 3 && !word.starts_with(|c: char| c.is_ascii_digit()) {
                     *counts.entry(word).or_default() += 1;
                 }
             }

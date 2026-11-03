@@ -3,6 +3,7 @@
 //! busca no projeto, divisão do editor e a sessão. Sem interface: testável sem janela;
 //! o app fica em `src/bin/mide-code`.
 
+pub mod colorizer;
 pub mod config;
 pub mod edit;
 pub mod extensions;

@@ -1121,3 +1121,9 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - v0.10.45: no aparelho (falta o usuário): quatro dedos para cima na tela abrem a visão das janelas; três abrem o launcher; `mide-logs --search "quarto dedo"` mostra a troca.
 - v0.10.55: `cargo test bordas_dos_gestos`; no aparelho (falta o usuário): subir da borda de baixo e parar abre a visão das janelas; quatro dedos para cima abrem; deslizar da borda lateral para dentro volta no navegador e no Arquivos e fecha o launcher/a visão.
 - v0.10.56: `cargo test` (mide e mide-ui); medição de 60 s parado (CPU e despertares por processo, potência do EC). Falta o usuário: estimativa da bateria depois do `data/mide-update --all`; cursor piscando nos campos, menus animando e o teclado na tela deslizando normalmente.
+
+## v0.10.69 (2026-11-03): fluidez do Code
+
+- `cargo test`: `code::colorizer` (cores acompanham a digitação, acentos, thread só com a versão mais nova), `code::syntax::edicao_entre_dois_textos`, `kit::textarea::cores_so_do_trecho_a_vista` (mide-ui).
+- Medição (não automatizada): roteiro que abre um arquivo grande no `mide-code` de release e digita 10 letras, com `RUST_LOG=mide_ui=debug`; o `quadro do app` da tecla deve ficar perto de 14 ms em 800x600 (era 34–50 ms no Rust e mais de 300 ms no HTML com tree-sitter).
+- Na sessão (falta o usuário): digitar num arquivo grande do projeto dele (PHP com o intelephense, Rust com o rust-analyzer), também na tela 2K em 150%.

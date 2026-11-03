@@ -4,7 +4,7 @@
 
 use std::{collections::HashMap, ops::Range, path::PathBuf};
 
-use tree_sitter::{wasmtime::Engine, Language, Parser, Query, QueryCursor, StreamingIterator, WasmStore};
+use tree_sitter::{wasmtime::Engine, InputEdit, Language, Parser, Point, Query, QueryCursor, StreamingIterator, Tree, WasmStore};
 
 use crate::code::highlight::Kind;
 use crate::code::lang::Language as Lang;
@@ -65,6 +65,10 @@ pub struct Syntax {
     parser: Option<Parser>,
     engine: Option<Engine>,
     grammars: HashMap<&'static str, Option<Grammar>>,
+    /// Última análise de cada documento (linguagem, texto e árvore): a próxima parte
+    /// dela e analisa de novo só o trecho que mudou (digitando, o arquivo inteiro de
+    /// novo levava centenas de milissegundos numa gramática em WebAssembly).
+    trees: HashMap<u64, (&'static str, String, Tree)>,
 }
 
 impl Default for Syntax {
@@ -75,7 +79,7 @@ impl Default for Syntax {
 
 impl Syntax {
     pub fn new() -> Self {
-        Self { parser: None, engine: None, grammars: HashMap::new() }
+        Self { parser: None, engine: None, grammars: HashMap::new(), trees: HashMap::new() }
     }
 
     /// O motor e o analisador com o armazém de WebAssembly (na primeira vez).
@@ -138,17 +142,36 @@ impl Syntax {
     /// Trechos de realce do texto pelo tree-sitter (`None`: sem gramática para a
     /// linguagem; vale o realce próprio).
     pub fn highlight(&mut self, text: &str, lang: &'static Lang) -> Option<Vec<(Range<usize>, Kind)>> {
+        self.highlight_doc(0, text, lang)
+    }
+
+    /// Como [`Syntax::highlight`], para o documento `doc` (um número do app): a árvore
+    /// da última análise dele é reaproveitada (análise incremental).
+    pub fn highlight_doc(&mut self, doc: u64, text: &str, lang: &'static Lang) -> Option<Vec<(Range<usize>, Kind)>> {
         if !self.load(lang) {
             return None;
         }
-        self.run(lang.id, text)
+        self.run(doc, lang.id, text)
     }
 
-    fn run(&mut self, id: &str, text: &str) -> Option<Vec<(Range<usize>, Kind)>> {
+    /// Esquece a árvore do documento (aba fechada).
+    pub fn forget(&mut self, doc: u64) {
+        self.trees.remove(&doc);
+    }
+
+    fn run(&mut self, doc: u64, id: &'static str, text: &str) -> Option<Vec<(Range<usize>, Kind)>> {
         let language = self.grammars.get(id)?.as_ref()?.language.clone();
+        // A árvore de antes, com a edição aplicada (mesma linguagem).
+        let old = self.trees.remove(&doc).filter(|(lid, ..)| *lid == id).map(|(_, old_text, mut tree)| {
+            if let Some(edit) = input_edit(&old_text, text) {
+                tree.edit(&edit);
+            }
+            tree
+        });
         let parser = self.parser()?;
         parser.set_language(&language).ok()?;
-        let tree = parser.parse(text, None)?;
+        let tree = parser.parse(text, old.as_ref())?;
+        self.trees.insert(doc, (id, text.to_string(), tree.clone()));
         let g = self.grammars.get(id)?.as_ref()?;
         let mut cursor = QueryCursor::new();
         let mut captures = cursor.captures(&g.query, tree.root_node(), text.as_bytes());
@@ -166,6 +189,48 @@ impl Syntax {
         }
         Some(flatten(spans, text.len()))
     }
+}
+
+/// A edição que leva `old` a `new`: o trecho entre o começo e o fim em comum (`None`:
+/// textos iguais).
+pub fn input_edit(old: &str, new: &str) -> Option<InputEdit> {
+    let (a, b) = edit_range(old, new)?;
+    let (start, old_end, new_end) = (a, b.0, b.1);
+    Some(InputEdit {
+        start_byte: start,
+        old_end_byte: old_end,
+        new_end_byte: new_end,
+        start_position: point(old, start),
+        old_end_position: point(old, old_end),
+        new_end_position: point(new, new_end),
+    })
+}
+
+/// Onde os textos começam a diferir e onde a diferença termina em cada um
+/// (`(começo, (fim no antigo, fim no novo))`), sempre em limites de caractere.
+pub fn edit_range(old: &str, new: &str) -> Option<(usize, (usize, usize))> {
+    if old == new {
+        return None;
+    }
+    let (o, n) = (old.as_bytes(), new.as_bytes());
+    let mut start = o.iter().zip(n).take_while(|(x, y)| x == y).count();
+    while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
+        start -= 1;
+    }
+    let max_suffix = o.len().min(n.len()) - start;
+    let mut suffix = o.iter().rev().zip(n.iter().rev()).take(max_suffix).take_while(|(x, y)| x == y).count();
+    while !old.is_char_boundary(o.len() - suffix) || !new.is_char_boundary(n.len() - suffix) {
+        suffix -= 1;
+    }
+    Some((start, (o.len() - suffix, n.len() - suffix)))
+}
+
+/// Linha e coluna (em bytes) da posição `at` do texto, como o tree-sitter conta.
+fn point(text: &str, at: usize) -> Point {
+    let before = &text.as_bytes()[..at];
+    let row = before.iter().filter(|&&c| c == b'\n').count();
+    let column = at - before.iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
+    Point { row, column }
 }
 
 /// Trechos sem sobreposição: dentro de um trecho, o menor (o mais de dentro) vale.
@@ -232,11 +297,25 @@ mod tests {
         let g = s.load_grammar("php", &bytes, &query).expect("gramática carregada");
         s.grammars.insert("php", Some(g));
         let text = "<?php\nfunction oi() { return \"a\"; }\n";
-        let spans = s.run("php", text).unwrap();
+        let spans = s.run(0, "php", text).unwrap();
         let at = |w: &str| spans.iter().find(|(r, _)| &text[r.clone()] == w).map(|(_, k)| *k);
         assert_eq!(at("function"), Some(Kind::Keyword));
         assert_eq!(at("oi"), Some(Kind::Function));
         assert!(spans.iter().any(|(r, k)| *k == Kind::String && text[r.clone()].contains('a')));
+    }
+
+    #[test]
+    fn edicao_entre_dois_textos() {
+        assert_eq!(edit_range("abc", "abc"), None);
+        assert_eq!(edit_range("abc", "abxc"), Some((2, (2, 3))));
+        assert_eq!(edit_range("abxc", "abc"), Some((2, (3, 2))));
+        // Letras repetidas: a mudança fica no fim do trecho em comum do começo.
+        assert_eq!(edit_range("aa", "aaa"), Some((2, (2, 3))));
+        // Acentos: o corte cai em limite de caractere.
+        assert_eq!(edit_range("é", "è"), Some((0, (2, 2))));
+        let e = input_edit("um\ndois", "um\ndoXis").unwrap();
+        assert_eq!((e.start_byte, e.old_end_byte, e.new_end_byte), (5, 5, 6));
+        assert_eq!((e.start_position.row, e.start_position.column), (1, 2));
     }
 
     #[test]

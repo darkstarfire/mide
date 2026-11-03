@@ -161,7 +161,11 @@ pub fn kind_svg(kind: u8) -> String {
 
 /// Caminho (no cache) do selo de um tipo de sugestão.
 pub fn kind_icon(kind: u8) -> Option<String> {
-    cached(&format!("kind-{kind}"), kind_svg(kind).as_bytes())
+    // Guardado por tipo: o painel de símbolos pede um por linha, a cada quadro (montar o
+    // desenho e conferir o arquivo no disco toda vez custava milissegundos).
+    static ICONS: std::sync::Mutex<Option<std::collections::HashMap<u8, Option<String>>>> = std::sync::Mutex::new(None);
+    let mut icons = ICONS.lock().unwrap_or_else(|e| e.into_inner());
+    icons.get_or_insert_with(Default::default).entry(kind).or_insert_with(|| cached(&format!("kind-{kind}"), kind_svg(kind).as_bytes())).clone()
 }
 
 /// Nome do tipo de sugestão, em inglês (traduzido na interface).

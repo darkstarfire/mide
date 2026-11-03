@@ -338,13 +338,13 @@ impl Code {
         let Some(doc) = self.docs.get(self.cur) else {
             return;
         };
-        let symbols = doc.path.as_ref().and_then(|p| self.lsp.symbols.get(p)).map(|(_, s)| s.clone());
+        let symbols = doc.path.as_ref().and_then(|p| self.lsp.symbols.get(p)).map(|(_, s)| s);
         let starts = doc.text.line_starts();
         let line = line_of(&starts, doc.text.edit.cursor) as u32;
         let has_server = self.config.server_for(doc.lang.id).is_some_and(|s| self.servers.contains_key(&s.key()));
         let mut go: Option<(u32, u32)> = None;
         ui.at(rect.0 + 6.0, rect.1 + 4.0, rect.2 - 12.0, |ui| {
-            let count = symbols.as_ref().map_or(0, Vec::len);
+            let count = symbols.map_or(0, |s| s.len());
             ui.row(|ui| {
                 ui.strong(&tr!("Symbols"));
                 if count > 0 {

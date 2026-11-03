@@ -322,10 +322,23 @@ pub enum Event {
     Exited(String),
 }
 
+/// A thread que escreve no servidor: manda as mensagens na ordem em que chegam e para
+/// quando o servidor fecha a entrada (ou o cliente acaba).
+fn write_messages(mut stdin: ChildStdin, messages: mpsc::Receiver<Vec<u8>>) {
+    for msg in messages {
+        if stdin.write_all(&msg).and_then(|_| stdin.flush()).is_err() {
+            break;
+        }
+    }
+}
+
 /// Um servidor de linguagem rodando.
 pub struct Client {
     child: Child,
-    stdin: ChildStdin,
+    /// As mensagens vão ao servidor por uma thread que escreve no `stdin` dele: o texto
+    /// inteiro do arquivo não cabe no buffer do pipe, e escrever direto travava a
+    /// janela enquanto o servidor não lia.
+    outbox: mpsc::Sender<Vec<u8>>,
     rx: Receiver<Value>,
     next_id: u64,
     /// Pedidos esperando resposta: id → método.
@@ -440,7 +453,9 @@ impl Client {
                 }
             }
         });
-        let mut client = Self { child, stdin, rx, next_id: 1, pending: HashMap::new(), utf8: false, ready: false, queued: Vec::new(), name: command.to_string(), caps: Value::Null, settings };
+        let (outbox, to_write) = mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || write_messages(stdin, to_write));
+        let mut client = Self { child, outbox, rx, next_id: 1, pending: HashMap::new(), utf8: false, ready: false, queued: Vec::new(), name: command.to_string(), caps: Value::Null, settings };
         let params = json!({
             "processId": std::process::id(),
             "rootUri": uri(root),
@@ -477,8 +492,7 @@ impl Client {
     }
 
     fn send(&mut self, msg: &Value) -> std::io::Result<()> {
-        self.stdin.write_all(&frame(msg))?;
-        self.stdin.flush()
+        self.outbox.send(frame(msg)).map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "servidor de linguagem fechado"))
     }
 
     fn request(&mut self, method: &'static str, params: Value) -> std::io::Result<u64> {
