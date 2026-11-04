@@ -1509,11 +1509,11 @@ impl Launcher {
                     (tr!("Move to Trash"), [255, 110, 100, 255])
                 }
             };
+            let accent = mide::kit::system_accent(true);
             if menu.hover == Some(i) {
-                let accent = mide::kit::system_accent(true);
                 fill_rounded(pixmap, ix, iy, iw, ih, 7.0, rgba(accent[0], accent[1], accent[2], 255));
             }
-            let color = if menu.hover == Some(i) { [255, 255, 255, 255] } else { color };
+            let color = if menu.hover == Some(i) { mide::kit::on_color(accent) } else { color };
             self.text.draw(pixmap, &label, ix + 10.0, iy + (ih - 14.0 * 1.25) / 2.0, 14.0, FontWeight::Regular, color);
         }
     }

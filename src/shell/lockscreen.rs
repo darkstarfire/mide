@@ -370,7 +370,7 @@ pub fn menu(ui: &mut Ui, anchor: (f32, f32, f32, f32), items: &[String], selecte
             if hot {
                 fill_rounded(pixmap, x + 5.0, ry, width - 10.0, ROW, 6.0, rgba(accent[0], accent[1], accent[2], 255));
             }
-            let color = if hot { WHITE } else { [28, 28, 32, 255] };
+            let color = if hot { crate::kit::on_color(accent) } else { [28, 28, 32, 255] };
             if i == selected {
                 text.draw(pixmap, "✓", x + 12.0, ry + (ROW - font * 1.25) / 2.0, font, FontWeight::Semibold, color);
             }

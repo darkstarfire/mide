@@ -282,7 +282,7 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 
 - Terminal nítido em escala fracionária; menu da bateria com tempo, consumo, saúde e ciclos; tamanho do ponteiro nas Configurações; barra de título em degradê contínuo; Alt+Tab na cor de destaque; brilho pelo logind.
 - Pendentes de diagnóstico no Chromebook: VS Code com letras espaçadas e tela de bloqueio borrada em 150% (não reproduzidos no teste).
-- Próximo pedido do usuário (2026-10-29): tema tingido pela cor de destaque (vidro e transparência com um toque da cor, como o macOS) e as opções branco e preto na cor de destaque, nos temas claro e escuro.
+- Tema tingido pela cor de destaque e as cores branco e preto: feitos na v0.10.72 (2026-11-04); falta o usuário conferir na sessão.
 - v0.10.31: fonte própria da interface (Noto Sans em `data/fonts`, instalada pelo `mide-update`), contra as letras espaçadas no Chromebook; falta o usuário conferir lá.
 
 ## v0.10.33 (2026-10-30)
@@ -344,3 +344,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - v0.10.69 (2026-11-03): Code fluido ao digitar (cores numa thread com tree-sitter incremental, imagem do texto guardada no mide-ui, divisórias sem cópia, escrita ao servidor numa thread); falta o usuário conferir na sessão.
 - v0.10.70 (2026-11-03): Terminal translúcido por inteiro (título, abas e margens com a opacidade do perfil; vidro atrás da janela toda); falta o usuário conferir.
 - v0.10.71: sino visual do Terminal pisca a janela inteira (sem as faixas de outra cor).
+- v0.10.72 (2026-11-04): cores de destaque branco e preto (texto por contraste) e vidro tingido pela cor de destaque (compositor e mide-ui, interruptor em Aparência); falta o usuário conferir. Pendente: o bug do PC fraco (dual core, 3 GB) que fecha a sessão ao abrir app em tela cheia, aguardando os logs.

@@ -485,6 +485,8 @@ pub fn handle(state: &mut State, command: &str) -> String {
                     tracing::info!("teclado: repetição depois de {} ms, {} por segundo", repeat.0, repeat.1);
                 }
                 state.config = config;
+                // Cor de destaque e tingido do vidro (Configurações → Aparência).
+                crate::blur::refresh_tint();
                 // Modo desktop ou tablet escolhido nas Configurações vale na hora.
                 crate::touch::apply_tablet_mode(state);
                 // Trava de rotação solta: a tela volta a seguir o sensor.

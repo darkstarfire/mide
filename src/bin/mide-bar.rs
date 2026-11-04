@@ -930,11 +930,13 @@ struct Palette {
     secondary: [u8; 4],
     faint: [u8; 4],
     body: [u8; 4],
+    /// Texto e símbolos por cima da cor de destaque (escuro no destaque branco).
+    on_accent: [u8; 4],
 }
 
 impl Palette {
-    const LIGHT: Palette = Palette { dark: false, accent: [10, 110, 235, 255], text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255] };
-    const DARK: Palette = Palette { dark: true, accent: [30, 125, 245, 255], text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255] };
+    const LIGHT: Palette = Palette { dark: false, accent: [10, 110, 235, 255], text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255], on_accent: [255, 255, 255, 255] };
+    const DARK: Palette = Palette { dark: true, accent: [30, 125, 245, 255], text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255], on_accent: [255, 255, 255, 255] };
 
     fn accent_color(&self) -> tiny_skia::Color {
         rgba(self.accent[0], self.accent[1], self.accent[2], 255)
@@ -1060,7 +1062,7 @@ fn pal() -> Palette {
 fn refresh_palette() {
     let theme = mide::kit::Theme::system();
     let base = if theme.dark { Palette::DARK } else { Palette::LIGHT };
-    PALETTE.with(|p| p.set(Palette { accent: theme.accent, ..base }));
+    PALETTE.with(|p| p.set(Palette { accent: theme.accent, on_accent: theme.on_accent, ..base }));
 }
 
 struct Bar {
@@ -2267,7 +2269,7 @@ impl Bar {
                         fill_rounded(pixmap, mx + 5.0, y, mw - 10.0, ITEM_H, 5.0, pal().accent_color());
                     }
                     let color = match (action.is_some(), active) {
-                        (_, true) => [255, 255, 255, 255],
+                        (_, true) => pal().on_accent,
                         (true, false) => pal().text,
                         // As informações da bateria (carga, tempo, saúde) são para ler:
                         // cinza secundário, não o apagado dos itens desativados.
@@ -2880,7 +2882,7 @@ impl Bar {
         if hovered {
             fill_rounded(p, 6.0, y, pw - 12.0, h, 6.0, pal().accent_color());
         }
-        let color = if hovered { [255, 255, 255, 255] } else { pal().text };
+        let color = if hovered { pal().on_accent } else { pal().text };
         self.text.draw(p, label, 16.0, y + (h - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
         regions.push(((6.0, y, pw - 12.0, h), action));
         hovered
@@ -2939,7 +2941,7 @@ impl Bar {
                     paint.anti_alias = true;
                     p.fill_path(&c, &paint, FillRule::Winding, tf(), None);
                 }
-                color = [255, 255, 255, 255];
+                color = pal().on_accent;
             }
             self.text.draw(p, &label, cx - lw / 2.0, cy - 8.5, 13.0, if day.date == today { FontWeight::Bold } else { FontWeight::Regular }, color);
         }
@@ -3080,7 +3082,7 @@ impl Bar {
         // neutros, um pouco mais escuros com o ponteiro em cima.
         let background = if prominent { pal().accent_color() } else if hovered { pal().ink(34) } else { pal().ink(20) };
         fill_rounded(p, x, y, w, h, h / 2.0, if enabled { background } else { pal().ink(12) });
-        let color = if !enabled { pal().secondary } else if prominent { [255, 255, 255, 255] } else { pal().text };
+        let color = if !enabled { pal().secondary } else if prominent { pal().on_accent } else { pal().text };
         draw_media_glyph(p, glyph, x + w / 2.0, y + h / 2.0, h * 0.4, color);
         if enabled {
             regions.push(((x, y, w, h), PanelAction::Media(action)));
@@ -3156,7 +3158,7 @@ impl Bar {
             let index = regions.len();
             let background = if on { pal().accent_color() } else if hover == Some(index) { pal().ink(34) } else { pal().ink(20) };
             fill_rounded(p, tx, ty, tw, th, th / 2.0, background);
-            let color = if on { [255, 255, 255, 255] } else { pal().text };
+            let color = if on { pal().on_accent } else { pal().text };
             // Ícone e nome centrados juntos na pílula.
             let (icon_w, space) = (16.0, 7.0);
             let text_w = self.text.measure(&label, 12.0, FontWeight::Regular);
@@ -3205,7 +3207,7 @@ impl Bar {
         }
         let circle = if device.default { pal().accent_color() } else { pal().ink(26) };
         fill_rounded(p, 14.0, y + 4.0, 26.0, 26.0, 13.0, circle);
-        let fg = if device.default { [255, 255, 255, 255] } else { pal().text };
+        let fg = if device.default { pal().on_accent } else { pal().text };
         draw_audio_kind_icon(p, 27.0, y + 17.0, device.kind, fg);
         let name = fit_label(&mut self.text, &device.name, FONT, pw - 64.0);
         if device.detail.is_empty() {
@@ -3231,7 +3233,7 @@ impl Bar {
             }
             for net in networks.iter().take(7) {
                 let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Connect(net.ssid.clone()));
-                let color = if hovered { [255, 255, 255, 255] } else { pal().text };
+                let color = if hovered { pal().on_accent } else { pal().text };
                 let level = 1 + (net.signal as u32 * 3 / 100).min(2) as u8;
                 draw_wifi_icon(p, 26.0, y + 15.0, Some(level), color);
                 let weight = if net.active { FontWeight::Semibold } else { FontWeight::Regular };
@@ -3260,7 +3262,7 @@ impl Bar {
                 let connected = w.state == system::WiredState::Connected;
                 let circle = if connected { pal().accent_color() } else { pal().ink(26) };
                 fill_rounded(p, 14.0, y + 4.0, 26.0, 26.0, 13.0, circle);
-                draw_ethernet_icon(p, 27.0, y + 17.0, if connected { [255, 255, 255, 255] } else { pal().text });
+                draw_ethernet_icon(p, 27.0, y + 17.0, if connected { pal().on_accent } else { pal().text });
                 self.text.draw(p, "Ethernet", 50.0, y + 1.0, FONT, FontWeight::Regular, pal().text);
                 let detail = match w.state {
                     system::WiredState::Connected => match &w.address {
@@ -3296,10 +3298,10 @@ impl Bar {
         if on {
             for (i, device) in devices.iter().enumerate().take(7) {
                 let hovered = self.panel_row(p, pw, y, 30.0, "", regions, hover, PanelAction::Device(i));
-                let color = if hovered { [255, 255, 255, 255] } else { pal().text };
+                let color = if hovered { pal().on_accent } else { pal().text };
                 // Círculo azul para aparelho conectado, cinza para os outros.
                 let dot = if device.connected { pal().accent_color() } else { rgba(170, 170, 176, 255) };
-                fill_rounded(p, 16.0, y + 7.0, 16.0, 16.0, 8.0, if hovered { rgba(255, 255, 255, 255) } else { dot });
+                fill_rounded(p, 16.0, y + 7.0, 16.0, 16.0, 8.0, if hovered { { let [r, g, b, a] = pal().on_accent; rgba(r, g, b, a) } } else { dot });
                 self.text.draw(p, &device.name, 42.0, y + (30.0 - FONT * 1.25) / 2.0, FONT, FontWeight::Regular, color);
                 if device.connected {
                     let connected = tr!("Connected");
@@ -3438,7 +3440,7 @@ impl Bar {
         let ox = 30.0 + bw;
         fill_rounded(p, ox, by, bw, 30.0, 8.0, if ok_hover { pal().accent_pressed() } else { pal().accent_color() });
         let ow = self.text.measure(&button, FONT, FontWeight::Semibold);
-        self.text.draw(p, &button, ox + (bw - ow) / 2.0, by + 6.0, FONT, FontWeight::Semibold, [255, 255, 255, 255]);
+        self.text.draw(p, &button, ox + (bw - ow) / 2.0, by + 6.0, FONT, FontWeight::Semibold, pal().on_accent);
         regions.push(((ox, by, bw, 30.0), PanelAction::ConfirmYes));
         by + 30.0 + 18.0
     }

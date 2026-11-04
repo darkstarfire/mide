@@ -99,6 +99,8 @@ const COMPOSITE_SRC: &str = r#"
 uniform vec2 area_size;
 uniform float corner;
 uniform float glass;
+// Toque da cor de destaque (rgb e força; força 0: sem tingir), Configurações → Aparência.
+uniform vec4 accent_tint;
 // 1 quando a cena atrás foi desenhada invertida no eixo y (winit), 0 no DRM.
 uniform float flip_y;
 
@@ -126,6 +128,8 @@ void main() {
     float lum = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(vec3(lum), c, 1.0 + 0.3 * glass);
     c = mix(c, vec3(1.0), glass * mix(0.20, 0.07, lum));
+    // Tingido: o vidro puxa para a cor de destaque, mais no miolo que no reflexo.
+    c = mix(c, accent_tint.rgb, accent_tint.a);
     // Reflexo: luz vindo de cima e um pouco da esquerda.
     vec2 light = normalize(vec2(-0.45, -1.0));
     float facing = dot(n, light);
@@ -181,6 +185,7 @@ impl Blur {
                 UniformName::new("corner", UniformType::_1f),
                 UniformName::new("glass", UniformType::_1f),
                 UniformName::new("flip_y", UniformType::_1f),
+                UniformName::new("accent_tint", UniformType::_4f),
             ],
         )?;
         Ok(Self {
@@ -231,7 +236,9 @@ impl Blur {
         if src.size.w < 16.0 || src.size.h < 16.0 {
             return None;
         }
-        let key = key ^ glass.to_bits() as u64;
+        // A cor do tingido também conta: trocada nas Configurações, o vidro é refeito (e
+        // ganha outra identidade, para o rastreador de dano redesenhá-lo).
+        let key = key ^ glass.to_bits() as u64 ^ tint_key();
         if let Some((k, texture, size, id)) = self.regions.borrow().get(name) {
             if *k == key {
                 return Some((texture.clone(), *size, id.clone()));
@@ -462,9 +469,38 @@ impl Blur {
                 Uniform::new("corner", radius * crate::clip::scale() as f32),
                 Uniform::new("glass", glass),
                 Uniform::new("flip_y", if crate::clip::flipped() { 1.0f32 } else { 0.0 }),
+                Uniform::new("accent_tint", tint()),
             ],
         ))
     }
+}
+
+/// Toque da cor de destaque no vidro (rgb de 0 a 1 e a força), ou força 0 com o
+/// tingido desligado (Configurações → Aparência). Lido da configuração na primeira vez
+/// e a cada `reload` ([`refresh_tint`]), não a cada quadro.
+fn tint() -> (f32, f32, f32, f32) {
+    let cached = TINT.lock().ok().and_then(|t| *t);
+    cached.unwrap_or_else(refresh_tint)
+}
+
+static TINT: std::sync::Mutex<Option<(f32, f32, f32, f32)>> = std::sync::Mutex::new(None);
+
+/// Relê o tingido do vidro (a cor de destaque ou o interruptor mudou).
+pub fn refresh_tint() -> (f32, f32, f32, f32) {
+    let tint = match mide::kit::glass_tint(mide::kit::system_dark()) {
+        Some(([r, g, b], amount)) => (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, amount),
+        None => (0.0, 0.0, 0.0, 0.0),
+    };
+    if let Ok(mut t) = TINT.lock() {
+        *t = Some(tint);
+    }
+    tint
+}
+
+/// Assinatura do tingido, para a do desfoque guardado.
+fn tint_key() -> u64 {
+    let (r, g, b, a) = tint();
+    (u64::from(r.to_bits()) << 32 ^ u64::from(g.to_bits())).rotate_left(7) ^ u64::from(b.to_bits()) ^ u64::from(a.to_bits()) << 17
 }
 
 /// Desenha os elementos (de trás para a frente) numa textura do tamanho de `area`,

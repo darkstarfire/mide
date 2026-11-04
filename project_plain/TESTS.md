@@ -1128,3 +1128,9 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Medição (não automatizada): roteiro que abre um arquivo grande no `mide-code` de release e digita 10 letras, com `RUST_LOG=mide_ui=debug`; o `quadro do app` da tecla deve ficar perto de 14 ms em 800x600 (era 34–50 ms no Rust e mais de 300 ms no HTML com tree-sitter).
 - Na sessão (falta o usuário): digitar num arquivo grande do projeto dele (PHP com o intelephense, Rust com o rust-analyzer), também na tela 2K em 150%.
 - v0.10.70: Terminal com `opacity = 0.6` e `blur = true` no `terminal.toml` de teste: título, barra de abas e cápsula translúcidos, vidro atrás da janela toda; com `1.0`, tudo opaco (conferido em captura).
+
+## v0.10.72 (2026-11-04): tema tingido e destaque branco/preto
+
+- Unidade: `kit::theme::tests` no mide-ui (contraste do texto sobre cada cor de destaque, mistura guardando a transparência).
+- Captura: `tests/scenario.sh "500 list" 480 -- "mide-settings appearance"` com `XDG_CONFIG_HOME` temporário e `[appearance] accent`/`theme`/`tint`; comparar o vidro da dock com o tingido ligado e desligado (`ImageChops.difference` só na área da dock).
+- Na sessão: trocar a cor de destaque e o interruptor "Tingir o vidro" com a dock e um menu da barra abertos; conferir que mudam na hora.

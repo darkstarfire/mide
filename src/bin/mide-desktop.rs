@@ -951,9 +951,10 @@ impl Desktop {
         }
         let tw = text.measure(&label, size, mide::ui::text::FontWeight::Regular) + 12.0;
         let (tx, ty) = (ox + (CELL.0 - tw) / 2.0, oy + 8.0 + ICON as f32 + 6.0);
-        let [r, g, b, _] = mide::kit::system_accent(mide::kit::system_dark());
+        let accent = mide::kit::system_accent(mide::kit::system_dark());
+        let [r, g, b, _] = accent;
         mide::ui::draw::fill_rounded(canvas, tx, ty, tw, 19.0, 6.0, tiny_skia::Color::from_rgba8(r, g, b, 255));
-        text.draw(canvas, &label, tx + 6.0, ty + 2.0, size, mide::ui::text::FontWeight::Regular, [255, 255, 255, 255]);
+        text.draw(canvas, &label, tx + 6.0, ty + 2.0, size, mide::ui::text::FontWeight::Regular, mide::kit::on_color(accent));
         if count > 1 {
             let badge = count.to_string();
             let bw = text.measure(&badge, 12.0, mide::ui::text::FontWeight::Semibold).max(8.0) + 12.0;

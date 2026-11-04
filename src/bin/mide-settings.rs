@@ -105,7 +105,7 @@ const SEARCHABLE: &[(&str, &str, Section)] = &[
     ("Login window", "login window list users name password sleep restart shut down buttons hints input menu", Section::Users),
     ("Automatically log in", "login automatic autologin without password", Section::Users),
     ("Message on the login window", "login lock message text", Section::Users),
-    ("Accent color", "appearance color accent blue purple pink red orange yellow green graphite", Section::Appearance),
+    ("Accent color", "appearance color accent blue purple pink red orange yellow green graphite white black tint tinted glass", Section::Appearance),
     ("Appearance", "theme light dark mode night colors", Section::Appearance),
     ("Wi-Fi", "network internet wireless connect password", Section::Wifi),
     ("Network", "network cable wired ethernet internet address ip connection", Section::Network),
@@ -1183,8 +1183,24 @@ impl Settings {
                 let key = mide::kit::ACCENTS[accent].0;
                 // Azul é o padrão: grava só as outras.
                 match settings_file::set("appearance", "accent", (key != "blue").then(|| Value::Text(key.into()))) {
-                    Ok(()) => tracing::info!("aparência: cor de destaque {key}"),
+                    Ok(()) => {
+                        tracing::info!("aparência: cor de destaque {key}");
+                        // O vidro do compositor (barra, dock, menus) tinge com a cor nova.
+                        ask_compositor("reload");
+                    }
                     Err(err) => tracing::warn!("cor de destaque não gravada: {err}"),
+                }
+            }
+            // Vidro e transparências com um toque da cor de destaque, como no macOS.
+            let mut tint = mide::kit::tint_enabled();
+            if ui.switch_detail(&tr!("Tint glass with accent color"), &tr!("Menu bar, Dock, menus and sidebars with a hint of the color"), &mut tint).changed() {
+                // Ligado é o padrão: grava só quando desliga.
+                match settings_file::set("appearance", "tint", (!tint).then_some(Value::Bool(false))) {
+                    Ok(()) => {
+                        tracing::info!("aparência: vidro tingido {}", if tint { "ligado" } else { "desligado" });
+                        ask_compositor("reload");
+                    }
+                    Err(err) => tracing::warn!("vidro tingido não gravado: {err}"),
                 }
             }
         });
@@ -2192,6 +2208,8 @@ fn accent_name(key: &str, name: &str) -> String {
         "yellow" => tr!("Yellow"),
         "green" => tr!("Green"),
         "graphite" => tr!("Graphite"),
+        "white" => tr!("White"),
+        "black" => tr!("Black"),
         _ => name.into(),
     }
     .into_owned()

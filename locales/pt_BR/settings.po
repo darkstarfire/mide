@@ -756,6 +756,12 @@ msgstr "Verde"
 msgid "Graphite"
 msgstr "Grafite"
 
+msgid "White"
+msgstr "Branco"
+
+msgid "Black"
+msgstr "Preto"
+
 msgid "mide apps, the menu bar and the Dock change immediately. GTK and Qt apps follow light or dark when they are opened."
 msgstr "Os apps do mide, a barra e a dock mudam na hora. Apps GTK e Qt seguem claro ou escuro quando são abertos."
 
@@ -1451,3 +1457,9 @@ msgstr "Atalho “.”"
 
 msgid "Double-tapping the space bar types a period and a space"
 msgstr "Dois toques no espaço digitam um ponto e um espaço"
+
+msgid "Tint glass with accent color"
+msgstr "Tingir o vidro com a cor de destaque"
+
+msgid "Menu bar, Dock, menus and sidebars with a hint of the color"
+msgstr "Barra, Dock, menus e barras laterais com um toque da cor"
