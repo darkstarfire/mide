@@ -128,25 +128,46 @@ impl X11Scene {
     }
 
     /// Desenha o quadro completo: fundo e todas as janelas clientes.
-    /// Por enquanto preenche com uma cor solida e lista as janelas no log.
+    /// Cada janela e desenhada como um retangulo com borda cujo cor indica o
+    /// estado EWMH (azul=normal, verde=maximizada, vermelho=tela cheia).
     pub fn draw_frame(
         &self,
         conn: &x11rb::rust_connection::RustConnection,
         render: &mut crate::x11_render::X11Render,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Fundo: cor escura
-        render.draw_frame(conn, 0x1a, 0x1a, 0x20)?;
+        let wins: Vec<_> = self
+            .windows
+            .values()
+            .filter(|w| w.mapped)
+            .map(|w| {
+                (
+                    w.id,
+                    w.x,
+                    w.y,
+                    w.width,
+                    w.height,
+                    w.maximized_vert,
+                    w.maximized_horz,
+                    w.fullscreen,
+                )
+            })
+            .collect();
+        render.draw_scene(conn, &wins, (0x1a, 0x1a, 0x20))?;
 
-        // Desenha cada janela cliente como um retangulo de contorno (placeholder).
         for (id, win) in &self.windows {
-            tracing::trace!(
-                "janela X11 {} em ({}, {}) {}x{}",
-                id,
-                win.x,
-                win.y,
-                win.width,
-                win.height
-            );
+            if win.mapped {
+                tracing::trace!(
+                    "janela X11 {} em ({}, {}) {}x{} (vert={} horz={} full={})",
+                    id,
+                    win.x,
+                    win.y,
+                    win.width,
+                    win.height,
+                    win.maximized_vert,
+                    win.maximized_horz,
+                    win.fullscreen
+                );
+            }
         }
 
         Ok(())
