@@ -676,10 +676,12 @@ impl Shared {
                         {
                             self.toggle_maximize_window(action);
                         } else if action == crate::config::Action::Minimize {
-                            if let Ok(layout) = self.layout.lock() {
-                                if let Some(active) = layout.active {
-                                    self.minimize_window(active);
-                                }
+                            let active = {
+                                let layout = self.layout.lock().unwrap();
+                                layout.active
+                            };
+                            if let Some(window) = active {
+                                self.minimize_window(window);
                             }
                         } else if action == crate::config::Action::ShowDesktop {
                             self.show_desktop();
