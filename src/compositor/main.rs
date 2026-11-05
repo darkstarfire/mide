@@ -135,6 +135,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ambiente: os apps abertos dentro da sessão não a herdam (um mide aberto de um
     // terminal da sessão não tenta tomar a tela).
     let backend = std::env::var("MIDE_BACKEND").unwrap_or_default();
+    // No backend X11 nao ha XWayland: o proprio servidor X ja atende os apps X11.
+    let is_x11_backend = backend == "x11";
     // SAFETY: ainda não há outras threads (o laço de eventos e os apps vêm depois).
     unsafe { std::env::remove_var("MIDE_BACKEND") };
     let drm = backend.is_empty()
@@ -212,7 +214,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Apps X11 dentro do mide (xwayland-satellite); encerrado junto com o mide. No
     // modo de login não há apps.
-    let _xwayland = if login_mode { None } else { xwayland::start(socket_name()) };
+    let _xwayland = if login_mode || is_x11_backend {
+        None
+    } else {
+        xwayland::start(socket_name())
+    };
 
     if let Err(err) = control::init(&loop_handle, socket_name()) {
         tracing::warn!("canal de controle indisponível: {err}");

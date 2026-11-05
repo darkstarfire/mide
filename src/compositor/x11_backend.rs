@@ -84,7 +84,8 @@ impl X11Backend {
                     | xproto::EventMask::POINTER_MOTION
                     | xproto::EventMask::ENTER_WINDOW
                     | xproto::EventMask::LEAVE_WINDOW
-                    | xproto::EventMask::STRUCTURE_NOTIFY,
+                    | xproto::EventMask::STRUCTURE_NOTIFY
+                    | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
             ),
             do_not_propogate_mask: None,
             colormap: None,
