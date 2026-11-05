@@ -2599,3 +2599,11 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - **Mesa:** usava um tema claro fixo (para os nomes brancos dos ícones), e o menu de contexto dela não seguia o escuro nem a cor. Agora segue o tema do sistema com `Window::theme_adjust` (mide-ui), que reaplica um ajuste (os nomes brancos) a cada troca de tema.
 - **mide-ui:** os apps abertos também refazem o tema quando "Interface na cor de destaque" é ligada ou desligada (antes, só com o claro/escuro ou a cor de destaque).
 
+
+## v0.10.75 (2026-11-05): cor mais presente no tema claro
+
+- Pedido do usuário depois de olhar a v0.10.74: mais cor no tema claro e um pouco mais no escuro. Conferido e aprovado por ele antes do commit.
+- **Claro:** fundo das janelas 16%, barras laterais 24%, cartões 7%, menus 16%, barra lateral de vidro 30%, menus de contexto e popovers 34%, vidro do compositor 28%, véu da dock 72, fundo da barra superior 32%, painéis da barra 16% e barra de título 19%.
+- **Escuro:** fundo 12%, barras laterais 16%, cartões 9%, menus 14%, barra lateral de vidro 20%, menus de contexto e popovers 25%, vidro 18%, véu da dock 52, fundo da barra 25%, painéis 14% e barra de título 16%.
+- O véu da dock passou de constante a `mide::kit::tint_veil(dark)`.
+- `data/mide-update` aceita `MIDE_UI_PATH=../mide-ui`, para compilar com o mide-ui local e testar uma mudança dele na sessão antes de publicar.

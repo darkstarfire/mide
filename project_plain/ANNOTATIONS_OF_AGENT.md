@@ -635,4 +635,4 @@
 - **Mudança no compositor só vale com `data/mide-update --all`** (ou sair e entrar na sessão): o `mide-update` simples reinicia só o shell. Avisar o usuário a cada versão que mexe no compositor.
 - **`Window::theme` congela o tema** (o app para de seguir claro/escuro/cor). Para mudar um detalhe e continuar seguindo o sistema, usar `Window::theme_adjust(fn)`. A mesa caiu nisso: o menu dela ficava claro no tema escuro.
 - **`pgrep -f` num laço `until` de espera:** o texto procurado aparece na linha de comando do próprio bash que espera, e o laço nunca termina. Esperar pelo PID ou por um arquivo de saída.
-
+- **Testar mudança do mide-ui na sessão antes de publicar:** `MIDE_UI_PATH=../mide-ui data/mide-update --all`. Depois, publicar o mide-ui e voltar o `Cargo.lock` ao GitHub (`cargo build` sem o patch) antes do commit do mide.

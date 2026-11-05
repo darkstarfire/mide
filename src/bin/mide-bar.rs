@@ -964,7 +964,7 @@ impl Palette {
         let base = if self.dark { [40, 40, 44, alpha] } else { [246, 246, 248, alpha] };
         // Interface na cor escolhida: os menus e painéis puxam de leve para ela.
         match self.tint {
-            Some(c) => mide::kit::mix(base, c, if self.dark { 0.12 } else { 0.10 }),
+            Some(c) => mide::kit::mix(base, c, if self.dark { 0.14 } else { 0.16 }),
             None => base,
         }
     }
@@ -990,7 +990,7 @@ impl Palette {
     /// cor aparente, como nos Macs coloridos.
     fn bar_tone(&self, base: [u8; 4]) -> tiny_skia::Color {
         let [r, g, b, a] = match self.tint {
-            Some(c) => mide::kit::mix(base, c, if self.dark { 0.22 } else { 0.20 }),
+            Some(c) => mide::kit::mix(base, c, if self.dark { 0.25 } else { 0.32 }),
             None => base,
         };
         rgba(r, g, b, a)

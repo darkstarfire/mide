@@ -33,7 +33,14 @@ programas > "$antes"
 # falhasse (tela preta e volta ao login). O cargo troca cada um quando o novo fica pronto.
 rm -rf target/debug
 rm -rf target/release/deps target/release/build target/release/.fingerprint target/release/incremental target/release/examples
-cargo build --release
+# MIDE_UI_PATH=../mide-ui: compila com o mide-ui local em vez do GitHub (testar uma
+# mudança do mide-ui na sessão antes de publicá-la).
+if [ -n "${MIDE_UI_PATH:-}" ]; then
+    echo "mide-update: usando o mide-ui de $MIDE_UI_PATH"
+    cargo build --release --config "patch.\"https://github.com/fabioaacarneiro/mide-ui\".mide-ui.path=\"$MIDE_UI_PATH\""
+else
+    cargo build --release
+fi
 programas > "$depois"
 mudaram="$(comm -13 "$antes" "$depois" | cut -d' ' -f1 | tr '\n' ' ')"
 

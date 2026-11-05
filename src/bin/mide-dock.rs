@@ -738,7 +738,7 @@ impl Dock {
             && let Some(path) = rounded_rect(0.0, 0.0, w as f32, h as f32, DOCK_RADIUS)
         {
             let mut paint = Paint { anti_alias: true, ..Default::default() };
-            paint.set_color(Color::from_rgba8(r, g, b, mide::kit::TINT_VEIL));
+            paint.set_color(Color::from_rgba8(r, g, b, mide::kit::tint_veil(self.dark)));
             pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
         }
         // Com a ampliação aberta, os ícones (e o que anda com eles) estão na camada dela.

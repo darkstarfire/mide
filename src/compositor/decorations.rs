@@ -160,7 +160,7 @@ pub fn dark() -> bool {
 pub fn tinted(c: [f32; 4]) -> [f32; 4] {
     match crate::blur::ui_tint() {
         Some(t) => {
-            let k = if dark() { 0.14 } else { 0.12 };
+            let k = if dark() { 0.16 } else { 0.19 };
             [c[0] + (t[0] - c[0]) * k, c[1] + (t[1] - c[1]) * k, c[2] + (t[2] - c[2]) * k, c[3]]
         }
         None => c,
