@@ -1528,10 +1528,14 @@ fn mirroring() -> bool {
         .unwrap_or(false)
 }
 
+/// Tema da mesa: o do sistema (claro, escuro, cor de destaque nos menus), com os nomes
+/// dos ícones brancos (com sombra) sobre o papel de parede.
+fn white_names(theme: &mut Theme) {
+    theme.tile_text = [255, 255, 255, 255];
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-desktop", "mide_desktop=info");
-    // Nomes brancos (com sombra) sobre o papel de parede.
-    let theme = Theme { tile_text: [255, 255, 255, 255], ..Theme::default() };
     warm_drag_text();
     // `--output NOME`: a mesa de um monitor externo (aberta pela mesa principal), numa
     // camada que o compositor põe naquela tela pelo nome depois do `@`.
@@ -1543,7 +1547,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let mut desktop = Desktop::new();
     desktop.output = output;
-    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop(&namespace).accepts_files().theme(theme), desktop)
+    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop(&namespace).accepts_files().theme_adjust(white_names), desktop)
 }
 
 #[cfg(test)]

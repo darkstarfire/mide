@@ -220,7 +220,7 @@ pub fn elements(state: &State, output: &smithay::output::Output, shaders: &Shade
         let stroke = if dark { [1.0, 1.0, 1.0, 0.14] } else { [0.0, 0.0, 0.0, 0.12] };
         front.push(MideRenderElement::from(decorations::stroke_element(shaders, local(panel), 16, fade(stroke))));
         let veil = if dark { [36.0 / 255.0, 36.0 / 255.0, 40.0 / 255.0, 0.94] } else { [248.0 / 255.0, 248.0 / 255.0, 250.0 / 255.0, 0.94] };
-        front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, local(panel), fade(veil), 16)));
+        front.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, local(panel), fade(decorations::tinted(veil)), 16)));
     }
     // Prévia de onde a janela vai ficar, com folga das bordas.
     if let Some(zone) = snap.zone {

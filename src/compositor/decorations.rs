@@ -154,6 +154,19 @@ pub fn dark() -> bool {
     DARK.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Fundo de painel do compositor (aviso de volume, encaixe, prévias, barra de título)
+/// com o toque da cor escolhida em Configurações → Aparência, guardando a
+/// transparência; igual no padrão e nas cores neutras.
+pub fn tinted(c: [f32; 4]) -> [f32; 4] {
+    match crate::blur::ui_tint() {
+        Some(t) => {
+            let k = if dark() { 0.14 } else { 0.12 };
+            [c[0] + (t[0] - c[0]) * k, c[1] + (t[1] - c[1]) * k, c[2] + (t[2] - c[2]) * k, c[3]]
+        }
+        None => c,
+    }
+}
+
 /// Retângulo arredondado preenchido. Os uniformes são `fill` (RGBA) e `radius`.
 const ROUNDED_RECT_SRC: &str = r#"
 precision highp float;
@@ -603,13 +616,7 @@ pub fn bar_elements(
     };
     // Interface na cor de destaque (Configurações → Aparência): a barra puxa de leve
     // para a cor, como o fundo das janelas do mide-ui.
-    let background = match crate::blur::ui_tint() {
-        Some(c) => {
-            let k = if dark { 0.10 } else { 0.07 };
-            [background[0] + (c[0] - background[0]) * k, background[1] + (c[1] - background[1]) * k, background[2] + (c[2] - background[2]) * k, background[3]]
-        }
-        None => background,
-    };
+    let background = tinted(background);
     let lift = if dark { 0.025 } else { 0.05 };
     let top = [(background[0] + lift).min(1.0), (background[1] + lift).min(1.0), (background[2] + lift).min(1.0), background[3]];
     elements.push(gradient(shaders, bar, top, background, clip));

@@ -633,3 +633,6 @@
 - **Configuração lida a cada quadro no compositor:** `settings_file::cached` faz um `stat` e analisa o texto a cada chamada; no desenho (vidro, várias regiões por quadro), guardar o valor e reler no `reload` (como `blur::refresh_tint`).
 - **Cor da interface (v0.10.73):** só `mide::kit::ui_tint(dark)` decide se a interface é pintada (Padrão azul, grafite, branco e preto: não). Quem desenha cores próprias (barra superior, decorações do compositor) mistura com `mide::kit::mix` usando esse valor; o compositor guarda a cor em `blur::ui_tint()`, relida no `reload`. O visual Padrão precisa continuar idêntico ao de antes: conferir o fundo (30,30,32)/(246,246,248) em captura.
 - **Mudança no compositor só vale com `data/mide-update --all`** (ou sair e entrar na sessão): o `mide-update` simples reinicia só o shell. Avisar o usuário a cada versão que mexe no compositor.
+- **`Window::theme` congela o tema** (o app para de seguir claro/escuro/cor). Para mudar um detalhe e continuar seguindo o sistema, usar `Window::theme_adjust(fn)`. A mesa caiu nisso: o menu dela ficava claro no tema escuro.
+- **`pgrep -f` num laço `until` de espera:** o texto procurado aparece na linha de comando do próprio bash que espera, e o laço nunca termina. Esperar pelo PID ou por um arquivo de saída.
+

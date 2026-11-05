@@ -2585,3 +2585,17 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - **Grafite, branco e preto** são neutros: mudam só a cor de destaque.
 - O interruptor passou a se chamar "Interface na cor de destaque" (`[appearance] tint`, ligado por padrão). Desligado, a cor escolhida fica só nos controles. Uma nota em Aparência explica quais cores mantêm o visual original.
 - Testes: capturas com padrão azul (claro e escuro), verde no escuro e roxo no claro; `cargo test`; seções `barra` e `configuracoes`. A barra de título do compositor ficou sem captura: o Mousepad não abriu no teste.
+
+## v0.10.74 (2026-11-05): a cor escolhida em todo o shell, também no tema claro
+
+- Pedido do usuário: a cor só aparecia no tema escuro e faltava na dock. Ela deve refletir em tudo o que é do shell (dock, barra superior, menus de contexto, popovers, janelas), mantendo o vidro com a cor aparente, como nos Macs coloridos. Também no fundo da barra superior, quando ele está ligado.
+- **Tema claro:** misturas mais fortes, porque a mesma porcentagem quase não aparece em fundos quase brancos. Fundo 10%, barra lateral 15%, menus 10%, barra lateral de vidro 20%, vidro do compositor 18%.
+- **Dock:** véu na cor escolhida por cima do vidro (`mide::kit::TINT_VEIL`, alfa 46), redesenhado na hora quando a cor muda.
+- **Barra superior:** o fundo (opção "fundo da barra") mistura 20–22% da cor no degradê de vidro. Menus e painéis (central de controle, calendário) com 10–12%.
+- **mide-ui:** o `Theme` guarda a cor (`tint`), e `Theme::tinted` pinta os fundos que eram fixos: menu de contexto e submenus, popovers (com a seta) e os painéis de vidro (`glass_panel`), com 22%.
+- **Compositor:** `decorations::tinted` pinta a barra de título das janelas de outros apps, o aviso de volume e brilho, o painel de encaixe e o painel das prévias da dock e do Alt+Tab.
+- Notificações, busca e menus da dock já usam o tema e ganham a cor junto. O padrão (azul) segue idêntico ao original: fundo (246,246,248) no claro, conferido em captura.
+- Testes: capturas com roxo e verde no claro, roxo no escuro e o padrão azul, com o fundo da barra ligado e o menu da mesa aberto.
+- **Mesa:** usava um tema claro fixo (para os nomes brancos dos ícones), e o menu de contexto dela não seguia o escuro nem a cor. Agora segue o tema do sistema com `Window::theme_adjust` (mide-ui), que reaplica um ajuste (os nomes brancos) a cada troca de tema.
+- **mide-ui:** os apps abertos também refazem o tema quando "Interface na cor de destaque" é ligada ou desligada (antes, só com o claro/escuro ou a cor de destaque).
+

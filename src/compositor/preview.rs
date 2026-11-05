@@ -293,7 +293,7 @@ pub fn elements(
     out.extend(middle);
     // Painel translúcido, como os menus do mide, com um contorno fino.
     let fill = if dark { [44.0 / 255.0, 44.0 / 255.0, 48.0 / 255.0, 0.95] } else { [0.965, 0.965, 0.972, 0.95] };
-    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade(fill), 14)));
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade(decorations::tinted(fill)), 14)));
     let border = Rectangle::new(panel.loc - Point::from((1, 1)), (panel.size.w + 2, panel.size.h + 2).into());
     out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, fade(if dark { [1.0, 1.0, 1.0, 0.14] } else { [0.0, 0.0, 0.0, 0.16] }), 15)));
     out

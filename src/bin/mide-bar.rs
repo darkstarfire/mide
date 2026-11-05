@@ -964,7 +964,7 @@ impl Palette {
         let base = if self.dark { [40, 40, 44, alpha] } else { [246, 246, 248, alpha] };
         // Interface na cor escolhida: os menus e painéis puxam de leve para ela.
         match self.tint {
-            Some(c) => mide::kit::mix(base, c, if self.dark { 0.09 } else { 0.06 }),
+            Some(c) => mide::kit::mix(base, c, if self.dark { 0.12 } else { 0.10 }),
             None => base,
         }
     }
@@ -979,19 +979,21 @@ impl Palette {
     }
 
     fn bar_top(&self, alpha: u8) -> tiny_skia::Color {
-        if self.dark {
-            rgba(46, 46, 50, alpha)
-        } else {
-            rgba(250, 250, 252, alpha)
-        }
+        self.bar_tone(if self.dark { [46, 46, 50, alpha] } else { [250, 250, 252, alpha] })
     }
 
     fn bar_bottom(&self, alpha: u8) -> tiny_skia::Color {
-        if self.dark {
-            rgba(36, 36, 40, alpha)
-        } else {
-            rgba(238, 238, 242, alpha)
-        }
+        self.bar_tone(if self.dark { [36, 36, 40, alpha] } else { [238, 238, 242, alpha] })
+    }
+
+    /// Fundo da barra na cor escolhida (Configurações → Aparência): o vidro fica com a
+    /// cor aparente, como nos Macs coloridos.
+    fn bar_tone(&self, base: [u8; 4]) -> tiny_skia::Color {
+        let [r, g, b, a] = match self.tint {
+            Some(c) => mide::kit::mix(base, c, if self.dark { 0.22 } else { 0.20 }),
+            None => base,
+        };
+        rgba(r, g, b, a)
     }
 }
 

@@ -571,7 +571,7 @@ fn build(
     // desfoca regiões): véu opaco, para o texto continuar legível.
     let veil_alpha = if state.config.effects.panel_glass && !state.lock.locked { 0.70 } else { 0.96 };
     let veil = if dark { [36.0 / 255.0, 36.0 / 255.0, 40.0 / 255.0, veil_alpha] } else { [248.0 / 255.0, 248.0 / 255.0, 250.0 / 255.0, veil_alpha] };
-    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade(veil), RADIUS)));
+    out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, panel, fade(decorations::tinted(veil)), RADIUS)));
     Some((out, panel, alpha))
 }
 

@@ -400,6 +400,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         osk: false,
         game_paused: false,
         dark: mide::kit::system_dark(),
+        tint: mide::kit::ui_tint(mide::kit::system_dark()),
         magnify: magnify_size(),
         zoom: None,
         zoom_extra: 0,
@@ -664,6 +665,8 @@ struct Dock {
     osk: bool,
     /// Tema escuro (Configurações → Aparência): véu, separadores e pontos escuros.
     dark: bool,
+    /// Cor que pinta a interface (Configurações → Aparência), ou nenhuma no padrão.
+    tint: Option<[u8; 3]>,
     /// Ampliação ligada: tamanho máximo dos ícones; e a camada da ampliação aberta.
     magnify: Option<u32>,
     zoom: Option<Zoom>,
@@ -728,6 +731,15 @@ impl Dock {
                 paint.set_color(Color::from_rgba8(28, 28, 32, if self.liquid { 120 } else { 150 }));
                 pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
             }
+        }
+        // Interface na cor escolhida (como os Macs coloridos): o vidro da dock ganha a
+        // cor, ainda translúcido.
+        if let Some([r, g, b]) = self.tint
+            && let Some(path) = rounded_rect(0.0, 0.0, w as f32, h as f32, DOCK_RADIUS)
+        {
+            let mut paint = Paint { anti_alias: true, ..Default::default() };
+            paint.set_color(Color::from_rgba8(r, g, b, mide::kit::TINT_VEIL));
+            pixmap.fill_path(&path, &paint, FillRule::Winding, tf(), None);
         }
         // Com a ampliação aberta, os ícones (e o que anda com eles) estão na camada dela.
         if self.zoom.is_some() {
@@ -2481,6 +2493,13 @@ impl Dock {
         }
         let dark = mide::kit::system_dark();
         let magnify = magnify_size();
+        let tint = mide::kit::ui_tint(dark);
+        if tint != self.tint {
+            // Outra cor de destaque: a dock troca o tom do vidro na hora.
+            self.tint = tint;
+            let qh = self.qh.clone();
+            self.draw(&qh);
+        }
         if dark != self.dark || magnify != self.magnify {
             tracing::info!("dock: tema {}, ampliação {:?}", if dark { "escuro" } else { "claro" }, magnify);
             self.dark = dark;
