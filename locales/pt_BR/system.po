@@ -200,3 +200,42 @@ msgstr "Para rodar:  cd {path} && cargo run"
 
 msgid "Hint: {hint}"
 msgstr "Dica: {hint}"
+
+msgid "Subtitles"
+msgstr "Legendas"
+
+msgid "Audio Track"
+msgstr "Faixa de áudio"
+
+msgid "Track {n}"
+msgstr "Faixa {n}"
+
+msgid "No Subtitles"
+msgstr "Sem legendas"
+
+msgid "Hide Subtitles"
+msgstr "Ocultar legendas"
+
+msgid "Show Subtitles"
+msgstr "Mostrar legendas"
+
+msgid "Portuguese"
+msgstr "Português"
+
+msgid "English"
+msgstr "Inglês"
+
+msgid "Spanish"
+msgstr "Espanhol"
+
+msgid "Japanese"
+msgstr "Japonês"
+
+msgid "Korean"
+msgstr "Coreano"
+
+msgid "Chinese"
+msgstr "Chinês"
+
+msgid "Russian"
+msgstr "Russo"

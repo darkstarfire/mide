@@ -28,12 +28,60 @@ pub struct Info {
     /// Quadros por segundo (30 se o arquivo não diz).
     pub fps: f64,
     pub has_audio: bool,
+    /// Faixas de áudio e de legenda, na ordem do arquivo (`0:a:N` e `0:s:N` do ffmpeg).
+    pub audio_tracks: Vec<Track>,
+    pub subtitle_tracks: Vec<Track>,
+}
+
+/// Uma faixa de áudio ou de legenda do arquivo.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Track {
+    /// Formato (`aac`, `subrip`, `hdmv_pgs_subtitle`...).
+    pub codec: String,
+    /// Idioma (`por`, `eng`...) e título, como o arquivo diz (podem faltar).
+    pub language: String,
+    pub title: String,
+}
+
+impl Track {
+    /// Nome para o menu: o título, o idioma, ou "Faixa N".
+    pub fn label(&self, n: usize) -> String {
+        match (self.title.trim(), language_name(&self.language)) {
+            ("", Some(lang)) => lang,
+            (title, Some(lang)) if !title.to_lowercase().contains(&lang.to_lowercase()) => format!("{lang} — {title}"),
+            ("", None) => crate::tr!("Track {n}", n = n + 1),
+            (title, _) => title.to_string(),
+        }
+    }
+}
+
+/// Nome do idioma pelo código do arquivo (ISO 639-2, o que o Matroska e o MP4 usam),
+/// no idioma da interface; códigos desconhecidos aparecem como estão.
+fn language_name(code: &str) -> Option<String> {
+    let code = code.trim().to_lowercase();
+    if code.is_empty() || code == "und" {
+        return None;
+    }
+    let name = match code.as_str() {
+        "por" | "pt" | "pob" | "pt-br" => crate::tr!("Portuguese"),
+        "eng" | "en" => crate::tr!("English"),
+        "spa" | "es" => crate::tr!("Spanish"),
+        "fre" | "fra" | "fr" => crate::tr!("French"),
+        "ger" | "deu" | "de" => crate::tr!("German"),
+        "ita" | "it" => crate::tr!("Italian"),
+        "jpn" | "ja" => crate::tr!("Japanese"),
+        "kor" | "ko" => crate::tr!("Korean"),
+        "chi" | "zho" | "zh" => crate::tr!("Chinese"),
+        "rus" | "ru" => crate::tr!("Russian"),
+        _ => return Some(code),
+    };
+    Some(name.into_owned())
 }
 
 /// Lê os dados do vídeo pelo `ffprobe`.
 pub fn probe(path: &Path) -> Option<Info> {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height,avg_frame_rate", "-of", "compact"])
+        .args(["-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate:stream_tags=language,title", "-of", "compact"])
         .arg(path)
         .output()
         .ok()?;
@@ -42,7 +90,7 @@ pub fn probe(path: &Path) -> Option<Info> {
 
 /// Lê a saída `compact` do `ffprobe` (uma linha por fluxo e uma do formato).
 pub fn parse_probe(text: &str) -> Option<Info> {
-    let mut info = Info { duration: 0.0, width: 0, height: 0, fps: 30.0, has_audio: false };
+    let mut info = Info { duration: 0.0, width: 0, height: 0, fps: 30.0, has_audio: false, audio_tracks: Vec::new(), subtitle_tracks: Vec::new() };
     let mut video = false;
     for line in text.lines() {
         let fields: Vec<(&str, &str)> = line.split('|').filter_map(|f| f.split_once('=')).collect();
@@ -60,7 +108,19 @@ pub fn parse_probe(text: &str) -> Option<Info> {
                     }
                 }
             }
-            (Some("stream"), Some("audio")) => info.has_audio = true,
+            (Some("stream"), Some(kind @ ("audio" | "subtitle"))) => {
+                let track = Track {
+                    codec: get("codec_name").unwrap_or_default().to_string(),
+                    language: get("tag:language").unwrap_or_default().to_string(),
+                    title: get("tag:title").unwrap_or_default().to_string(),
+                };
+                if kind == "audio" {
+                    info.has_audio = true;
+                    info.audio_tracks.push(track);
+                } else {
+                    info.subtitle_tracks.push(track);
+                }
+            }
             (Some("format"), _) => info.duration = get("duration").and_then(|v| v.parse().ok()).unwrap_or(0.0),
             _ => {}
         }
@@ -103,6 +163,8 @@ pub struct Player {
     pub looped: bool,
     /// Toca o som (a miniatura do Arquivos também toca, como no Finder).
     with_audio: bool,
+    /// Faixa de áudio tocada (entre as de `info.audio_tracks`).
+    audio_track: usize,
     current: Option<Frame>,
     /// O próximo quadro já lido, esperando a hora dele.
     next: Option<Frame>,
@@ -127,6 +189,7 @@ impl Player {
             muted: false,
             looped: false,
             with_audio,
+            audio_track: 0,
             current: None,
             next: None,
             ended: false,
@@ -218,6 +281,27 @@ impl Player {
         }
         self.volume = volume.clamp(0.0, 1.0);
         self.muted = muted;
+        if self.playing() {
+            if let Some(mut child) = self.audio.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            self.audio = self.spawn_audio(self.position());
+        }
+    }
+
+    /// Faixa de áudio tocada.
+    pub fn audio_track(&self) -> usize {
+        self.audio_track
+    }
+
+    /// Troca a faixa de áudio (dublado, original, comentários): o som recomeça na
+    /// posição atual, a imagem segue.
+    pub fn set_audio_track(&mut self, n: usize) {
+        if n == self.audio_track || n >= self.info.audio_tracks.len() {
+            return;
+        }
+        self.audio_track = n;
         if self.playing() {
             if let Some(mut child) = self.audio.take() {
                 let _ = child.kill();
@@ -342,7 +426,7 @@ impl Player {
         Command::new("ffmpeg")
             .args(["-nostdin", "-loglevel", "error", "-ss", &format!("{t:.3}"), "-i"])
             .arg(&self.path)
-            .args(["-vn", "-sn", "-af", &format!("volume={:.2}", self.volume), "-f", "pulse", &crate::tr!("Video")])
+            .args(["-map", &format!("0:a:{}", self.audio_track), "-vn", "-sn", "-af", &format!("volume={:.2}", self.volume), "-f", "pulse", &crate::tr!("Video")])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -391,11 +475,17 @@ mod tests {
         assert!((info.fps - 29.97).abs() < 0.01);
         assert!((info.duration - 12.5).abs() < 1e-9);
         assert_eq!(parse_probe("stream|codec_type=audio\nformat|duration=3\n"), None);
+        let text = "stream|codec_name=h264|codec_type=video|width=640|height=360|avg_frame_rate=24/1\nstream|codec_name=aac|codec_type=audio|avg_frame_rate=0/0|tag:language=por|tag:title=Dublado\nstream|codec_name=ac3|codec_type=audio|avg_frame_rate=0/0|tag:language=eng\nstream|codec_name=subrip|codec_type=subtitle|avg_frame_rate=0/0|tag:language=por\nformat|duration=60\n";
+        let info = parse_probe(text).unwrap();
+        assert_eq!(info.audio_tracks.len(), 2);
+        assert_eq!(info.audio_tracks[0].title, "Dublado");
+        assert_eq!(info.audio_tracks[1].language, "eng");
+        assert_eq!(info.subtitle_tracks[0].codec, "subrip");
     }
 
     #[test]
     fn cabe_mantendo_a_proporcao() {
-        let info = Info { duration: 1.0, width: 1920, height: 1080, fps: 30.0, has_audio: false };
+        let info = Info { duration: 1.0, width: 1920, height: 1080, fps: 30.0, has_audio: false, audio_tracks: Vec::new(), subtitle_tracks: Vec::new() };
         assert_eq!(fit(&info, (800, 800)), (800, 450));
         assert_eq!(fit(&info, (1000, 300)), (532, 300));
         assert_eq!(time_text(65.4), "1:05");

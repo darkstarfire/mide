@@ -6,7 +6,11 @@
 //! como programa à parte (decisão do usuário em 2026-10-25).
 //!
 //! Teclado: Espaço toca/pausa, ←/→ voltam/avançam 5 s, ↑/↓ mudam o volume, M tira o
-//! som, Ctrl+O abre outro vídeo.
+//! som, F (ou duplo clique no vídeo) entra e sai da tela cheia, Esc sai dela, C liga e
+//! desliga as legendas, Ctrl+O abre outro vídeo.
+//!
+//! Legendas: arquivos `.srt`/`.vtt` ao lado do vídeo e as legendas em texto de dentro
+//! dele (`mide::media::subtitles`); faixas de áudio escolhíveis no menu Visualizar.
 
 use std::{
     path::PathBuf,
@@ -15,7 +19,11 @@ use std::{
 
 use mide::kit::{run, window_menu, App, Choice, FileChooser, Key, MenuGroup, MenuItem, Response, Theme, Ui, Window};
 use mide::tr;
-use mide::media::video::{self, Player};
+use mide::media::{
+    subtitles::{self, Cue},
+    video::{self, Player},
+};
+use std::sync::mpsc::Receiver;
 use mide::ui::{
     draw::{copy_rgba, fill_rounded, scale},
     text::FontWeight,
@@ -42,6 +50,33 @@ struct VideoApp {
     scrub_sent: Option<Instant>,
     /// Tamanho do vídeo pedido ao decodificador, e quando a janela mudou de tamanho.
     resize_at: Option<(Instant, (u32, u32))>,
+    /// Legendas que dá para escolher, a escolhida e as falas dela (as de dentro do
+    /// vídeo chegam de uma thread: o `ffmpeg` lê o arquivo inteiro).
+    subs: Vec<SubSource>,
+    sub_choice: Option<usize>,
+    cues: Vec<Cue>,
+    sub_loading: Option<Receiver<Option<Vec<Cue>>>>,
+    /// Última legenda escolhida (o botão CC volta a ela).
+    last_sub: usize,
+    /// Último clique no vídeo (dois seguidos: tela cheia).
+    last_click: Option<Instant>,
+    /// A janela está em tela cheia (para o menu, que é montado fora do `view`).
+    fullscreen: bool,
+    /// Pedido de entrar ou sair da tela cheia, feito no próximo `view`.
+    want_fullscreen: Option<bool>,
+}
+
+/// Uma legenda que dá para escolher.
+struct SubSource {
+    label: String,
+    kind: SubKind,
+}
+
+enum SubKind {
+    /// Arquivo ao lado do vídeo.
+    File(PathBuf),
+    /// Legenda em texto de dentro do vídeo (`0:s:N`).
+    Embedded(usize),
 }
 
 impl VideoApp {
@@ -56,6 +91,14 @@ impl VideoApp {
             dragging_volume: false,
             scrub_sent: None,
             resize_at: None,
+            subs: Vec::new(),
+            sub_choice: None,
+            cues: Vec::new(),
+            sub_loading: None,
+            last_sub: 0,
+            last_click: None,
+            fullscreen: false,
+            want_fullscreen: None,
         };
         match path {
             Some(path) => app.open(path),
@@ -70,6 +113,18 @@ impl VideoApp {
         match Player::open(&path, (960, 540), true) {
             Some(mut player) => {
                 tracing::info!("player: {} ({}x{}, {:.1} s)", path.display(), player.info.width, player.info.height, player.info.duration);
+                // Legendas: os arquivos ao lado e as de texto de dentro do vídeo.
+                self.subs = subtitles::sidecar_files(&path).into_iter().map(|(p, label)| SubSource { label, kind: SubKind::File(p) }).collect();
+                for (n, track) in player.info.subtitle_tracks.iter().enumerate() {
+                    if subtitles::is_text_codec(&track.codec) {
+                        self.subs.push(SubSource { label: track.label(n), kind: SubKind::Embedded(n) });
+                    }
+                }
+                self.sub_choice = None;
+                self.cues.clear();
+                self.sub_loading = None;
+                self.last_sub = 0;
+                tracing::info!("player: {} legenda(s), {} faixa(s) de áudio", self.subs.len(), player.info.audio_tracks.len());
                 player.play();
                 self.player = Some(player);
                 self.error = None;
@@ -81,8 +136,67 @@ impl VideoApp {
         }
     }
 
+    /// Mostra a legenda `n` (ou nenhuma).
+    fn choose_subtitle(&mut self, n: Option<usize>) {
+        self.cues.clear();
+        self.sub_loading = None;
+        self.sub_choice = n.filter(|&i| i < self.subs.len());
+        let Some(i) = self.sub_choice else {
+            return;
+        };
+        self.last_sub = i;
+        match &self.subs[i].kind {
+            SubKind::File(path) => self.cues = subtitles::load_file(path).unwrap_or_default(),
+            SubKind::Embedded(n) => {
+                let (n, video) = (*n, self.player.as_ref().map(|p| p.path.clone()));
+                if let Some(video) = video {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(subtitles::extract_embedded(&video, n));
+                    });
+                    self.sub_loading = Some(rx);
+                }
+            }
+        }
+        tracing::info!("player: legenda {}", self.subs[i].label);
+    }
+
     /// Ações dos menus e do teclado.
     fn act(&mut self, action: &str) {
+        match action {
+            "fullscreen" => {
+                self.want_fullscreen = Some(!self.fullscreen);
+                return;
+            }
+            "exit-fullscreen" => {
+                if self.fullscreen {
+                    self.want_fullscreen = Some(false);
+                }
+                return;
+            }
+            "sub-off" => {
+                self.choose_subtitle(None);
+                return;
+            }
+            "sub-toggle" => {
+                let next = if self.sub_choice.is_some() || self.subs.is_empty() { None } else { Some(self.last_sub) };
+                self.choose_subtitle(next);
+                self.shown_until = Instant::now() + HIDE_AFTER;
+                return;
+            }
+            a if a.starts_with("sub-") => {
+                self.choose_subtitle(a[4..].parse().ok());
+                return;
+            }
+            a if a.starts_with("audio-") => {
+                if let (Some(player), Ok(n)) = (self.player.as_mut(), a[6..].parse::<usize>()) {
+                    player.set_audio_track(n);
+                    tracing::info!("player: faixa de áudio {}", n + 1);
+                }
+                return;
+            }
+            _ => {}
+        }
         let Some(player) = self.player.as_mut() else {
             if action == "open" {
                 self.chooser = Some(open_dialog());
@@ -129,6 +243,9 @@ struct Hud {
     speaker: (f32, f32, f32, f32),
     volume: (f32, f32, f32, f32),
     track: (f32, f32, f32, f32),
+    /// Legendas (CC) e tela cheia, à direita, como no QuickTime.
+    cc: (f32, f32, f32, f32),
+    full: (f32, f32, f32, f32),
 }
 
 fn hud(w: f32, h: f32) -> Hud {
@@ -145,6 +262,8 @@ fn hud(w: f32, h: f32) -> Hud {
         speaker: (px + 14.0, row + 2.0, 30.0, 30.0),
         volume: (px + 46.0, row + 13.0, 80.0, 8.0),
         track: (px + 64.0, py + 52.0, pw - 128.0, 6.0),
+        cc: (px + pw - 86.0, row + 2.0, 32.0, 30.0),
+        full: (px + pw - 46.0, row + 2.0, 32.0, 30.0),
     }
 }
 
@@ -290,6 +409,32 @@ impl App for VideoApp {
         if input.shortcut("o") {
             self.act("open");
         }
+        if !input.ctrl && input.text.to_lowercase().contains('f') {
+            self.act("fullscreen");
+        }
+        if !input.ctrl && input.text.to_lowercase().contains('c') {
+            self.act("sub-toggle");
+        }
+        if input.key(Key::Escape) {
+            self.act("exit-fullscreen");
+        }
+        // Tela cheia pedida (tecla, menu, duplo clique, botão).
+        self.fullscreen = ui.fullscreen();
+        if let Some(on) = self.want_fullscreen.take() {
+            ui.set_fullscreen(on);
+        }
+        // Legenda de dentro do vídeo chegando da thread.
+        if let Some(rx) = &self.sub_loading {
+            match rx.try_recv() {
+                Ok(cues) => {
+                    self.cues = cues.unwrap_or_default();
+                    self.sub_loading = None;
+                    tracing::info!("player: {} falas na legenda", self.cues.len());
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui.wake_after(Duration::from_millis(100)),
+                Err(_) => self.sub_loading = None,
+            }
+        }
         if input.shortcut("w") {
             ui.close();
         }
@@ -331,6 +476,28 @@ impl App for VideoApp {
         });
 
         let playing = self.player.as_ref().is_some_and(|p| p.playing());
+        let shown_now = !playing || now < self.shown_until || self.scrubbing.is_some() || self.dragging_volume;
+        // Legenda do instante, embaixo e centrada; sobe acima dos controles à mostra.
+        if let Some(cue) = self.player.as_ref().and_then(|p| subtitles::cue_at(&self.cues, p.position())) {
+            let lines: Vec<String> = cue.text.lines().map(str::to_string).collect();
+            let size = (h * 0.048).clamp(16.0, 44.0);
+            let bottom = if shown_now && self.player.is_some() { hud(w, h).panel.1 - 12.0 } else { h - (h * 0.07).max(18.0) };
+            ui.paint_text(move |canvas, text, _| {
+                let line_h = size * 1.3;
+                let top = bottom - line_h * lines.len() as f32;
+                for (i, line) in lines.iter().enumerate() {
+                    let tw = text.measure(line, size, FontWeight::Semibold);
+                    let (x, y) = ((w - tw) / 2.0, top + i as f32 * line_h);
+                    // Contorno escuro (oito cópias deslocadas) e o texto branco por cima:
+                    // lê bem sobre qualquer imagem, como as legendas da TV.
+                    let o = (size * 0.06).max(1.2);
+                    for (dx, dy) in [(-o, 0.0), (o, 0.0), (0.0, -o), (0.0, o), (-o, -o), (o, o), (-o, o), (o, -o)] {
+                        text.draw(canvas, line, x + dx, y + dy, size, FontWeight::Semibold, [0, 0, 0, 220]);
+                    }
+                    text.draw(canvas, line, x, y, size, FontWeight::Semibold, [255, 255, 255, 255]);
+                }
+            });
+        }
         let shown = !playing || now < self.shown_until || self.scrubbing.is_some() || self.dragging_volume || input.pointer.is_some_and(|p| inside(hud(w, h).panel, p));
         if let Some(err) = &self.error {
             let err = err.clone();
@@ -360,6 +527,14 @@ impl App for VideoApp {
         let over_hud = shown && self.player.is_some() && input.pointer.is_some_and(|p| inside(hud(w, h).panel, p));
         if input.pressed && !over_hud && input.pointer.is_some_and(|p| p.1 > 44.0) && self.player.is_some() {
             self.act("toggle");
+            // Dois cliques seguidos: o segundo desfaz o tocar/pausar do primeiro e põe
+            // (ou tira) a tela cheia, como no QuickTime.
+            if self.last_click.is_some_and(|t| now.duration_since(t) < Duration::from_millis(400)) {
+                self.last_click = None;
+                self.act("fullscreen");
+            } else {
+                self.last_click = Some(now);
+            }
         }
         // Faixa de cima: arrasta a janela (duplo clique maximiza).
         ui.window_drag_area((0.0, 0.0, w, 44.0));
@@ -394,6 +569,20 @@ impl App for VideoApp {
                     MenuItem::action("mute", &tr!("Mute")).checked(muted).enabled(has),
                 ],
             },
+            {
+                // Visualizar: tela cheia, legendas e faixa de áudio.
+                let mut items = vec![MenuItem::action("fullscreen", &if self.fullscreen { tr!("Exit Full Screen") } else { tr!("Enter Full Screen") }).shortcut("F").enabled(has), MenuItem::Separator];
+                let mut subs = vec![MenuItem::action("sub-off", &tr!("Off")).checked(self.sub_choice.is_none())];
+                for (i, sub) in self.subs.iter().enumerate() {
+                    subs.push(MenuItem::action(&format!("sub-{i}"), &sub.label).checked(self.sub_choice == Some(i)));
+                }
+                items.push(MenuItem::Submenu { label: tr!("Subtitles").into(), items: subs });
+                if let Some(p) = self.player.as_ref().filter(|p| p.info.audio_tracks.len() > 1) {
+                    let audio = p.info.audio_tracks.iter().enumerate().map(|(i, t)| MenuItem::action(&format!("audio-{i}"), &t.label(i)).checked(p.audio_track() == i)).collect();
+                    items.push(MenuItem::Submenu { label: tr!("Audio Track").into(), items: audio });
+                }
+                MenuGroup { title: tr!("View").into(), items }
+            },
             window_menu(Vec::new()),
         ]
     }
@@ -404,6 +593,9 @@ impl VideoApp {
     fn draw_hud(&mut self, ui: &mut Ui, w: f32, h: f32, input: &mide::kit::Input) {
         let hud = hud(w, h);
         let accent = ui.theme().accent;
+        // Ação dos botões novos, feita no fim (o player fica emprestado até lá).
+        let mut pending: Option<&str> = None;
+        let (has_subs, subs_on, fullscreen) = (!self.subs.is_empty(), self.sub_choice.is_some(), self.fullscreen);
         let Some(player) = self.player.as_mut() else {
             return;
         };
@@ -426,6 +618,10 @@ impl VideoApp {
                 } else if inside(hud.speaker, p) {
                     let (v, m) = (player.volume, !player.muted);
                     player.set_volume(v, m);
+                } else if inside(hud.cc, p) && has_subs {
+                    pending = Some("sub-toggle");
+                } else if inside(hud.full, p) {
+                    pending = Some("fullscreen");
                 }
             }
         }
@@ -456,11 +652,12 @@ impl VideoApp {
         let remaining = format!("-{}", video::time_text(duration - position));
         let hover = |r: (f32, f32, f32, f32)| pointer.is_some_and(|p| inside(r, p));
         let (hb, hp, hf) = (hover(hud.back), hover(hud.play), hover(hud.forward));
+        let (hc, hfull) = (hover(hud.cc) && has_subs, hover(hud.full));
         ui.paint(|canvas, _| {
             let (x, y, pw, ph) = hud.panel;
             fill_rounded(canvas, x, y, pw, ph, 20.0, rgba(28, 28, 30, 200));
             let white = rgba(240, 240, 245, 255);
-            for (r, on) in [(hud.back, hb), (hud.play, hp), (hud.forward, hf)] {
+            for (r, on) in [(hud.back, hb), (hud.play, hp), (hud.forward, hf), (hud.cc, hc), (hud.full, hfull)] {
                 if on {
                     fill_rounded(canvas, r.0, r.1, r.2, r.3, r.3 / 2.0, rgba(255, 255, 255, 30));
                 }
@@ -479,6 +676,38 @@ impl VideoApp {
             } else {
                 triangle(canvas, cx - 7.0, cy - 11.0, 22.0, false, white);
             }
+            // Legendas: "CC" num quadradinho (cheio quando ligadas; apagado sem legenda).
+            let (cx0, cy0) = (hud.cc.0 + 6.0, hud.cc.1 + 7.0);
+            let cc_color = if has_subs { white } else { rgba(240, 240, 245, 90) };
+            if subs_on {
+                fill_rounded(canvas, cx0, cy0, 20.0, 16.0, 3.5, cc_color);
+            } else if let Some(path) = mide::ui::draw::rounded_rect(cx0 + 0.75, cy0 + 0.75, 18.5, 14.5, 3.0) {
+                let mut paint = Paint::default();
+                paint.set_color(cc_color);
+                paint.anti_alias = true;
+                canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.5, ..Default::default() }, mide::ui::draw::tf(), None);
+            }
+            // Tela cheia: dois cantos apontando para fora (ou para dentro, em tela cheia).
+            let (fx0, fy0) = (hud.full.0 + 8.0, hud.full.1 + 7.0);
+            let mut pb = PathBuilder::new();
+            pb.move_to(fx0, fy0 + 6.0);
+            pb.line_to(fx0, fy0);
+            pb.line_to(fx0 + 6.0, fy0);
+            pb.move_to(fx0 + 16.0, fy0 + 10.0);
+            pb.line_to(fx0 + 16.0, fy0 + 16.0);
+            pb.line_to(fx0 + 10.0, fy0 + 16.0);
+            if fullscreen {
+                pb.move_to(fx0, fy0);
+                pb.line_to(fx0 + 5.0, fy0 + 5.0);
+                pb.move_to(fx0 + 16.0, fy0 + 16.0);
+                pb.line_to(fx0 + 11.0, fy0 + 11.0);
+            }
+            if let Some(path) = pb.finish() {
+                let mut paint = Paint::default();
+                paint.set_color(white);
+                paint.anti_alias = true;
+                canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.8, line_cap: tiny_skia::LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() }, mide::ui::draw::tf(), None);
+            }
             // Volume.
             speaker(canvas, hud.speaker.0 + 4.0, hud.speaker.1 + 5.0, volume, muted, white);
             let v = if muted { 0.0 } else { volume };
@@ -493,6 +722,10 @@ impl VideoApp {
             fill_rounded(canvas, tx + tw * f - 6.0, ty - 3.0, 12.0, 12.0, 6.0, white);
         });
         ui.paint_text(|canvas, text, _| {
+            // Letras do botão de legendas (pretas sobre o quadrado cheio).
+            let cc_text = if subs_on { [28, 28, 30, 255] } else if has_subs { [240, 240, 245, 255] } else { [240, 240, 245, 90] };
+            let ccw = text.measure("CC", 10.0, FontWeight::Bold);
+            text.draw(canvas, "CC", hud.cc.0 + 16.0 - ccw / 2.0, hud.cc.1 + 8.5, 10.0, FontWeight::Bold, cc_text);
             let c = [220, 220, 228, 255];
             let (x, y, pw, _) = hud.panel;
             text.draw(canvas, &elapsed, x + 14.0, y + 46.0, 11.5, FontWeight::Regular, c);
@@ -503,12 +736,18 @@ impl VideoApp {
         let play_tip = if playing { tr!("Pause") } else { tr!("Play") };
         let mute_tip = if muted { tr!("Unmute") } else { tr!("Mute") };
         let (back_tip, forward_tip) = (tr!("Skip Back 15 Seconds"), tr!("Skip Forward 15 Seconds"));
-        for (i, (r, tip)) in [(hud.back, &back_tip), (hud.play, &play_tip), (hud.forward, &forward_tip), (hud.speaker, &mute_tip)].into_iter().enumerate() {
+        let cc_tip = if !has_subs { tr!("No Subtitles") } else if subs_on { tr!("Hide Subtitles") } else { tr!("Show Subtitles") };
+        let full_tip = if fullscreen { tr!("Exit Full Screen") } else { tr!("Enter Full Screen") };
+        for (i, (r, tip)) in [(hud.back, &back_tip), (hud.play, &play_tip), (hud.forward, &forward_tip), (hud.speaker, &mute_tip), (hud.cc, &cc_tip), (hud.full, &full_tip)].into_iter().enumerate() {
             let response = Response { hovered: hover(r), rect: r, id: 0x91A7_0000_0000 + i as u64, ..Default::default() };
             ui.tooltip(&response, tip);
         }
         if self.scrubbing.is_some() || self.dragging_volume {
             ui.request_tick();
+        }
+        if let Some(action) = pending {
+            self.act(action);
+            ui.request_repaint();
         }
     }
 }

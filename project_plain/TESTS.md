@@ -1134,3 +1134,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Unidade: `kit::theme::tests` no mide-ui (contraste do texto sobre cada cor de destaque, mistura guardando a transparência).
 - Captura: `tests/scenario.sh "500 list" 480 -- "mide-settings appearance"` com `XDG_CONFIG_HOME` temporário e `[appearance] accent`/`theme`/`tint`; comparar o vidro da dock com o tingido ligado e desligado (`ImageChops.difference` só na área da dock).
 - Na sessão: trocar a cor de destaque e o interruptor "Tingir o vidro" com a dock e um menu da barra abertos; conferir que mudam na hora.
+
+## v0.10.76 (2026-11-05): Player
+
+- Unidade: `media::subtitles` e `media::video` (`cargo test --lib media`).
+- Cenário: gerar um vídeo com `ffmpeg` (duas faixas de áudio, uma legenda `mov_text` embutida e um `filme.pt-BR.srt` ao lado), abrir com `mide-player` e apertar C (legenda) e F (tela cheia). Usar sempre `XDG_CONFIG_HOME` temporário: sem ele o cenário lê a configuração real do usuário (papel de parede, dock).

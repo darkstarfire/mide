@@ -2607,3 +2607,11 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - **Escuro:** fundo 12%, barras laterais 16%, cartões 9%, menus 14%, barra lateral de vidro 20%, menus de contexto e popovers 25%, vidro 18%, véu da dock 52, fundo da barra 25%, painéis 14% e barra de título 16%.
 - O véu da dock passou de constante a `mide::kit::tint_veil(dark)`.
 - `data/mide-update` aceita `MIDE_UI_PATH=../mide-ui`, para compilar com o mide-ui local e testar uma mudança dele na sessão antes de publicar.
+
+## v0.10.76 (2026-11-05): Player com tela cheia, legendas e faixas de áudio (E12)
+
+- Pedido do usuário: terminar tudo o que estava pela metade antes da instalação. Do Player faltavam tela cheia, legendas e a escolha da faixa de áudio.
+- **Tela cheia:** F, duplo clique no vídeo, botão na cápsula e Visualizar → Entrar/Sair da tela cheia; Esc sai. Novo no mide-ui: `ui.set_fullscreen(bool)` e `ui.toggle_fullscreen()`, para qualquer app pedir a tela cheia (como o `NSWindow.toggleFullScreen`).
+- **Legendas:** módulo novo `mide::media::subtitles`, escrito do zero: lê SubRip e WebVTT (tira `<i>`, `{\an8}`, entidades; aceita Latin-1 das legendas antigas), acha os arquivos ao lado do vídeo (`filme.srt`, `filme.pt-BR.srt`, `filme.en.vtt`) e extrai as legendas em texto de dentro dele (SubRip, ASS/SSA, mov_text, WebVTT) pelo `ffmpeg`, numa thread. Legendas em imagem (PGS, DVD) ficam de fora. A fala do instante aparece embaixo, centrada, branca com contorno escuro, e sobe acima dos controles quando eles estão à mostra. Botão CC na cápsula (e tecla C) liga e desliga, voltando à última escolhida; Visualizar → Legendas escolhe qual.
+- **Faixas de áudio:** o `ffprobe` passa a listar as faixas de áudio e de legenda com idioma e título (`Track::label`: "Português — Dublado", "Inglês", "Faixa 2"); Visualizar → Faixa de áudio aparece com mais de uma e troca o som na hora (`-map 0:a:N`), sem recomeçar a imagem.
+- Testes: unidade (SubRip, WebVTT, arquivos ao lado, Latin-1, faixas do `ffprobe`); cenário com um vídeo de duas faixas de áudio e legenda embutida mais um `.srt` ao lado: a tecla C mostra a legenda de duas linhas acima da cápsula, F põe a janela em tela cheia (barra e dock escondidas); a extração da legenda embutida conferida com o mesmo comando do `ffmpeg`.
