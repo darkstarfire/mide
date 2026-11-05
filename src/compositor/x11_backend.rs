@@ -2,15 +2,17 @@
 //!
 //! Nao existe suporte nativo no Smithay para atuar como servidor X11, entao este
 //! backend cria a propria conexao X11 (via x11rb), abre uma janela raiz de
-//! composicao e integra com o event loop calloop ja usado pelo mide.
-//!
-//! A renderizacao real sera integrada na proxima etapa.
+//! composicao, renderiza sobre X11 via XPutImage e integra com o event loop
+//! calloop ja usado pelo mide.
 
-use smithay::reexports::calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction};
+use smithay::reexports::calloop::{
+    generic::Generic, timer::Timer, Interest, LoopHandle, Mode, PostAction,
+};
 use std::{
     error::Error,
     os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
@@ -38,9 +40,10 @@ pub struct X11Backend {
     pub atom_wm_delete_window: xproto::Atom,
     pub atom_net_wm_pid: xproto::Atom,
     pub atom_net_wm_name: xproto::Atom,
-    pub render: X11Render,
+    pub render: Arc<Mutex<X11Render>>,
     pub width: u32,
     pub height: u32,
+    pub frame_count: u64,
 }
 
 impl X11Backend {
@@ -108,6 +111,7 @@ impl X11Backend {
         conn.flush()?;
 
         let render = X11Render::new(conn.clone(), window, width, height)?;
+        let render = Arc::new(Mutex::new(render));
 
         let backend = X11Backend {
             conn,
@@ -116,9 +120,10 @@ impl X11Backend {
             atom_wm_delete_window,
             atom_net_wm_pid,
             atom_net_wm_name,
-            render,
+            render: render.clone(),
             width,
             height,
+            frame_count: 0,
         };
 
         let raw_fd = backend.conn.stream().as_raw_fd();
@@ -128,6 +133,30 @@ impl X11Backend {
             move |_, _, state: &mut State| {
                 Self::dispatch_x11_events(&backend_clone, state);
                 Ok(PostAction::Continue)
+            },
+        )?;
+
+        // Timer de renderizacao: dispara a cada 16 ms (~60 FPS) para manter a
+        // tela atualizada.
+        let render_conn = backend.conn.clone();
+        let render_clone = render.clone();
+        let mut frame_count: u64 = 0;
+        loop_handle.insert_source(
+            Timer::from_duration(Duration::from_millis(16)),
+            move |_, _, state: &mut State| {
+                let _ = state;
+                // Desenha um quadro com cor que muda suavemente ao longo do tempo.
+                let t = (frame_count as f32) * 0.01;
+                let r = ((t.sin() * 0.5 + 0.5) * 255.0) as u8;
+                let g = (((t + 2.0).sin() * 0.5 + 0.5) * 255.0) as u8;
+                let b = (((t + 4.0).sin() * 0.5 + 0.5) * 255.0) as u8;
+                if let Ok(mut render) = render_clone.lock() {
+                    if let Err(err) = render.draw_frame(&render_conn, r, g, b) {
+                        tracing::warn!("erro ao desenhar frame X11: {err}");
+                    }
+                }
+                frame_count = frame_count.wrapping_add(1);
+                smithay::reexports::calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(16))
             },
         )?;
 
