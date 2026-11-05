@@ -259,16 +259,28 @@ impl X11Backend {
                                     ev.child,
                                     xproto::Time::CURRENT_TIME,
                                 );
+                                // Traz a janela clicada para o topo da pilha.
+                                let aux = xproto::ConfigureWindowAux::new()
+                                    .stack_mode(xproto::StackMode::ABOVE);
+                                let _ = conn.configure_window(ev.child, &aux);
                                 let _ = conn.flush();
                             }
                         }
                         Event::EnterNotify(ev) => {
-                            if ev.child != 0 {
+                            // Foco segue o ponteiro ao entrar numa janela adotada.
+                            let known = scene
+                                .lock()
+                                .map(|s| s.windows.contains_key(&ev.event))
+                                .unwrap_or(false);
+                            if known {
                                 let _ = conn.set_input_focus(
                                     xproto::InputFocus::POINTER_ROOT,
-                                    ev.child,
+                                    ev.event,
                                     xproto::Time::CURRENT_TIME,
                                 );
+                                let aux = xproto::ConfigureWindowAux::new()
+                                    .stack_mode(xproto::StackMode::ABOVE);
+                                let _ = conn.configure_window(ev.event, &aux);
                                 let _ = conn.flush();
                             }
                         }
@@ -323,7 +335,7 @@ impl X11Backend {
                                 }
                             } else if let Ok(mut scene) = scene.lock() {
                                 scene.update_window(
-                                    ev.window,
+                                    ev.event,
                                     ev.x,
                                     ev.y,
                                     ev.width,
@@ -371,6 +383,12 @@ impl X11Backend {
         }
 
         conn.map_window(window)?;
+        // Seleciona entrada do ponteiro na janela cliente para foco ao passar o mouse.
+        let _ = conn.change_window_attributes(
+            window,
+            &xproto::ChangeWindowAttributesAux::new()
+                .event_mask(xproto::EventMask::ENTER_WINDOW),
+        );
         let _ = conn.set_input_focus(
             xproto::InputFocus::POINTER_ROOT,
             window,
