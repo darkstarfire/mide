@@ -24,6 +24,9 @@ pub struct X11Scene {
     pub windows: HashMap<xproto::Window, X11Window>,
     /// Proximo ID sequencial para janelas criadas pela cena.
     pub next_id: u32,
+    /// Dimensoes atuais da saida (janela de composicao).
+    pub output_width: u16,
+    pub output_height: u16,
 }
 
 impl X11Scene {
@@ -32,7 +35,15 @@ impl X11Scene {
         Self {
             windows: HashMap::new(),
             next_id: 1,
+            output_width: 0,
+            output_height: 0,
         }
+    }
+
+    /// Atualiza as dimensoes da saida.
+    pub fn set_output_size(&mut self, width: u16, height: u16) {
+        self.output_width = width;
+        self.output_height = height;
     }
 
     /// Registra uma janela X11 cliente na cena.

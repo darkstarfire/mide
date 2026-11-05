@@ -124,6 +124,9 @@ impl X11Backend {
         let render = X11Render::new(conn.clone(), window, width, height)?;
         let render = Arc::new(Mutex::new(render));
         let scene = Arc::new(Mutex::new(X11Scene::new()));
+        if let Ok(mut s) = scene.lock() {
+            s.set_output_size(width as u16, height as u16);
+        }
 
         let backend = X11Backend {
             conn,
@@ -142,11 +145,18 @@ impl X11Backend {
         let raw_fd = backend.conn.stream().as_raw_fd();
         let backend_clone = backend.conn.clone();
         let scene_dispatch = backend.scene.clone();
+        let render_dispatch = backend.render.clone();
         let comp_window = backend.window;
         loop_handle.insert_source(
             Generic::new(FdWrapper(raw_fd), Interest::READ, Mode::Level),
             move |_, _, state: &mut State| {
-                Self::dispatch_x11_events(&backend_clone, &scene_dispatch, comp_window, state);
+                Self::dispatch_x11_events(
+                    &backend_clone,
+                    &scene_dispatch,
+                    &render_dispatch,
+                    comp_window,
+                    state,
+                );
                 Ok(PostAction::Continue)
             },
         )?;
@@ -186,6 +196,7 @@ impl X11Backend {
     fn dispatch_x11_events(
         conn: &Arc<RustConnection>,
         scene: &Arc<Mutex<X11Scene>>,
+        render: &Arc<Mutex<X11Render>>,
         comp_window: xproto::Window,
         state: &mut State,
     ) {
@@ -294,6 +305,30 @@ impl X11Backend {
                                 ev.width,
                                 ev.height
                             );
+                            if ev.window == comp_window {
+                                if let Ok(mut render) = render.lock() {
+                                    if let Err(err) = render.resize(
+                                        conn,
+                                        ev.width as u32,
+                                        ev.height as u32,
+                                    ) {
+                                        tracing::warn!(
+                                            "falha ao redimensionar render X11: {err}"
+                                        );
+                                    }
+                                }
+                                if let Ok(mut scene) = scene.lock() {
+                                    scene.set_output_size(ev.width, ev.height);
+                                }
+                            } else if let Ok(mut scene) = scene.lock() {
+                                scene.update_window(
+                                    ev.window,
+                                    ev.x,
+                                    ev.y,
+                                    ev.width,
+                                    ev.height,
+                                );
+                            }
                         }
                         Event::ClientMessage(ev) => {
                             tracing::trace!("X11 mensagem do cliente: janela {}", ev.window);
