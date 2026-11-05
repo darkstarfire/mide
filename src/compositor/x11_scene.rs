@@ -16,6 +16,12 @@ pub struct X11Window {
     pub width: u16,
     pub height: u16,
     pub mapped: bool,
+    /// Estado EWMH: maximizada na vertical/horizontal ou em tela cheia.
+    pub maximized_vert: bool,
+    pub maximized_horz: bool,
+    pub fullscreen: bool,
+    /// Geometria antes de maximizar/entrar em tela cheia, para restaurar.
+    pub normal: Option<(i16, i16, u16, u16)>,
 }
 
 /// Cena de renderizacao X11.
@@ -57,6 +63,10 @@ impl X11Scene {
                 width: w,
                 height: h,
                 mapped: true,
+                maximized_vert: false,
+                maximized_horz: false,
+                fullscreen: false,
+                normal: None,
             },
         );
     }
@@ -87,6 +97,33 @@ impl X11Scene {
             win.y = y;
             win.width = w;
             win.height = h;
+        }
+    }
+
+    /// Estado EWMH atual e a geometria de restauracao da janela.
+    pub fn state_of(
+        &self,
+        id: xproto::Window,
+    ) -> Option<(bool, bool, bool, Option<(i16, i16, u16, u16)>)> {
+        self.windows
+            .get(&id)
+            .map(|w| (w.maximized_vert, w.maximized_horz, w.fullscreen, w.normal))
+    }
+
+    /// Grava o novo estado EWMH da janela.
+    pub fn set_state(
+        &mut self,
+        id: xproto::Window,
+        maximized_vert: bool,
+        maximized_horz: bool,
+        fullscreen: bool,
+        normal: Option<(i16, i16, u16, u16)>,
+    ) {
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.maximized_vert = maximized_vert;
+            win.maximized_horz = maximized_horz;
+            win.fullscreen = fullscreen;
+            win.normal = normal;
         }
     }
 
