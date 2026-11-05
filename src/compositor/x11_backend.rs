@@ -57,6 +57,8 @@ pub struct Atoms {
     pub net_close_window: xproto::Atom,
     pub net_supporting_wm_check: xproto::Atom,
     pub net_wm_check: xproto::Atom,
+    /// Property na raiz usada pelo app de bloqueio para solicitar desbloqueio.
+    pub mide_unlock: xproto::Atom,
 }
 
 impl Atoms {
@@ -83,6 +85,7 @@ impl Atoms {
             net_close_window: atom(b"_NET_CLOSE_WINDOW")?,
             net_supporting_wm_check: atom(b"_NET_SUPPORTING_WM_CHECK")?,
             net_wm_check: atom(b"_NET_WM_CHECK")?,
+            mide_unlock: atom(b"_MIDE_UNLOCK")?,
         })
     }
 }
@@ -638,6 +641,12 @@ impl Shared {
                     || ev.atom == self.atoms.net_wm_strut_partial
                 {
                     self.update_strut(ev.window);
+                }
+                // App de bloqueio pede desbloqueio via property na raiz.
+                if ev.window == self.root && ev.atom == self.atoms.mide_unlock {
+                    if let Err(err) = self.unlock() {
+                        tracing::warn!("falha ao desbloquear tela: {err}");
+                    }
                 }
             }
             Event::KeyPress(ev) => {
