@@ -60,6 +60,9 @@ use smithay::{
 };
 use state::{ClientState, State};
 
+/// O backend X11 está ativo: não há socket Wayland para passar aos programas filhos.
+static X11_BACKEND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Nome do socket Wayland: `mide-0`, ou o valor de `MIDE_SOCKET` (os testes usam
 /// outro nome para não interferir numa sessão do mide aberta).
 pub fn socket_name() -> &'static str {
@@ -137,6 +140,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = std::env::var("MIDE_BACKEND").unwrap_or_default();
     // No backend X11 nao ha XWayland: o proprio servidor X ja atende os apps X11.
     let is_x11_backend = backend == "x11";
+    X11_BACKEND.store(is_x11_backend, std::sync::atomic::Ordering::Relaxed);
     // SAFETY: ainda não há outras threads (o laço de eventos e os apps vêm depois).
     unsafe { std::env::remove_var("MIDE_BACKEND") };
     let drm = backend.is_empty()
@@ -411,7 +415,12 @@ fn reexec_self() {
 /// a pasta de dados do mide em `XDG_DATA_DIRS` (os `.desktop` dele aparecem no
 /// launcher e na dock). Em desenvolvimento, os dados ficam em `data/` no projeto.
 pub fn child_env(command: &mut std::process::Command) {
-    command.env("WAYLAND_DISPLAY", socket_name());
+    if X11_BACKEND.load(std::sync::atomic::Ordering::Relaxed) {
+        // Backend X11: nao ha socket Wayland; os filhos usam o mesmo servidor X.
+        command.env_remove("WAYLAND_DISPLAY");
+    } else {
+        command.env("WAYLAND_DISPLAY", socket_name());
+    }
     // Apps X11 abrem dentro do mide (XWayland), e não no desktop por baixo.
     if let Some(display) = xwayland::display() {
         command.env("DISPLAY", display);
