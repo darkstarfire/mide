@@ -205,6 +205,8 @@ struct LayoutState {
     clients: Vec<xproto::Window>,
     /// Janela com foco no momento.
     active: Option<xproto::Window>,
+    /// Janelas minimizadas.
+    minimized: Vec<xproto::Window>,
     /// Tela bloqueada? (equivalente X11 a ext-session-lock-v1).
     locked: bool,
     work_area: WorkArea,
@@ -664,6 +666,23 @@ impl Shared {
                             if let Err(err) = self.lock() {
                                 tracing::warn!("falha ao bloquear tela: {err}");
                             }
+                        } else if action == crate::config::Action::SwitchWindows {
+                            self.switch_windows(true);
+                        } else if action == crate::config::Action::SwitchWindowsBack {
+                            self.switch_windows(false);
+                        } else if action == crate::config::Action::Maximize
+                            || action == crate::config::Action::Unmaximize
+                            || action == crate::config::Action::ToggleMaximize
+                        {
+                            self.toggle_maximize_window(action);
+                        } else if action == crate::config::Action::Minimize {
+                            if let Ok(layout) = self.layout.lock() {
+                                if let Some(active) = layout.active {
+                                    self.minimize_window(active);
+                                }
+                            }
+                        } else if action == crate::config::Action::ShowDesktop {
+                            self.show_desktop();
                         } else {
                             run_action(state, action);
                         }
@@ -813,6 +832,7 @@ impl Shared {
                 if ev.window != self.comp_window {
                     if let Ok(mut scene) = self.scene.lock() {
                         scene.mark_content_dirty(ev.window);
+                        scene.mark_dirty_rect(ev.window, ev.x as i16, ev.y as i16, ev.width as u16, ev.height as u16);
                     }
                 }
             }
@@ -834,6 +854,7 @@ impl Shared {
                     if let Ok(mut scene) = self.scene.lock() {
                         scene.update_window(ev.event, ev.x, ev.y, ev.width, ev.height);
                         scene.mark_content_dirty(ev.window);
+                        scene.mark_dirty_rect(ev.window, ev.x as i16, ev.y as i16, ev.width as u16, ev.height as u16);
                     }
                 }
             }
@@ -924,6 +945,144 @@ impl Shared {
             layout.active = Some(window);
         }
         let _ = self.conn.flush();
+    }
+
+    /// Alterna para a proxima janela (Alt+Tab) ou anterior (Alt+Shift+Tab).
+    fn switch_windows(&self, forward: bool) {
+        let clients: Vec<xproto::Window> = {
+            let layout = self.layout.lock().unwrap();
+            layout
+                .clients
+                .iter()
+                .filter(|win_id| {
+                    self.scene
+                        .lock()
+                        .map(|s| s.windows.get(win_id).map(|win| win.mapped).unwrap_or(false))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect()
+        };
+        if clients.is_empty() {
+            return;
+        }
+        let n = clients.len();
+        let current = {
+            let layout = self.layout.lock().unwrap();
+            layout.active
+        };
+        let idx = current
+            .and_then(|w| clients.iter().position(|w2| w2 == &w))
+            .unwrap_or(0);
+        let next_idx = if forward {
+            (idx + 1) % n
+        } else {
+            (idx + n - 1) % n
+        };
+        let next = clients[next_idx];
+        self.focus(next);
+    }
+
+    /// Minimiza uma janela (desmapeia e guarda na lista de minimizadas).
+    fn minimize_window(&self, window: xproto::Window) {
+        let _ = self.conn.unmap_window(window);
+        if let Ok(mut layout) = self.layout.lock() {
+            if !layout.minimized.contains(&window) {
+                layout.minimized.push(window);
+            }
+            if layout.active == Some(window) {
+                layout.active = None;
+            }
+        }
+        let _ = self.conn.flush();
+    }
+
+    /// Restaura uma janela minimizada.
+    fn restore_window(&self, window: xproto::Window) {
+        let removed = {
+            let mut layout = self.layout.lock().unwrap();
+            if let Some(pos) = layout.minimized.iter().position(|w| *w == window) {
+                layout.minimized.remove(pos);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
+            let _ = self.conn.map_window(window);
+            self.focus(window);
+        }
+        let _ = self.conn.flush();
+    }
+
+    /// Minimiza todas as janelas (show desktop).
+    fn show_desktop(&self) {
+        let to_minimize: Vec<xproto::Window> = {
+            let layout = self.layout.lock().unwrap();
+            layout.clients.clone()
+        };
+        for w in to_minimize {
+            if self
+                .scene
+                .lock()
+                .map(|s| s.windows.get(&w).map(|win| win.mapped).unwrap_or(false))
+                .unwrap_or(false)
+            {
+                self.minimize_window(w);
+            }
+        }
+    }
+
+    /// Restaura todas as janelas minimizadas (sair do show desktop).
+    fn restore_all(&self) {
+        let to_restore: Vec<xproto::Window> = {
+            let layout = self.layout.lock().unwrap();
+            layout.minimized.clone()
+        };
+        for w in to_restore {
+            self.restore_window(w);
+        }
+    }
+
+    /// Alterna maximizar/restaurar da janela com foco.
+    fn toggle_maximize_window(&self, action: crate::config::Action) {
+        let Some(window) = ({
+            let layout = self.layout.lock().unwrap();
+            layout.active
+        }) else {
+            return;
+        };
+        // Verifica se ja esta maximizada.
+        let is_maximized = {
+            let layout = self.layout.lock().unwrap();
+            let in_clients = layout.clients.iter().any(|w| *w == window);
+            if in_clients {
+                self.scene
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.state_of(window))
+                    .map(|(v, h, _, _)| v && h)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        };
+        match action {
+            crate::config::Action::Maximize => {
+                if !is_maximized {
+                    self.apply_state(window, true, true, false).ok();
+                }
+            }
+            crate::config::Action::Unmaximize => {
+                if is_maximized {
+                    self.apply_state(window, false, false, false).ok();
+                }
+            }
+            crate::config::Action::ToggleMaximize => {
+                self.apply_state(window, !is_maximized, !is_maximized, false).ok();
+            }
+            _ => {}
+        }
     }
 
     /// Bloqueia a sessao: cria janela override-redirect em tela cheia sobre tudo

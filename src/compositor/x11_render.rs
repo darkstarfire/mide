@@ -53,7 +53,7 @@ impl X11Render {
     }
 
     /// Preenche um retangulo no buffer (clipe ao tamanho do buffer).
-    fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Rgb) {
+    pub fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Rgb) {
         let x0 = x.clamp(0, self.width as i32) as u32;
         let y0 = y.clamp(0, self.height as i32) as u32;
         let x1 = (x + w as i32).clamp(0, self.width as i32) as u32;
@@ -74,17 +74,17 @@ impl X11Render {
     }
 
     /// Desenha uma linha horizontal de 1 px.
-    fn hline(&mut self, x: i32, y: i32, w: u32, color: Rgb) {
+    pub fn hline(&mut self, x: i32, y: i32, w: u32, color: Rgb) {
         self.fill_rect(x, y, w, 1, color);
     }
 
     /// Desenha uma linha vertical de 1 px.
-    fn vline(&mut self, x: i32, y: i32, h: u32, color: Rgb) {
+    pub fn vline(&mut self, x: i32, y: i32, h: u32, color: Rgb) {
         self.fill_rect(x, y, 1, h, color);
     }
 
     /// Desenha a borda de um retangulo (espessura 2 px) no buffer.
-    fn stroke_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Rgb, thickness: u32) {
+    pub fn stroke_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Rgb, thickness: u32) {
         let t = thickness.clamp(1, 8) as i32;
         self.fill_rect(x, y, w, t as u32, color);                                // topo
         self.fill_rect(x, y + h as i32 - t, w, t as u32, color);                // fundo
@@ -93,7 +93,7 @@ impl X11Render {
     }
 
     /// Desenha um "X" (botao fechar) dentro de um quadrado.
-    fn draw_close(&mut self, cx: i32, cy: i32, size: u32, color: Rgb) {
+    pub fn draw_close(&mut self, cx: i32, cy: i32, size: u32, color: Rgb) {
         let s = size as i32;
         // Diagonal principal.
         for i in 0..s {
@@ -120,7 +120,7 @@ impl X11Render {
     }
 
     /// Desenha um quadro (boto maximizar) dentro de um quadrado.
-    fn draw_maximize(&mut self, cx: i32, cy: i32, size: u32, color: Rgb) {
+    pub fn draw_maximize(&mut self, cx: i32, cy: i32, size: u32, color: Rgb) {
         let s = size as i32;
         self.hline(cx, cy, s as u32, color);
         self.hline(cx, cy + s - 1, s as u32, color);
@@ -129,12 +129,12 @@ impl X11Render {
     }
 
     /// Desenha um pequeno retangulo preenchido (indicador de titulo/icone).
-    fn draw_title_marks(&mut self, cx: i32, cy: i32, w: u32, h: u32, color: Rgb) {
+    pub fn draw_title_marks(&mut self, cx: i32, cy: i32, w: u32, h: u32, color: Rgb) {
         self.fill_rect(cx, cy, w, h, color);
     }
 
     /// Cor da borda conforme o estado EWMH da janela.
-    fn border_color(maximized_vert: bool, maximized_horz: bool, fullscreen: bool) -> Rgb {
+    pub fn border_color(maximized_vert: bool, maximized_horz: bool, fullscreen: bool) -> Rgb {
         if fullscreen {
             (0x50, 0x10, 0x10) // vermelho escuro
         } else if maximized_vert && maximized_horz {
@@ -147,7 +147,7 @@ impl X11Render {
     }
 
     /// Cor da barra de titulo conforme o estado EWMH da janela.
-    fn title_color(maximized_vert: bool, maximized_horz: bool, fullscreen: bool) -> Rgb {
+    pub fn title_color(maximized_vert: bool, maximized_horz: bool, fullscreen: bool) -> Rgb {
         if fullscreen {
             (0x30, 0x08, 0x08)
         } else if maximized_vert && maximized_horz {
