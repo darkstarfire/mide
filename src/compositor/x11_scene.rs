@@ -1,11 +1,24 @@
 //! Cena de renderizacao X11: gerencia janelas X11 clientes e faz composicao.
 //!
-//! Por enquanto e uma estrutura basica que armazena janelas X11 conhecidas e
-//! oferece um placeholder para desenhar o quadro completo. A integracao com a
-//! cena do Smithay (`crate::render::Scene`) sera feita em etapas posteriores.
+//! Armazena janelas X11 conhecidas, estado EWMH, titulos e oferece
+//! hit-testing das decorações do servidor (barra de título, botoes de fechar
+//! e maximizar).
 
 use std::collections::HashMap;
 use x11rb::protocol::xproto;
+
+/// Regiao da janela onde um clique caiu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecorationHit {
+    /// Fora da janela / cliente comum (clique passa para o cliente).
+    Client,
+    /// Barra de titulo: arrasta a janela.
+    Title,
+    /// Botao fechar (X).
+    Close,
+    /// Botao maximizar/restaurar.
+    Maximize,
+}
 
 /// Janela X11 cliente conhecida pela cena.
 #[derive(Debug, Clone)]
@@ -22,6 +35,54 @@ pub struct X11Window {
     pub fullscreen: bool,
     /// Geometria antes de maximizar/entrar em tela cheia, para restaurar.
     pub normal: Option<(i16, i16, u16, u16)>,
+    /// Titulo da janela (_NET_WM_NAME / WM_NAME).
+    pub title: Option<String>,
+}
+
+/// Altura da barra de desenho do servidor, em pontos (escala ja aplicada).
+pub const TITLE_HEIGHT: u16 = 30;
+/// Largura de cada boto da barra de titulo, em pontos.
+pub const BTN_SIZE: u16 = 28;
+/// Margem entre botoes e borda, em pontos.
+pub const BTN_MARGIN: u16 = 4;
+
+impl X11Window {
+    /// Hit-test de um ponto (x, y) relativo ao canto superior-esquerdo da
+    /// janela (já em pixels de saida, escala aplicada).
+    /// Retorna a regiao de decoraçao ou Client.
+    pub fn hit_test(&self, x: i16, y: i16) -> DecorationHit {
+        // Janelas em tela cheia nao tem decoraçoes.
+        if self.fullscreen {
+            return DecorationHit::Client;
+        }
+        // Fora dos limites da janela.
+        if x < 0 || y < 0 || x >= self.width as i16 || y >= self.height as i16 {
+            return DecorationHit::Client;
+        }
+        // Barra de titulo.
+        if y < TITLE_HEIGHT as i16 {
+            // Botoes ficam no canto direito.
+            let btn_x_start = self.width as i16
+                - BTN_MARGIN as i16
+                - BTN_SIZE as i16;
+            if x >= btn_x_start && x <= self.width as i16 {
+                // Botao fechar (mais a direita) ou maximizar (ao lado).
+                let close_x = btn_x_start;
+                let max_x = btn_x_start.saturating_sub(BTN_SIZE as i16).saturating_sub(2);
+                if x >= close_x {
+                    DecorationHit::Close
+                } else if x >= max_x {
+                    DecorationHit::Maximize
+                } else {
+                    DecorationHit::Title
+                }
+            } else {
+                DecorationHit::Title
+            }
+        } else {
+            DecorationHit::Client
+        }
+    }
 }
 
 /// Cena de renderizacao X11.
@@ -76,6 +137,7 @@ impl X11Scene {
                 maximized_horz: false,
                 fullscreen: false,
                 normal: None,
+                title: None,
             },
         );
     }
@@ -109,6 +171,13 @@ impl X11Scene {
         }
     }
 
+    /// Define o titulo de uma janela.
+    pub fn set_title(&mut self, id: xproto::Window, title: Option<String>) {
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.title = title;
+        }
+    }
+
     /// Estado EWMH atual e a geometria de restauracao da janela.
     pub fn state_of(
         &self,
@@ -136,9 +205,28 @@ impl X11Scene {
         }
     }
 
+    /// Hit-test de um ponto (x, y) em pixels de saida contra uma janela.
+    /// Retorna None se a janela nao existe ou nao esta mapeada.
+    pub fn hit_test_window(
+        &self,
+        id: xproto::Window,
+        x: i16,
+        y: i16,
+    ) -> Option<DecorationHit> {
+        let win = self.windows.get(&id)?;
+        if !win.mapped {
+            return None;
+        }
+        let k = self.output_scale;
+        // Converte coordenadas de saida para coordenadas da janela (escala
+        // ja aplicada na cena, entao dividimos de volta).
+        let wx = (x as f32 / k) as i16;
+        let wy = (y as f32 / k) as i16;
+        Some(win.hit_test(wx, wy))
+    }
+
     /// Desenha o quadro completo: fundo e todas as janelas clientes.
-    /// Cada janela e desenhada como um retangulo com borda cujo cor indica o
-    /// estado EWMH (azul=normal, verde=maximizada, vermelho=tela cheia).
+    /// Cada janela e desenhada com barra de título, botoes e borda pelo estado EWMH.
     pub fn draw_frame(
         &self,
         conn: &x11rb::rust_connection::RustConnection,
@@ -159,6 +247,7 @@ impl X11Scene {
                     w.maximized_vert,
                     w.maximized_horz,
                     w.fullscreen,
+                    w.title.as_deref().unwrap_or(""),
                 )
             })
             .collect();
@@ -167,7 +256,7 @@ impl X11Scene {
         for (id, win) in &self.windows {
             if win.mapped {
                 tracing::trace!(
-                    "janela X11 {} em ({}, {}) {}x{} (vert={} horz={} full={})",
+                    "janela X11 {} em ({}, {}) {}x{} (vert={} horz={} full={}) titulo={:?}",
                     id,
                     win.x,
                     win.y,
@@ -175,7 +264,8 @@ impl X11Scene {
                     win.height,
                     win.maximized_vert,
                     win.maximized_horz,
-                    win.fullscreen
+                    win.fullscreen,
+                    win.title
                 );
             }
         }

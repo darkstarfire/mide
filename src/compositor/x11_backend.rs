@@ -25,7 +25,7 @@ use crate::config::{Action, Modifiers};
 use super::input::run_action;
 use crate::state::State;
 use crate::x11_render::X11Render;
-use crate::x11_scene::X11Scene;
+use crate::x11_scene::{DecorationHit, X11Scene};
 
 /// Wrapper sem assumir propriedade do fd, para uso com `calloop::Generic`.
 struct FdWrapper(RawFd);
@@ -233,6 +233,9 @@ struct Shared {
     root: xproto::Window,
     /// Janela de bloqueio (override-redirect, tela cheia) quando bloqueada.
     lock_window: Option<xproto::Window>,
+    /// Arrastre em andamento: (janela, offset_x, offset_y) do ponteiro em
+    /// relacao ao canto superior-esquerdo da janela, em pixels de saida.
+    drag_window: Mutex<Option<(xproto::Window, i16, i16)>>,
 }
 
 impl X11Backend {
@@ -437,6 +440,24 @@ impl X11Backend {
         }
         let _ = conn.flush();
 
+        // Captura cliques do botao esquerdo em qualquer janela (incluindo clientes)
+        // com owner_events=True: o cliente tambem recebe o clique normalmente, e o
+        // compositor recebe copia para fazer hit-test de decocoes (barra de titulo,
+        // botoes fechar/maximizar) e arrastre.
+        let _ = conn.grab_button(
+            true,
+            window,
+            xproto::EventMask::BUTTON_PRESS
+                | xproto::EventMask::BUTTON_RELEASE
+                | xproto::EventMask::POINTER_MOTION,
+            xproto::GrabMode::ASYNC,
+            xproto::GrabMode::ASYNC,
+            0u32,
+            0u32,
+            xproto::ButtonIndex::from(1),
+            xproto::ModMask::from(0u8),
+        );
+        let _ = conn.flush();
         let backend = X11Backend {
             conn: conn.clone(),
             screen_num: screen_num.try_into().unwrap_or(0),
@@ -458,6 +479,7 @@ impl X11Backend {
             comp_window: window,
             root,
             lock_window: None,
+            drag_window: Mutex::new(None),
         });
 
         let raw_fd = conn.stream().as_raw_fd();
@@ -660,6 +682,62 @@ impl Shared {
                     ev.event_x,
                     ev.event_y
                 );
+                // Janela de bloqueio: ignora cliques (qualquer tecla desbloqueia).
+                if self.lock_window.is_some() {
+                    return;
+                }
+                // Clique em janela cliente: hit-test de decocoes do servidor.
+                if ev.child != 0 && ev.detail == 1 {
+                    if let Ok(scene) = self.scene.lock() {
+                        if let Some(win) = scene.windows.get(&ev.child) {
+                            if win.mapped {
+                                let k = scene.output_scale;
+                                // ev.event_x/y sao relativos à janela de
+                                // composicao (0,0) => coordenadas de saida.
+                                // Converte para pixels brutos e depois para
+                                // coordenadas relativas à janela cliente.
+                                let wx = (ev.event_x as f32 / k) as i16 - win.x;
+                                let wy = (ev.event_y as f32 / k) as i16 - win.y;
+                                match win.hit_test(wx, wy) {
+                                    DecorationHit::Close => {
+                                        drop(scene);
+                                        self.send_close(ev.child);
+                                        return;
+                                    }
+                                    DecorationHit::Maximize => {
+                                        let (vert, horz, full, normal) =
+                                            scene.state_of(ev.child).unwrap_or((false, false, false, None));
+                                        drop(scene);
+                                        let new_vert = !vert || !horz;
+                                        let new_horz = new_vert;
+                                        if let Err(err) =
+                                            self.apply_state(ev.child, new_vert, new_horz, false)
+                                        {
+                                            tracing::warn!(
+                                                "falha ao alternar maximizar janela {}: {err}",
+                                                ev.child
+                                            );
+                                        }
+                                        return;
+                                    }
+                                    DecorationHit::Title => {
+                                        // Inicia arrastre: offset do ponteiro em
+                                        // relacao ao canto superior-esquerdo da
+                                        // janela (pixels de saida).
+                                        let drag_off_x = (ev.event_x as f32 / k) as i16 - win.x;
+                                        let drag_off_y = (ev.event_y as f32 / k) as i16 - win.y;
+                                        drop(scene);
+                                        *self.drag_window.lock().unwrap() =
+                                            Some((ev.child, drag_off_x, drag_off_y));
+                                        self.focus(ev.child);
+                                        return;
+                                    }
+                                    DecorationHit::Client => {}
+                                }
+                            }
+                        }
+                    }
+                }
                 // Foca a janela cliente sob o ponteiro, se houver.
                 if ev.child != 0 {
                     self.focus(ev.child);
@@ -683,8 +761,31 @@ impl Shared {
                     ev.event_x,
                     ev.event_y
                 );
+                // Cancela arrastre ao soltar o botao esquerdo.
+                if ev.detail == 1 {
+                    *self.drag_window.lock().unwrap() = None;
+                }
             }
             Event::MotionNotify(ev) => {
+                // Arrastre em andamento: move a janela acompanhando o ponteiro.
+                let drag = self.drag_window.lock().unwrap();
+                if let Some((win, off_x, off_y)) = drag.as_ref() {
+                    let win = *win;
+                    let off_x = *off_x;
+                    let off_y = *off_y;
+                    let nx: i32 = ev.event_x as i32 - off_x as i32;
+                    let ny: i32 = ev.event_y as i32 - off_y as i32;
+                    let aux = xproto::ConfigureWindowAux::new()
+                        .x(nx)
+                        .y(ny);
+                    let _ = self.conn.configure_window(win, &aux);
+                    drop(drag);
+                    if let Ok(mut scene) = self.scene.lock() {
+                        scene.update_window(win, nx as i16, ny as i16, 0u16, 0u16);
+                    }
+                    let _ = self.conn.flush();
+                    return;
+                }
                 tracing::trace!(
                     "X11 movimento do ponteiro em ({}, {})",
                     ev.event_x,
@@ -1065,6 +1166,47 @@ impl Shared {
             .unwrap_or_default()
     }
 
+    /// Le o título da janela (`_NET_WM_NAME` UTF8_STRING ou `WM_NAME` STRING).
+    fn read_window_title(&self, window: xproto::Window) -> Option<String> {
+        let prop = self
+            .conn
+            .get_property(
+                false,
+                window,
+                self.atoms.net_wm_name,
+                self.atoms.utf8_string,
+                0,
+                1024,
+            )
+            .ok()
+            .and_then(|c| c.reply().ok())?;
+        let bytes: Vec<u8> = prop.value8()?.collect();
+        let title = String::from_utf8_lossy(&bytes).into_owned();
+        if !title.is_empty() {
+            return Some(title);
+        }
+        // Fallback WM_NAME.
+        let prop = self
+            .conn
+            .get_property(
+                false,
+                window,
+                xproto::AtomEnum::WM_NAME,
+                xproto::AtomEnum::STRING,
+                0,
+                1024,
+            )
+            .ok()
+            .and_then(|c| c.reply().ok())?;
+        let bytes: Vec<u8> = prop.value8()?.collect();
+        let title = String::from_utf8_lossy(&bytes).into_owned();
+        if title.is_empty() {
+            None
+        } else {
+            Some(title)
+        }
+    }
+
     /// Aplica maximizar/tela cheia a uma janela, guardando a geometria original.
     fn apply_state(
         &self,
@@ -1219,13 +1361,23 @@ impl Shared {
         }
 
         self.conn.map_window(window)?;
-        // Entrada do ponteiro para foco ao passar o mouse; mudancas de
-        // propriedades (reservas de borda, estado) tambem interessam.
+        // Seleciona eventos de ponteiro para hit-test de decocoes e arrasto.
         let _ = self.conn.change_window_attributes(
             window,
             &xproto::ChangeWindowAttributesAux::new()
-                .event_mask(xproto::EventMask::ENTER_WINDOW | xproto::EventMask::PROPERTY_CHANGE),
+                .event_mask(
+                    xproto::EventMask::ENTER_WINDOW
+                        | xproto::EventMask::PROPERTY_CHANGE
+                        | xproto::EventMask::BUTTON_PRESS
+                        | xproto::EventMask::BUTTON_RELEASE
+                        | xproto::EventMask::POINTER_MOTION,
+                ),
         );
+        // Le o título da janela (_NET_WM_NAME / WM_NAME).
+        let title = self.read_window_title(window);
+        if let Ok(mut scene) = self.scene.lock() {
+            scene.set_title(window, title.clone());
+        }
         self.focus(window);
         if vert || horz || full {
             self.apply_state(window, vert, horz, full)?;

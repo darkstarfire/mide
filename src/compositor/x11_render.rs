@@ -1,8 +1,8 @@
 //! Renderizacao X11: desenha frames sobre a janela X11 do mide.
 //!
 //! Usa XPutImage para copiar pixels de um buffer em memoria para a janela X11.
-//! Desenha o fundo e cada janela cliente conhecida pela cena X11 como um
-//! retangulo com borda (placeholders visuais, sem fontes nem texturas).
+//! Desenha o fundo e cada janela cliente conhecida pela cena X11 com decoraçoes
+//! do servidor: barra de titulo, botoes fechar/maximizar e borda pelo estado EWMH.
 
 use std::sync::Arc;
 
@@ -72,6 +72,16 @@ impl X11Render {
         }
     }
 
+    /// Desenha uma linha horizontal de 1 px.
+    fn hline(&mut self, x: i32, y: i32, w: u32, color: Rgb) {
+        self.fill_rect(x, y, w, 1, color);
+    }
+
+    /// Desenha uma linha vertical de 1 px.
+    fn vline(&mut self, x: i32, y: i32, h: u32, color: Rgb) {
+        self.fill_rect(x, y, 1, h, color);
+    }
+
     /// Desenha a borda de um retangulo (espessura 2 px) no buffer.
     fn stroke_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Rgb, thickness: u32) {
         let t = thickness.clamp(1, 8) as i32;
@@ -79,6 +89,47 @@ impl X11Render {
         self.fill_rect(x, y + h as i32 - t, w, t as u32, color);                // fundo
         self.fill_rect(x, y, t as u32, h, color);                               // esquerda
         self.fill_rect(x + w as i32 - t, y, t as u32, h, color);                // direita
+    }
+
+    /// Desenha um "X" (botao fechar) dentro de um quadrado.
+    fn draw_close(&mut self, cx: i32, cy: i32, size: u32, color: Rgb) {
+        let s = size as i32;
+        // Diagonal principal.
+        for i in 0..s {
+            let px = cx + i;
+            let py = cy + i;
+            if px >= 0 && py >= 0 && px < self.width as i32 && py < self.height as i32 {
+                let i = ((py as u32 * self.width + px as u32) * 3) as usize;
+                self.buffer[i] = color.0;
+                self.buffer[i + 1] = color.1;
+                self.buffer[i + 2] = color.2;
+            }
+        }
+        // Diagonal secundaria.
+        for i in 0..s {
+            let px = cx + s - 1 - i;
+            let py = cy + i;
+            if px >= 0 && py >= 0 && px < self.width as i32 && py < self.height as i32 {
+                let i = ((py as u32 * self.width + px as u32) * 3) as usize;
+                self.buffer[i] = color.0;
+                self.buffer[i + 1] = color.1;
+                self.buffer[i + 2] = color.2;
+            }
+        }
+    }
+
+    /// Desenha um quadro (boto maximizar) dentro de um quadrado.
+    fn draw_maximize(&mut self, cx: i32, cy: i32, size: u32, color: Rgb) {
+        let s = size as i32;
+        self.hline(cx, cy, s as u32, color);
+        self.hline(cx, cy + s - 1, s as u32, color);
+        self.vline(cx, cy, s as u32, color);
+        self.vline(cx + s - 1, cy, s as u32, color);
+    }
+
+    /// Desenha um pequeno retangulo preenchido (indicador de titulo/icone).
+    fn draw_title_marks(&mut self, cx: i32, cy: i32, w: u32, h: u32, color: Rgb) {
+        self.fill_rect(cx, cy, w, h, color);
     }
 
     /// Cor da borda conforme o estado EWMH da janela.
@@ -94,18 +145,31 @@ impl X11Render {
         }
     }
 
+    /// Cor da barra de título conforme o estado EWMH da janela.
+    fn title_color(maximized_vert: bool, maximized_horz: bool, fullscreen: bool) -> Rgb {
+        if fullscreen {
+            (0x30, 0x08, 0x08)
+        } else if maximized_vert && maximized_horz {
+            (0x08, 0x30, 0x08)
+        } else if maximized_vert || maximized_horz {
+            (0x30, 0x30, 0x08)
+        } else {
+            (0x08, 0x18, 0x30)
+        }
+    }
+
     /// Desenha um quadro completo: fundo e cada janela cliente da cena.
+    /// `wins` contem: (id, x, y, w, h, maximized_vert, maximized_horz, fullscreen, title).
     pub fn draw_scene(
         &mut self,
         conn: &RustConnection,
-        wins: &[(xproto::Window, i16, i16, u16, u16, bool, bool, bool)],
+        wins: &[(xproto::Window, i16, i16, u16, u16, bool, bool, bool, &str)],
         bg: Rgb,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Fundo: cor solida com uma suave variacao ao longo do tempo para
-        // confirmar que o quadro esta sendo redesenhado.
+        // Fundo: cor solida.
         self.fill_rect(0, 0, self.width, self.height, bg);
 
-        for (_id, x, y, w, h, maximized_vert, maximized_horz, fullscreen) in wins {
+        for (_id, x, y, w, h, maximized_vert, maximized_horz, fullscreen, title) in wins {
             let x = *x as i32;
             let y = *y as i32;
             let w = *w as u32;
@@ -113,13 +177,52 @@ impl X11Render {
             if w == 0 || h == 0 {
                 continue;
             }
-            // Faixa de titulo (mais escura) + conteudo.
-            let title_h = 24u32.min(h);
-            self.fill_rect(x, y, w, title_h, (0x20, 0x20, 0x28));
-            self.fill_rect(x, y + title_h as i32, w, h.saturating_sub(title_h), (0x18, 0x18, 0x20));
-            // Borda pelo estado.
-            let color = Self::border_color(*maximized_vert, *maximized_horz, *fullscreen);
-            self.stroke_rect(x, y, w, h, color, 3);
+
+            let title_h = super::x11_scene::TITLE_HEIGHT as u32;
+            let btn_size = super::x11_scene::BTN_SIZE as u32;
+            let btn_margin = super::x11_scene::BTN_MARGIN as u32;
+
+            // Conteudo da janela (abaixo da barra de titulo, se houver).
+            let content_y = if *fullscreen { 0 } else { title_h as i32 };
+            let content_h = h.saturating_sub(content_y as u32);
+            self.fill_rect(
+                x,
+                y + content_y,
+                w,
+                content_h,
+                (0x18, 0x18, 0x20),
+            );
+
+            if !*fullscreen {
+                // Barra de titulo.
+                let tcolor = Self::title_color(*maximized_vert, *maximized_horz, *fullscreen);
+                self.fill_rect(x, y, w, title_h, tcolor);
+
+                // Indicador de titulo (retangulo branco simples no canto esquerdo).
+                self.draw_title_marks(x + 8, y + 8, 16, 16, (0xc0, 0xc0, 0xc0));
+
+                // Botoes no canto direito.
+                let close_x = (x + w as i32) - btn_margin as i32 - btn_size as i32;
+                let max_x = close_x.saturating_sub(btn_size as i32 + 2);
+                let btn_y = y + (title_h as i32 - btn_size as i32) / 2;
+
+                // Botao fechar (X vermelho se hover nao implementado; sempre desenhado).
+                self.draw_close(close_x, btn_y, btn_size, (0xd0, 0x40, 0x40));
+                // Borda do botao fechar.
+                self.stroke_rect(close_x, btn_y, btn_size, btn_size, (0x60, 0x20, 0x20), 1);
+
+                // Botao maximizar.
+                self.draw_maximize(max_x, btn_y, btn_size, (0x40, 0x80, 0xd0));
+                // Borda do botao maximizar.
+                self.stroke_rect(max_x, btn_y, btn_size, btn_size, (0x20, 0x40, 0x70), 1);
+
+                // Linha separadora abaixo da barra de titulo.
+                self.hline(x, y + title_h as i32, w, (0x40, 0x40, 0x48));
+            }
+
+            // Borda externa pelo estado.
+            let bcolor = Self::border_color(*maximized_vert, *maximized_horz, *fullscreen);
+            self.stroke_rect(x, y, w, h, bcolor, 3);
         }
 
         // Copia os pixels para a janela X11 via XPutImage.
