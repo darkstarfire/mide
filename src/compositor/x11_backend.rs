@@ -2,8 +2,9 @@
 //!
 //! Nao existe suporte nativo no Smithay para atuar como servidor X11, entao este
 //! backend cria a propria conexao X11 (via x11rb), abre uma janela raiz de
-//! composicao, renderiza com OpenGL sobre X11 (via glow) e integra com o event
-//! loop calloop ja usado pelo mide.
+//! composicao e integra com o event loop calloop ja usado pelo mide.
+//!
+//! A renderizacao real sera integrada na proxima etapa.
 
 use smithay::reexports::calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction};
 use std::{
@@ -37,7 +38,7 @@ pub struct X11Backend {
     pub atom_wm_delete_window: xproto::Atom,
     pub atom_net_wm_pid: xproto::Atom,
     pub atom_net_wm_name: xproto::Atom,
-    pub render: Option<X11Render>,
+    pub render: X11Render,
     pub width: u32,
     pub height: u32,
 }
@@ -115,7 +116,7 @@ impl X11Backend {
             atom_wm_delete_window,
             atom_net_wm_pid,
             atom_net_wm_name,
-            render: Some(render),
+            render,
             width,
             height,
         };
