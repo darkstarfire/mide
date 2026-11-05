@@ -11,6 +11,7 @@ mod backend_udev;
 mod backend_winit;
 mod x11_backend;
 mod x11_render;
+mod x11_scene;
 mod blur;
 mod clip;
 mod config;

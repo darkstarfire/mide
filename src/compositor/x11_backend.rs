@@ -21,6 +21,7 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::state::State;
 use crate::x11_render::X11Render;
+use crate::x11_scene::X11Scene;
 
 /// Wrapper sem assumir propriedade do fd, para uso com `calloop::Generic`.
 struct FdWrapper(RawFd);
@@ -41,6 +42,7 @@ pub struct X11Backend {
     pub atom_net_wm_pid: xproto::Atom,
     pub atom_net_wm_name: xproto::Atom,
     pub render: Arc<Mutex<X11Render>>,
+    pub scene: Arc<Mutex<X11Scene>>,
     pub width: u32,
     pub height: u32,
     pub frame_count: u64,
@@ -112,6 +114,7 @@ impl X11Backend {
 
         let render = X11Render::new(conn.clone(), window, width, height)?;
         let render = Arc::new(Mutex::new(render));
+        let scene = Arc::new(Mutex::new(X11Scene::new()));
 
         let backend = X11Backend {
             conn,
@@ -121,6 +124,7 @@ impl X11Backend {
             atom_net_wm_pid,
             atom_net_wm_name,
             render: render.clone(),
+            scene: scene.clone(),
             width,
             height,
             frame_count: 0,
@@ -140,19 +144,16 @@ impl X11Backend {
         // tela atualizada.
         let render_conn = backend.conn.clone();
         let render_clone = render.clone();
+        let scene_clone = backend.scene.clone();
         let mut frame_count: u64 = 0;
         loop_handle.insert_source(
             Timer::from_duration(Duration::from_millis(16)),
             move |_, _, state: &mut State| {
                 let _ = state;
-                // Desenha um quadro com cor que muda suavemente ao longo do tempo.
-                let t = (frame_count as f32) * 0.01;
-                let r = ((t.sin() * 0.5 + 0.5) * 255.0) as u8;
-                let g = (((t + 2.0).sin() * 0.5 + 0.5) * 255.0) as u8;
-                let b = (((t + 4.0).sin() * 0.5 + 0.5) * 255.0) as u8;
+                // Desenha o quadro completo usando a cena X11.
                 if let Ok(mut render) = render_clone.lock() {
-                    if let Err(err) = render.draw_frame(&render_conn, r, g, b) {
-                        tracing::warn!("erro ao desenhar frame X11: {err}");
+                    if let Err(err) = scene_clone.lock().unwrap().draw_frame(&render_conn, &mut render) {
+                        tracing::warn!("erro ao desenhar cena X11: {err}");
                     }
                 }
                 frame_count = frame_count.wrapping_add(1);
