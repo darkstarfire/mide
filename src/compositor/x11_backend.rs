@@ -202,6 +202,8 @@ struct LayoutState {
     clients: Vec<xproto::Window>,
     /// Janela com foco no momento.
     active: Option<xproto::Window>,
+    /// Tela bloqueada? (equivalente X11 a ext-session-lock-v1).
+    locked: bool,
     work_area: WorkArea,
 }
 
@@ -229,6 +231,8 @@ struct Shared {
     comp_window: xproto::Window,
     /// Janela raiz do servidor X.
     root: xproto::Window,
+    /// Janela de bloqueio (override-redirect, tela cheia) quando bloqueada.
+    lock_window: Option<xproto::Window>,
 }
 
 impl X11Backend {
@@ -296,7 +300,9 @@ impl X11Backend {
         let root_attr = xproto::ChangeWindowAttributesAux::new().event_mask(
             xproto::EventMask::SUBSTRUCTURE_REDIRECT
                 | xproto::EventMask::SUBSTRUCTURE_NOTIFY
-                | xproto::EventMask::PROPERTY_CHANGE,
+                | xproto::EventMask::PROPERTY_CHANGE
+                | xproto::EventMask::KEY_PRESS
+                | xproto::EventMask::KEY_RELEASE,
         );
         if let Err(err) = conn.change_window_attributes(screen.root, &root_attr) {
             tracing::warn!("nao foi possivel assumir SubstructureRedirect na raiz: {err}");
@@ -394,6 +400,7 @@ impl X11Backend {
                 width,
                 height,
             },
+            locked: false,
             ..Default::default()
         }));
 
@@ -441,6 +448,7 @@ impl X11Backend {
             keymap,
             comp_window: window,
             root,
+            lock_window: None,
         });
 
         let raw_fd = conn.stream().as_raw_fd();
@@ -602,19 +610,37 @@ impl Shared {
                 }
             }
             Event::KeyPress(ev) => {
-                // Atalho global pressionado na raiz? Executa a ação configurada.
-                if ev.event == self.root {
-                    if let Some(action) = self.global_binding(state, ev.detail, u16::from(ev.state)) {
-                        run_action(state, action);
+                // Janela de bloqueio: qualquer tecla desbloqueia (MVP).
+                if self.lock_window.is_some() {
+                    if let Err(err) = self.unlock() {
+                        tracing::warn!("falha ao desbloquear: {err}");
                     }
-                } else {
+                    return;
+                }
+                // Atalho global pressionado na raiz? Executa a ação configurada.
+                if ev.event == self.root && !self.is_locked() {
+                    if let Some(action) = self.global_binding(state, ev.detail, u16::from(ev.state)) {
+                        if action == crate::config::Action::LockScreen {
+                            if let Err(err) = self.lock() {
+                                tracing::warn!("falha ao bloquear tela: {err}");
+                            }
+                        } else {
+                            run_action(state, action);
+                        }
+                    }
+                } else if ev.event != self.root {
                     tracing::trace!("X11 tecla pressionada: code={}", ev.detail);
                 }
             }
             Event::KeyRelease(ev) => {
-                if ev.event == self.root {
+                if let Some(lock_window) = self.lock_window {
+                    if ev.event == lock_window {
+                        return;
+                    }
+                }
+                if ev.event == self.root && !self.is_locked() {
                     let _ = self.global_binding(state, ev.detail, u16::from(ev.state));
-                } else {
+                } else if ev.event != self.root {
                     tracing::trace!("X11 tecla solta: code={}", ev.detail);
                 }
             }
@@ -775,6 +801,76 @@ impl Shared {
         let _ = self.conn.flush();
     }
 
+    /// Bloqueia a sessao: cria janela override-redirect em tela cheia sobre tudo
+    /// e foca o teclado nela (equivalente X11 a ext-session-lock-v1).
+    /// Sem app de senha ainda: qualquer tecla desbloqueia (MVP).
+    fn lock(&self) -> Result<(), Box<dyn Error>> {
+        if self.lock_window.is_some() {
+            return Ok(()); // ja bloqueada
+        }
+        let (out_w, out_h) = self.output_size();
+        let id = self.conn.generate_id()?;
+        let aux = xproto::CreateWindowAux::new()
+            .override_redirect(1)
+            .background_pixel(0)
+            .event_mask(xproto::EventMask::KEY_PRESS | xproto::EventMask::KEY_RELEASE);
+        self.conn.create_window(
+            0,
+            id,
+            self.root,
+            0,
+            0,
+            out_w as u16,
+            out_h as u16,
+            0,
+            xproto::WindowClass::INPUT_OUTPUT,
+            0,
+            &aux,
+        )?;
+        self.conn.map_window(id)?;
+        // Foca o teclado na janela de bloqueio e a coloca no topo.
+        let _ = self.conn.set_input_focus(
+            xproto::InputFocus::NONE,
+            id,
+            0u32,
+        );
+        let aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
+        let _ = self.conn.configure_window(id, &aux);
+        self.conn.change_property32(
+            xproto::PropMode::REPLACE,
+            self.root,
+            self.atoms.net_active_window,
+            xproto::AtomEnum::WINDOW,
+            &[id],
+        )?;
+        self.conn.flush()?;
+        if let Ok(mut layout) = self.layout.lock() {
+            layout.locked = true;
+        }
+        tracing::info!("tela de bloqueio X11 ativada (janela {})", id);
+        Ok(())
+    }
+
+    /// Desbloqueia a sessao: remove a janela de bloqueio e devolve o foco.
+    fn unlock(&self) -> Result<(), Box<dyn Error>> {
+        let Some(id) = self.lock_window else {
+            return Ok(());
+        };
+        let _ = self.conn.destroy_window(id);
+        self.conn.flush()?;
+        if let Ok(mut layout) = self.layout.lock() {
+            layout.locked = false;
+        }
+        // Devolve o foco ao ponteiro (padrao do mide).
+        let _ = self.conn.set_input_focus(
+            xproto::InputFocus::POINTER_ROOT,
+            0u32,
+            0u32,
+        );
+        tracing::info!("tela de bloqueio X11 desativada");
+        Ok(())
+    }
+
     /// Traduz um evento de tecla na raiz para a acao de atalho global, se houver.
     fn global_binding(
         &self,
@@ -824,6 +920,11 @@ impl Shared {
             .lock()
             .map(|s| (s.output_width, s.output_height))
             .unwrap_or((0, 0))
+    }
+
+    /// Esta com a tela bloqueada?
+    fn is_locked(&self) -> bool {
+        self.layout.lock().map(|l| l.locked).unwrap_or(false)
     }
 
     /// Le `_NET_WM_STRUT`/`_NET_WM_STRUT_PARTIAL` de uma janela.
