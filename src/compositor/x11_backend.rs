@@ -106,6 +106,15 @@ impl X11Backend {
 
         conn.map_window(window)?;
 
+        // Assume o papel de window manager: intercepta requisicoes de mapeamento
+        // e configuracao de janelas clientes na janela raiz.
+        let root_attr = xproto::ChangeWindowAttributesAux::new().event_mask(
+            xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+        );
+        if let Err(err) = conn.change_window_attributes(screen.root, &root_attr) {
+            tracing::warn!("nao foi possivel assumir SubstructureRedirect na raiz: {err}");
+        }
+
         let atom_wm_delete_window = conn.intern_atom(false, b"WM_DELETE_WINDOW")?.reply()?.atom;
         let atom_net_wm_pid = conn.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
         let atom_net_wm_name = conn.intern_atom(false, b"_NET_WM_NAME")?.reply()?.atom;
@@ -132,10 +141,12 @@ impl X11Backend {
 
         let raw_fd = backend.conn.stream().as_raw_fd();
         let backend_clone = backend.conn.clone();
+        let scene_dispatch = backend.scene.clone();
+        let comp_window = backend.window;
         loop_handle.insert_source(
             Generic::new(FdWrapper(raw_fd), Interest::READ, Mode::Level),
             move |_, _, state: &mut State| {
-                Self::dispatch_x11_events(&backend_clone, state);
+                Self::dispatch_x11_events(&backend_clone, &scene_dispatch, comp_window, state);
                 Ok(PostAction::Continue)
             },
         )?;
@@ -172,12 +183,50 @@ impl X11Backend {
     }
 
     /// Despacha todos os eventos X11 pendentes.
-    fn dispatch_x11_events(conn: &Arc<RustConnection>, state: &mut State) {
+    fn dispatch_x11_events(
+        conn: &Arc<RustConnection>,
+        scene: &Arc<Mutex<X11Scene>>,
+        comp_window: xproto::Window,
+        state: &mut State,
+    ) {
         let _ = state;
         loop {
             match conn.poll_for_event() {
                 Ok(Some(event)) => {
                     match event {
+                        Event::MapRequest(ev) => {
+                            // Janela cliente pediu para ser mapeada: reparenta sob a
+                            // janela de composicao e mapeia.
+                            if let Err(err) =
+                                Self::adopt_window(conn, scene, comp_window, ev.window)
+                            {
+                                tracing::warn!(
+                                    "falha ao adotar janela X11 {}: {err}",
+                                    ev.window
+                                );
+                            }
+                        }
+                        Event::ConfigureRequest(ev) => {
+                            // Repassa a requisicao de configuracao para a janela cliente.
+                            let aux = xproto::ConfigureWindowAux::new()
+                                .x(ev.x as i32)
+                                .y(ev.y as i32)
+                                .width(ev.width as u32)
+                                .height(ev.height as u32);
+                            let _ = conn.configure_window(ev.window, &aux);
+                            let _ = conn.flush();
+                        }
+                        Event::UnmapNotify(ev) => {
+                            if let Ok(mut scene) = scene.lock() {
+                                scene.set_mapped(ev.window, false);
+                            }
+                        }
+                        Event::DestroyNotify(ev) => {
+                            if let Ok(mut scene) = scene.lock() {
+                                scene.remove_window(ev.window);
+                            }
+                            tracing::debug!("janela X11 {} destruida", ev.window);
+                        }
                         Event::KeyPress(ev) => {
                             tracing::trace!("X11 tecla pressionada: code={}", ev.detail);
                         }
@@ -227,9 +276,6 @@ impl X11Backend {
                                 ev.height
                             );
                         }
-                        Event::DestroyNotify(ev) => {
-                            tracing::trace!("X11 janela destruida: {}", ev.window);
-                        }
                         Event::ClientMessage(ev) => {
                             tracing::trace!("X11 mensagem do cliente: janela {}", ev.window);
                         }
@@ -243,5 +289,33 @@ impl X11Backend {
                 }
             }
         }
+    }
+
+    /// Adota uma janela cliente: reparenta sob a janela de composicao, registra
+    /// na cena e a mapeia.
+    fn adopt_window(
+        conn: &Arc<RustConnection>,
+        scene: &Arc<Mutex<X11Scene>>,
+        comp_window: xproto::Window,
+        window: xproto::Window,
+    ) -> Result<(), Box<dyn Error>> {
+        conn.reparent_window(window, comp_window, 0, 0)?;
+
+        let geom = conn.get_geometry(window)?.reply()?;
+        let attrs = conn.get_window_attributes(window)?.reply()?;
+        if let Ok(mut scene) = scene.lock() {
+            scene.add_window(window, 0, 0, geom.width, geom.height);
+            scene.set_mapped(window, attrs.map_state == xproto::MapState::VIEWABLE);
+        }
+
+        conn.map_window(window)?;
+        conn.flush()?;
+        tracing::info!(
+            "janela X11 {} adotada ({}x{})",
+            window,
+            geom.width,
+            geom.height
+        );
+        Ok(())
     }
 }

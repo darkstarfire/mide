@@ -55,6 +55,13 @@ impl X11Scene {
         self.windows.remove(&id);
     }
 
+    /// Marca uma janela como mapeada ou nao.
+    pub fn set_mapped(&mut self, id: xproto::Window, mapped: bool) {
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.mapped = mapped;
+        }
+    }
+
     /// Atualiza a geometria de uma janela existente.
     pub fn update_window(
         &mut self,
