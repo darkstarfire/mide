@@ -354,12 +354,19 @@ impl X11Backend {
         comp_window: xproto::Window,
         window: xproto::Window,
     ) -> Result<(), Box<dyn Error>> {
-        conn.reparent_window(window, comp_window, 0, 0)?;
+        // Posiciona em cascata para nao empilhar todas as janelas em (0, 0).
+        let slot = scene
+            .lock()
+            .map(|s| s.windows.len())
+            .unwrap_or(0);
+        let offset = 40 + ((slot % 8) as i16) * 40;
+
+        conn.reparent_window(window, comp_window, offset, offset)?;
 
         let geom = conn.get_geometry(window)?.reply()?;
         let attrs = conn.get_window_attributes(window)?.reply()?;
         if let Ok(mut scene) = scene.lock() {
-            scene.add_window(window, 0, 0, geom.width, geom.height);
+            scene.add_window(window, offset, offset, geom.width, geom.height);
             scene.set_mapped(window, attrs.map_state == xproto::MapState::VIEWABLE);
         }
 
