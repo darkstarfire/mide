@@ -37,6 +37,12 @@ pub struct X11Window {
     pub normal: Option<(i16, i16, u16, u16)>,
     /// Titulo da janela (_NET_WM_NAME / WM_NAME).
     pub title: Option<String>,
+    /// Conteudo capturado da janela (RGB, sem alpha) via XGetImage.
+    pub content_buffer: Option<Vec<u8>>,
+    /// Dimensoes do conteudo capturado.
+    pub content_size: Option<(u32, u32)>,
+    /// O conteudo precisa ser recapturado?
+    pub content_dirty: bool,
 }
 
 /// Altura da barra de desenho do servidor, em pontos (escala ja aplicada).
@@ -138,6 +144,9 @@ impl X11Scene {
                 fullscreen: false,
                 normal: None,
                 title: None,
+                content_buffer: None,
+                content_size: None,
+                content_dirty: true,
             },
         );
     }
@@ -175,6 +184,13 @@ impl X11Scene {
     pub fn set_title(&mut self, id: xproto::Window, title: Option<String>) {
         if let Some(win) = self.windows.get_mut(&id) {
             win.title = title;
+        }
+    }
+
+    /// Marca o conteudo de uma janela como precisando de recaptura (appos Expose/ConfigureNotify).
+    pub fn mark_content_dirty(&mut self, id: xproto::Window) {
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.content_dirty = true;
         }
     }
 
@@ -228,16 +244,32 @@ impl X11Scene {
     /// Desenha o quadro completo: fundo e todas as janelas clientes.
     /// Cada janela e desenhada com barra de título, botoes e borda pelo estado EWMH.
     pub fn draw_frame(
-        &self,
+        &mut self,
         conn: &x11rb::rust_connection::RustConnection,
         render: &mut crate::x11_render::X11Render,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let k = self.output_scale;
-        let wins: Vec<_> = self
+        let mut wins: Vec<_> = self
             .windows
-            .values()
+            .values_mut()
             .filter(|w| w.mapped)
             .map(|w| {
+                // Captura o conteúdo da janela se estiver sujo.
+                if w.content_dirty {
+                    if let Some(buf) = render.capture_window(
+                        conn,
+                        w.id,
+                        w.width as u32,
+                        w.height as u32,
+                    ) {
+                        let (cw, ch) = (w.width as u32, w.height as u32);
+                        w.content_buffer = Some(buf);
+                        w.content_size = Some((cw, ch));
+                        w.content_dirty = false;
+                    }
+                }
+                let content = w.content_buffer.as_deref();
+                let (cw, ch) = w.content_size.unwrap_or((0, 0));
                 (
                     w.id,
                     (w.x as f32 * k) as i16,
@@ -248,10 +280,13 @@ impl X11Scene {
                     w.maximized_horz,
                     w.fullscreen,
                     w.title.as_deref().unwrap_or(""),
+                    content,
+                    cw,
+                    ch,
                 )
             })
             .collect();
-        render.draw_scene(conn, &wins, (0x1a, 0x1a, 0x20))?;
+        render.draw_scene(&wins, (0x1a, 0x1a, 0x20))?;
 
         for (id, win) in &self.windows {
             if win.mapped {

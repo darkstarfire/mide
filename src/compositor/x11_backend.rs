@@ -810,6 +810,11 @@ impl Shared {
                     ev.width,
                     ev.height
                 );
+                if ev.window != self.comp_window {
+                    if let Ok(mut scene) = self.scene.lock() {
+                        scene.mark_content_dirty(ev.window);
+                    }
+                }
             }
             Event::ConfigureNotify(ev) => {
                 tracing::trace!(
@@ -828,6 +833,7 @@ impl Shared {
                 } else {
                     if let Ok(mut scene) = self.scene.lock() {
                         scene.update_window(ev.event, ev.x, ev.y, ev.width, ev.height);
+                        scene.mark_content_dirty(ev.window);
                     }
                 }
             }
