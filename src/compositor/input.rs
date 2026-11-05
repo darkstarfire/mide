@@ -489,7 +489,7 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
 }
 
 /// Executa a ação de um atalho.
-fn run_action(state: &mut State, action: Action) {
+pub(crate) fn run_action(state: &mut State, action: Action) {
     match action {
         Action::CloseWindow => {
             let Some(keyboard) = state.seat.get_keyboard() else {

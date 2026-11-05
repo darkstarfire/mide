@@ -21,6 +21,8 @@ use x11rb::protocol::xproto::{self, ConnectionExt as _};
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
+use crate::config::{Action, Modifiers};
+use super::input::run_action;
 use crate::state::State;
 use crate::x11_render::X11Render;
 use crate::x11_scene::X11Scene;
@@ -85,6 +87,94 @@ impl Atoms {
     }
 }
 
+/// Mapeia keysym <-> keycodes do servidor X, usado para XGrabKey e para traduzir
+/// eventos de tecla em keysyms.
+struct KeyMap {
+    min_keycode: u8,
+    keysym_to_keycodes: HashMap<u32, Vec<u8>>,
+    keycode_to_syms: Vec<(u32, u32)>, // nível 0 (sem shift) e nível 1 (com shift)
+}
+
+impl KeyMap {
+    fn build(conn: &RustConnection) -> Result<Self, Box<dyn Error>> {
+        let setup = conn.setup();
+        let min = setup.min_keycode;
+        let max = setup.max_keycode;
+        drop(setup);
+        let map = conn
+            .get_keyboard_mapping(min, max - min + 1)?
+            .reply()?;
+        let per = map.keysyms_per_keycode as usize;
+        let mut keysym_to_keycodes: HashMap<u32, Vec<u8>> = HashMap::new();
+        let mut keycode_to_syms: Vec<(u32, u32)> = Vec::new();
+        for (i, code) in (min..=max).enumerate() {
+            let base = i * per;
+            let s0 = *map.keysyms.get(base).unwrap_or(&0);
+            let s1 = if per > 1 {
+                *map.keysyms.get(base + 1).unwrap_or(&0)
+            } else {
+                0
+            };
+            keycode_to_syms.push((s0, s1));
+            if s0 != 0 {
+                keysym_to_keycodes.entry(s0).or_default().push(code);
+            }
+            if s1 != 0 && s1 != s0 {
+                keysym_to_keycodes.entry(s1).or_default().push(code);
+            }
+        }
+        Ok(Self {
+            min_keycode: min,
+            keysym_to_keycodes,
+            keycode_to_syms,
+        })
+    }
+
+    /// keysym do evento de tecla (considerando o Shift).
+    fn keysym_for_event(&self, keycode: u8, shift: bool) -> u32 {
+        if keycode < self.min_keycode {
+            return 0;
+        }
+        let idx = (keycode - self.min_keycode) as usize;
+        let (s0, s1) = self
+            .keycode_to_syms
+            .get(idx)
+            .copied()
+            .unwrap_or((0, 0));
+        if shift && s1 != 0 {
+            s1
+        } else {
+            s0
+        }
+    }
+
+    /// keycodes que geram esse keysym (para XGrabKey).
+    fn keycodes_for_keysym(&self, keysym: u32) -> &[u8] {
+        self.keysym_to_keycodes
+            .get(&keysym)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+/// Máscara X11 (bits brutos) de modificadores a partir do `Modifiers` do mide.
+fn modifiers_mask(mods: &Modifiers) -> u16 {
+    let mut m: u16 = 0;
+    if mods.shift {
+        m |= 1 << 0;
+    }
+    if mods.ctrl {
+        m |= 1 << 2;
+    }
+    if mods.alt {
+        m |= 1 << 3;
+    }
+    if mods.logo {
+        m |= 1 << 6;
+    }
+    m
+}
+
 /// Area reservada por uma janela de camada (barra, dock) numa das bordas.
 #[derive(Clone, Copy, Debug, Default)]
 struct Strut {
@@ -134,6 +224,7 @@ struct Shared {
     atoms: Arc<Atoms>,
     scene: Arc<Mutex<X11Scene>>,
     layout: Arc<Mutex<LayoutState>>,
+    keymap: KeyMap,
     /// Janela de composicao (mae das janelas clientes).
     comp_window: xproto::Window,
     /// Janela raiz do servidor X.
@@ -144,7 +235,7 @@ impl X11Backend {
     /// Conecta ao display X11, cria a janela de composicao e registra no event loop.
     pub fn init(
         loop_handle: &LoopHandle<'static, State>,
-        _state: &mut State,
+        state: &mut State,
     ) -> Result<Self, Box<dyn Error>> {
         let (conn, screen_num) = RustConnection::connect(None)?;
         let conn = Arc::new(conn);
@@ -306,6 +397,30 @@ impl X11Backend {
             ..Default::default()
         }));
 
+        // Atalhos globais: XGrabKey na raiz para cada binding configurado.
+        let keymap = KeyMap::build(&conn)?;
+        for binding in &state.config.bindings {
+            let mods = Modifiers {
+                ctrl: binding.ctrl,
+                shift: binding.shift,
+                alt: binding.alt,
+                logo: binding.logo,
+                ..Default::default()
+            };
+            let mask = modifiers_mask(&mods);
+            for &keycode in keymap.keycodes_for_keysym(u32::from(binding.key)) {
+                let _ = conn.grab_key(
+                    true,
+                    root,
+                    xproto::ModMask::from(mask),
+                    keycode,
+                    xproto::GrabMode::ASYNC,
+                    xproto::GrabMode::ASYNC,
+                );
+            }
+        }
+        let _ = conn.flush();
+
         let backend = X11Backend {
             conn: conn.clone(),
             screen_num: screen_num.try_into().unwrap_or(0),
@@ -323,6 +438,7 @@ impl X11Backend {
             atoms,
             scene: scene.clone(),
             layout,
+            keymap,
             comp_window: window,
             root,
         });
@@ -371,10 +487,10 @@ impl X11Backend {
 
 impl Shared {
     /// Despacha todos os eventos X11 pendentes.
-    fn dispatch(&self, _state: &mut State) {
+    fn dispatch(&self, state: &mut State) {
         loop {
             match self.conn.poll_for_event() {
-                Ok(Some(event)) => self.handle_event(event),
+                Ok(Some(event)) => self.handle_event(state, event),
                 Ok(None) => break,
                 Err(err) => {
                     tracing::warn!("erro ao ler evento X11: {err}");
@@ -384,7 +500,7 @@ impl Shared {
         }
     }
 
-    fn handle_event(&self, event: Event) {
+    fn handle_event(&self, state: &mut State, event: Event) {
         match event {
             Event::MapRequest(ev) => {
                 // Janela cliente pediu para ser mapeada: reparenta sob a
@@ -486,10 +602,21 @@ impl Shared {
                 }
             }
             Event::KeyPress(ev) => {
-                tracing::trace!("X11 tecla pressionada: code={}", ev.detail);
+                // Atalho global pressionado na raiz? Executa a ação configurada.
+                if ev.event == self.root {
+                    if let Some(action) = self.global_binding(state, ev.detail, u16::from(ev.state)) {
+                        run_action(state, action);
+                    }
+                } else {
+                    tracing::trace!("X11 tecla pressionada: code={}", ev.detail);
+                }
             }
             Event::KeyRelease(ev) => {
-                tracing::trace!("X11 tecla solta: code={}", ev.detail);
+                if ev.event == self.root {
+                    let _ = self.global_binding(state, ev.detail, u16::from(ev.state));
+                } else {
+                    tracing::trace!("X11 tecla solta: code={}", ev.detail);
+                }
             }
             Event::ButtonPress(ev) => {
                 tracing::trace!(
@@ -646,6 +773,32 @@ impl Shared {
             layout.active = Some(window);
         }
         let _ = self.conn.flush();
+    }
+
+    /// Traduz um evento de tecla na raiz para a acao de atalho global, se houver.
+    fn global_binding(
+        &self,
+        state: &mut State,
+        keycode: u8,
+        state_mask: u16,
+    ) -> Option<Action> {
+        let mods = Modifiers {
+            shift: state_mask & 0x01 != 0,
+            ctrl: state_mask & 0x04 != 0,
+            alt: state_mask & 0x08 != 0,
+            logo: state_mask & 0x40 != 0,
+            ..Default::default()
+        };
+        let keysym = self.keymap.keysym_for_event(keycode, mods.shift);
+        if keysym == 0 {
+            return None;
+        }
+        let keysym = xkbcommon::xkb::utf32_to_keysym(keysym);
+        if let Some(action) = state.config.match_binding(mods, keysym) {
+            tracing::info!("atalho global X11: {}", action);
+            return Some(action);
+        }
+        None
     }
 
     /// Publica a lista de janelas gerenciadas na raiz.
