@@ -42,6 +42,10 @@ xkbcommon = "0.8"
 # Ler as propriedades de menu das janelas X11 (menu global dos apps pelo XWayland);
 # já vem com o winit, sem código C.
 x11rb = "0.13"
+# OpenGL sobre X11 para renderizacao no backend X11.
+glow = "0.12"
+# Handle de janela X11 para criar contexto OpenGL.
+raw-window-handle = "0.5"
 zbus = "5"
 # Compactar e extrair .zip no Arquivos, sem programa externo.
 zip = { version = "2", default-features = false, features = ["deflate"] }

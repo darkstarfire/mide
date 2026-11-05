@@ -9,6 +9,8 @@ mod backend_headless;
 mod bar_tone;
 mod backend_udev;
 mod backend_winit;
+mod x11_backend;
+mod x11_render;
 mod blur;
 mod clip;
 mod config;
@@ -134,20 +136,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = std::env::var("MIDE_BACKEND").unwrap_or_default();
     // SAFETY: ainda não há outras threads (o laço de eventos e os apps vêm depois).
     unsafe { std::env::remove_var("MIDE_BACKEND") };
-    let drm = match backend.as_str() {
-        "drm" => true,
-        "winit" | "headless" => false,
-        _ => std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none(),
-    };
-    if backend == "headless" {
-        tracing::info!("backend: sem tela (testes)");
-        backend_headless::init(&loop_handle, &mut state)?;
-    } else if drm {
-        tracing::info!("backend: DRM (direto na tela)");
-        backend_udev::init(&event_loop, &loop_handle, &mut state)?;
-    } else {
-        tracing::info!("backend: winit (janela no desktop atual)");
-        backend_winit::init(&event_loop, &loop_handle, &mut state)?;
+    let drm = backend.is_empty()
+        && std::env::var_os("WAYLAND_DISPLAY").is_none()
+        && std::env::var_os("DISPLAY").is_none();
+    match backend.as_str() {
+        "headless" => {
+            tracing::info!("backend: sem tela (testes)");
+            backend_headless::init(&loop_handle, &mut state)?;
+        }
+        "drm" => {
+            tracing::info!("backend: DRM (direto na tela)");
+            backend_udev::init(&event_loop, &loop_handle, &mut state)?;
+        }
+        "winit" => {
+            tracing::info!("backend: winit (janela no desktop atual)");
+            backend_winit::init(&event_loop, &loop_handle, &mut state)?;
+        }
+        "x11" => {
+            tracing::info!("backend: X11 (servidor de exibicao X11)");
+            let _ = crate::x11_backend::X11Backend::init(&loop_handle, &mut state)?;
+        }
+        _ => {
+            if drm {
+                tracing::info!("backend: DRM (direto na tela)");
+                backend_udev::init(&event_loop, &loop_handle, &mut state)?;
+            } else {
+                tracing::info!("backend: winit (janela no desktop atual)");
+                backend_winit::init(&event_loop, &loop_handle, &mut state)?;
+            }
+        }
     }
 
     // Bloqueio: pelo tempo sem uso e pelos pedidos do logind, só na sessão de verdade
