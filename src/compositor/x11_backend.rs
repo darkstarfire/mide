@@ -392,6 +392,15 @@ impl X11Backend {
         let scene = Arc::new(Mutex::new(X11Scene::new()));
         if let Ok(mut s) = scene.lock() {
             s.set_output_size(width as u16, height as u16);
+            let scale: f32 = match std::env::var("MIDE_OUTPUT_SCALE")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+            {
+                Some(s) if s.is_finite() && s > 0.0 => s,
+                _ => 1.0,
+            };
+            s.set_output_scale(scale);
+            tracing::info!("escala de saida X11: {scale}");
         }
         let layout = Arc::new(Mutex::new(LayoutState {
             work_area: WorkArea {

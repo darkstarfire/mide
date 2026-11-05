@@ -33,6 +33,9 @@ pub struct X11Scene {
     /// Dimensoes atuais da saida (janela de composicao).
     pub output_width: u16,
     pub output_height: u16,
+    /// Fator de escala da saida (padrão 1,0; no X11 nao existe
+    /// wp_fractional_scale_v1, entao vale para toda a sessao).
+    pub output_scale: f32,
 }
 
 impl X11Scene {
@@ -43,6 +46,7 @@ impl X11Scene {
             next_id: 1,
             output_width: 0,
             output_height: 0,
+            output_scale: 1.0,
         }
     }
 
@@ -50,6 +54,11 @@ impl X11Scene {
     pub fn set_output_size(&mut self, width: u16, height: u16) {
         self.output_width = width;
         self.output_height = height;
+    }
+
+    /// Define o fator de escala da saida.
+    pub fn set_output_scale(&mut self, scale: f32) {
+        self.output_scale = scale;
     }
 
     /// Registra uma janela X11 cliente na cena.
@@ -135,6 +144,7 @@ impl X11Scene {
         conn: &x11rb::rust_connection::RustConnection,
         render: &mut crate::x11_render::X11Render,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let k = self.output_scale;
         let wins: Vec<_> = self
             .windows
             .values()
@@ -142,10 +152,10 @@ impl X11Scene {
             .map(|w| {
                 (
                     w.id,
-                    w.x,
-                    w.y,
-                    w.width,
-                    w.height,
+                    (w.x as f32 * k) as i16,
+                    (w.y as f32 * k) as i16,
+                    (w.width as f32 * k) as u16,
+                    (w.height as f32 * k) as u16,
                     w.maximized_vert,
                     w.maximized_horz,
                     w.fullscreen,
