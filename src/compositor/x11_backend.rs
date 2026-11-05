@@ -240,6 +240,25 @@ impl X11Backend {
                                 ev.event_x,
                                 ev.event_y
                             );
+                            // Foca a janela cliente sob o ponteiro, se houver.
+                            if ev.child != 0 {
+                                let _ = conn.set_input_focus(
+                                    xproto::InputFocus::POINTER_ROOT,
+                                    ev.child,
+                                    xproto::Time::CURRENT_TIME,
+                                );
+                                let _ = conn.flush();
+                            }
+                        }
+                        Event::EnterNotify(ev) => {
+                            if ev.child != 0 {
+                                let _ = conn.set_input_focus(
+                                    xproto::InputFocus::POINTER_ROOT,
+                                    ev.child,
+                                    xproto::Time::CURRENT_TIME,
+                                );
+                                let _ = conn.flush();
+                            }
                         }
                         Event::ButtonRelease(ev) => {
                             tracing::trace!(
@@ -309,6 +328,11 @@ impl X11Backend {
         }
 
         conn.map_window(window)?;
+        let _ = conn.set_input_focus(
+            xproto::InputFocus::POINTER_ROOT,
+            window,
+            xproto::Time::CURRENT_TIME,
+        );
         conn.flush()?;
         tracing::info!(
             "janela X11 {} adotada ({}x{})",
