@@ -721,6 +721,12 @@ impl State {
         // Se a janela tinha o foco, o foco vai para a próxima da pilha de foco.
         self.focus_stack.retain(|&i| i != window_id(&window));
         self.move_focus_from(surface);
+        // A próxima janela vem para a frente com o foco; a que minimiza continua por
+        // cima até a lâmpada acabar (antes ela era desenhada atrás da próxima e parecia
+        // sumir de uma vez). Sem ativar: o foco já é da próxima.
+        if self.config.effects.animations {
+            self.space.raise_element(&window, false);
+        }
         tracing::info!("janela minimizada");
     }
 

@@ -1191,19 +1191,20 @@ impl Settings {
                     Err(err) => tracing::warn!("cor de destaque não gravada: {err}"),
                 }
             }
-            // Vidro e transparências com um toque da cor de destaque, como no macOS.
+            // Interface na cor escolhida, como os Macs coloridos: janelas, menus e vidro.
             let mut tint = mide::kit::tint_enabled();
-            if ui.switch_detail(&tr!("Tint glass with accent color"), &tr!("Menu bar, Dock, menus and sidebars with a hint of the color"), &mut tint).changed() {
+            if ui.switch_detail(&tr!("Color the interface"), &tr!("Windows, menus and glass with a hint of the chosen color"), &mut tint).changed() {
                 // Ligado é o padrão: grava só quando desliga.
                 match settings_file::set("appearance", "tint", (!tint).then_some(Value::Bool(false))) {
                     Ok(()) => {
-                        tracing::info!("aparência: vidro tingido {}", if tint { "ligado" } else { "desligado" });
+                        tracing::info!("aparência: interface na cor {}", if tint { "ligado" } else { "desligado" });
                         ask_compositor("reload");
                     }
                     Err(err) => tracing::warn!("vidro tingido não gravado: {err}"),
                 }
             }
         });
+        ui.note(&tr!("Default, Graphite, White and Black keep the original look; the other colors also color the interface."));
         ui.note(&tr!("mide apps, the menu bar and the Dock change immediately. GTK and Qt apps follow light or dark when they are opened."));
     }
 
@@ -2200,7 +2201,7 @@ fn alert_name(key: &str, name: &str) -> String {
 /// Nome de uma cor de destaque (`mide::kit::ACCENTS`, do mide-ui), pela chave.
 fn accent_name(key: &str, name: &str) -> String {
     match key {
-        "blue" => tr!("Blue"),
+        "blue" => tr!("Default (Blue)"),
         "purple" => tr!("Purple"),
         "pink" => tr!("Pink"),
         "red" => tr!("Red"),

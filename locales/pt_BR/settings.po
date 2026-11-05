@@ -756,6 +756,9 @@ msgstr "Verde"
 msgid "Graphite"
 msgstr "Grafite"
 
+msgid "Default (Blue)"
+msgstr "Padrão (azul)"
+
 msgid "White"
 msgstr "Branco"
 
@@ -1458,8 +1461,11 @@ msgstr "Atalho “.”"
 msgid "Double-tapping the space bar types a period and a space"
 msgstr "Dois toques no espaço digitam um ponto e um espaço"
 
-msgid "Tint glass with accent color"
-msgstr "Tingir o vidro com a cor de destaque"
+msgid "Color the interface"
+msgstr "Interface na cor de destaque"
 
-msgid "Menu bar, Dock, menus and sidebars with a hint of the color"
-msgstr "Barra, Dock, menus e barras laterais com um toque da cor"
+msgid "Windows, menus and glass with a hint of the chosen color"
+msgstr "Janelas, menus e vidro com um toque da cor escolhida"
+
+msgid "Default, Graphite, White and Black keep the original look; the other colors also color the interface."
+msgstr "Padrão, Grafite, Branco e Preto mantêm o visual original; as outras cores também colorem a interface."

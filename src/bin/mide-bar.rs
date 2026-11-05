@@ -932,11 +932,13 @@ struct Palette {
     body: [u8; 4],
     /// Texto e símbolos por cima da cor de destaque (escuro no destaque branco).
     on_accent: [u8; 4],
+    /// Cor que pinta a interface (Configurações → Aparência), ou nenhuma no padrão.
+    tint: Option<[u8; 3]>,
 }
 
 impl Palette {
-    const LIGHT: Palette = Palette { dark: false, accent: [10, 110, 235, 255], text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255], on_accent: [255, 255, 255, 255] };
-    const DARK: Palette = Palette { dark: true, accent: [30, 125, 245, 255], text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255], on_accent: [255, 255, 255, 255] };
+    const LIGHT: Palette = Palette { dark: false, accent: [10, 110, 235, 255], text: [24, 24, 28, 255], secondary: [120, 120, 128, 255], faint: [165, 165, 172, 255], body: [70, 70, 78, 255], on_accent: [255, 255, 255, 255], tint: None };
+    const DARK: Palette = Palette { dark: true, accent: [30, 125, 245, 255], text: [236, 236, 240, 255], secondary: [160, 160, 168, 255], faint: [110, 110, 118, 255], body: [205, 205, 212, 255], on_accent: [255, 255, 255, 255], tint: None };
 
     fn accent_color(&self) -> tiny_skia::Color {
         rgba(self.accent[0], self.accent[1], self.accent[2], 255)
@@ -959,10 +961,11 @@ impl Palette {
 
     /// Fundo dos menus e painéis.
     fn panel(&self, alpha: u8) -> [u8; 4] {
-        if self.dark {
-            [40, 40, 44, alpha]
-        } else {
-            [246, 246, 248, alpha]
+        let base = if self.dark { [40, 40, 44, alpha] } else { [246, 246, 248, alpha] };
+        // Interface na cor escolhida: os menus e painéis puxam de leve para ela.
+        match self.tint {
+            Some(c) => mide::kit::mix(base, c, if self.dark { 0.09 } else { 0.06 }),
+            None => base,
         }
     }
 
@@ -1062,7 +1065,7 @@ fn pal() -> Palette {
 fn refresh_palette() {
     let theme = mide::kit::Theme::system();
     let base = if theme.dark { Palette::DARK } else { Palette::LIGHT };
-    PALETTE.with(|p| p.set(Palette { accent: theme.accent, on_accent: theme.on_accent, ..base }));
+    PALETTE.with(|p| p.set(Palette { accent: theme.accent, on_accent: theme.on_accent, tint: mide::kit::ui_tint(theme.dark), ..base }));
 }
 
 struct Bar {
@@ -1691,7 +1694,7 @@ impl Bar {
         // Também a cor de destaque (Configurações → Aparência).
         let dark = mide::kit::system_dark();
         let accent = mide::kit::system_accent(dark);
-        if dark != self.dark_seen || accent != pal().accent {
+        if dark != self.dark_seen || accent != pal().accent || mide::kit::ui_tint(dark) != pal().tint {
             self.dark_seen = dark;
             tracing::info!("barra: tema {}", if dark { "escuro" } else { "claro" });
             refresh_palette();

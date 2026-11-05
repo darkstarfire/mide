@@ -2576,3 +2576,12 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - no mide-ui, `sidebar_glass`, `sidebar` e `menu` puxam um pouco para a cor; cartões e fundos ficam neutros;
   - o compositor guarda o tingido em memória e só relê no `reload`; trocar a cor ou o interruptor nas Configurações já pede o `reload`. A cor entra na assinatura do desfoque guardado, então o vidro é refeito na hora.
 - Testes: capturas com rosa (vidro da dock mais rosado com o tingido ligado, igual ao de antes desligado), branco no escuro, preto no claro e verde no escuro (barra lateral esverdeada); teste de unidade de contraste de todas as cores de destaque e da mistura; `cargo test`; seções `barra`, `dock`, `configuracoes` e `bloqueio` da bateria.
+
+## v0.10.73 (2026-11-05): Padrão (azul) como antes e a interface na cor escolhida
+
+- Pedido do usuário: o vidro tingido da v0.10.72 mudou também o visual padrão. Ele quer o azul como era antes (vidro neutro, claro e escuro originais, seleção azul) e que as outras cores mudem a interface inteira de leve, como os Macs coloridos (verde, roxo...), com as janelas acompanhando a cor.
+- **Azul vira "Padrão (azul)"** e não pinta nada: fundo, cartões, barras laterais, menus e vidro ficam com os valores de antes da v0.10.72 (conferido em captura: (30,30,32) no escuro e (246,246,248) no claro).
+- **Cores que pintam a interface** (roxo, rosa, vermelho, laranja, amarelo e verde): `mide::kit::ui_tint` e, no `Theme::system`, o fundo das janelas (7%), as barras laterais (10%), os cartões (3%), os menus (6%) e a barra lateral de vidro (12%) misturam a cor; no escuro, 1,4 vez mais. Ganham a cor também a barra de título que o compositor desenha (7% no claro, 10% no escuro), os menus e painéis da barra superior e o vidro do compositor (dock, menus).
+- **Grafite, branco e preto** são neutros: mudam só a cor de destaque.
+- O interruptor passou a se chamar "Interface na cor de destaque" (`[appearance] tint`, ligado por padrão). Desligado, a cor escolhida fica só nos controles. Uma nota em Aparência explica quais cores mantêm o visual original.
+- Testes: capturas com padrão azul (claro e escuro), verde no escuro e roxo no claro; `cargo test`; seções `barra` e `configuracoes`. A barra de título do compositor ficou sem captura: o Mousepad não abriu no teste.

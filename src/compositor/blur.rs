@@ -485,14 +485,31 @@ fn tint() -> (f32, f32, f32, f32) {
 
 static TINT: std::sync::Mutex<Option<(f32, f32, f32, f32)>> = std::sync::Mutex::new(None);
 
-/// Relê o tingido do vidro (a cor de destaque ou o interruptor mudou).
+/// Cor que pinta a interface (barra de título das janelas), de 0 a 1, ou `None` com a
+/// cor padrão ou uma neutra (Configurações → Aparência). Lida junto com o vidro.
+static UI_TINT: std::sync::Mutex<Option<Option<[f32; 3]>>> = std::sync::Mutex::new(None);
+
+pub fn ui_tint() -> Option<[f32; 3]> {
+    if let Some(t) = UI_TINT.lock().ok().and_then(|t| *t) {
+        return t;
+    }
+    refresh_tint();
+    UI_TINT.lock().ok().and_then(|t| *t).flatten()
+}
+
+/// Relê a cor da interface e o tingido do vidro (a cor de destaque, o tema ou o
+/// interruptor mudou).
 pub fn refresh_tint() -> (f32, f32, f32, f32) {
-    let tint = match mide::kit::glass_tint(mide::kit::system_dark()) {
+    let dark = mide::kit::system_dark();
+    let tint = match mide::kit::glass_tint(dark) {
         Some(([r, g, b], amount)) => (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, amount),
         None => (0.0, 0.0, 0.0, 0.0),
     };
     if let Ok(mut t) = TINT.lock() {
         *t = Some(tint);
+    }
+    if let Ok(mut t) = UI_TINT.lock() {
+        *t = Some(mide::kit::ui_tint(dark).map(|[r, g, b]| [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]));
     }
     tint
 }

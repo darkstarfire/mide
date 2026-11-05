@@ -601,6 +601,15 @@ pub fn bar_elements(
         (false, true) => BAR_FOCUSED,
         (false, false) => BAR_UNFOCUSED,
     };
+    // Interface na cor de destaque (Configurações → Aparência): a barra puxa de leve
+    // para a cor, como o fundo das janelas do mide-ui.
+    let background = match crate::blur::ui_tint() {
+        Some(c) => {
+            let k = if dark { 0.10 } else { 0.07 };
+            [background[0] + (c[0] - background[0]) * k, background[1] + (c[1] - background[1]) * k, background[2] + (c[2] - background[2]) * k, background[3]]
+        }
+        None => background,
+    };
     let lift = if dark { 0.025 } else { 0.05 };
     let top = [(background[0] + lift).min(1.0), (background[1] + lift).min(1.0), (background[2] + lift).min(1.0), background[3]];
     elements.push(gradient(shaders, bar, top, background, clip));
