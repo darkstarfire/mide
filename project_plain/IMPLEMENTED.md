@@ -2690,3 +2690,44 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - **Alinhamento à esquerda:** a tira começava colada na borda (o contorno do escolhido era cortado). Agora tem recuo de 16 pt dos dois lados, fica no meio quando cabe e, quando não cabe, rola para o escolhido ficar no meio.
 - **Zoom da imagem:** a página da galeria rolava com a roda (e a imagem crescia junto, porque a altura dela vinha do que sobrava da página). A página não rola mais. A roda sobre a imagem amplia e reduz em torno do ponteiro (100% a 800%), arrastar move a imagem ampliada (até a borda dela), duplo clique alterna entre 100% e 200%, Ctrl +/−/0 também mudam o zoom na galeria, e o zoom aparece nas informações ("— 200%"). A imagem ampliada fica recortada na área e é pedida em resolução maior. Trocar de item volta a 100%.
 - Testes: unidade (degraus do zoom); cenários com a roda (200% em torno do ponteiro, reduzir de volta), arrasto e clique na tira; seção `arquivos-visualizacao` com "galeria: clicar numa imagem da tira a escolhe".
+
+## v0.10.85 (2026-11-06): instalador interativo (C3 e C6)
+
+Pedido do usuário: o instalador e o C6 juntos, interativo, com a escolha do sistema
+(Slackware, Debian/Ubuntu, Fedora, Arch/Manjaro) e a opção de instalar no sistema e de
+remover do sistema.
+
+- `./install.sh` na raiz do projeto. Primeiro menu: instalar (ou atualizar), remover ou
+  sair. Depois, a distribuição (a detectada pelo `/etc/os-release` ou pelo
+  `/etc/slackware-version` já marcada) e as partes opcionais: apps X11
+  (`xwayland-satellite`), tema de ícones do mide, tampa e botão de ligar com o mide e a
+  tela de login do mide (greetd, desligada por padrão). Um resumo mostra o que vai ser
+  feito e pede a confirmação. Textos em inglês, em português quando o idioma é pt.
+- Pacotes: apt, dnf (pulando nomes que não existem) e pacman (filtrando os que o
+  repositório conhece); no Slackware, os que faltam do conjunto oficial pelo `slackpkg`,
+  e seatd, xdg-desktop-portal-wlr e greetd pelos SlackBuilds do SlackBuilds.org 15.0
+  (lista `SLACKBUILDS.TXT`, dependências `REQUIRES` antes, fontes conferidas pelo MD5,
+  pacote instalado com o `upgradepkg`; o usuário `greeter` criado como pede o README do
+  greetd no SBo).
+- Rust: usa o do usuário se for 1.85 ou mais novo; senão, o rustup instala na pasta do
+  usuário (sem mexer no sistema nem no `.profile`). A compilação roda sempre como o
+  usuário, mesmo com o instalador rodando pelo sudo.
+- Os arquivos são montados em `target/install/root` nos caminhos finais (programas, dados,
+  fonte, sessão, portais, ativação D-Bus do seletor de arquivos, configuração do portal
+  wlr em `/etc/xdg`, PAM da tela de bloqueio, logind/elogind e ícones) e só vão para o
+  sistema depois de perguntar. Debian, Fedora e Arch: `/usr/local`, copiado com o tar
+  (dono root, sem mexer nas pastas que já existem), com a lista em
+  `/var/lib/mide/installed-files`; ao atualizar, o que saiu da versão nova é apagado.
+  Slackware: pacote `mide-VERSÃO-ARQ-1_mide.txz` em `/usr`, feito com o `makepkg`.
+- Remover: apaga os arquivos da lista (ou `removepkg` no Slackware) e as pastas do mide
+  que ficarem vazias, e desfaz a tela de login do mide (volta a de antes). Configurações
+  das pessoas e pacotes de dependências ficam.
+- `mide-login-install`: com o mide instalado no sistema, não cria mais atalhos em
+  `/usr/local/bin` nem copia a sessão, os dados e a fonte (são do instalador), e a remoção
+  só apaga os atalhos que apontam para a cópia da tela de login. No Slackware, a tela de
+  login sobe pelo `/etc/rc.d/rc.4.local` (o `rc.4` roda ele no lugar de procurar
+  GDM/SDDM) e o `/etc/inittab` passa ao runlevel 4; os dois voltam ao que eram com
+  `--uninstall`.
+- `mide-check` mostra a instalação no sistema (versão e lugar, ou o pacote do Slackware).
+- Opções: `--install`, `--remove`, `--distro`, `--yes`, `--dry-run`, `--no-build`,
+  `--no-deps`, `--prefix`, `--destdir` e as das partes (`--x11`/`--no-x11` etc.).

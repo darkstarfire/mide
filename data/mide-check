@@ -26,6 +26,17 @@ else
     falta "target/release/mide: rode data/mide-update"
 fi
 
+echo "== instalação no sistema (./install.sh)"
+pacote="$(ls /var/lib/pkgtools/packages /var/log/packages 2>/dev/null | grep -E '^mide-[0-9][^-]*-[^-]+-[^-]+$' | head -1)"
+if [ -n "$pacote" ]; then
+    ok "pacote do Slackware: $pacote"
+elif [ -f /var/lib/mide/installed-files ]; then
+    prefixo="$(sed -n 's|^\(.*\)/bin/mide$|\1|p' /var/lib/mide/installed-files | head -1)"
+    ok "mide $(cat "$prefixo/share/mide/version" 2>/dev/null) em $prefixo (projeto: $(sed -nE '0,/^version = "([^"]+)"/s//\1/p' Cargo.toml))"
+else
+    aviso "não instalado no sistema (só o do projeto); para instalar: ./install.sh"
+fi
+
 echo "== tema de ícones (mide-icons)"
 versao="$(cat data/icons.version)"
 dados="${XDG_DATA_HOME:-$HOME/.local/share}/icons"

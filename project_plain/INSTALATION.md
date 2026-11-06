@@ -1,5 +1,15 @@
 # Como deve ser para instalar o compositor
 
+**Feito (v0.10.85): `./install.sh`**, interativo: instalar/atualizar ou remover do
+sistema, com a escolha da distribuição (Debian/Ubuntu, Fedora, Arch/Manjaro, Slackware) e
+das partes opcionais. Ele instala os pacotes da lista abaixo, o Rust (rustup, se faltar),
+compila como o usuário e copia para o sistema depois de perguntar: `/usr/local` com a
+lista em `/var/lib/mide/installed-files`, ou, no Slackware, um pacote `.txz` em `/usr`
+(seatd, xdg-desktop-portal-wlr e greetd pelos SlackBuilds do SBo). `./install.sh --help`
+mostra as opções; `tests/install-test.sh` testa sem root.
+
+Pedido original:
+
 - deve ter um script bash que deve ser rodado com sudo
 - deve analisar o linux, se é fedora, ubuntu, debian, arch
 - deve instalar as dependências sozinho para compilar o projeto

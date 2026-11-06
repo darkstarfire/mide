@@ -24,6 +24,18 @@ GREETD_CONF=/etc/greetd/config.toml
 passo() { printf '\n==> %s\n' "$*"; }
 falha() { printf 'erro: %s\n' "$*" >&2; exit 1; }
 
+# mide instalado no sistema pelo install.sh (lista de arquivos dele ou o pacote do
+# Slackware): os programas no PATH, a sessão, os dados e a fonte já são dele. Aqui fica
+# só a cópia do greeter; e a remoção da tela de login não apaga nada daquilo.
+SISTEMA=
+if [ -f /var/lib/mide/installed-files ] ||
+    ls /var/lib/pkgtools/packages /var/log/packages 2>/dev/null | grep -qE '^mide-[0-9][^-]*-[^-]+-[^-]+$'; then
+    SISTEMA=1
+fi
+# Slackware: sem systemd; a tela de login sobe no runlevel 4 pelo /etc/rc.d/rc.4.local.
+SLACKWARE=
+[ -f /etc/slackware-version ] && SLACKWARE=1
+
 [ "$(id -u)" = 0 ] || falha "rode com sudo: sudo $0 ${1:-}"
 cd "$(dirname "$(readlink -f "$0")")/.."
 # Quem chamou o sudo: a configuração (telas, escala, teclado, papel de parede) vem dele.
@@ -172,7 +184,20 @@ desinstalar() {
     passo "Voltando ao gerenciador de login de antes"
     local antes=""
     [ -f "$STATE/gerenciador-anterior" ] && antes="$(cat "$STATE/gerenciador-anterior")"
-    if command -v systemctl >/dev/null; then
+    if [ -n "$SLACKWARE" ]; then
+        # O rc.4.local e o runlevel de antes.
+        if [ -f "$STATE/rc.4.local.antes" ]; then
+            cp -a "$STATE/rc.4.local.antes" /etc/rc.d/rc.4.local
+            echo "   /etc/rc.d/rc.4.local de antes restaurado."
+        elif grep -q 'mide-login-install' /etc/rc.d/rc.4.local 2>/dev/null; then
+            rm -f /etc/rc.d/rc.4.local
+            echo "   /etc/rc.d/rc.4.local apagado (o rc.4 volta a procurar GDM, SDDM, XDM...)."
+        fi
+        if [ -f "$STATE/runlevel-anterior" ]; then
+            sed -i -E "s/^id:[0-9]:initdefault:/id:$(cat "$STATE/runlevel-anterior"):initdefault:/" /etc/inittab
+            echo "   runlevel $(cat "$STATE/runlevel-anterior") de novo no /etc/inittab."
+        fi
+    elif command -v systemctl >/dev/null; then
         systemctl disable greetd.service 2>/dev/null || true
         if [ -n "$antes" ] && [ "$antes" != greetd ]; then
             systemctl enable --force "$antes.service"
@@ -187,12 +212,17 @@ desinstalar() {
         echo "   $GREETD_CONF restaurado."
     fi
     passo "Apagando os arquivos da tela de login do mide"
-    for f in "$LIB"/mide*; do
-        [ -e "$f" ] && rm -f "/usr/local/bin/$(basename "$f")"
-    done
-    rm -f /usr/local/bin/mide-session /usr/share/wayland-sessions/mide.desktop
-    rm -rf "$LIB" "$CONF" "$FONTS" "$DADOS/applications" "$DADOS/xdg-desktop-portal"
-    rmdir "$DADOS" 2>/dev/null || true
+    if [ -z "$SISTEMA" ]; then
+        # Só os atalhos que apontam para a cópia da tela de login.
+        for f in "$LIB"/mide*; do
+            alvo="/usr/local/bin/$(basename "$f")"
+            [ -L "$alvo" ] && [ "$(readlink "$alvo")" = "$f" ] && rm -f "$alvo"
+        done
+        rm -f /usr/local/bin/mide-session /usr/share/wayland-sessions/mide.desktop
+        rm -rf "$FONTS" "$DADOS/applications" "$DADOS/xdg-desktop-portal"
+        rmdir "$DADOS" 2>/dev/null || true
+    fi
+    rm -rf "$LIB" "$CONF"
     rm -rf "$STATE"
     echo "   pronto. O pacote greetd continua instalado (remova pelo gerenciador de pacotes se quiser)."
     exit 0
@@ -217,6 +247,8 @@ elif command -v dnf >/dev/null; then
     dnf install -y greetd
 elif command -v pacman >/dev/null; then
     pacman -S --needed --noconfirm greetd
+elif [ -n "$SLACKWARE" ]; then
+    falha "o greetd não vem no Slackware: o ./install.sh (com a tela de login) compila pelo SlackBuilds.org, ou instale o system/greetd do SBo e rode de novo"
 else
     falha "instale o pacote greetd pelo gerenciador de pacotes da sua distribuição e rode de novo"
 fi
@@ -236,29 +268,37 @@ done
 # O próprio instalador também: as Configurações rodam o --sync dele pelo pkexec, e ele
 # precisa estar num lugar só do root (não na pasta do projeto, que o usuário altera).
 install -m755 data/mide-login-install "$LIB/"
-# Atalhos no PATH: `mide`, `mide-session` e os demais programas ficam em /usr/local/bin
-# (links para a cópia de $LIB, que não muda quando o projeto é recompilado ou movido).
-for f in "$LIB"/mide*; do
-    ln -sfn "$f" "/usr/local/bin/$(basename "$f")"
-done
-install -m755 data/mide-session /usr/local/bin/mide-session
-# A entrada "mide" da tela de login (o `mide-session` acima é o que ela executa).
-install -d -m755 /usr/share/wayland-sessions
-install -m644 data/wayland-sessions/mide.desktop /usr/share/wayland-sessions/mide.desktop
-# Dados do mide (os .desktop dos apps e a configuração dos portais). O compositor procura
-# `data/` ao lado do programa (só existe no projeto), e de $LIB essa pasta não se acha:
-# a cópia vai para $DADOS, que o compositor também procura.
-install -d -m755 "$DADOS"
-for pasta in applications xdg-desktop-portal; do
-    rm -rf "${DADOS:?}/$pasta"
-    cp -r "data/$pasta" "$DADOS/"
-done
-echo "   programas copiados de $BIN para $LIB, com atalhos em /usr/local/bin (rode este script de novo depois de atualizar o mide)."
-echo "   apps (.desktop) e portais copiados de data/ para $DADOS."
+if [ -n "$SISTEMA" ]; then
+    echo "   programas copiados de $BIN para $LIB; o mide do sistema (install.sh) fica no PATH, com a sessão e os dados dele."
+else
+    # Atalhos no PATH: `mide`, `mide-session` e os demais programas ficam em /usr/local/bin
+    # (links para a cópia de $LIB, que não muda quando o projeto é recompilado ou movido).
+    for f in "$LIB"/mide*; do
+        ln -sfn "$f" "/usr/local/bin/$(basename "$f")"
+    done
+    install -m755 data/mide-session /usr/local/bin/mide-session
+    # A entrada "mide" da tela de login (o `mide-session` acima é o que ela executa).
+    install -d -m755 /usr/share/wayland-sessions
+    install -m644 data/wayland-sessions/mide.desktop /usr/share/wayland-sessions/mide.desktop
+    # Dados do mide (os .desktop dos apps e a configuração dos portais). O compositor procura
+    # `data/` ao lado do programa (só existe no projeto), e de $LIB essa pasta não se acha:
+    # a cópia vai para $DADOS, que o compositor também procura.
+    install -d -m755 "$DADOS"
+    for pasta in applications xdg-desktop-portal; do
+        rm -rf "${DADOS:?}/$pasta"
+        cp -r "data/$pasta" "$DADOS/"
+    done
+    echo "   programas copiados de $BIN para $LIB, com atalhos em /usr/local/bin (rode este script de novo depois de atualizar o mide)."
+    echo "   apps (.desktop) e portais copiados de data/ para $DADOS."
+fi
 
 passo "3/6 Fonte da interface (Noto Sans) em $FONTS"
-install -d -m755 "$FONTS"
-install -m644 data/fonts/*.ttf data/fonts/OFL.txt "$FONTS/"
+if [ -n "$SISTEMA" ]; then
+    echo "   já instalada com o mide do sistema."
+else
+    install -d -m755 "$FONTS"
+    install -m644 data/fonts/*.ttf data/fonts/OFL.txt "$FONTS/"
+fi
 
 passo "4/6 Telas, escala, teclado e papel de parede de ${DONO:-ninguém} em $CONF"
 copiar_configuracao
@@ -286,7 +326,28 @@ EOF
 echo "   o greetd abre o compositor do mide em modo de login, no terminal virtual $vt."
 
 passo "6/6 Gerenciador de login: greetd no lugar do atual"
-if command -v systemctl >/dev/null; then
+if [ -n "$SLACKWARE" ]; then
+    # O rc.4 do Slackware roda o /etc/rc.d/rc.4.local, se existir, no lugar de procurar
+    # GDM, SDDM, XDM...; e a tela de login só sobe no runlevel 4 (/etc/inittab).
+    if [ -f /etc/rc.d/rc.4.local ] && ! grep -q 'mide-login-install' /etc/rc.d/rc.4.local; then
+        [ -f "$STATE/rc.4.local.antes" ] || cp -a /etc/rc.d/rc.4.local "$STATE/rc.4.local.antes"
+        echo "   cópia do rc.4.local de antes em $STATE/rc.4.local.antes."
+    fi
+    greetd_bin="$(command -v greetd || echo /usr/bin/greetd)"
+    printf '%s\n' '#!/bin/bash' \
+        '# Gerado por mide-login-install: a tela de login do mide (greetd). Volta ao de antes com:' \
+        '# sudo data/mide-login-install --uninstall' \
+        "if [ -x $greetd_bin ]; then" "  exec $greetd_bin" 'fi' > /etc/rc.d/rc.4.local
+    chmod 755 /etc/rc.d/rc.4.local
+    echo "   /etc/rc.d/rc.4.local inicia o greetd."
+    nivel="$(sed -nE 's/^id:([0-9]):initdefault:.*/\1/p' /etc/inittab | head -1)"
+    if [ -n "$nivel" ] && [ "$nivel" != 4 ]; then
+        [ -f "$STATE/runlevel-anterior" ] || echo "$nivel" > "$STATE/runlevel-anterior"
+        sed -i -E 's/^id:[0-9]:initdefault:/id:4:initdefault:/' /etc/inittab
+        echo "   /etc/inittab: o sistema passa a iniciar no runlevel 4 (era $nivel)."
+    fi
+    echo "   vale no próximo boot (ou agora, com: telinit 4)."
+elif command -v systemctl >/dev/null; then
     antes="$(gerenciador_atual || true)"
     if [ -n "$antes" ] && [ "$antes" != greetd ]; then
         echo "$antes" > "$STATE/gerenciador-anterior"

@@ -1152,3 +1152,17 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Unidade: `cargo test --bin mide-writer` (legenda numerada).
 - Seção `writer` da bateria (nova): abre um `.rtf`, digita e confere o arquivo gravado sozinho; com `[writer] autosave = false` num `XDG_CONFIG_HOME` temporário, o arquivo não muda.
 - Na sessão: escrever num .docx e fechar sem salvar (deve estar salvo); Inserir legenda numa imagem e numa tabela.
+
+## v0.10.85 (2026-11-06): instalador
+
+- `tests/install-test.sh` (28 verificações, sem root): a simulação (`--dry-run`) de cada
+  distribuição mostra os comandos certos (apt, dnf, pacman, slackpkg, SlackBuilds.org,
+  makepkg, elogind no Slackware); a instalação numa pasta (`--destdir`) põe cada arquivo
+  no lugar, a sessão aponta para o `mide-session` instalado, atualizar apaga o que saiu da
+  versão nova e remover apaga tudo.
+- Conferidos à mão: o menu em inglês e em português, respostas pela entrada, o tar
+  trocando um link de `/usr/local/bin` pelo arquivo (sem escrever na cópia da tela de
+  login) e o tema de ícones instalado numa pasta (99 MB).
+- Falta o usuário: instalar de verdade numa máquina (Debian/Ubuntu, Fedora ou Arch) e,
+  principalmente, num Slackware 15.0 (os SlackBuilds, o pacote, o runlevel 4 com o
+  greetd), e remover.

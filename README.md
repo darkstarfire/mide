@@ -26,12 +26,40 @@ O `pkexec` e os apps que pedem permissão pelo polkit usam a mesma janela na ses
 mide. O programa roda pelo X11 (XWayland), sem acesso ao Wayland nem à sessão D-Bus do
 usuário; use só com programas confiáveis.
 
-## Instalação manual (para testar)
+## Instalação
 
-O instalador automático ainda não existe. Para testar agora, compile o projeto e entre
-na sessão do mide pela tela de login. Funciona em Debian, Ubuntu, Zorin, Mint, Fedora e
-Arch, com placa de vídeo Intel ou AMD (drivers Mesa); a placa da NVIDIA com o driver
+```sh
+git clone https://github.com/fabioaacarneiro/mide.git
+cd mide
+./install.sh
+```
+
+O instalador pergunta o que fazer (instalar ou atualizar, remover, sair) e qual é o
+sistema, com o detectado já escolhido: **Debian/Ubuntu** (apt), **Fedora** (dnf),
+**Arch/Manjaro** (pacman) ou **Slackware** (slackpkg e SlackBuilds.org). Em seguida, as
+partes opcionais: apps X11 (`xwayland-satellite`), tema de ícones do mide, tampa e botão
+de ligar com o mide e a tela de login do mide (greetd). Ele instala os pacotes, o Rust
+(pelo rustup, na pasta do usuário, se faltar ou for antigo), compila como o usuário e só
+copia para o sistema depois de perguntar. Pede a senha de administrador pelo `sudo` (ou
+rode como root).
+
+- Debian, Fedora e Arch: os programas vão para `/usr/local`, com a lista do que foi
+  copiado em `/var/lib/mide/installed-files`; rodar de novo atualiza.
+- Slackware: vira um pacote de verdade (`mide-VERSÃO-x86_64-1_mide.txz`, em `/usr`),
+  instalado com o `upgradepkg`. O que não vem no Slackware (seatd,
+  xdg-desktop-portal-wlr e greetd) é compilado pelos SlackBuilds do SlackBuilds.org,
+  com as dependências. A tela de login sobe no runlevel 4 (`/etc/rc.d/rc.4.local`).
+- Remover: `./install.sh --remove`. Apaga o que foi instalado e devolve a tela de login
+  de antes; as configurações de cada pessoa (`~/.config/mide`) ficam.
+- `./install.sh --help` mostra as opções (`--dry-run` mostra o que seria feito sem
+  mudar nada).
+
+Funciona com placa de vídeo Intel ou AMD (drivers Mesa); a placa da NVIDIA com o driver
 proprietário ainda não foi testada.
+
+## Instalação manual (desenvolvimento)
+
+Para mexer no código e testar a versão do projeto sem instalar no sistema:
 
 **1. Rust** (o compilador da linguagem do mide):
 
