@@ -66,6 +66,25 @@ impl Place {
     }
 }
 
+/// Uma aba guardada (Ctrl+T, como no Finder). A aba ativa usa os campos do próprio
+/// `Files`; as outras ficam aqui e trocam de lugar com ela.
+#[derive(Clone)]
+struct Tab {
+    place: Place,
+    back: Vec<Place>,
+    forward: Vec<Place>,
+    selection: Vec<PathBuf>,
+    list_view: bool,
+    column_view: bool,
+    sort: (usize, bool),
+    icon_size: u32,
+    search: String,
+    searching: bool,
+    expanded: HashSet<PathBuf>,
+    gallery_view: bool,
+    group: usize,
+}
+
 /// Item da lista a partir de um caminho solto (Recentes, Etiquetas).
 fn entry_of(path: &Path) -> Option<Entry> {
     let meta = std::fs::metadata(path).ok()?;
@@ -76,6 +95,50 @@ fn entry_of(path: &Path) -> Option<Entry> {
         size: if meta.is_dir() { 0 } else { meta.len() },
         modified: meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
     })
+}
+
+/// Grupo do item no "Agrupar por" (`by`: 1 tipo, 2 data, 3 tamanho, 4 etiqueta): a
+/// ordem do grupo e o título dele.
+fn group_of(by: usize, e: &Entry, now: std::time::SystemTime) -> (u32, String) {
+    match by {
+        1 => {
+            if e.is_dir {
+                (0, tr!("Folders").into_owned())
+            } else {
+                let kind = files::kind_text(e);
+                // Ordem alfabética pelo tipo (o 1 fica para as pastas).
+                let rank = kind.chars().next().map_or(1, |c| 1 + c.to_lowercase().next().unwrap_or(c) as u32);
+                (rank, kind)
+            }
+        }
+        2 => {
+            let days = now.duration_since(e.modified).map(|d| d.as_secs() / 86_400).unwrap_or(0);
+            match days {
+                0 => (0, tr!("Today").into_owned()),
+                1 => (1, tr!("Yesterday").into_owned()),
+                2..=6 => (2, tr!("Previous 7 Days").into_owned()),
+                7..=29 => (3, tr!("Previous 30 Days").into_owned()),
+                30..=364 => (4, tr!("This Year").into_owned()),
+                _ => (5, tr!("Earlier").into_owned()),
+            }
+        }
+        3 => {
+            if e.is_dir {
+                (0, tr!("Folders").into_owned())
+            } else if e.size < 1_000_000 {
+                (1, tr!("Small (under 1 MB)").into_owned())
+            } else if e.size < 100_000_000 {
+                (2, tr!("Medium (1 to 100 MB)").into_owned())
+            } else {
+                (3, tr!("Large (over 100 MB)").into_owned())
+            }
+        }
+        4 => match files::tags_of(&e.path).first() {
+            Some(&t) => (t as u32, tag_name(t)),
+            None => (99, tr!("No Tags").into_owned()),
+        },
+        _ => (0, String::new()),
+    }
 }
 
 /// Nome de uma etiqueta de cor, no idioma da interface.
@@ -223,6 +286,42 @@ struct Files {
     /// Discos e pendrives da barra lateral (Locais) e quando foram lidos.
     drives: Vec<drives::Drive>,
     drives_read: Option<std::time::Instant>,
+    /// Abas (vazio: uma só, sem a barra de abas) e a ativa.
+    tabs: Vec<Tab>,
+    tab: usize,
+    /// Fechar a janela no próximo quadro (Fechar janela no menu, com uma aba só).
+    close_window: bool,
+    /// Renomear vários (com mais de um item escolhido).
+    batch: Option<BatchRename>,
+    /// Filtros da busca (faixa embaixo da barra de ferramentas): onde (0 esta pasta,
+    /// 1 pasta pessoal), tipo e data.
+    search_scope: usize,
+    search_kind: usize,
+    search_date: usize,
+    /// Busca na pasta pessoal: os resultados, a busca que os gerou e a thread rodando
+    /// (com o sinal de parar quando o texto muda).
+    search_results: Option<(String, Vec<Entry>)>,
+    search_rx: Option<(String, Receiver<Vec<Entry>>, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    /// Buscas salvas (barra lateral).
+    saved_searches: Vec<SavedSearch>,
+    /// Apresentação de slides (Arquivo → Apresentação de slides): as imagens, a mostrada,
+    /// quando ela entrou e se está pausada.
+    slideshow: Option<(Vec<PathBuf>, usize, std::time::Instant, bool)>,
+    /// Começar a apresentação no próximo `view` (pedida pelo menu).
+    want_slideshow: bool,
+    /// Tamanho do texto dos nomes (Visualizar → Tamanho do texto, `[files] text_size`):
+    /// 0 pequeno, 1 médio (o padrão), 2 grande, 3 muito grande.
+    text_size: usize,
+    /// Botões escondidos da barra de ferramentas (Visualizar → Barra de ferramentas,
+    /// `[files] toolbar_hidden`): "views", "preview", "new-folder", "search".
+    toolbar_hidden: Vec<String>,
+    /// Galeria (imagem grande e tira de miniaturas, como no Finder): vale mais que lista
+    /// e colunas.
+    gallery_view: bool,
+    /// Agrupar por: 0 nada, 1 tipo, 2 data, 3 tamanho, 4 etiqueta (lembrado por pasta).
+    group: usize,
+    /// Mostrar as extensões dos nomes (`[files] extensions`, ligado por padrão).
+    extensions: bool,
 }
 
 impl Files {
@@ -334,6 +433,29 @@ impl Files {
             favorites: files::favorites(),
             drives: Vec::new(),
             drives_read: None,
+            tabs: Vec::new(),
+            tab: 0,
+            close_window: false,
+            batch: None,
+            search_scope: 0,
+            search_kind: 0,
+            search_date: 0,
+            search_results: None,
+            search_rx: None,
+            saved_searches: load_saved_searches(),
+            slideshow: None,
+            want_slideshow: false,
+            text_size: match mide::settings_file::get("files", "text_size") {
+                Some(mide::settings_file::Value::Int(n)) => (n.clamp(0, 3)) as usize,
+                _ => 1,
+            },
+            toolbar_hidden: match mide::settings_file::get("files", "toolbar_hidden") {
+                Some(mide::settings_file::Value::Text(t)) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
+                _ => Vec::new(),
+            },
+            gallery_view: false,
+            group: 0,
+            extensions: !matches!(mide::settings_file::get("files", "extensions"), Some(mide::settings_file::Value::Bool(false))),
             thumbs: HashMap::new(),
             waiting: HashSet::new(),
             to_loader,
@@ -548,7 +670,9 @@ impl Files {
         if self.place != Place::Trash {
             self.list_view = view.list;
             self.column_view = view.columns;
+            self.gallery_view = view.gallery;
         }
+        self.group = view.group;
         self.icon_size = view.icon_size;
         self.sort = (view.sort_column, view.ascending);
         self.view_switched = None;
@@ -565,6 +689,8 @@ impl Files {
             ascending: self.sort.1,
             columns: self.column_view && !in_trash,
             icon_size: self.icon_size,
+            gallery: self.gallery_view && !in_trash,
+            group: self.group,
         };
         match ViewMemory::record(&key, view, !in_trash) {
             Ok(_) => tracing::info!("visualização guardada para {key}: {}", view_text(view.list, self.sort)),
@@ -636,6 +762,14 @@ impl Files {
 
     fn sort_entries(&mut self) {
         sort_list(&mut self.entries, self.sort);
+        // Agrupar por: os grupos em ordem, cada um na ordem escolhida (ordenação
+        // estável: a da coluna continua dentro do grupo).
+        if self.group > 0 {
+            let now = std::time::SystemTime::now();
+            let mut keyed: Vec<(u32, Entry)> = std::mem::take(&mut self.entries).into_iter().map(|e| (group_of(self.group, &e, now).0, e)).collect();
+            keyed.sort_by_key(|(k, _)| *k);
+            self.entries = keyed.into_iter().map(|(_, e)| e).collect();
+        }
         for list in self.children.values_mut() {
             sort_list(list, self.sort);
         }
@@ -940,6 +1074,103 @@ impl Files {
         });
     }
 
+    /// O estado da aba ativa.
+    fn snapshot(&self) -> Tab {
+        Tab {
+            place: self.place.clone(),
+            back: self.back.clone(),
+            forward: self.forward.clone(),
+            selection: self.selection.clone(),
+            list_view: self.list_view,
+            column_view: self.column_view,
+            sort: self.sort,
+            icon_size: self.icon_size,
+            search: self.search.clone(),
+            searching: self.searching,
+            expanded: self.expanded.clone(),
+            gallery_view: self.gallery_view,
+            group: self.group,
+        }
+    }
+
+    /// Mostra a aba `t` (o que é só da aba anterior sai: Visualização Rápida, vídeo no
+    /// ícone, nome sendo editado).
+    fn load_tab(&mut self, t: Tab) {
+        self.place = t.place;
+        self.back = t.back;
+        self.forward = t.forward;
+        self.selection = t.selection;
+        self.list_view = t.list_view;
+        self.column_view = t.column_view;
+        self.sort = t.sort;
+        self.icon_size = t.icon_size;
+        self.search = t.search;
+        self.searching = t.searching;
+        self.expanded = t.expanded;
+        self.gallery_view = t.gallery_view;
+        self.group = t.group;
+        self.quick_look = None;
+        self.inline_video = None;
+        self.preview_video = None;
+        self.inline = None;
+        self.reload();
+    }
+
+    /// Nova aba em `place` (Ctrl+T abre na pasta atual, como o Finder).
+    fn new_tab(&mut self, place: Place) {
+        let current = self.snapshot();
+        if self.tabs.is_empty() {
+            self.tabs.push(current.clone());
+            self.tab = 0;
+        } else {
+            self.tabs[self.tab] = current.clone();
+        }
+        let tab = Tab { place, back: Vec::new(), forward: Vec::new(), selection: Vec::new(), search: String::new(), searching: false, expanded: HashSet::new(), ..current };
+        self.tabs.push(tab.clone());
+        self.tab = self.tabs.len() - 1;
+        self.load_tab(tab);
+        tracing::info!("aba nova ({} abas)", self.tabs.len());
+    }
+
+    fn switch_tab(&mut self, i: usize) {
+        if i == self.tab || i >= self.tabs.len() {
+            return;
+        }
+        self.tabs[self.tab] = self.snapshot();
+        self.tab = i;
+        let t = self.tabs[i].clone();
+        self.load_tab(t);
+    }
+
+    /// Fecha a aba `i`; com uma aba só, devolve `false` (quem chama fecha a janela).
+    fn close_tab(&mut self, i: usize) -> bool {
+        if self.tabs.len() <= 1 {
+            return false;
+        }
+        self.tabs[self.tab] = self.snapshot();
+        self.tabs.remove(i);
+        if i < self.tab || self.tab >= self.tabs.len() {
+            self.tab = self.tab.saturating_sub(1);
+        }
+        let t = self.tabs[self.tab].clone();
+        if self.tabs.len() == 1 {
+            self.tabs.clear();
+            self.tab = 0;
+        }
+        self.load_tab(t);
+        true
+    }
+
+    /// Nova janela do Arquivos na pasta atual (como ⌘N no Finder).
+    fn new_window(&self) {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-files"));
+        let dir = match &self.place {
+            Place::Dir(dir) => dir.clone(),
+            _ => places::home_dir(),
+        };
+        let _ = std::process::Command::new(exe).arg(dir).spawn();
+    }
+
     fn go(&mut self, place: Place) {
         if place == self.place {
             return;
@@ -1036,7 +1267,12 @@ impl Files {
     }
 
     fn title(&self) -> String {
-        match &self.place {
+        self.place_title(&self.place)
+    }
+
+    /// Nome de um lugar (título da janela e das abas).
+    fn place_title(&self, place: &Place) -> String {
+        match place {
             Place::Trash => tr!("Trash").into_owned(),
             Place::Recents => tr!("Recents").into_owned(),
             Place::Tag(n) => tag_name(*n),
@@ -1049,9 +1285,103 @@ impl Files {
         }
     }
 
-    /// Itens mostrados agora (com a busca aplicada).
+    /// Itens mostrados agora (com a busca e os filtros aplicados). Na pasta pessoal,
+    /// os resultados da thread de busca.
     fn shown(&self) -> Vec<Entry> {
-        files::filter(&self.entries, &self.search)
+        let now = std::time::SystemTime::now();
+        let (kind, date) = (self.search_kind, self.search_date);
+        if self.search.trim().is_empty() {
+            return self.entries.clone();
+        }
+        let base: Vec<Entry> = if self.search_scope == 1 {
+            self.search_results.as_ref().map(|(_, r)| r.clone()).unwrap_or_default()
+        } else {
+            files::filter(&self.entries, &self.search)
+        };
+        base.into_iter().filter(|e| passes_filters(e, kind, date, now)).collect()
+    }
+
+    /// Busca na pasta pessoal: começa (ou recomeça) a thread quando o texto muda e
+    /// recebe os resultados.
+    fn tick_search(&mut self, ui: &mut Ui) {
+        let query = self.search.trim().to_string();
+        if self.search_scope != 1 || query.is_empty() {
+            if let Some((_, _, stop)) = self.search_rx.take() {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            return;
+        }
+        let running = self.search_rx.as_ref().map(|(q, ..)| q.clone());
+        let done = self.search_results.as_ref().map(|(q, _)| q.clone());
+        if running.as_deref() != Some(&query) && done.as_deref() != Some(&query) {
+            if let Some((_, _, stop)) = self.search_rx.take() {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            let (tx, rx) = channel();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let (root, q, hidden, flag) = (places::home_dir(), query.clone(), self.hidden, stop.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(search_tree(root, q, hidden, flag));
+            });
+            self.search_rx = Some((query.clone(), rx, stop));
+        }
+        if let Some((q, rx, _)) = &self.search_rx {
+            match rx.try_recv() {
+                Ok(list) => {
+                    tracing::info!("busca na pasta pessoal: {} resultado(s)", list.len());
+                    self.search_results = Some((q.clone(), list));
+                    self.search_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui.wake_after(std::time::Duration::from_millis(150)),
+                Err(_) => self.search_rx = None,
+            }
+        }
+    }
+
+    /// Faixa dos filtros da busca (com texto na busca): onde, tipo, data e Salvar.
+    fn search_bar(&mut self, ui: &mut Ui) {
+        if self.search.trim().is_empty() || self.place.virtual_place() || self.place == Place::Trash {
+            return;
+        }
+        let here = self.place_title(&self.place);
+        let (home, any_kind, any_date) = (tr!("Home"), tr!("Any Kind"), tr!("Any Date"));
+        let kinds = [any_kind.into_owned(), tr!("Folders").into_owned(), tr!("Images").into_owned(), tr!("Documents").into_owned(), tr!("Videos").into_owned(), tr!("Audio").into_owned(), tr!("Archives").into_owned()];
+        let dates = [any_date.into_owned(), tr!("Today").into_owned(), tr!("Previous 7 Days").into_owned(), tr!("Previous 30 Days").into_owned(), tr!("This Year").into_owned()];
+        let mut save = false;
+        let busy = self.search_rx.is_some();
+        let r = ui.region();
+        let y = r.1 + r.3 - ui.remaining_height();
+        ui.at(r.0 + 12.0, y + 4.0, (r.2 - 40.0).max(100.0), |ui| ui.row(|ui| {
+            let mut scope = self.search_scope;
+            ui.segmented(&[&here, &home], &mut scope, Some(260.0));
+            if scope != self.search_scope {
+                self.search_scope = scope;
+                self.selection.clear();
+            }
+            ui.sized(150.0, |ui| {
+                ui.dropdown("", &kinds, &mut self.search_kind);
+            });
+            ui.sized(150.0, |ui| {
+                ui.dropdown("", &dates, &mut self.search_date);
+            });
+            if busy {
+                ui.note(&tr!("Searching…"));
+            }
+            ui.push_right(90.0);
+            ui.sized(90.0, |ui| save = ui.button(&tr!("Save")).clicked());
+        }));
+        ui.space(44.0);
+        if save {
+            let dir = match &self.place {
+                Place::Dir(d) => d.clone(),
+                _ => places::home_dir(),
+            };
+            let search = SavedSearch { name: self.search.trim().to_string(), query: self.search.trim().to_string(), scope: self.search_scope, dir, kind: self.search_kind, date: self.search_date };
+            self.saved_searches.retain(|s| s.name != search.name);
+            self.saved_searches.push(search);
+            store_saved_searches(&self.saved_searches);
+            tracing::info!("busca salva: {}", self.search.trim());
+        }
     }
 
     fn open(&mut self, entry: &Entry) {
@@ -1131,6 +1461,14 @@ impl Files {
         match action {
             "refresh" => self.reload(),
             "new-folder" => self.new_folder(),
+            "new-tab" => self.new_tab(self.place.clone()),
+            "slideshow" => self.want_slideshow = true,
+            "new-window" => self.new_window(),
+            "close-tab" => {
+                if !self.close_tab(self.tab) {
+                    self.close_window = true;
+                }
+            }
             "new-file" => self.new_file(),
             "open" => {
                 if let Some(entry) = entry {
@@ -1143,7 +1481,9 @@ impl Files {
                 }
             }
             "rename" => {
-                if let Some(path) = primary {
+                if self.selection.len() > 1 {
+                    self.start_batch_rename();
+                } else if let Some(path) = primary {
                     self.start_rename(path);
                 }
             }
@@ -1173,6 +1513,47 @@ impl Files {
             "view-icons" => self.set_mode(0),
             "view-list" => self.set_mode(1),
             "view-columns" => self.set_mode(2),
+            "view-gallery" => self.set_mode(3),
+            a if a.starts_with("group-") => {
+                self.group = a[6..].parse().unwrap_or(0).min(4);
+                tracing::info!("agrupar por: {}", self.group);
+                self.sort_entries();
+                self.save_view();
+            }
+            a if a.starts_with("sort-") => {
+                let column = a[5..].parse().unwrap_or(0).min(3);
+                // Data e tamanho: do maior para o menor, como no Finder.
+                self.sort = (column, !matches!(column, 1 | 2));
+                self.sort_entries();
+                self.save_view();
+            }
+            a if a.starts_with("text-size-") => {
+                self.text_size = a[10..].parse().unwrap_or(1).min(3);
+                let value = (self.text_size != 1).then_some(mide::settings_file::Value::Int(self.text_size as i64));
+                if let Err(err) = mide::settings_file::set("files", "text_size", value) {
+                    tracing::warn!("tamanho do texto não gravado: {err}");
+                }
+            }
+            a if a.starts_with("toolbar-") => {
+                let key = a[8..].to_string();
+                if let Some(i) = self.toolbar_hidden.iter().position(|h| *h == key) {
+                    self.toolbar_hidden.remove(i);
+                } else {
+                    self.toolbar_hidden.push(key);
+                }
+                let joined = self.toolbar_hidden.join(",");
+                let value = (!joined.is_empty()).then_some(mide::settings_file::Value::Text(joined));
+                if let Err(err) = mide::settings_file::set("files", "toolbar_hidden", value) {
+                    tracing::warn!("barra de ferramentas não gravada: {err}");
+                }
+            }
+            "extensions" => {
+                self.extensions = !self.extensions;
+                let value = (!self.extensions).then_some(mide::settings_file::Value::Bool(false));
+                if let Err(err) = mide::settings_file::set("files", "extensions", value) {
+                    tracing::warn!("opção de extensões não gravada: {err}");
+                }
+            }
             "preview" => self.preview_pane = !self.preview_pane,
             "hidden" => {
                 self.hidden = !self.hidden;
@@ -1467,6 +1848,26 @@ impl Files {
         let (new, hidden, find, rename) = (input.shortcut("n"), input.shortcut("h"), input.shortcut("f"), input.shortcut("r"));
         let (copy, cut, paste, dup, select_all) = (input.shortcut("c"), input.shortcut("x"), input.shortcut("v"), input.shortcut("d"), input.shortcut("a"));
         let info = input.shortcut("i");
+        // Abas: Ctrl+T abre, Ctrl+W fecha (com uma só, fecha a janela), Ctrl+Tab e
+        // Ctrl+Shift+Tab passam de uma para outra (como no Finder).
+        if input.shortcut("t") {
+            self.new_tab(self.place.clone());
+        }
+        // Ctrl+Alt+Y: apresentação de slides (como ⌥⌘Y no Finder).
+        if input.shortcut_alt("y") {
+            self.want_slideshow = true;
+        }
+        // Com uma aba só, fecha a janela (no próximo `view`: o `input` ainda está em uso).
+        if input.shortcut("w") && !self.close_tab(self.tab) {
+            self.close_window = true;
+        }
+        if let Some((_, _, shift)) = input.key_events().into_iter().find(|(k, ctrl, _)| *k == Key::Tab && *ctrl)
+            && self.tabs.len() > 1
+        {
+            let n = self.tabs.len();
+            let next = if shift { (self.tab + n - 1) % n } else { (self.tab + 1) % n };
+            self.switch_tab(next);
+        }
         // Ctrl+Z desfaz; Ctrl+Shift+G vai para uma pasta digitada (como no Finder).
         let undo = input.shortcut_shift("z") == Some(false);
         let goto = input.shortcut_shift("g") == Some(true);
@@ -1567,7 +1968,11 @@ impl Files {
             }
         }
         // Enter renomeia o item escolhido (como no Finder); abrir é ⌘O/⌘↓.
-        if enter && self.place != Place::Trash {
+        // Enter com vários escolhidos: "Renomear N itens" (como no Finder).
+        if enter && self.place != Place::Trash && self.selection.len() > 1 {
+            self.start_batch_rename();
+            ui.request_repaint();
+        } else if enter && self.place != Place::Trash {
             if let Some(entry) = &chosen {
                 self.inline = Some((entry.path.clone(), entry.name.clone(), true));
                 ui.request_repaint();
@@ -1595,7 +2000,10 @@ impl Files {
                 ui.request_repaint();
             }
         }
-        if rename && self.place != Place::Trash {
+        if rename && self.place != Place::Trash && self.selection.len() > 1 {
+            self.start_batch_rename();
+            ui.request_repaint();
+        } else if rename && self.place != Place::Trash {
             if let Some(entry) = chosen {
                 self.start_rename(entry.path);
                 ui.request_repaint();
@@ -1649,6 +2057,8 @@ impl Files {
         let preview_on = self.preview_pane;
         let mut empty_trash = false;
         let mut search = std::mem::take(&mut self.search);
+        let shown_tool = |key: &str| !self.toolbar_hidden.iter().any(|h| h == key);
+        let (show_views, show_preview, show_new, show_search) = (shown_tool("views"), shown_tool("preview"), shown_tool("new-folder"), shown_tool("search"));
         ui.toolbar(|ui| {
             // Tahoe: ‹ › numa cápsula, título, visualizações e ações em grupos, busca.
             match ui.tool_group(&[Tool::new("go-previous-symbolic", &tr!("Back")).enabled(can_back), Tool::new("go-next-symbolic", &tr!("Forward")).enabled(can_forward)]) {
@@ -1658,7 +2068,14 @@ impl Files {
             }
             let spacing = ui.theme().spacing;
             // Larguras à direita: grupos de 40 por botão (+4) e a busca.
-            let right = if in_trash { 44.0 + spacing + 110.0 } else { 124.0 + spacing + 84.0 + spacing + 200.0 };
+            let right = if in_trash {
+                44.0 + spacing + 110.0
+            } else {
+                // Só os grupos à mostra (Visualizar → Barra de ferramentas).
+                (if show_views { 164.0 + spacing } else { 0.0 })
+                    + (if show_preview || show_new { 4.0 + 40.0 * (show_preview as u8 + show_new as u8) as f32 + spacing } else { 0.0 })
+                    + if show_search { 200.0 } else { 0.0 }
+            };
             // O título encolhe (com reticências); os grupos ficam presos à direita.
             let title_room = (ui.row_remaining() - right - spacing * 2.0 - 8.0).max(40.0);
             ui.toolbar_title(&title, title_room);
@@ -1667,17 +2084,37 @@ impl Files {
                 preview = ui.tool_group(&[Tool::new("view-dual-symbolic", &tr!("Show Preview")).on(preview_on)]).is_some();
                 ui.sized(110.0, |ui| empty_trash = has_items && ui.button(&tr!("Empty")).clicked());
             } else {
-                let (as_icons, as_list, as_columns) = (tr!("as Icons"), tr!("as List"), tr!("as Columns"));
-                let views = [Tool::new("view-grid-symbolic", &as_icons).on(current == 0), Tool::new("view-list-symbolic", &as_list).on(current == 1), Tool::new("view-column-symbolic", &as_columns).on(current == 2)];
-                mode = ui.tool_group(&views);
-                match ui.tool_group(&[Tool::new("view-dual-symbolic", &tr!("Show Preview")).on(preview_on), Tool::new("folder-new-symbolic", &tr!("New Folder"))]) {
-                    Some(0) => preview = true,
-                    Some(1) => new_folder = true,
-                    _ => {}
+                let (as_icons, as_list, as_columns, as_gallery) = (tr!("as Icons"), tr!("as List"), tr!("as Columns"), tr!("as Gallery"));
+                let views = [
+                    Tool::new("view-grid-symbolic", &as_icons).on(current == 0),
+                    Tool::new("view-list-symbolic", &as_list).on(current == 1),
+                    Tool::new("view-column-symbolic", &as_columns).on(current == 2),
+                    Tool::new("image-x-generic-symbolic", &as_gallery).on(current == 3),
+                ];
+                if show_views {
+                    mode = ui.tool_group(&views);
                 }
-                ui.sized(200.0, |ui| {
-                    ui.search_field(&mut search, &tr!("Search"));
-                });
+                let (preview_t, new_t) = (tr!("Show Preview"), tr!("New Folder"));
+                let mut tools = Vec::new();
+                if show_preview {
+                    tools.push(("preview", Tool::new("view-dual-symbolic", &preview_t).on(preview_on)));
+                }
+                if show_new {
+                    tools.push(("new", Tool::new("folder-new-symbolic", &new_t)));
+                }
+                if !tools.is_empty() {
+                    let group: Vec<Tool> = tools.iter().map(|(_, t)| t.clone()).collect();
+                    match ui.tool_group(&group).map(|i| tools[i].0) {
+                        Some("preview") => preview = true,
+                        Some("new") => new_folder = true,
+                        _ => {}
+                    }
+                }
+                if show_search {
+                    ui.sized(200.0, |ui| {
+                        ui.search_field(&mut search, &tr!("Search"));
+                    });
+                }
             }
         });
         if search != self.search {
@@ -1710,8 +2147,10 @@ impl Files {
 
     /// Visualização atual: 0 ícones, 1 lista, 2 colunas (a Lixeira é sempre lista).
     fn mode(&self) -> usize {
-        if self.place == Place::Trash || (self.list_view && !self.column_view) {
+        if self.place == Place::Trash || (self.list_view && !self.column_view && !self.gallery_view) {
             1
+        } else if self.gallery_view {
+            3
         } else if self.column_view {
             2
         } else {
@@ -1728,7 +2167,8 @@ impl Files {
         }
         self.list_view = mode == 1;
         self.column_view = mode == 2;
-        tracing::info!("visualização: {}", ["ícones", "lista", "colunas"][mode.min(2)]);
+        self.gallery_view = mode == 3;
+        tracing::info!("visualização: {}", ["ícones", "lista", "colunas", "galeria"][mode.min(3)]);
         self.save_view();
         // O item escolhido continua à vista na outra visualização.
         self.reveal = self.primary().cloned();
@@ -1889,6 +2329,130 @@ impl Files {
         }
     }
 
+    /// Abre o "Renomear N itens" com a seleção (na ordem da pasta).
+    fn start_batch_rename(&mut self) {
+        let mut paths: Vec<PathBuf> = self.entries.iter().filter(|e| self.selection.contains(&e.path)).map(|e| e.path.clone()).collect();
+        if paths.len() < self.selection.len() {
+            paths = self.selection.clone();
+        }
+        self.batch = Some(BatchRename {
+            paths,
+            mode: 0,
+            find: String::new(),
+            replace: String::new(),
+            text: String::new(),
+            after: true,
+            base: String::new(),
+            start: "1".into(),
+            error: None,
+        });
+        self.focus_rename = true;
+    }
+
+    /// Faz o renomear em lote: confere antes (nome vazio, com barra, repetido ou de um
+    /// item que já existe) e renomeia em duas passadas (por nomes temporários), para
+    /// trocar nomes entre os próprios itens sem um apagar o outro.
+    fn apply_batch(&mut self) -> Result<(), String> {
+        let Some(b) = self.batch.as_ref() else {
+            return Ok(());
+        };
+        let names: Vec<String> = b.paths.iter().map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).collect();
+        let new = batch_names(&names, b);
+        let pairs: Vec<(PathBuf, PathBuf)> = b.paths.iter().zip(&new).map(|(p, n)| (p.clone(), p.with_file_name(n))).filter(|(a, z)| a != z).collect();
+        for (_, to) in &pairs {
+            let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if name.trim().is_empty() || name.contains('/') {
+                return Err(tr!("Invalid name: “{name}”.", name = name));
+            }
+            if pairs.iter().filter(|(_, t)| t == to).count() > 1 {
+                return Err(tr!("Two items would get the name “{name}”.", name = name));
+            }
+            if to.exists() && !b.paths.contains(to) {
+                return Err(tr!("“{name}” already exists.", name = name));
+            }
+        }
+        let tmp: Vec<PathBuf> = pairs.iter().enumerate().map(|(i, (from, _))| from.with_file_name(format!(".mide-rename-{}-{i}", std::process::id()))).collect();
+        for ((from, _), t) in pairs.iter().zip(&tmp) {
+            std::fs::rename(from, t).map_err(|e| tr!("That didn’t work: {err}", err = e))?;
+        }
+        for ((_, to), t) in pairs.iter().zip(&tmp) {
+            std::fs::rename(t, to).map_err(|e| tr!("That didn’t work: {err}", err = e))?;
+        }
+        tracing::info!("renomeados {} itens", pairs.len());
+        if !pairs.is_empty() {
+            self.remember(Undo::Move(pairs.clone()));
+        }
+        self.selection = pairs.into_iter().map(|(_, to)| to).collect();
+        Ok(())
+    }
+
+    /// Diálogo "Renomear N itens", como o do Finder, com o exemplo do primeiro nome.
+    fn batch_view(&mut self, ui: &mut Ui) {
+        let Some(b) = self.batch.as_mut() else {
+            return;
+        };
+        let focus = std::mem::take(&mut self.focus_rename);
+        let mut done = false;
+        let mut cancel = ui.input().key(Key::Escape);
+        let title = tr!("Rename {n} Items", n = b.paths.len());
+        let first = b.paths.first().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        ui.modal(440.0, |ui| {
+            ui.strong(&title);
+            let (replace_t, add_t, format_t) = (tr!("Replace Text"), tr!("Add Text"), tr!("Format"));
+            if ui.segmented(&[&replace_t, &add_t, &format_t], &mut b.mode, None).clicked() {
+                b.error = None;
+            }
+            if focus {
+                ui.focus_next_input();
+            }
+            match b.mode {
+                0 => {
+                    done |= ui.text_input(&mut b.find, &tr!("Find")).submitted();
+                    done |= ui.text_input(&mut b.replace, &tr!("Replace with")).submitted();
+                }
+                1 => {
+                    done |= ui.text_input(&mut b.text, &tr!("Text")).submitted();
+                    ui.checkbox(&tr!("After the name"), &mut b.after);
+                }
+                _ => {
+                    done |= ui.text_input(&mut b.base, &tr!("Name")).submitted();
+                    done |= ui.text_input(&mut b.start, &tr!("Start numbers at")).submitted();
+                }
+            }
+            let example = batch_names(std::slice::from_ref(&first), b).pop().unwrap_or_default();
+            ui.note(&tr!("Example: {name}", name = example));
+            if let Some(err) = &b.error {
+                ui.note(err);
+            }
+            ui.row(|ui| {
+                ui.push_right(2.0 * 110.0 + 8.0);
+                ui.sized(110.0, |ui| cancel |= ui.button(&tr!("Cancel")).clicked());
+                ui.sized(110.0, |ui| done |= ui.primary_button(&tr!("Rename")).clicked());
+            });
+        });
+        // O Enter que abriu o diálogo não o confirma no mesmo quadro.
+        if focus {
+            done = false;
+        }
+        if cancel {
+            self.batch = None;
+            ui.request_repaint();
+        } else if done {
+            match self.apply_batch() {
+                Ok(()) => {
+                    self.batch = None;
+                    self.reload();
+                }
+                Err(err) => {
+                    if let Some(b) = self.batch.as_mut() {
+                        b.error = Some(err);
+                    }
+                }
+            }
+            ui.request_repaint();
+        }
+    }
+
     fn dialog_view(&mut self, ui: &mut Ui) {
         let Some(dialog) = self.dialog.as_mut() else {
             return;
@@ -1983,7 +2547,29 @@ impl Files {
                 Err(_) => self.apps_rx = None,
             }
         }
-        self.toolbar(ui);
+        // A barra de ferramentas e a dos filtros ficam no tamanho normal (o "Tamanho do
+        // texto" vale para os itens, como no Finder).
+        let delta = [-1.5f32, 0.0, 2.0, 4.0][self.text_size.min(3)];
+        ui.with_theme(|t| {
+            t.font -= delta;
+            t.font_small -= delta;
+        }, |ui| {
+            self.toolbar(ui);
+            self.tick_search(ui);
+            self.search_bar(ui);
+        });
+        // Abas (só com mais de uma, como no Finder): trocar, fechar e + para outra.
+        if self.tabs.len() > 1 {
+            let titles: Vec<String> = self.tabs.iter().enumerate().map(|(i, t)| if i == self.tab { self.title() } else { self.place_title(&t.place) }).collect();
+            match ui.tab_bar(&titles, self.tab) {
+                mide::kit::TabAction::Select(i) => self.switch_tab(i),
+                mide::kit::TabAction::Close(i) => {
+                    self.close_tab(i);
+                }
+                mide::kit::TabAction::New => self.new_tab(self.place.clone()),
+                mide::kit::TabAction::None => {}
+            }
+        }
         let mode = self.mode();
         // Zoom dos ícones: Ctrl+roda (como a pinça do trackpad no Finder).
         if mode == 0 && ui.input().ctrl {
@@ -2024,7 +2610,8 @@ impl Files {
         } else {
             shown.clone()
         };
-        self.keys(ui, &key_list, columns, mode != 0);
+        // Galeria: uma fileira só (← e → andam pela tira).
+        self.keys(ui, &key_list, if mode == 3 { shown.len().max(1) } else { columns }, mode != 0 && mode != 3);
         if mode == 2 && !ui.typing() && self.dialog.is_none() {
             self.column_keys(ui, &col_dirs);
         }
@@ -2039,7 +2626,18 @@ impl Files {
                 labels.insert(entry.path.clone(), label);
             }
         }
-        let label_of = |entry: &Entry| labels.get(&entry.path).cloned().unwrap_or_else(|| (entry.name.clone(), entry.icon_name().to_string()));
+        // Sem "Mostrar as extensões": o nome sem a extensão (como o Finder escondendo).
+        let extensions = self.extensions;
+        let label_of = |entry: &Entry| {
+            labels.get(&entry.path).cloned().unwrap_or_else(|| {
+                let name = if extensions || entry.is_dir || entry.name.starts_with('.') {
+                    entry.name.clone()
+                } else {
+                    entry.path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| entry.name.clone())
+                };
+                (name, entry.icon_name().to_string())
+            })
+        };
         let mut sizes: HashMap<PathBuf, String> = HashMap::new();
         if in_list {
             for (_, entry) in &rows {
@@ -2064,6 +2662,8 @@ impl Files {
         let mut action: Option<(Action, Entry)> = None;
         let mut empty_action = None;
         let mut wanted: Vec<PathBuf> = Vec::new();
+        // Galeria: a miniatura grande do escolhido (pedida no tamanho dela).
+        let mut wanted_big: Option<(PathBuf, u32)> = None;
         let mut rects: Vec<(PathBuf, (f32, f32, f32, f32))> = Vec::new();
         // Etiquetas dos itens que podem aparecer (lidas uma vez e guardadas).
         let mut visible: Vec<&Entry> = shown.iter().collect();
@@ -2288,6 +2888,99 @@ impl Files {
                     }
                 });
                 ui.space(col_h);
+            } else if mode == 3 {
+                // Galeria (como no Finder): o item escolhido grande, com o nome e as
+                // informações embaixo, e a tira de miniaturas para escolher.
+                let r = ui.region();
+                let g_top = r.1 + r.3 - ui.remaining_height();
+                let g_h = (r.1 + r.3 - g_top - 4.0).max(160.0);
+                let strip_h = 92.0;
+                let big_h = (g_h - strip_h - 64.0).max(80.0);
+                let chosen = self.primary().and_then(|p| shown.iter().find(|e| &e.path == p)).or_else(|| shown.first()).cloned();
+                let k = mide::ui::draw::scale();
+                if let Some(entry) = &chosen {
+                    let big = ((big_h.min(r.2 - 40.0)).max(64.0) / 32.0).round() as u32 * 32;
+                    let pix = if Self::wants_thumb(entry) { self.thumbs.get(&(entry.path.clone(), big)).cloned() } else { None };
+                    if Self::wants_thumb(entry) && pix.is_none() {
+                        wanted_big = Some((entry.path.clone(), big));
+                    }
+                    let (name, icon) = label_of(entry);
+                    let area = (r.0, g_top, r.2, big_h);
+                    match pix.flatten() {
+                        Some(pix) => {
+                            // A imagem inteira cabendo na área, centrada.
+                            let (pw, ph) = (pix.width() as f32 / k, pix.height() as f32 / k);
+                            let fit = (area.2 / pw).min(area.3 / ph).min(1.0);
+                            let (w, h) = (pw * fit, ph * fit);
+                            let (x, y) = (area.0 + (area.2 - w) / 2.0, area.1 + (area.3 - h) / 2.0);
+                            ui.paint(|canvas, _| {
+                                let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+                                let tf = tiny_skia::Transform::from_scale(fit, fit).post_translate(x * k, y * k);
+                                canvas.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, None);
+                            });
+                        }
+                        None => {
+                            let side = big_h.min(160.0);
+                            ui.at(area.0 + (area.2 - side - 44.0) / 2.0, area.1 + (area.3 - side) / 2.0, side + 44.0, |ui| {
+                                ui.tile(Tile::Icon(&icon), "", false, side as u32);
+                            });
+                        }
+                    }
+                    // Nome e informações (tipo, tamanho, data) embaixo da imagem.
+                    let info = format!("{} — {} — {}", files::kind_text(entry), if entry.is_dir { "—".to_string() } else { files::size_text(entry.size) }, files::date_text(entry.modified, now));
+                    ui.at(r.0, g_top + big_h + 4.0, r.2, |ui| {
+                        ui.centered_title(&name);
+                        ui.centered_note(&info);
+                    });
+                }
+                // Tira de miniaturas: um quadro por item, o escolhido destacado.
+                let thumb_side = 64.0;
+                let strip_y = g_top + g_h - strip_h + 8.0;
+                let step = thumb_side + 10.0;
+                let chosen_i = chosen.as_ref().and_then(|c| shown.iter().position(|e| e.path == c.path)).unwrap_or(0);
+                // A tira rola para o escolhido ficar no meio.
+                let offset = (chosen_i as f32 * step - (r.2 - thumb_side) / 2.0).clamp(0.0, (shown.len() as f32 * step - r.2).max(0.0));
+                let accent = ui.theme().accent;
+                for (i, entry) in shown.iter().enumerate() {
+                    let x = r.0 + i as f32 * step - offset;
+                    if x + thumb_side < r.0 || x > r.0 + r.2 {
+                        continue;
+                    }
+                    let rect = (x, strip_y, thumb_side, thumb_side);
+                    let resp = ui.background(rect);
+                    let wants = Self::wants_thumb(entry);
+                    let pix = if wants { self.thumbs.get(&(entry.path.clone(), size)).cloned().flatten() } else { None };
+                    if wants && !self.thumbs.contains_key(&(entry.path.clone(), size)) {
+                        wanted.push(entry.path.clone());
+                    }
+                    let selected = chosen.as_ref().is_some_and(|c| c.path == entry.path);
+                    let (_, icon) = label_of(entry);
+                    match pix {
+                        Some(pix) => ui.paint(move |canvas, _| {
+                            let (pw, ph) = (pix.width() as f32, pix.height() as f32);
+                            let fit = (thumb_side * k / pw).min(thumb_side * k / ph);
+                            let (w, h) = (pw * fit, ph * fit);
+                            let tf = tiny_skia::Transform::from_scale(fit, fit).post_translate(rect.0 * k + (thumb_side * k - w) / 2.0, rect.1 * k + (thumb_side * k - h) / 2.0);
+                            canvas.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint::default(), tf, None);
+                        }),
+                        None => {
+                            ui.at(rect.0 - 22.0, rect.1, thumb_side + 44.0, |ui| {
+                                ui.tile(Tile::Icon(&icon), "", false, (thumb_side - 8.0) as u32);
+                            });
+                        }
+                    }
+                    if selected {
+                        ui.paint(move |canvas, _| {
+                            if let Some(path) = mide::ui::draw::rounded_rect(rect.0 - 3.0, rect.1 - 3.0, rect.2 + 6.0, rect.3 + 6.0, 8.0) {
+                                let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+                                paint.set_color(tiny_skia::Color::from_rgba8(accent[0], accent[1], accent[2], 255));
+                                canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 3.0, ..Default::default() }, mide::ui::draw::tf(), None);
+                            }
+                        });
+                    }
+                    item(ui, entry, resp);
+                }
+                ui.space(g_h);
             } else if in_list {
                 // Lista no estilo do Finder: cabeçalho que ordena e linhas alternadas,
                 // com a setinha das pastas.
@@ -2322,6 +3015,7 @@ impl Files {
                     expand_done = *done;
                 }
                 let mut order = 0usize;
+                let mut last_group: Option<String> = None;
                 for (i, (depth, entry)) in rows.iter().enumerate() {
                     if let Some((folder, _, shown_rows, _)) = &accordion {
                         if entry.path != *folder && entry.path.starts_with(folder) {
@@ -2333,6 +3027,14 @@ impl Files {
                                 }
                                 continue;
                             }
+                        }
+                    }
+                    // Agrupar por: título do grupo quando ele muda (só no nível de cima).
+                    if self.group > 0 && *depth == 0 {
+                        let title = group_of(self.group, entry, now).1;
+                        if last_group.as_ref() != Some(&title) {
+                            ui.heading(&title);
+                            last_group = Some(title);
                         }
                     }
                     let selected = selection.contains(&entry.path);
@@ -2378,8 +3080,22 @@ impl Files {
                 // Vídeo tocando no ícone: o quadro atual no lugar da miniatura.
                 let video_now = self.inline_video.as_ref().map(|(path, player, pix)| (path.clone(), pix.clone(), player.playing()));
                 let mut video_click: Option<PathBuf> = None;
+                // Agrupar por: cada grupo com o título em cima e a grade dele.
+                let now_group = std::time::SystemTime::now();
+                let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
+                for entry in &shown {
+                    let title = if self.group > 0 { group_of(self.group, entry, now_group).1 } else { String::new() };
+                    match groups.last_mut() {
+                        Some((t, list)) if *t == title => list.push(entry.clone()),
+                        _ => groups.push((title, vec![entry.clone()])),
+                    }
+                }
+                for (title, group) in &groups {
+                if !title.is_empty() {
+                    ui.heading(title);
+                }
                 ui.wrap(|ui| {
-                    for entry in &shown {
+                    for entry in group {
                         let selected = selection.contains(&entry.path);
                         let (name, icon) = label_of(entry);
                         let wants = Self::wants_thumb(entry);
@@ -2422,6 +3138,7 @@ impl Files {
                         }
                     }
                 });
+                }
                 if let Some(path) = video_click {
                     self.toggle_inline_video(&path, size);
                 }
@@ -2516,6 +3233,9 @@ impl Files {
         });
         for path in wanted {
             self.thumb(&path, size);
+        }
+        if let Some((path, big)) = wanted_big {
+            self.thumb(&path, big);
         }
         if !self.waiting.is_empty() {
             ui.request_tick();
@@ -2788,6 +3508,7 @@ impl Files {
                         }
                     }
                 }
+                Action::OpenNewTab => self.new_tab(Place::Dir(entry.path.clone())),
                 Action::OpenNewWindow => {
                     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-files"));
                     let _ = std::process::Command::new(exe).arg(&entry.path).spawn();
@@ -3131,6 +3852,88 @@ impl Files {
         }
     }
 
+    /// Começa a apresentação de slides: as imagens escolhidas (ou todas as da pasta, a
+    /// partir da escolhida), em tela cheia, trocando a cada 3 s, como no Finder.
+    fn start_slideshow(&mut self, ui: &mut Ui) {
+        let images: Vec<PathBuf> = self.shown().into_iter().filter(|e| e.is_image()).map(|e| e.path).collect();
+        let chosen: Vec<PathBuf> = images.iter().filter(|p| self.selection.contains(p)).cloned().collect();
+        let (list, start) = if chosen.len() > 1 {
+            (chosen, 0)
+        } else {
+            let start = self.primary().and_then(|p| images.iter().position(|i| i == p)).unwrap_or(0);
+            (images, start)
+        };
+        if list.is_empty() {
+            self.message = Some(tr!("No images to show.").into_owned());
+            return;
+        }
+        tracing::info!("apresentação de slides: {} imagem(ns)", list.len());
+        self.slideshow = Some((list, start, std::time::Instant::now(), false));
+        ui.set_fullscreen(true);
+    }
+
+    /// A apresentação por cima de tudo: a imagem cabendo na tela, sobre preto, com o
+    /// nome e "n de N" embaixo. ← → trocam, Espaço pausa, Esc sai.
+    fn slideshow_view(&mut self, ui: &mut Ui) {
+        let Some((list, mut i, mut since, mut paused)) = self.slideshow.clone() else {
+            return;
+        };
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(3);
+        let input = ui.input().clone();
+        let mut exit = input.key(Key::Escape);
+        if input.key(Key::Right) || (!paused && since.elapsed() >= EVERY) {
+            i = (i + 1) % list.len();
+            since = std::time::Instant::now();
+        }
+        if input.key(Key::Left) {
+            i = (i + list.len() - 1) % list.len();
+            since = std::time::Instant::now();
+        }
+        if input.text.contains(' ') {
+            paused = !paused;
+            since = std::time::Instant::now();
+        }
+        let (ww, wh) = ui.window_size();
+        let side = (ww.max(wh) as u32).clamp(256, 1600);
+        let path = list[i].clone();
+        let pix = self.thumb_clone(&path, side);
+        // A próxima já começa a carregar, para a troca não piscar.
+        let _ = self.thumb(&list[(i + 1) % list.len()], side);
+        let k = mide::ui::draw::scale();
+        let caption = format!("{}  ·  {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), tr!("{n} of {total}", n = i + 1, total = list.len()));
+        ui.paint(move |canvas, _| {
+            canvas.fill(tiny_skia::Color::BLACK);
+            if let Some(pix) = &pix {
+                let (pw, ph) = (pix.width() as f32, pix.height() as f32);
+                let fit = ((ww * k) / pw).min((wh * k - 60.0 * k) / ph);
+                let (w, h) = (pw * fit, ph * fit);
+                let tf = tiny_skia::Transform::from_scale(fit, fit).post_translate((ww * k - w) / 2.0, (wh * k - 60.0 * k - h) / 2.0);
+                canvas.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() }, tf, None);
+            }
+        });
+        ui.paint_text(move |canvas, text, _| {
+            let tw = text.measure(&caption, 13.0, mide::ui::text::FontWeight::Regular);
+            text.draw(canvas, &caption, (ww - tw) / 2.0, wh - 40.0, 13.0, mide::ui::text::FontWeight::Regular, [220, 220, 228, 255]);
+        });
+        if input.pressed && !exit {
+            // Clique: próxima imagem.
+            i = (i + 1) % list.len();
+            since = std::time::Instant::now();
+        }
+        if exit || list.is_empty() {
+            self.slideshow = None;
+            ui.set_fullscreen(false);
+            exit = true;
+        }
+        if !exit {
+            self.slideshow = Some((list, i, since, paused));
+            ui.wake_after(if paused { std::time::Duration::from_secs(1) } else { EVERY.saturating_sub(since.elapsed()) + std::time::Duration::from_millis(10) });
+        }
+        if self.waiting.iter().any(|(p, _)| *p == path) {
+            ui.request_tick();
+        }
+    }
+
     fn thumb_clone(&mut self, path: &Path, size: u32) -> Option<Pixmap> {
         self.thumb(path, size).cloned()
     }
@@ -3142,6 +3945,162 @@ struct Dialog {
     suggestion: String,
     name: String,
     error: Option<String>,
+}
+
+/// Classe do item para o filtro "Tipo" da busca: 1 pasta, 2 imagem, 3 documento,
+/// 4 vídeo, 5 áudio, 6 compactado, 0 outro.
+fn kind_class(e: &Entry) -> usize {
+    if e.is_dir {
+        return 1;
+    }
+    let ext = e.path.extension().and_then(|x| x.to_str()).map(str::to_lowercase).unwrap_or_default();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "tif" | "tiff" | "heic" | "avif" => 2,
+        "pdf" | "txt" | "md" | "odt" | "doc" | "docx" | "rtf" | "ods" | "xls" | "xlsx" | "csv" | "odp" | "ppt" | "pptx" | "epub" => 3,
+        "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "wmv" | "ogv" => 4,
+        "mp3" | "ogg" | "flac" | "wav" | "m4a" | "opus" | "aac" => 5,
+        "zip" | "gz" | "tgz" | "xz" | "bz2" | "7z" | "rar" | "tar" | "zst" => 6,
+        _ => 0,
+    }
+}
+
+/// O item passa nos filtros da busca? `kind` (0 qualquer, senão a classe de
+/// `kind_class`) e `date` (0 qualquer, 1 hoje, 2 7 dias, 3 30 dias, 4 365 dias).
+fn passes_filters(e: &Entry, kind: usize, date: usize, now: std::time::SystemTime) -> bool {
+    if kind > 0 && kind_class(e) != kind {
+        return false;
+    }
+    let days = now.duration_since(e.modified).map(|d| d.as_secs() / 86_400).unwrap_or(0);
+    match date {
+        1 => days == 0,
+        2 => days < 7,
+        3 => days < 30,
+        4 => days < 365,
+        _ => true,
+    }
+}
+
+/// Busca na pasta pessoal (numa thread): nomes que contêm o texto, em todas as pastas
+/// de baixo, sem as ocultas (salvo `hidden`), até `LIMIT` resultados.
+fn search_tree(root: PathBuf, query: String, hidden: bool, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Vec<Entry> {
+    const LIMIT: usize = 2000;
+    let q = mide::apps::fold(query.trim());
+    let mut out = Vec::new();
+    let mut stack = vec![(root, 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) || out.len() >= LIMIT {
+            break;
+        }
+        let Ok(list) = files::list_dir(&dir, hidden) else {
+            continue;
+        };
+        for e in list {
+            if mide::apps::fold(&e.name).contains(&q) {
+                out.push(e.clone());
+            }
+            // Não entra em links (laços) nem fundo demais.
+            if e.is_dir && depth < 24 && !std::fs::symlink_metadata(&e.path).is_ok_and(|m| m.file_type().is_symlink()) {
+                stack.push((e.path, depth + 1));
+            }
+        }
+    }
+    out
+}
+
+/// Uma busca salva (aparece na barra lateral, como as do Finder).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SavedSearch {
+    name: String,
+    query: String,
+    /// 0 na pasta `dir`, 1 na pasta pessoal.
+    scope: usize,
+    dir: PathBuf,
+    kind: usize,
+    date: usize,
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct SavedSearches {
+    #[serde(default)]
+    search: Vec<SavedSearch>,
+}
+
+fn saved_searches_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+        .map(|d| d.join("mide/files-searches.toml"))
+}
+
+fn load_saved_searches() -> Vec<SavedSearch> {
+    saved_searches_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| toml::from_str::<SavedSearches>(&t).ok())
+        .map(|s| s.search)
+        .unwrap_or_default()
+}
+
+fn store_saved_searches(list: &[SavedSearch]) {
+    let Some(path) = saved_searches_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match toml::to_string(&SavedSearches { search: list.to_vec() }) {
+        Ok(text) => {
+            let _ = std::fs::write(path, text);
+        }
+        Err(err) => tracing::warn!("buscas salvas não gravadas: {err}"),
+    }
+}
+
+/// Renomear vários itens de uma vez (como no Finder): substituir um trecho, acrescentar
+/// texto antes ou depois do nome, ou formatar com um nome e um número.
+struct BatchRename {
+    paths: Vec<PathBuf>,
+    /// 0 substituir, 1 adicionar, 2 formatar.
+    mode: usize,
+    find: String,
+    replace: String,
+    text: String,
+    /// Adicionar depois do nome (senão, antes).
+    after: bool,
+    base: String,
+    /// Primeiro número do formatar.
+    start: String,
+    error: Option<String>,
+}
+
+/// Os nomes novos dos itens (`names`, com a extensão), pela regra do diálogo. A
+/// extensão fica (só o nome muda); "formatar" numera a partir de `start`, com zeros na
+/// frente para todos terem o mesmo número de algarismos.
+fn batch_names(names: &[String], b: &BatchRename) -> Vec<String> {
+    let split = |name: &str| -> (String, String) {
+        match name.rfind('.') {
+            Some(i) if i > 0 => (name[..i].to_string(), name[i..].to_string()),
+            _ => (name.to_string(), String::new()),
+        }
+    };
+    let start: u64 = b.start.trim().parse().unwrap_or(1);
+    let width = (start + names.len().saturating_sub(1) as u64).to_string().len();
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let (stem, ext) = split(name);
+            match b.mode {
+                0 if !b.find.is_empty() => format!("{}{ext}", stem.replace(&b.find, &b.replace)),
+                1 if b.after => format!("{stem}{}{ext}", b.text),
+                1 => format!("{}{stem}{ext}", b.text),
+                2 => {
+                    let base = if b.base.trim().is_empty() { stem.clone() } else { b.base.trim().to_string() };
+                    format!("{base} {:0width$}{ext}", start + i as u64)
+                }
+                _ => name.clone(),
+            }
+        })
+        .collect()
 }
 
 /// O que o diálogo faz; criar leva a pasta onde criar.
@@ -3209,6 +4168,7 @@ enum Action {
     OpenWithApp(String),
     /// Abrir a pasta numa janela nova do Arquivos.
     OpenNewWindow,
+    OpenNewTab,
     /// Novo documento de um tipo (`mide::templates`), na pasta aberta.
     NewKind(&'static str),
     /// Novo documento de um tipo dentro da pasta clicada.
@@ -3254,6 +4214,9 @@ fn finder_menu(
         chosen = Some(Action::Open);
     }
     if !multi && entry.is_dir {
+        if m.item(&tr!("Open in New Tab")) {
+            chosen = Some(Action::OpenNewTab);
+        }
         if m.item(&tr!("Open in New Window")) {
             chosen = Some(Action::OpenNewWindow);
         }
@@ -3384,15 +4347,20 @@ impl App for Files {
             MenuGroup {
                 title: tr!("File").into_owned(),
                 items: vec![
+                    MenuItem::action("new-window", &tr!("New Window")).shortcut("Ctrl+Alt+N"),
+                    MenuItem::action("new-tab", &tr!("New Tab")).shortcut("Ctrl+T"),
                     MenuItem::action("new-folder", &tr!("New Folder")).shortcut("Ctrl+N").enabled(!in_trash),
                     MenuItem::action("new-file", &tr!("New File")).enabled(!in_trash),
                     MenuItem::Separator,
                     MenuItem::action("open", &tr!("Open")).shortcut("Ctrl+O").enabled(one),
                     MenuItem::action("info", &tr!("Get Info")).shortcut("Ctrl+I").enabled(some),
-                    MenuItem::action("rename", &tr!("Rename")).enabled(one && !in_trash),
+                    MenuItem::action("slideshow", &tr!("Slideshow")).shortcut("Ctrl+Alt+Y"),
+                    MenuItem::action("rename", &if self.selection.len() > 1 { tr!("Rename {n} Items…", n = self.selection.len()) } else { tr!("Rename").into_owned() }).enabled(some && !in_trash),
                     MenuItem::action("duplicate", &tr!("Duplicate")).shortcut("Ctrl+D").enabled(one && !in_trash),
                     MenuItem::Separator,
                     MenuItem::action("trash", &tr!("Move to Trash")).enabled(some && !in_trash),
+                    MenuItem::Separator,
+                    MenuItem::action("close-tab", &if self.tabs.len() > 1 { tr!("Close Tab") } else { tr!("Close Window") }).shortcut("Ctrl+W"),
                 ],
             },
             MenuGroup {
@@ -3414,6 +4382,40 @@ impl App for Files {
                     MenuItem::action("view-icons", &tr!("as Icons")).checked(mode == 0),
                     MenuItem::action("view-list", &tr!("as List")).checked(mode == 1),
                     MenuItem::action("view-columns", &tr!("as Columns")).checked(mode == 2),
+                    MenuItem::action("view-gallery", &tr!("as Gallery")).checked(mode == 3),
+                    MenuItem::Separator,
+                    MenuItem::Submenu {
+                        label: tr!("Group By").into_owned(),
+                        items: [tr!("None"), tr!("Kind"), tr!("Date Modified"), tr!("Size"), tr!("Tags")]
+                            .iter()
+                            .enumerate()
+                            .map(|(i, name)| MenuItem::action(&format!("group-{i}"), name).checked(self.group == i))
+                            .collect(),
+                    },
+                    MenuItem::Submenu {
+                        label: tr!("Sort By").into_owned(),
+                        items: [tr!("Name"), tr!("Date Modified"), tr!("Size"), tr!("Kind")]
+                            .iter()
+                            .enumerate()
+                            .map(|(i, name)| MenuItem::action(&format!("sort-{i}"), name).checked(self.sort.0 == i))
+                            .collect(),
+                    },
+                    MenuItem::action("extensions", &tr!("Show Filename Extensions")).checked(self.extensions),
+                    MenuItem::Submenu {
+                        label: tr!("Text Size").into_owned(),
+                        items: [tr!("Small"), tr!("Medium"), tr!("Large"), tr!("Extra Large")]
+                            .iter()
+                            .enumerate()
+                            .map(|(i, name)| MenuItem::action(&format!("text-size-{i}"), name).checked(self.text_size == i))
+                            .collect(),
+                    },
+                    MenuItem::Submenu {
+                        label: tr!("Toolbar").into_owned(),
+                        items: [("views", tr!("View Buttons")), ("preview", tr!("Preview")), ("new-folder", tr!("New Folder")), ("search", tr!("Search"))]
+                            .iter()
+                            .map(|(key, name)| MenuItem::action(&format!("toolbar-{key}"), name).checked(!self.toolbar_hidden.iter().any(|h| h == key)))
+                            .collect(),
+                    },
                     MenuItem::Separator,
                     MenuItem::action("preview", &tr!("Show Preview")).checked(self.preview_pane),
                     MenuItem::action("hidden", &tr!("Show Hidden Files")).shortcut("Ctrl+H").checked(self.hidden),
@@ -3441,6 +4443,9 @@ impl App for Files {
 
     fn view(&mut self, ui: &mut Ui) {
         ui.set_title(&self.title());
+        if std::mem::take(&mut self.close_window) {
+            ui.close();
+        }
         self.tick_inline_video(ui);
         for action in ui.input().menu.clone() {
             self.menu_action(&action);
@@ -3471,6 +4476,15 @@ impl App for Files {
         for (name, path, icon) in &self.favorites {
             push(&mut items, name.clone(), icon, Some(Place::Dir(path.clone())), false);
         }
+        // Buscas salvas: a linha guarda o índice da busca (o lugar é a pasta dela).
+        let first_saved = items.len();
+        if !self.saved_searches.is_empty() {
+            push(&mut items, tr!("Saved Searches").into_owned(), "", None, false);
+            for search in &self.saved_searches {
+                push(&mut items, search.name.clone(), "edit-find-symbolic", None, false);
+            }
+        }
+        let saved_count = self.saved_searches.len();
         push(&mut items, tr!("Locations").into_owned(), "", None, false);
         push(&mut items, tr!("Computer").into_owned(), "drive-harddisk-symbolic", Some(Place::Dir(PathBuf::from("/"))), false);
         let first_drive = items.len();
@@ -3502,7 +4516,18 @@ impl App for Files {
             self.drives_read = None;
             ui.request_repaint();
         }
-        ui.at(area.0 + side_w, y0, (area.2 - side_w).max(1.0), |ui| self.content(ui));
+        // Tamanho do texto escolhido: só o conteúdo (a barra lateral fica como está).
+        let text_delta = [-1.5f32, 0.0, 2.0, 4.0][self.text_size.min(3)];
+        ui.at(area.0 + side_w, y0, (area.2 - side_w).max(1.0), |ui| {
+            if text_delta == 0.0 {
+                self.content(ui);
+            } else {
+                ui.with_theme(|t| {
+                    t.font += text_delta;
+                    t.font_small += text_delta;
+                }, |ui| self.content(ui));
+            }
+        });
         // Arrasto em andamento: a miniatura dos itens segue o ponteiro, por cima de tudo.
         if self.drag.is_none() {
             self.drag_pix = None;
@@ -3518,13 +4543,31 @@ impl App for Files {
         }
         // Diálogo por cima de tudo (a janela inteira escurece atrás).
         self.dialog_view(ui);
+        self.batch_view(ui);
         self.open_with_view(ui);
         self.info_view(ui);
         self.prompt_view(ui);
         self.quick_look_view(ui);
+        if std::mem::take(&mut self.want_slideshow) {
+            self.start_slideshow(ui);
+        }
+        self.slideshow_view(ui);
+        // Fechar pedido pelo teclado ou menu: o próximo quadro fecha a janela.
+        if self.close_window {
+            ui.request_repaint();
+        }
         if chosen != current && chosen < targets.len() {
             match targets[chosen].clone() {
                 Some(place) => self.go(place),
+                // Busca salva: vai à pasta dela e refaz a busca com os mesmos filtros.
+                None if saved_count > 0 && (first_saved + 1..first_saved + 1 + saved_count).contains(&chosen) => {
+                    let search = self.saved_searches[chosen - first_saved - 1].clone();
+                    self.go(Place::Dir(search.dir.clone()));
+                    self.search = search.query;
+                    self.search_scope = search.scope;
+                    self.search_kind = search.kind;
+                    self.search_date = search.date;
+                }
                 // Disco ainda desmontado: monta pelo UDisks e entra nele.
                 None if (first_drive..first_drive + self.drives.len()).contains(&chosen) => {
                     let device = self.drives[chosen - first_drive].device.clone();
@@ -3694,6 +4737,23 @@ fn fit_list_widths(widths: [f32; 3], width: f32) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn renomear_varios() {
+        let names: Vec<String> = ["foto 1.jpg", "foto 2.jpg", "notas"].iter().map(|s| s.to_string()).collect();
+        let mut b = BatchRename { paths: Vec::new(), mode: 0, find: "foto".into(), replace: "praia".into(), text: String::new(), after: true, base: String::new(), start: "1".into(), error: None };
+        assert_eq!(batch_names(&names, &b), ["praia 1.jpg", "praia 2.jpg", "notas"]);
+        b.mode = 1;
+        b.text = " (cópia)".into();
+        assert_eq!(batch_names(&names, &b)[0], "foto 1 (cópia).jpg");
+        b.after = false;
+        b.text = "2026 ".into();
+        assert_eq!(batch_names(&names, &b)[2], "2026 notas");
+        b.mode = 2;
+        b.base = "Férias".into();
+        b.start = "9".into();
+        assert_eq!(batch_names(&names, &b), ["Férias 09.jpg", "Férias 10.jpg", "Férias 11"]);
+    }
+
     #[test]
     fn colunas_largas_encolhem_para_caber() {
         let fitted = super::fit_list_widths([687.0, 165.0, 150.0], 640.0);

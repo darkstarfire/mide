@@ -662,3 +662,123 @@ msgstr "Não foi possível montar o disco."
 
 msgid "Eject"
 msgstr "Ejetar"
+
+msgid "Open in New Tab"
+msgstr "Abrir em nova aba"
+
+msgid "as Gallery"
+msgstr "como Galeria"
+
+msgid "Group By"
+msgstr "Agrupar por"
+
+msgid "Sort By"
+msgstr "Ordenar por"
+
+msgid "Show Filename Extensions"
+msgstr "Mostrar as extensões dos nomes"
+
+msgid "Yesterday"
+msgstr "Ontem"
+
+msgid "Previous 7 Days"
+msgstr "7 dias anteriores"
+
+msgid "Previous 30 Days"
+msgstr "30 dias anteriores"
+
+msgid "This Year"
+msgstr "Este ano"
+
+msgid "Earlier"
+msgstr "Antes"
+
+msgid "Small (under 1 MB)"
+msgstr "Pequenos (menos de 1 MB)"
+
+msgid "Medium (1 to 100 MB)"
+msgstr "Médios (de 1 a 100 MB)"
+
+msgid "Large (over 100 MB)"
+msgstr "Grandes (mais de 100 MB)"
+
+msgid "No Tags"
+msgstr "Sem etiqueta"
+
+msgid "Rename {n} Items"
+msgstr "Renomear {n} itens"
+
+msgid "Rename {n} Items…"
+msgstr "Renomear {n} itens…"
+
+msgid "Replace Text"
+msgstr "Substituir texto"
+
+msgid "Add Text"
+msgstr "Adicionar texto"
+
+msgid "After the name"
+msgstr "Depois do nome"
+
+msgid "Start numbers at"
+msgstr "Começar os números em"
+
+msgid "Example: {name}"
+msgstr "Exemplo: {name}"
+
+msgid "Invalid name: “{name}”."
+msgstr "Nome inválido: “{name}”."
+
+msgid "Two items would get the name “{name}”."
+msgstr "Dois itens ficariam com o nome “{name}”."
+
+msgid "“{name}” already exists."
+msgstr "“{name}” já existe."
+
+msgid "Saved Searches"
+msgstr "Buscas salvas"
+
+msgid "Any Kind"
+msgstr "Qualquer tipo"
+
+msgid "Any Date"
+msgstr "Qualquer data"
+
+msgid "Images"
+msgstr "Imagens"
+
+msgid "Archives"
+msgstr "Compactados"
+
+msgid "Searching…"
+msgstr "Buscando…"
+
+msgid "Slideshow"
+msgstr "Apresentação de slides"
+
+msgid "No images to show."
+msgstr "Não há imagens para mostrar."
+
+msgid "{n} of {total}"
+msgstr "{n} de {total}"
+
+msgid "Text Size"
+msgstr "Tamanho do texto"
+
+msgid "Extra Large"
+msgstr "Muito grande"
+
+msgid "Toolbar"
+msgstr "Barra de ferramentas"
+
+msgid "View Buttons"
+msgstr "Botões de visualização"
+
+msgid "Small"
+msgstr "Pequeno"
+
+msgid "Medium"
+msgstr "Médio"
+
+msgid "Large"
+msgstr "Grande"

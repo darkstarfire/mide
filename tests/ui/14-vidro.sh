@@ -56,7 +56,7 @@ check "Arquivos abre a pasta pedida (título = pasta)" 'janela "mide-arquivos-te
 check "duplo clique numa pasta entra nela" 'janela "Fotos"' "400 click 463 190; 406 click 463 190; 440 list" "$FILES '$FDIR'"
 check "Backspace volta para a pasta de cima" 'janela "mide-arquivos-teste"' "400 click 463 190; 406 click 463 190; 440 key backspace; 470 list" "$FILES '$FDIR'"
 check "voltar da barra de ferramentas" 'janela "mide-arquivos-teste"' "400 click 463 190; 406 click 463 190; 440 click 296 106; 470 list" "$FILES '$FDIR'"
-check "Lixeira na barra lateral" 'janela "Lixeira"' "400 click 103 435; 440 list" "$FILES '$FDIR'"
+check "Lixeira na barra lateral" 'janela "Lixeira"' "400 click 103 465; 440 list" "$FILES '$FDIR'"
 file_check "Delete manda o item selecionado para a Lixeira" '[ ! -e "$FDIR/relatorio.pdf" ] && [ -e "$TRASH/relatorio.pdf" ]' "400 click 581 310; 430 key delete; 470 list"
 file_check "menu do fundo → Nova pasta, já pedindo o nome" '[ -d "$FDIR/arquivados" ] && [ ! -e "$FDIR/Nova pasta" ]' "400 rclick 600 450; 430 click 650 311; 470 type arquivados; 490 key enter; 530 list"
 # Nova pasta e Novo arquivo abrem um diálogo (modal); só "Criar" cria.
@@ -66,25 +66,25 @@ file_check "Cancelar no diálogo não cria nada" '[ ! -e "$FDIR/Nova pasta" ]' "
 file_check "Criar sem mudar o nome: Nova pasta, depois Nova pasta (1)" '[ -d "$FDIR/Nova pasta" ] && [ -d "$FDIR/Nova pasta (1)" ]' "400 rclick 600 450; 430 click 650 311; 460 key enter; 500 rclick 600 450; 530 click 650 311; 560 key enter; 600 list"
 # Menu do Finder de um arquivo (não pasta): Abrir, Abrir com ›, Mover para a Lixeira
 # (y=159 na lista, com o menu subindo para caber), Obter informações...
-file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 569 102; 430 rclick 500 293; 460 click 580 159; 500 list"
-file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 520 246; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
+file_check "lista + menu do item → Mover para a Lixeira" '[ ! -e "$FDIR/notas.txt" ] && [ -e "$TRASH/notas.txt" ]' "400 click 529 102; 430 rclick 500 293; 460 click 580 159; 500 list"
+file_check "menu do item → Renomear" '[ -e "$FDIR/imagens" ] && [ ! -e "$FDIR/Fotos" ]' "400 rclick 463 190; 430 click 520 272; 470 key backspace; 471 key backspace; 472 key backspace; 473 key backspace; 474 key backspace; 480 type imagens; 490 key enter; 530 list"
 file_check "clique fora fecha o menu sem fazer nada" '[ -e "$FDIR/relatorio.pdf" ] && [ -e "$FDIR/notas.txt" ]' "400 rclick 581 310; 430 click 700 470; 460 click 630 281; 500 list"
 # Lista: setinha de "Fotos" em (303, 215) abre a pasta na própria lista; o item de
 # dentro aparece na linha seguinte (y=241).
 # Fechar a pasta na lista (sanfona, A20): depois de fechar, a linha y=241 volta a ser
 # Projetos (a de dentro de Fotos sumiu), e Delete leva Projetos.
-file_check "lista: setinha fecha a pasta (as linhas de dentro saem)" '[ -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/Projetos" ]' "400 click 569 102; 430 click 303 215; 480 click 303 215; 540 click 500 241; 560 key delete; 600 list"
-file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 569 102; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
+file_check "lista: setinha fecha a pasta (as linhas de dentro saem)" '[ -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/Projetos" ]' "400 click 529 102; 430 click 303 215; 480 click 303 215; 540 click 500 241; 560 key delete; 600 list"
+file_check "lista: setinha abre a pasta na lista (e o item de dentro vai para a Lixeira)" '[ ! -e "$FDIR/Fotos/ferias.jpg" ] && [ -e "$TRASH/ferias.jpg" ]' "400 click 529 102; 430 click 303 215; 460 click 500 241; 480 key delete; 520 list"
 # Fundo em (600, 450): o menu abre para cima (não cabe embaixo), com "Nova pasta" em
 # y=311 e o submenu "Novo arquivo ›" em y=337, que abre à esquerda: Markdown em
 # (430, 363). O documento novo vem com o nome (sem a extensão) escolhido.
 file_check "menu do fundo → Novo arquivo › Markdown com o nome digitado" '[ -f "$FDIR/leiame.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 600 450; 430 move 650 337; 450 click 430 363; 490 type leiame; 500 key enter; 540 list"
 # Menu de "Projetos" (pasta, em (581, 190)), que sobe para caber: "Comprimir" em
-# y=272, "Nova pasta aqui dentro" em y=524 e "Novo arquivo aqui dentro ›" em y=550
+# y=298, "Nova pasta aqui dentro" em y=550 e "Novo arquivo aqui dentro ›" em y=576 (desde a v0.10.79, com "Abrir em nova aba" no menu)
 # (o submenu abre à esquerda: Markdown em (450, 364)).
-file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 272; 560 list"
-file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 524; 470 type rascunhos; 490 key enter; 530 list"
-file_check "menu da pasta → Novo arquivo aqui dentro › Markdown" '[ -f "$FDIR/Projetos/Novo documento.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 581 190; 430 move 650 550; 450 click 450 364; 500 list"
+file_check "menu da pasta → Comprimir cria o .zip" '[ -f "$FDIR/Projetos.zip" ]' "400 rclick 581 190; 430 click 630 298; 560 list"
+file_check "menu da pasta → Nova pasta aqui dentro" '[ -d "$FDIR/Projetos/rascunhos" ] && [ ! -e "$FDIR/rascunhos" ]' "400 rclick 581 190; 430 click 630 550; 470 type rascunhos; 490 key enter; 530 list"
+file_check "menu da pasta → Novo arquivo aqui dentro › Markdown" '[ -f "$FDIR/Projetos/Novo documento.md" ] && [ ! -e "$FDIR/Novo documento.md" ]' "400 rclick 581 190; 430 move 650 576; 450 click 450 364; 500 list"
 # Barra lateral de vidro (acesso rápido): o compositor desfoca atrás da janela.
 check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:app:mide-files:[0-9]+#0\)' "400 list" "$FILES '$FDIR'"
 # Vidro do menu de contexto dentro da janela (mide-ui, frost): na lista, com
@@ -93,7 +93,7 @@ check "barra lateral do Arquivos sobre vidro" 'vidro: desfoque refeito \([^:]*:a
 # o borrão era tirado da imagem da lista, com outra origem).
 fixture
 FROST="$(mktemp -d)"
-SCENARIO_OUT="$FROST/scen" timeout 150 "$SCEN" "400 click 569 102; 430 click 500 189; 460 rclick 500 293; 520 list" 510 -- "$FILES '$FDIR'" >/dev/null 2>&1
+SCENARIO_OUT="$FROST/scen" timeout 150 "$SCEN" "400 click 529 102; 430 click 500 189; 460 rclick 500 293; 520 list" 510 -- "$FILES '$FDIR'" >/dev/null 2>&1
 if python3 -c "
 import sys
 from PIL import Image

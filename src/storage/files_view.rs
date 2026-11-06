@@ -43,6 +43,14 @@ pub struct View {
     /// Lado dos ícones da grade, em pontos (zoom: Ctrl+roda, Ctrl +/−).
     #[serde(default = "icon_default")]
     pub icon_size: u32,
+    /// Galeria (imagem grande e a tira de miniaturas, como no Finder); vale mais que
+    /// `list` e `columns`.
+    #[serde(default)]
+    pub gallery: bool,
+    /// Agrupar por (Visualizar → Agrupar por): 0 nada, 1 tipo, 2 data, 3 tamanho,
+    /// 4 etiqueta.
+    #[serde(default)]
+    pub group: usize,
 }
 
 fn yes() -> bool {
@@ -60,7 +68,7 @@ fn icon_default() -> u32 {
 
 impl Default for View {
     fn default() -> Self {
-        Self { list: false, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT }
+        Self { list: false, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT, gallery: false, group: 0 }
     }
 }
 
@@ -70,6 +78,9 @@ impl View {
             self.sort_column = 0;
         }
         self.icon_size = self.icon_size.clamp(ICON_MIN, ICON_MAX);
+        if self.group > 4 {
+            self.group = 0;
+        }
         self
     }
 }
@@ -89,6 +100,10 @@ struct Folder {
     columns: bool,
     #[serde(default = "icon_default")]
     icon_size: u32,
+    #[serde(default)]
+    gallery: bool,
+    #[serde(default)]
+    group: usize,
     /// Ordem do último ajuste (maior = mais recente).
     #[serde(default)]
     used: u64,
@@ -165,7 +180,7 @@ impl ViewMemory {
         self.folder
             .iter()
             .find(|f| f.path == key)
-            .map(|f| View { list: f.list, sort_column: f.sort_column, ascending: f.ascending, columns: f.columns, icon_size: f.icon_size }.clean())
+            .map(|f| View { list: f.list, sort_column: f.sort_column, ascending: f.ascending, columns: f.columns, icon_size: f.icon_size, gallery: f.gallery, group: f.group }.clean())
             .unwrap_or(self.default.clean())
     }
 
@@ -228,7 +243,7 @@ impl ViewMemory {
         self.folder.retain(|f| f.path != key);
         self.folder.insert(
             0,
-            Folder { path: key.to_string(), list: view.list, sort_column: view.sort_column, ascending: view.ascending, columns: view.columns, icon_size: view.icon_size, used },
+            Folder { path: key.to_string(), list: view.list, sort_column: view.sort_column, ascending: view.ascending, columns: view.columns, icon_size: view.icon_size, gallery: view.gallery, group: view.group, used },
         );
         if as_default {
             self.default = view;
@@ -325,7 +340,7 @@ pub fn path() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    const LIST_BY_DATE: View = View { list: true, sort_column: 1, ascending: false, columns: false, icon_size: ICON_DEFAULT };
+    const LIST_BY_DATE: View = View { list: true, sort_column: 1, ascending: false, columns: false, icon_size: ICON_DEFAULT, gallery: false, group: 0 };
 
     #[test]
     fn pasta_ajustada_volta_e_as_outras_usam_o_padrao() {
@@ -354,7 +369,7 @@ mod tests {
     fn ida_e_volta_pelo_toml() {
         let mut m = ViewMemory::default();
         m.remember("/home/x/Fotos com espaço e ç", LIST_BY_DATE, true);
-        m.remember("/b", View { list: false, sort_column: 2, ascending: true, columns: false, icon_size: ICON_DEFAULT }, true);
+        m.remember("/b", View { list: false, sort_column: 2, ascending: true, columns: false, icon_size: ICON_DEFAULT, gallery: false, group: 0 }, true);
         let back = ViewMemory::from_toml(&m.to_toml());
         assert_eq!(back, m);
     }
@@ -366,8 +381,8 @@ mod tests {
             "[default]\nlist = true\nsort_column = 99\n[[folder]]\npath = \"/a\"\nlist = true\nsort_column = 7\nascending = true\nused = 3\n[[folder]]\npath = \"/a\"\nlist = false\nsort_column = 0\nascending = true\nused = 1\n",
         );
         // Coluna inválida vira Nome; a pasta repetida fica com o ajuste mais recente.
-        assert_eq!(m.default_view(), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT });
-        assert_eq!(m.view_for("/a"), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT });
+        assert_eq!(m.default_view(), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT, gallery: false, group: 0 });
+        assert_eq!(m.view_for("/a"), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT, gallery: false, group: 0 });
         assert_eq!(m.len(), 1);
         // O contador continua depois do maior `used` lido.
         let mut m = m;
@@ -434,7 +449,7 @@ mod tests {
     fn campo_faltando_nao_perde_o_arquivo() {
         let m = ViewMemory::from_toml("[[folder]]\npath = \"/a\"\nlist = true\n[[folder]]\npath = \"/b\"\nused = 2\n");
         assert_eq!(m.len(), 2);
-        assert_eq!(m.view_for("/a"), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT });
+        assert_eq!(m.view_for("/a"), View { list: true, sort_column: 0, ascending: true, columns: false, icon_size: ICON_DEFAULT, gallery: false, group: 0 });
         assert_eq!(m.view_for("/b"), View::default());
     }
 
