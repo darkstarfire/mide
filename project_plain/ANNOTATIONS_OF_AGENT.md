@@ -636,3 +636,5 @@
 - **`Window::theme` congela o tema** (o app para de seguir claro/escuro/cor). Para mudar um detalhe e continuar seguindo o sistema, usar `Window::theme_adjust(fn)`. A mesa caiu nisso: o menu dela ficava claro no tema escuro.
 - **`pgrep -f` num laço `until` de espera:** o texto procurado aparece na linha de comando do próprio bash que espera, e o laço nunca termina. Esperar pelo PID ou por um arquivo de saída.
 - **Testar mudança do mide-ui na sessão antes de publicar:** `MIDE_UI_PATH=../mide-ui data/mide-update --all`. Depois, publicar o mide-ui e voltar o `Cargo.lock` ao GitHub (`cargo build` sem o patch) antes do commit do mide.
+- **Datas, horas e números na interface:** usar `mide::kit::region` (`time_of`, `date_of`, `number`, `currency`, `first_weekday`), nunca `%H:%M`, `%d/%m/%Y` ou o separador da tradução. Os nomes de meses e dias continuam pelo `tr`/`trc`.
+- **Testes que trocam o idioma global (`set_language`) interferem nos outros que rodam junto:** compare com o resultado das próprias funções em vez de trocar o idioma.

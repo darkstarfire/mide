@@ -1469,3 +1469,12 @@ msgstr "Janelas, menus e vidro com um toque da cor escolhida"
 
 msgid "Default, Graphite, White and Black keep the original look; the other colors also color the interface."
 msgstr "Padrão, Grafite, Branco e Preto mantêm o visual original; as outras cores também colorem a interface."
+
+msgid "24-Hour Time"
+msgstr "Relógio de 24 horas"
+
+msgid "Example: {number} · {date} · {time} · {money}"
+msgstr "Exemplo: {number} · {date} · {time} · {money}"
+
+msgid "Formats take effect now in mide apps; the language takes effect at the next login. The languages in the list are the ones installed on the system (locale -a)."
+msgstr "Os formatos valem na hora nos apps do mide; o idioma vale no próximo login. Os idiomas da lista são os instalados no sistema (locale -a)."

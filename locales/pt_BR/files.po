@@ -644,3 +644,6 @@ msgstr "Tamanho dos ícones"
 
 msgid "Refresh"
 msgstr "Atualizar"
+
+msgid "{date} at {time}"
+msgstr "{date} às {time}"

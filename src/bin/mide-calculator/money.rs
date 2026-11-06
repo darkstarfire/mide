@@ -47,14 +47,15 @@ pub fn now() -> DateTime<Utc> {
         .map_or_else(Utc::now, |t| t.with_timezone(&Utc))
 }
 
-/// "21/10/2026".
+/// "21/10/2026" (no formato da região de Idioma e região: "10/21/2026" nos EUA).
 pub fn date_br(d: NaiveDate) -> String {
-    d.format("%d/%m/%Y").to_string()
+    mide::kit::region::date_of(&d)
 }
 
-/// "21/10".
+/// "21/10" (no formato da região).
 fn day_month(d: NaiveDate) -> String {
-    d.format("%d/%m").to_string()
+    use chrono::Datelike;
+    mide::kit::region::region().day_month(d.month(), d.day())
 }
 
 impl Money {
@@ -247,7 +248,12 @@ pub fn dialogs(ui: &mut Ui, money: &mut Money, online: Option<bool>, pair: (&str
     let next = money
         .status
         .next_check
-        .map(|t| t.with_timezone(&chrono::FixedOffset::west_opt(3 * 3600).expect("UTC−3")).format("%d/%m %H:%M").to_string());
+        .map(|t| t.with_timezone(&chrono::FixedOffset::west_opt(3 * 3600).expect("UTC−3")).naive_local())
+        .map(|t| {
+            use chrono::{Datelike, Timelike};
+            let r = mide::kit::region::region();
+            format!("{} {}", r.day_month(t.month(), t.day()), r.time(t.hour(), t.minute(), None))
+        });
     let busy = money.fetching.is_some();
     let band = money.band(online);
     let mut on = online == Some(true);

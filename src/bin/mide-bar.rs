@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::{Datelike, Local, Timelike};
+use chrono::{Datelike, Local};
 use mide::tr;
 use mide::shell::scale::{ScaleHandler, SurfaceScale};
 use mide::{
@@ -758,7 +758,8 @@ fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: b
     if year {
         parts.push(now.year().to_string());
     }
-    let time = if seconds { format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()) } else { format!("{:02}:{:02}", now.hour(), now.minute()) };
+    // Relógio de 12 ou 24 horas da região (ou o escolhido em Idioma e região).
+    let time = mide::kit::region::time_of(&now, seconds);
     if parts.is_empty() {
         time
     } else {
@@ -2928,11 +2929,13 @@ impl Bar {
             regions.push(((bx, 34.0, bw, 24.0), action));
         }
         let cell = (pw - 24.0) / 7.0;
-        for (i, wd) in calendar::weekday_initials().iter().enumerate() {
+        // Semana começando no dia da região (Idioma e região).
+        let first_weekday = mide::kit::region::region().first_weekday;
+        for (i, wd) in calendar::weekday_initials_from(first_weekday).iter().enumerate() {
             let ww = self.text.measure(wd, 11.5, FontWeight::Semibold);
             self.text.draw(p, wd, 12.0 + i as f32 * cell + (cell - ww) / 2.0, 68.0, 11.5, FontWeight::Semibold, pal().secondary);
         }
-        for (i, day) in calendar::month_grid(year, month).iter().enumerate() {
+        for (i, day) in calendar::month_grid_from(year, month, first_weekday).iter().enumerate() {
             let (col, row) = ((i % 7) as f32, (i / 7) as f32);
             let cx = 12.0 + col * cell + cell / 2.0;
             let cy = 98.0 + row * 30.0;

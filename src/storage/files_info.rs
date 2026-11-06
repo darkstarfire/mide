@@ -333,7 +333,12 @@ fn kv(ui: &mut Ui, key: &str, value: &str) -> crate::kit::Response {
 
 fn date_text(t: Option<std::time::SystemTime>) -> String {
     match t {
-        Some(t) => chrono::DateTime::<chrono::Local>::from(t).format(&tr!("%b %-d, %Y at %H:%M")).to_string(),
+        Some(t) => {
+            // Data e hora nos formatos da região (Idioma e região), como no Obter
+            // Informações do Mac: "05/11/2026 às 14:05".
+            let t = chrono::DateTime::<chrono::Local>::from(t);
+            tr!("{date} at {time}", date = crate::kit::region::date_of(&t), time = crate::kit::region::time_of(&t, false))
+        }
         None => "—".into(),
     }
 }

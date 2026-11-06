@@ -143,7 +143,9 @@ pub fn centered(ui: &mut Ui, s: &str, cx: f32, y: f32, size: f32, weight: FontWe
 pub fn clock(ui: &mut Ui, cx: f32, top: f32) -> f32 {
     let now = Local::now();
     let date = crate::calendar::long_date(now.date_naive());
-    let time = format!("{}:{:02}", now.hour(), now.minute());
+    // Relógio de 12 ou 24 horas da região; no de 12, sem AM/PM, como no Mac ("9:41").
+    let hour = if crate::kit::region::region().hour24 { now.hour() } else { (now.hour() + 11) % 12 + 1 };
+    let time = format!("{hour}:{:02}", now.minute());
     centered(ui, &date, cx, top, 21.0, FontWeight::Semibold, [255, 255, 255, 235]);
     let size = 104.0;
     ui.paint_text(move |pixmap, text, (ox, oy)| {

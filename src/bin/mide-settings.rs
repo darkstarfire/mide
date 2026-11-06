@@ -1524,8 +1524,30 @@ impl Settings {
             if ui.dropdown(&tr!("Formats (date, time, numbers and currency)"), &options, &mut formats_i).changed() {
                 save("formats", formats_i);
             }
+            // Relógio de 12 ou 24 horas: o da região, ou o escolhido aqui (como no Mac).
+            let region = mide::kit::region::region();
+            let mut hour24 = region.hour24;
+            if ui.switch(&tr!("24-Hour Time"), &mut hour24).changed() {
+                // Igual ao da região: apaga a escolha (volta a seguir a região).
+                let value = (hour24 != mide::kit::region::region_for(&region.code).hour24).then_some(Value::Bool(hour24));
+                match settings_file::set("locale", "clock24", value) {
+                    Ok(()) => tracing::info!("idioma e região: relógio de {} horas", if hour24 { 24 } else { 12 }),
+                    Err(err) => tracing::warn!("relógio não gravado: {err}"),
+                }
+            }
         });
-        ui.note(&tr!("Takes effect at the next login. The languages in the list are the ones installed on the system (locale -a)."));
+        // Prévia dos formatos da região, como em Idioma e Região do Mac.
+        let r = mide::kit::region::region();
+        let now = chrono::Local::now();
+        let sample = tr!(
+            "Example: {number} · {date} · {time} · {money}",
+            number = r.number(1234567.89, 2),
+            date = mide::kit::region::date_of(&now),
+            time = mide::kit::region::time_of(&now, false),
+            money = r.currency(1234.5)
+        );
+        ui.note(&sample);
+        ui.note(&tr!("Formats take effect now in mide apps; the language takes effect at the next login. The languages in the list are the ones installed on the system (locale -a)."));
     }
 
     /// Suspender por tempo sem uso e o botão de ligar (`[power]`).

@@ -49,6 +49,12 @@ pub fn weekday_name(from_sunday: u32) -> String {
     name.into_owned()
 }
 
+/// Iniciais dos dias da semana a partir do dia `first_weekday` (0 = domingo).
+pub fn weekday_initials_from(first_weekday: u32) -> [String; 7] {
+    let all = weekday_initials();
+    std::array::from_fn(|i| all[(i + first_weekday as usize) % 7].clone())
+}
+
 /// Iniciais dos dias da semana, de domingo a sábado ("S M T W T F S" / "D S T Q Q S S").
 pub fn weekday_initials() -> [String; 7] {
     use crate::i18n::trc;
@@ -73,8 +79,14 @@ pub struct Day {
 
 /// As 6 semanas (42 dias) que mostram o mês, começando no domingo.
 pub fn month_grid(year: i32, month: u32) -> Vec<Day> {
+    month_grid_from(year, month, 0)
+}
+
+/// As 6 semanas do mês começando no dia `first_weekday` (0 = domingo, 1 = segunda),
+/// o primeiro dia da semana da região (`mide::kit::region`).
+pub fn month_grid_from(year: i32, month: u32, first_weekday: u32) -> Vec<Day> {
     let first = NaiveDate::from_ymd_opt(year, month, 1).unwrap_or_default();
-    let back = first.weekday().num_days_from_sunday() as i64;
+    let back = (first.weekday().num_days_from_sunday() as i64 - first_weekday as i64).rem_euclid(7);
     let start = first - chrono::Duration::days(back);
     (0..42)
         .map(|i| {
@@ -119,6 +131,19 @@ mod tests {
         assert_eq!(days[4].date.day(), 1);
         assert!(days[4].in_month);
         assert_eq!(days.iter().filter(|d| d.in_month).count(), 31);
+    }
+
+    #[test]
+    fn grade_comecando_na_segunda() {
+        // Outubro de 2026 começando na segunda: a grade abre em 28 de setembro.
+        let days = month_grid_from(2026, 10, 1);
+        assert_eq!(days[0].date, NaiveDate::from_ymd_opt(2026, 9, 28).unwrap());
+        assert_eq!(days[3].date.day(), 1);
+        // Sem trocar o idioma (os testes rodam juntos): as iniciais giradas.
+        let all = weekday_initials();
+        let from_monday = weekday_initials_from(1);
+        assert_eq!(from_monday[0], all[1]);
+        assert_eq!(from_monday[6], all[0]);
     }
 
     #[test]
