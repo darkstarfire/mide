@@ -73,3 +73,6 @@ msgstr "Tela integrada"
 # Trava do botão de ligar (logind)
 msgid "mide asks before shutting down"
 msgstr "O mide pergunta antes de desligar"
+
+msgid "No window there"
+msgstr "Não há janela aí"

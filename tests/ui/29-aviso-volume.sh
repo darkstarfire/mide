@@ -64,7 +64,7 @@ fi
 mkdir -p "$OSD/cap-cfg/mide" "$OSD/cap-pics"
 printf 'XDG_PICTURES_DIR="%s"\n' "$OSD/cap-pics" > "$OSD/cap-cfg/user-dirs.dirs"
 XDG_CONFIG_HOME="$OSD/cap-cfg" osd_run captura "500 key volumeup; 520 combo super+shift+3; 700 list" 14 525
-SHOT="$(ls "$OSD/cap-pics/Capturas de tela/"*.png 2>/dev/null | head -n1)"
+SHOT="$(ls "$OSD/cap-pics/Screenshots/"*.png 2>/dev/null | head -n1)"
 SHOT_BAR="$([ -n "$SHOT" ] && python3 -c "import sys; from PIL import Image; print('%d,%d,%d' % Image.open(sys.argv[1]).convert('RGB').getpixel((615, 614)))" "$SHOT" 2>/dev/null)"
 if [ -n "$SHOT_BAR" ] && ! osd_blue "$SHOT_BAR" && osd_blue "$(osd_pixel captura 615 614)"; then
     ok "captura de tela: o aviso não sai na imagem (só na tela)"

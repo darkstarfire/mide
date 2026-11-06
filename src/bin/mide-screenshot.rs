@@ -383,6 +383,8 @@ struct Capture {
     shapes: Vec<Shape>,
     /// Janelas à mostra (a de cima primeiro, pontos no desktop), para o modo Janela.
     windows: Vec<(f32, f32, f32, f32)>,
+    /// Gravação de uma janela: o meio da janela escolhida (pontos globais).
+    record_window: Option<(f32, f32)>,
     /// Retângulo das cores no painel (para o clique nelas).
     swatches: Vec<(f32, f32, f32, f32)>,
     /// Modo rápido (⌘⇧4, `--area`): sem painel; ao soltar o mouse, a área é salva e
@@ -416,6 +418,7 @@ impl Capture {
             drag: None,
             shapes: Vec::new(),
             windows,
+            record_window: None,
             swatches: Vec::new(),
             quick: false,
             record: false,
@@ -939,14 +942,14 @@ impl Capture {
     fn record_view(&mut self, ui: &mut Ui, (sw, sh): (f32, f32)) {
         let (ox, oy, _, _) = self.primary().rect;
         let mut picked = false;
-        let panel_w = 740.0;
+        let panel_w = 820.0;
         let px = (sw - panel_w) / 2.0;
         let py = self.place_panel((ox, oy), (px, panel_w), sh - 84.0, 56.0);
         let mut start = ui.input().keys.contains(&Key::Enter);
         let mut cancel = false;
         let rect = ui.glass_panel(px, py, panel_w, 14.0, |ui| {
             ui.row(|ui| {
-                for (mode, label) in [(Mode::Full, tr!("Entire Screen")), (Mode::Selection, tr!("Area"))] {
+                for (mode, label) in [(Mode::Full, tr!("Entire Screen")), (Mode::Window, tr!("Window")), (Mode::Selection, tr!("Area"))] {
                     let current = self.mode == mode || (mode == Mode::Full && self.mode == Mode::PickScreen);
                     let r = if current { ui.primary_button(&label) } else { ui.button(&label) };
                     if r.clicked() {
@@ -983,6 +986,13 @@ impl Capture {
                 Mode::Selection => self.pointer(ui, pos, over_panel),
                 // Com várias telas, o clique numa tela começa a gravar ela inteira (como
                 // no Mac).
+                // Janela: o clique numa janela começa a gravar só ela (como no Mac).
+                Mode::Window if !over_panel && ui.input().released => {
+                    if let Some(r) = self.windows.iter().find(|r| inside(**r, pos)).copied() {
+                        self.record_window = Some((r.0 + r.2 / 2.0, r.1 + r.3 / 2.0));
+                        picked = true;
+                    }
+                }
                 Mode::PickScreen if !over_panel && ui.input().released => {
                     if let Some(i) = screen_index_at(&self.rects(), pos) {
                         self.pick_screen(i);
@@ -998,6 +1008,27 @@ impl Capture {
         }
         if cancel {
             tracing::info!("gravação cancelada");
+            ui.close();
+            return;
+        }
+        if start && self.mode == Mode::Window {
+            // Uma janela: o compositor acha a janela sob o ponto e grava só ela.
+            let Some((x, y)) = self.record_window else {
+                return;
+            };
+            let mut command = format!("record start janela {} {}", x.round(), y.round());
+            if self.system_audio {
+                command.push_str(" sistema");
+            }
+            if self.microphone {
+                command.push_str(" microfone");
+            }
+            let reply = ask_compositor(&command).and_then(|r| r.into_iter().next()).unwrap_or_default();
+            if let Some(err) = reply.strip_prefix("erro: ") {
+                mide::notify::send_and_wait(&tr!("Screen Recording"), &tr!("The recording did not start"), err);
+            } else {
+                tracing::info!("gravação da janela começou: {reply}");
+            }
             ui.close();
             return;
         }
@@ -1029,7 +1060,8 @@ impl Capture {
 /// Grava as imagens em Imagens/Capturas de tela (`shot_file_name`, com o nome da tela
 /// quando dado) e avisa uma vez onde ficaram (ou o erro). Devolve os arquivos gravados.
 fn save_images(images: &[(&Pixmap, Option<&str>)]) -> Vec<PathBuf> {
-    let dir = mide::places::pictures_dir().join("Capturas de tela");
+    // Nome em inglês (I1): as pastas que o mide cria não ficam presas a um idioma.
+    let dir = mide::places::pictures_dir().join("Screenshots");
     let stamp = chrono_name();
     let mut saved = Vec::new();
     let mut error = None;

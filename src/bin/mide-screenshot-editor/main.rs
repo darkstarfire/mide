@@ -1601,7 +1601,7 @@ fn segment_tips(ui: &mut Ui, group: RectF, tips: &[std::borrow::Cow<'_, str>]) {
 /// Pasta das capturas (Imagens/Capturas de tela), ou Imagens.
 fn default_dir() -> PathBuf {
     let pictures = mide::places::pictures_dir();
-    let shots = pictures.join("Capturas de tela");
+    let shots = pictures.join("Screenshots");
     if shots.is_dir() { shots } else { pictures }
 }
 

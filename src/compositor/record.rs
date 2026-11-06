@@ -37,6 +37,10 @@ pub struct Recording {
     pub path: PathBuf,
     /// Os primeiros quadros ficam de fora (a janela de escolha ainda sumindo).
     skip_until: Instant,
+    /// Gravando só uma janela: ela e o tamanho em pontos (o do começo; o vídeo tem um
+    /// tamanho só). A janela é desenhada sozinha a cada quadro, mesmo coberta por
+    /// outra, e acompanha se ela andar pela tela.
+    window: Option<(smithay::desktop::Window, smithay::utils::Size<i32, smithay::utils::Logical>)>,
 }
 
 /// O que gravar: a tela (pelo nome; vazio, a principal), a área em pontos nela (ou a
@@ -46,11 +50,13 @@ pub struct Request {
     pub area: Option<(i32, i32, i32, i32)>,
     pub system_audio: bool,
     pub microphone: bool,
+    /// Gravar a janela sob este ponto (coordenadas globais em pontos): `janela X Y`.
+    pub window_at: Option<(f64, f64)>,
 }
 
 /// Lê o pedido do canal de controle: `record start [full|x y w h] [sistema] [microfone] [tela NOME]`.
 pub fn parse_request(words: &[&str]) -> Request {
-    let mut request = Request { output: None, area: None, system_audio: false, microphone: false };
+    let mut request = Request { output: None, area: None, system_audio: false, microphone: false, window_at: None };
     let mut i = 0;
     while i < words.len() {
         match words[i] {
@@ -61,6 +67,12 @@ pub fn parse_request(words: &[&str]) -> Request {
                 i += 1;
             }
             "full" => {}
+            "janela" if i + 2 < words.len() => {
+                if let (Ok(x), Ok(y)) = (words[i + 1].parse(), words[i + 2].parse()) {
+                    request.window_at = Some((x, y));
+                }
+                i += 2;
+            }
             _ => {
                 let nums: Option<Vec<i32>> = words.get(i..i + 4).map(|w| w.iter().filter_map(|n| n.parse().ok()).collect());
                 if let Some(n) = nums.filter(|n| n.len() == 4) {
@@ -113,9 +125,19 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
     if state.recording.is_some() {
         return Err(mide::tr!("Already recording").into_owned());
     }
-    let output = match &request.output {
-        Some(name) => state.space.outputs().find(|o| o.name() == *name).cloned(),
-        None => state.primary_output(),
+    // Uma janela: a de cima sob o ponto, na tela dela.
+    let window = match request.window_at {
+        Some((x, y)) => {
+            let point: smithay::utils::Point<f64, smithay::utils::Logical> = (x, y).into();
+            let found = state.space.element_under(point).map(|(w, _)| w.clone());
+            Some(found.ok_or_else(|| mide::tr!("No window there").into_owned())?)
+        }
+        None => None,
+    };
+    let output = match (&window, &request.output) {
+        (Some(w), _) => crate::presentation::primary_output(state, w),
+        (None, Some(name)) => state.space.outputs().find(|o| o.name() == *name).cloned(),
+        (None, None) => state.primary_output(),
     }
     .ok_or_else(|| mide::tr!("Display not found").into_owned())?;
     let mode = output.current_mode().ok_or_else(|| mide::tr!("The display has no mode").into_owned())?;
@@ -132,8 +154,18 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
         }
         None => screen,
     };
+    // Janela: o vídeo tem o tamanho dela (só o conteúdo, sem a barra do mide).
+    let window = window.map(|w| {
+        let size = w.geometry().size;
+        (w, size)
+    });
+    let region = match &window {
+        Some((_, size)) => Rectangle::from_size(((size.w as f64 * scale).round() as i32, (size.h as f64 * scale).round() as i32).into()),
+        None => region,
+    };
     let region = Rectangle::new(region.loc, ((region.size.w / 2 * 2).max(2), (region.size.h / 2 * 2).max(2)).into());
-    let dir = mide::places::videos_dir().join("Gravações de tela");
+    // Nome em inglês (I1): as pastas que o mide cria não ficam presas a um idioma.
+    let dir = mide::places::videos_dir().join("Screen Recordings");
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
     let path = dir.join(format!("Gravação de tela {stamp}.mp4"));
@@ -214,7 +246,10 @@ pub fn start(state: &mut State, request: Request) -> Result<PathBuf, String> {
         path.display()
     );
     let now = Instant::now();
-    state.recording = Some(Recording { output: output.name(), region, frames: Some(tx), started: now, path: path.clone(), skip_until: now + Duration::from_millis(250) });
+    if let Some((w, _)) = &window {
+        tracing::info!("gravando só a janela {:?}", crate::render::window_title(w));
+    }
+    state.recording = Some(Recording { output: output.name(), region, frames: Some(tx), started: now, path: path.clone(), skip_until: now + Duration::from_millis(250), window });
     // Primeiro quadro já (a tela pode estar parada).
     state.redraw = true;
     state.wake();
@@ -243,6 +278,30 @@ pub fn feed(renderer: &mut GlesRenderer, framebuffer: &GlesTarget<'_>, output: &
     }
     // O cursor entra na imagem (no DRM, a cena o desenha em vez do plano de hardware).
     state.screencopy.cursor_until = Some(Instant::now() + Duration::from_millis(500));
+    // Uma janela: desenhada sozinha numa textura do tamanho do começo da gravação.
+    if let Some((window, size)) = recording.window.clone() {
+        use smithay::backend::renderer::Bind;
+        use smithay::utils::IsAlive;
+        if !window.alive() {
+            return;
+        }
+        let r = recording.region;
+        let Some(mut texture) = crate::genie::snapshot(renderer, &window, size, 0, &[]) else {
+            return;
+        };
+        let pixels = {
+            let Ok(fb) = renderer.bind(&mut texture) else {
+                return;
+            };
+            crate::screencopy::read_pixels(renderer, &fb, Rectangle::from_size(r.size))
+        };
+        if let (Some(frame), Some(tx)) = (pixels, &recording.frames) {
+            if frame.len() == (r.size.w * r.size.h * 4) as usize {
+                let _ = tx.try_send(frame);
+            }
+        }
+        return;
+    }
     let Some(mode) = output.current_mode() else {
         return;
     };
@@ -290,6 +349,13 @@ mod tests {
         let silent = ffmpeg_args(100, 100, false, false, "/tmp/y.mp4");
         assert!(!silent.iter().any(|a| a == "aac"));
         assert!(args.iter().any(|a| a == "-shortest"));
+    }
+
+    #[test]
+    fn pedido_de_uma_janela() {
+        let r = parse_request(&["janela", "200", "300", "sistema"]);
+        assert_eq!(r.window_at, Some((200.0, 300.0)));
+        assert!(r.system_audio && r.area.is_none());
     }
 
     #[test]

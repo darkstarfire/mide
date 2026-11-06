@@ -1,18 +1,18 @@
 # Seção da bateria (tests/ui.sh); usa as funções de tests/ui/comum.sh.
 echo "== captura de tela (Print)"
-# A imagem vai para Imagens/Capturas de tela: no teste, uma pasta temporária.
+# A imagem vai para Imagens/Screenshots: no teste, uma pasta temporária.
 SHOTS="$(mktemp -d)"
 printf 'XDG_PICTURES_DIR="%s"\n' "$SHOTS" > "$TESTCFG/user-dirs.dirs"
 # O Ctrl+S vem uns 11 s depois da partida: com a espera padrão (10 s) o teste ficava no limite.
 SCENARIO_WAIT=16 timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo ctrl+s; 720 list" >/dev/null 2>&1
-if ls "$SHOTS/Capturas de tela/"*.png >/dev/null 2>&1 && python3 -c "
+if ls "$SHOTS/Screenshots/"*.png >/dev/null 2>&1 && python3 -c "
 import sys, glob
 from PIL import Image
-img = Image.open(glob.glob(sys.argv[1] + '/Capturas de tela/*.png')[0])
+img = Image.open(glob.glob(sys.argv[1] + '/Screenshots/*.png')[0])
 sys.exit(0 if img.size == (400, 250) else 1)" "$SHOTS"; then
-    echo "ok    captura de uma área salva em Imagens/Capturas de tela (400x250)"; PASS=$((PASS + 1))
+    echo "ok    captura de uma área salva em Imagens/Screenshots (400x250)"; PASS=$((PASS + 1))
 else
-    echo "FALHA captura de uma área salva em Imagens/Capturas de tela"; FAIL=$((FAIL + 1))
+    echo "FALHA captura de uma área salva em Imagens/Screenshots"; FAIL=$((FAIL + 1))
 fi
 SCENARIO_WAIT=16 check "captura: Enter copia a imagem para a área de transferência" "bytes de image/png copiados" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 key enter; 720 list"
 # Estilo Mac: ⌘S (a tecla Alt) também salva (antes, o Ctrl virava Super e nem o
@@ -22,8 +22,8 @@ mkdir -p "$MSHOT/cfg/mide"
 printf '[keyboard]\nmac_style = true\n' > "$MSHOT/cfg/mide/config.toml"
 printf 'XDG_PICTURES_DIR="%s"\n' "$MSHOT/pics" > "$MSHOT/cfg/user-dirs.dirs"
 XDG_CONFIG_HOME="$MSHOT/cfg" SCENARIO_WAIT=16 timeout 150 "$SCEN" "400 key print; 600 press 300 200; 610 move 500 350; 620 release 700 450; 660 combo alt+s; 720 list" >/dev/null 2>&1
-if ls "$MSHOT/pics/Capturas de tela/Captura de tela "*.png >/dev/null 2>&1; then
-    echo "ok    captura: ⌘S salva no estilo Mac (Imagens/Capturas de tela, nome com data e hora)"; PASS=$((PASS + 1))
+if ls "$MSHOT/pics/Screenshots/Captura de tela "*.png >/dev/null 2>&1; then
+    echo "ok    captura: ⌘S salva no estilo Mac (Imagens/Screenshots, nome com data e hora)"; PASS=$((PASS + 1))
 else
     echo "FALHA captura: ⌘S salva no estilo Mac"; FAIL=$((FAIL + 1))
 fi
@@ -42,7 +42,7 @@ shot_test() {
     got="$(python3 -c "
 import glob, sys
 from PIL import Image
-files = glob.glob(sys.argv[1] + '/Capturas de tela/Captura de tela *.png')
+files = glob.glob(sys.argv[1] + '/Screenshots/Captura de tela *.png')
 print('%dx%d' % Image.open(files[0]).size if files else 'nada')" "$pics" 2>/dev/null)"
     if [ "$got" = "$want" ]; then
         echo "ok    $name"; PASS=$((PASS + 1))
@@ -90,7 +90,7 @@ if python3 -c "
 import sys, glob
 from PIL import Image, ImageChops
 d = sys.argv[1]
-files = glob.glob(d + '/pics/Capturas de tela/*.png')
+files = glob.glob(d + '/pics/Screenshots/*.png')
 if not files: sys.exit('nada salvo')
 shot = Image.open(files[0]).convert('RGB')
 if shot.size != (500, 313): sys.exit('tamanho %dx%d' % shot.size)
@@ -116,7 +116,7 @@ XDG_CONFIG_HOME="$SF/cfg" SCENARIO_OUT="$SF/scen" SCENARIO_WAIT=14 timeout 150 "
 if python3 -c "
 import sys, glob
 from PIL import Image
-files = glob.glob(sys.argv[1] + '/pics/Capturas de tela/*.png')
+files = glob.glob(sys.argv[1] + '/pics/Screenshots/*.png')
 if not files: sys.exit('nada salvo')
 img = Image.open(files[0]).convert('RGB')
 if img.size != (1366, 768): sys.exit('tamanho %dx%d' % img.size)
@@ -136,13 +136,23 @@ mkdir -p "$REC/cfg/mide" "$REC/videos"
 printf 'XDG_VIDEOS_DIR="%s/videos"\n' "$REC" > "$REC/cfg/user-dirs.dirs"
 printf '#!/bin/sh\nfor a; do last=$a; done\nprintf "%%s\\n" "$@" > "$last.args"\nwc -c > "$last"\n' > "$REC/ffmpeg"
 chmod +x "$REC/ffmpeg"
-rec_file() { ls "$REC/videos/Gravações de tela/"*.mp4 2>/dev/null | head -n 1; }
-XDG_CONFIG_HOME="$REC/cfg" MIDE_FFMPEG="$REC/ffmpeg" SCENARIO_WAIT=20 SCENARIO_TIMEOUT=40 timeout 150 "$SCEN" "300 combo super+shift+5; 420 click 980 710; 600 click 1220 14; 700 list" >/dev/null 2>&1
+rec_file() { ls "$REC/videos/Screen Recordings/"*.mp4 2>/dev/null | head -n 1; }
+XDG_CONFIG_HOME="$REC/cfg" MIDE_FFMPEG="$REC/ffmpeg" SCENARIO_WAIT=20 SCENARIO_TIMEOUT=40 timeout 150 "$SCEN" "300 combo super+shift+5; 420 click 1021 710; 600 click 1220 14; 700 list" >/dev/null 2>&1
 VIDEO="$(rec_file)"
 if [ -n "$VIDEO" ] && [ "$(cat "$VIDEO")" -gt $((1366 * 768 * 4 * 10)) ] && grep -qx "1366x768" "$VIDEO.args" && grep -qx "@DEFAULT_MONITOR@" "$VIDEO.args"; then
     echo "ok    gravar a tela: ⌘⇧5, Gravar e parar pela barra (tela inteira, som do sistema)"; PASS=$((PASS + 1))
 else
     echo "FALHA gravar a tela: ⌘⇧5, Gravar e parar pela barra"; FAIL=$((FAIL + 1))
+fi
+# Gravar só uma janela: ⌘⇧5 → Janela (433, 710) → clique na Calculadora; o vídeo tem o
+# tamanho da janela (não o da tela), e os quadros chegam mesmo com a janela coberta.
+rm -rf "$REC/videos/Screen Recordings"
+XDG_CONFIG_HOME="$REC/cfg" MIDE_FFMPEG="$REC/ffmpeg" SCENARIO_WAIT=20 SCENARIO_TIMEOUT=40 timeout 150 "$SCEN" "400 combo super+shift+5; 460 click 433 710; 500 click 200 300; 700 click 1220 14; 800 list" -- "$PWD/target/debug/mide-calculator" >/dev/null 2>&1
+VIDEO="$(rec_file)"
+if [ -n "$VIDEO" ] && [ "$(cat "$VIDEO")" -gt 0 ] && ! grep -qx "1366x768" "$VIDEO.args" && grep -qE "^[0-9]+x[0-9]+$" "$VIDEO.args"; then
+    echo "ok    gravar só uma janela: ⌘⇧5, Janela e clique nela (vídeo no tamanho da janela)"; PASS=$((PASS + 1))
+else
+    echo "FALHA gravar só uma janela: ⌘⇧5, Janela e clique nela"; FAIL=$((FAIL + 1))
 fi
 rm -rf "$REC/videos"/*
 XDG_CONFIG_HOME="$REC/cfg" MIDE_FFMPEG="$REC/ffmpeg" SCENARIO_WAIT=14 timeout 150 "$SCEN" "700 list" -- "sh -c 'sleep 2; mide-ctl record start 100 100 401 301 microfone; sleep 2; mide-ctl record stop'" >/dev/null 2>&1

@@ -12,8 +12,8 @@ CAP2="$(mktemp -d)"
 printf '#!/bin/sh\nfor a; do last=$a; done\nprintf "%%s\\n" "$@" > "$last.args"\nwc -c > "$last"\n' > "$CAP2/ffmpeg"
 chmod +x "$CAP2/ffmpeg"
 # cap2 "roteiro" "config.toml" "comando extra": roda com as duas telas; log em
-# $CAP2/scen/mide.log, imagem salva em $CAP2/pics/Capturas de tela, vídeo em
-# $CAP2/videos/Gravações de tela. CAP2_DUMP=<quadro> salva um quadro (da tela
+# $CAP2/scen/mide.log, imagem salva em $CAP2/pics/Screenshots, vídeo em
+# $CAP2/videos/Screen Recordings. CAP2_DUMP=<quadro> salva um quadro (da tela
 # CAP2_DUMP_OUTPUT, se dada) em $CAP2/scen/frame.png.
 cap2() {
     rm -rf "$CAP2/cfg" "$CAP2/pics" "$CAP2/scen" "$CAP2/videos"
@@ -29,7 +29,7 @@ cap2_size() {
     python3 -c "
 import glob, sys
 from PIL import Image
-files = glob.glob(sys.argv[1] + '/pics/Capturas de tela/*.png')
+files = glob.glob(sys.argv[1] + '/pics/Screenshots/*.png')
 print('%dx%d' % Image.open(files[0]).size if files else 'nada')" "$CAP2" 2>/dev/null
 }
 # cap2_check "nome" "LxA esperado" "regex no log (vazio: não confere)"
@@ -93,7 +93,7 @@ cap2 "$SEL; 660 click 453 707; 680 press 350 250; 690 move 450 300; 700 release 
 if [ "$(cap2_size)" = 400x250 ] && grep -aq "captura: ferramenta Seta" "$CAP2/scen/mide.log" && python3 -c "
 import glob, sys
 from PIL import Image
-img = Image.open(glob.glob(sys.argv[1] + '/pics/Capturas de tela/*.png')[0]).convert('RGB')
+img = Image.open(glob.glob(sys.argv[1] + '/pics/Screenshots/*.png')[0]).convert('RGB')
 red = sum(1 for p in img.getdata() if p[0] > 200 and p[1] < 90 and p[2] < 90)
 sys.exit(0 if red > 200 else 'vermelho: %d' % red)" "$CAP2"; then
     echo "ok    área ajustável: com a Seta, arrastar dentro desenha"; PASS=$((PASS + 1))
@@ -175,7 +175,7 @@ XDG_CONFIG_HOME="$UMA/cfg" SCENARIO_OUT="$UMA/scen" MIDE_HEADLESS_OUTPUTS=1366x7
 UMA_SIZE="$(python3 -c "
 import glob, sys
 from PIL import Image
-files = glob.glob(sys.argv[1] + '/pics/Capturas de tela/*.png')
+files = glob.glob(sys.argv[1] + '/pics/Screenshots/*.png')
 print('%dx%d' % Image.open(files[0]).size if files else 'nada')" "$UMA" 2>/dev/null)"
 if [ "$UMA_SIZE" = 1366x768 ] && ! grep -aq "escolhida" "$UMA/scen/mide.log"; then
     echo "ok    tela inteira com uma tela: salva sem perguntar (1366x768)"; PASS=$((PASS + 1))
@@ -188,12 +188,12 @@ cap2 "400 combo super+shift+3; 600 list"
 if python3 -c "
 import glob, sys
 from PIL import Image
-d = sys.argv[1] + '/pics/Capturas de tela/'
+d = sys.argv[1] + '/pics/Screenshots/'
 sizes = {f.rsplit('(', 1)[-1].rstrip(').png'): Image.open(f).size for f in glob.glob(d + 'Captura de tela * (*).png')}
 sys.exit(0 if sizes == {'HEADLESS-1': (1366, 768), 'HEADLESS-2': (1920, 1080)} else str(sizes))" "$CAP2" && grep -aq "captura copiada (1366x768)" "$CAP2/scen/mide.log"; then
     echo "ok    ⌘⇧3 em duas telas: um arquivo por tela e a principal copiada"; PASS=$((PASS + 1))
 else
-    echo "FALHA ⌘⇧3 em duas telas ($(ls "$CAP2/pics/Capturas de tela" 2>/dev/null | tr '\n' ' '))"; FAIL=$((FAIL + 1))
+    echo "FALHA ⌘⇧3 em duas telas ($(ls "$CAP2/pics/Screenshots" 2>/dev/null | tr '\n' ' '))"; FAIL=$((FAIL + 1))
 fi
 # ⌘⇧4 numa área toda na segunda tela.
 cap2 "400 combo super+shift+4; 600 press 1500 300; 610 move 1650 400; 625 release 1800 500; 760 list"
@@ -206,16 +206,16 @@ cap2_check "⌘⇧4 na segunda tela salva ao soltar" 300x200 'captura: área 300
 # rec2_check "nome" "regex no log" "LxA no -video_size"
 rec2_check() {
     local video
-    video="$(ls "$CAP2/videos/Gravações de tela/"*.mp4 2>/dev/null | head -n 1)"
+    video="$(ls "$CAP2/videos/Screen Recordings/"*.mp4 2>/dev/null | head -n 1)"
     if [ -n "$video" ] && grep -aEq "$2" "$CAP2/scen/mide.log" && grep -qx "$3" "$video.args"; then
         echo "ok    $1"; PASS=$((PASS + 1))
     else
         echo "FALHA $1 ($(grep -a "gravando" "$CAP2/scen/mide.log" | tail -1 | sed 's/.*gravando/gravando/'))"; FAIL=$((FAIL + 1))
     fi
 }
-CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 click 469 710; 500 press 1500 300; 510 move 1650 400; 520 release 1800 500; 600 click 980 710; 800 click 1220 14; 900 list"
+CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 click 504 710; 500 press 1500 300; 510 move 1650 400; 520 release 1800 500; 600 click 1021 710; 800 click 1220 14; 900 list"
 rec2_check "gravar em duas telas: área na segunda tela" 'gravando HEADLESS-2 \(300x200 em 134,300\)' 300x200
-CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 click 469 710; 500 press 1200 200; 510 move 1400 300; 520 release 1566 450; 600 click 980 710; 800 click 1220 14; 900 list"
+CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 click 504 710; 500 press 1200 200; 510 move 1400 300; 520 release 1566 450; 600 click 1021 710; 800 click 1220 14; 900 list"
 rec2_check "gravar em duas telas: área presa à tela onde começou" 'gravando HEADLESS-1 \(166x250 em 1200,200\)' 166x250
 CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 move 1900 400; 460 click 2000 500; 700 click 1220 14; 800 list"
 rec2_check "gravar em duas telas: tela inteira, o clique escolhe a tela" 'gravando HEADLESS-2 \(1920x1080 em 0,0\)' 1920x1080
@@ -230,7 +230,7 @@ if [ "$(cap2_size)" = 250x250 ] && python3 -c "
 import glob, sys
 from PIL import Image, ImageChops
 d = sys.argv[1]
-shot = Image.open(glob.glob(d + '/pics/Capturas de tela/*.png')[0]).convert('RGB')
+shot = Image.open(glob.glob(d + '/pics/Screenshots/*.png')[0]).convert('RGB')
 base = Image.open(d + '/base-HEADLESS-2.png').convert('RGB')
 if base.size != (1920, 1080): sys.exit('base %dx%d' % base.size)
 diff = ImageChops.difference(shot, base.crop((125, 125, 375, 375)))
@@ -245,7 +245,7 @@ if [ "$(cap2_size)" = 250x125 ] && python3 -c "
 import glob, sys
 from PIL import Image, ImageChops
 d = sys.argv[1]
-shot = Image.open(glob.glob(d + '/pics/Capturas de tela/*.png')[0]).convert('RGB')
+shot = Image.open(glob.glob(d + '/pics/Screenshots/*.png')[0]).convert('RGB')
 b2 = Image.open(d + '/base-HEADLESS-2.png').convert('RGB')
 # A metade direita (da segunda tela) é a imagem dela, sem mudar de tamanho.
 diff = ImageChops.difference(shot.crop((125, 0, 250, 125)), b2.crop((0, 125, 125, 250)))
@@ -259,7 +259,7 @@ cap2 "400 combo super+shift+3; 600 list" "$SCALE2"
 if python3 -c "
 import glob, sys
 from PIL import Image
-d = sys.argv[1] + '/pics/Capturas de tela/'
+d = sys.argv[1] + '/pics/Screenshots/'
 sizes = sorted(Image.open(f).size for f in glob.glob(d + 'Captura de tela * (*).png'))
 sys.exit(0 if sizes == [(1366, 768), (1920, 1080)] else str(sizes))" "$CAP2"; then
     echo "ok    escalas diferentes: ⌘⇧3 salva cada tela em pixels (1366x768 e 1920x1080)"; PASS=$((PASS + 1))
@@ -268,6 +268,6 @@ else
 fi
 cap2 "400 key print; 600 click 560 665; 700 move 1900 300; 740 move 2000 500; 800 click 2000 500; 860 combo ctrl+s; 920 list" "$SCALE2"
 cap2_check "escalas diferentes: tela inteira escolhida em 1,25 sai com 1920x1080" 1920x1080 'captura: tela HEADLESS-2 escolhida'
-CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 click 469 710; 500 press 1500 300; 510 move 1650 400; 520 release 1800 500; 600 click 980 710; 800 click 1220 14; 900 list" "$SCALE2"
+CAP2_WAIT=22 cap2 "300 combo super+shift+5; 420 click 504 710; 500 press 1500 300; 510 move 1650 400; 520 release 1800 500; 600 click 1021 710; 800 click 1220 14; 900 list" "$SCALE2"
 rec2_check "escalas diferentes: gravar uma área da tela em 1,25 (pixels, lados pares)" 'gravando HEADLESS-2 \(374x250 em 168,375\)' 374x250
 rm -rf "$CAP2"

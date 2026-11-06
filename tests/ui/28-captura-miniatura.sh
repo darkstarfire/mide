@@ -33,7 +33,7 @@ else
     echo "FALHA miniatura: aparece no canto depois do ⌘⇧4 e some sozinha em 5 s (entrou $T_IN, saiu $T_OUT)"; FAIL=$((FAIL + 1))
 fi
 # A captura continua salva e copiada como antes.
-if ls "$MIN/pics/Capturas de tela/"*.png >/dev/null 2>&1 && echo "$LOG" | grep -q "captura copiada (300x200)"; then
+if ls "$MIN/pics/Screenshots/"*.png >/dev/null 2>&1 && echo "$LOG" | grep -q "captura copiada (300x200)"; then
     echo "ok    miniatura: a captura continua salva e copiada"; PASS=$((PASS + 1))
 else
     echo "FALHA miniatura: a captura continua salva e copiada"; FAIL=$((FAIL + 1))
@@ -43,7 +43,7 @@ rm -rf "$MIN/pics"
 # Clique na miniatura: abre o editor com a captura (e a miniatura sai).
 XDG_CONFIG_HOME="$MIN/cfg" SCENARIO_OUT="$MIN/clique" SCENARIO_WAIT=16 timeout 150 "$SCEN" "$AREA4; 700 click 1260 625; 900 list" >/dev/null 2>&1
 LOG="$(min_log clique)"
-if echo "$LOG" | grep -q "miniatura: abrindo no editor" && echo "$LOG" | grep -q "editor da captura aberto: .*Capturas de tela/Captura de tela .*(300x200)" \
+if echo "$LOG" | grep -q "miniatura: abrindo no editor" && echo "$LOG" | grep -q "editor da captura aberto: .*Screenshots/Captura de tela .*(300x200)" \
     && echo "$LOG" | grep -q 'autoteste: janela "Captura de tela .* — Editor de Capturas"' && echo "$LOG" | grep -q "miniatura: fechada (Editor)"; then
     echo "ok    miniatura: o clique abre a captura no editor"; PASS=$((PASS + 1))
 else
@@ -59,7 +59,7 @@ rm -rf "$MIN/pics"
 XDG_CONFIG_HOME="$MIN/cfg" SCENARIO_OUT="$MIN/lixeira" SCENARIO_WAIT=16 timeout 150 "$SCEN" "$AREA4; 700 rclick 1260 625; 760 click 1216 538; 900 list" >/dev/null 2>&1
 LOG="$(min_log lixeira)"
 if echo "$LOG" | grep -q "miniatura: movida para a Lixeira" && ls "$MIN/lixeira/data/Trash/files/Captura de tela "*.png >/dev/null 2>&1 \
-    && ! ls "$MIN/pics/Capturas de tela/"*.png >/dev/null 2>&1; then
+    && ! ls "$MIN/pics/Screenshots/"*.png >/dev/null 2>&1; then
     echo "ok    miniatura: menu com Mover para a Lixeira (a captura vai para a Lixeira)"; PASS=$((PASS + 1))
 else
     echo "FALHA miniatura: menu com Mover para a Lixeira ($(echo "$LOG" | grep -c miniatura) linhas; quadro do menu em $MENU_FRAME)"; FAIL=$((FAIL + 1))
@@ -69,7 +69,7 @@ rm -rf "$MIN/pics"
 # Arrastar a miniatura para a direita: some na hora; o arquivo fica.
 XDG_CONFIG_HOME="$MIN/cfg" SCENARIO_OUT="$MIN/arrasto" SCENARIO_WAIT=14 timeout 150 "$SCEN" "$AREA4; 700 press 1260 625; 705 move 1290 625; 710 move 1330 625; 715 move 1360 625; 720 release 1360 625; 800 list" >/dev/null 2>&1
 LOG="$(min_log arrasto)"
-if echo "$LOG" | grep -q "miniatura: descartada" && ! echo "$LOG" | grep -q "miniatura: some sozinha" && ls "$MIN/pics/Capturas de tela/"*.png >/dev/null 2>&1; then
+if echo "$LOG" | grep -q "miniatura: descartada" && ! echo "$LOG" | grep -q "miniatura: some sozinha" && ls "$MIN/pics/Screenshots/"*.png >/dev/null 2>&1; then
     echo "ok    miniatura: arrastada para fora some na hora (a captura fica salva)"; PASS=$((PASS + 1))
 else
     echo "FALHA miniatura: arrastada para fora some na hora"; FAIL=$((FAIL + 1))
@@ -79,7 +79,7 @@ rm -rf "$MIN/pics"
 # arrastar 40 pontos, e chegar à borda basta para descartar.
 XDG_CONFIG_HOME="$MIN/cfg" SCENARIO_OUT="$MIN/borda" SCENARIO_WAIT=14 timeout 150 "$SCEN" "$AREA4; 700 press 1340 625; 705 move 1352 625; 710 move 1365 625; 720 release 1365 625; 800 list" >/dev/null 2>&1
 LOG="$(min_log borda)"
-if echo "$LOG" | grep -q "miniatura: descartada" && ! echo "$LOG" | grep -q "miniatura: abrindo no editor" && ls "$MIN/pics/Capturas de tela/"*.png >/dev/null 2>&1; then
+if echo "$LOG" | grep -q "miniatura: descartada" && ! echo "$LOG" | grep -q "miniatura: abrindo no editor" && ls "$MIN/pics/Screenshots/"*.png >/dev/null 2>&1; then
     echo "ok    miniatura: arrastada até a borda da tela some (apertada perto da borda)"; PASS=$((PASS + 1))
 else
     echo "FALHA miniatura: arrastada até a borda da tela some ($(echo "$LOG" | grep -m1 'miniatura: \(descartada\|fechada\|some\)'))"; FAIL=$((FAIL + 1))
