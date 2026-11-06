@@ -250,6 +250,8 @@ impl X11Backend {
         state: &mut State,
     ) -> Result<Self, Box<dyn Error>> {
         let (conn, screen_num) = RustConnection::connect(None)?;
+        // Publica o numero do display para que child_env() defina DISPLAY nos filhos.
+        let _ = crate::X11_DISPLAY_NUM.set(screen_num.try_into().unwrap_or(0));
         let conn = Arc::new(conn);
 
         let setup = conn.setup();

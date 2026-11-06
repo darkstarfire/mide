@@ -62,6 +62,8 @@ use state::{ClientState, State};
 
 /// O backend X11 está ativo: não há socket Wayland para passar aos programas filhos.
 static X11_BACKEND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Numero do display X11 (ex.: 99 para :99), definido pelo X11Backend::init.
+pub(crate) static X11_DISPLAY_NUM: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
 
 /// Nome do socket Wayland: `mide-0`, ou o valor de `MIDE_SOCKET` (os testes usam
 /// outro nome para não interferir numa sessão do mide aberta).
@@ -418,10 +420,14 @@ pub fn child_env(command: &mut std::process::Command) {
     if X11_BACKEND.load(std::sync::atomic::Ordering::Relaxed) {
         // Backend X11: nao ha socket Wayland; os filhos usam o mesmo servidor X.
         command.env_remove("WAYLAND_DISPLAY");
+        // Define DISPLAY para o servidor X onde o mide esta rodando (ex.: :99).
+        if let Some(num) = X11_DISPLAY_NUM.get() {
+            command.env("DISPLAY", format!(":{num}"));
+        }
     } else {
         command.env("WAYLAND_DISPLAY", socket_name());
     }
-    // Apps X11 abrem dentro do mide (XWayland), e não no desktop por baixo.
+    // Apps X11 abrem dentro do mide (XWayland), e nao no desktop por baixo.
     if let Some(display) = xwayland::display() {
         command.env("DISPLAY", display);
     }
