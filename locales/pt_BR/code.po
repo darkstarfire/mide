@@ -799,3 +799,12 @@ msgstr "disponível"
 
 msgid "JSON with Comments"
 msgstr "JSON com comentários"
+
+msgid "Add Next Occurrence"
+msgstr "Escolher a próxima ocorrência"
+
+msgid "Add Cursor Above"
+msgstr "Cursor na linha de cima"
+
+msgid "Add Cursor Below"
+msgstr "Cursor na linha de baixo"

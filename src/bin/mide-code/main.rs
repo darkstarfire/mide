@@ -1260,6 +1260,20 @@ impl Code {
             "goto-line" => self.overlay = Overlay::GoToLine { text: String::new(), focus: true },
             "comment" => self.toggle_comment(),
             "duplicate" => self.duplicate_line(),
+            "add-next" => {
+                let doc = &mut self.docs[self.cur].text;
+                if doc.add_next_occurrence() {
+                    tracing::info!("cursores: {}", 1 + doc.extra.len());
+                }
+            }
+            "cursor-above" | "cursor-below" => {
+                let doc = &mut self.docs[self.cur].text;
+                doc.add_cursor_vertical(action == "cursor-below");
+                tracing::info!("cursores: {}", 1 + doc.extra.len());
+            }
+            "single-cursor" => {
+                self.docs[self.cur].text.collapse_cursors();
+            }
             "move-up" => self.move_lines(true),
             "move-down" => self.move_lines(false),
             "complete" => self.request_completion(),
@@ -1418,6 +1432,9 @@ impl Code {
         }
         if shift("d") {
             run.push("duplicate");
+        } else if plain("d") {
+            // Ctrl+D: a próxima ocorrência do escolhido ganha mais um cursor.
+            run.push("add-next");
         }
         if shift("p") {
             run.push("palette");
@@ -1450,6 +1467,11 @@ impl Code {
                 0xffc5 => run.push(if p.shift { "prev-problem" } else { "next-problem" }),
                 // Ctrl+\ divide à direita (Ctrl+Shift+\: embaixo).
                 0x5c | 0x7c if p.ctrl => run.push(if p.shift { "split-down" } else { "split-right" }),
+                // Ctrl+Alt+↑/↓: mais um cursor na linha de cima ou de baixo.
+                0xff52 | 0xff54 if p.alt && p.ctrl => {
+                    ui.take_key(if p.keysym == 0xff52 { Key::Up } else { Key::Down });
+                    run.push(if p.keysym == 0xff52 { "cursor-above" } else { "cursor-below" });
+                }
                 // Alt+↑/↓ movem as linhas (a área de texto não vê a seta).
                 0xff52 | 0xff54 if p.alt && !p.ctrl => {
                     ui.take_key(if p.keysym == 0xff52 { Key::Up } else { Key::Down });
@@ -1478,6 +1500,11 @@ impl Code {
         let esc = ui.input().key(Key::Escape);
         if self.lsp_overlays(ui, esc) || self.tool_overlays(ui, esc) || self.store_overlay(ui, esc) {
             return;
+        }
+        // Esc sem nada aberto por cima: volta a um cursor só (como no VS Code e no Zed).
+        if esc && matches!(self.overlay, Overlay::None) && self.docs.get(self.cur).is_some_and(|d| d.text.has_extra()) {
+            self.docs[self.cur].text.collapse_cursors();
+            ui.request_repaint();
         }
         match &mut self.overlay {
             Overlay::None => {}
@@ -2080,7 +2107,15 @@ impl Code {
                 }
             }
             m.separator();
-            for (action, label) in [("comment", tr!("Comment Lines")), ("duplicate", tr!("Duplicate Line")), ("move-up", tr!("Move Line Up")), ("move-down", tr!("Move Line Down"))] {
+            for (action, label) in [
+                ("comment", tr!("Comment Lines")),
+                ("duplicate", tr!("Duplicate Line")),
+                ("move-up", tr!("Move Line Up")),
+                ("move-down", tr!("Move Line Down")),
+                ("add-next", tr!("Add Next Occurrence")),
+                ("cursor-above", tr!("Add Cursor Above")),
+                ("cursor-below", tr!("Add Cursor Below")),
+            ] {
                 if m.item(&label) {
                     chosen = Some(action);
                 }
@@ -2702,6 +2737,10 @@ impl App for Code {
                     MenuItem::action("duplicate", &tr!("Duplicate Line")).shortcut("Ctrl+Shift+D"),
                     MenuItem::action("move-up", &tr!("Move Line Up")).shortcut("Alt+↑"),
                     MenuItem::action("move-down", &tr!("Move Line Down")).shortcut("Alt+↓"),
+                    MenuItem::Separator,
+                    MenuItem::action("add-next", &tr!("Add Next Occurrence")).shortcut("Ctrl+D"),
+                    MenuItem::action("cursor-above", &tr!("Add Cursor Above")).shortcut("Ctrl+Alt+↑"),
+                    MenuItem::action("cursor-below", &tr!("Add Cursor Below")).shortcut("Ctrl+Alt+↓"),
                     MenuItem::Separator,
                     MenuItem::action("complete", &tr!("Complete")).shortcut("Alt+Space"),
                     MenuItem::action("rename", &tr!("Rename Symbol…")).shortcut("F2"),
