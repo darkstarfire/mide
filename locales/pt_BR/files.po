@@ -647,3 +647,18 @@ msgstr "Atualizar"
 
 msgid "{date} at {time}"
 msgstr "{date} às {time}"
+
+msgid "Recents"
+msgstr "Recentes"
+
+msgid "Tags"
+msgstr "Etiquetas"
+
+msgid "Gray"
+msgstr "Cinza"
+
+msgid "Couldn’t mount the disk."
+msgstr "Não foi possível montar o disco."
+
+msgid "Eject"
+msgstr "Ejetar"

@@ -40,6 +40,7 @@ use mide::{
     kit::{run, window_menu, App, Cursor, Key, MenuGroup, MenuItem, Tile, Tool, Ui, Window},
     places,
     programs::{self, Answer, Labels, Opened, Prompt},
+    storage::drives,
 };
 use tiny_skia::Pixmap;
 
@@ -51,6 +52,35 @@ const SIDEBAR_CONTENT_MIN: f32 = 340.0;
 enum Place {
     Dir(PathBuf),
     Trash,
+    /// Recentes (arquivos abertos há pouco, do `recently-used.xbel`).
+    Recents,
+    /// Itens com a etiqueta de cor N (índice em `files::TAGS`).
+    Tag(usize),
+}
+
+impl Place {
+    /// Lugar que não é uma pasta de verdade (Recentes, uma etiqueta): os itens vêm de
+    /// pastas diferentes, e criar ou colar ali não vale.
+    fn virtual_place(&self) -> bool {
+        matches!(self, Place::Recents | Place::Tag(_))
+    }
+}
+
+/// Item da lista a partir de um caminho solto (Recentes, Etiquetas).
+fn entry_of(path: &Path) -> Option<Entry> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(Entry {
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        path: path.to_path_buf(),
+        is_dir: meta.is_dir(),
+        size: if meta.is_dir() { 0 } else { meta.len() },
+        modified: meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+    })
+}
+
+/// Nome de uma etiqueta de cor, no idioma da interface.
+fn tag_name(n: usize) -> String {
+    mide::i18n::tr(files::TAGS[n.min(files::TAGS.len() - 1)].0).into_owned()
 }
 
 struct Files {
@@ -190,6 +220,9 @@ struct Files {
     labels: Labels,
     /// Observa alterações externas na pasta atual (gravações, downloads etc.).
     directory_watch: Option<mide::storage::directory_watch::DirectoryWatch>,
+    /// Discos e pendrives da barra lateral (Locais) e quando foram lidos.
+    drives: Vec<drives::Drive>,
+    drives_read: Option<std::time::Instant>,
 }
 
 impl Files {
@@ -299,6 +332,8 @@ impl Files {
             message: None,
             undo: Vec::new(),
             favorites: files::favorites(),
+            drives: Vec::new(),
+            drives_read: None,
             thumbs: HashMap::new(),
             waiting: HashSet::new(),
             to_loader,
@@ -362,7 +397,9 @@ impl Files {
     /// na cor de destaque e o nome cortado com "…" quando não cabe, o escolhido numa
     /// pílula cinza, e o vazio arrastando a janela. A lista rola quando não cabe.
     /// Devolve o item clicado.
-    fn sidebar(&mut self, ui: &mut Ui, items: &[(String, &str)], current: usize, rect: (f32, f32, f32, f32)) -> Option<usize> {
+    /// Barra lateral: devolve o item escolhido e o disco a ejetar (botão ⏏ da linha).
+    /// Ícone `tag:N` desenha a bolinha da etiqueta N; `ejectable[i]` mostra o ⏏.
+    fn sidebar(&mut self, ui: &mut Ui, items: &[(String, &str)], ejectable: &[bool], current: usize, rect: (f32, f32, f32, f32)) -> (Option<usize>, Option<usize>) {
         use mide::ui::draw;
         let (x, y0, sw, h) = rect;
         let t = ui.theme().clone();
@@ -385,7 +422,7 @@ impl Files {
         ui.window_controls(x + 20.0, y0 + (mide::kit::TOOLBAR_HEIGHT - 14.0) / 2.0);
         // Ícones dos itens (poucos, carregados uma vez no tamanho em pixels da tela).
         let scale = draw::scale();
-        for (_, icon) in items.iter().filter(|(_, i)| !i.is_empty()) {
+        for (_, icon) in items.iter().filter(|(_, i)| !i.is_empty() && !i.starts_with("tag:")) {
             let size = if icon.ends_with("-symbolic") { 17 } else { 20 };
             let px = (size as f32 * scale).round() as u32;
             self.sidebar_icons.entry((icon.to_string(), px)).or_insert_with(|| mide::icons::load_themed_icon(&[icon], px));
@@ -393,6 +430,7 @@ impl Files {
         let top = y0 + mide::kit::TOOLBAR_HEIGHT;
         let list_h = (panel.1 + panel.3 - 8.0 - top).max(1.0);
         let mut chosen = None;
+        let mut eject = None;
         let mut row_hovered = false;
         let icons = &self.sidebar_icons;
         ui.at(panel.0, top, panel.2, |ui| {
@@ -418,9 +456,19 @@ impl Files {
                     if row.1 + row.3 < 0.0 || row.1 > list_h {
                         continue;
                     }
+                    // Botão ⏏ dos discos, à direita da linha (tem prioridade sobre a linha).
+                    let eject_rect = (row.0 + row.2 - 26.0, row.1 + 4.0, 20.0, 20.0);
+                    let can_eject = ejectable.get(i).copied().unwrap_or(false);
+                    if can_eject {
+                        let e = ui.background(eject_rect);
+                        if e.clicked() {
+                            eject = Some(i);
+                        }
+                        ui.tooltip(&e, &tr!("Eject"));
+                    }
                     let r = ui.background(row);
                     row_hovered |= r.hovered;
-                    if r.clicked() {
+                    if r.clicked() && eject.is_none() {
                         chosen = Some(i);
                     }
                     let fill = if i == current {
@@ -433,9 +481,31 @@ impl Files {
                     let size = if icon.ends_with("-symbolic") { 17.0 } else { 20.0 };
                     let pix = icons.get(&(icon.to_string(), (size * scale).round() as u32)).and_then(Option::as_ref);
                     let accent = t.accent;
+                    let tag = icon.strip_prefix("tag:").and_then(|n| n.parse::<usize>().ok());
+                    let eject_color = t.text_secondary;
                     ui.paint(|canvas, _| {
                         if let Some(fill) = fill {
                             draw::fill_rounded(canvas, row.0, row.1, row.2, row.3, 8.0, rgba(fill));
+                        }
+                        // Etiqueta: a bolinha da cor (como na barra lateral do Finder).
+                        if let Some(n) = tag {
+                            let [r, g, b, _] = mide::kit::TAG_COLORS[n.min(mide::kit::TAG_COLORS.len() - 1)];
+                            draw::fill_rounded(canvas, row.0 + 12.0, row.1 + 9.0, 10.0, 10.0, 5.0, tiny_skia::Color::from_rgba8(r, g, b, 255));
+                        }
+                        // ⏏: triângulo e traço.
+                        if can_eject {
+                            let (ex, ey) = (eject_rect.0 + 4.0, eject_rect.1 + 4.0);
+                            let mut pb = tiny_skia::PathBuilder::new();
+                            pb.move_to(ex + 6.0, ey);
+                            pb.line_to(ex + 12.0, ey + 7.0);
+                            pb.line_to(ex, ey + 7.0);
+                            pb.close();
+                            if let Some(path) = pb.finish() {
+                                let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+                                paint.set_color(rgba(eject_color));
+                                canvas.fill_path(&path, &paint, tiny_skia::FillRule::Winding, draw::tf(), None);
+                            }
+                            draw::fill_rounded(canvas, ex, ey + 9.0, 12.0, 2.0, 1.0, rgba(eject_color));
                         }
                         if let Some(pix) = pix {
                             let (ix, iy) = ((row.0 + 8.0).floor() as i32, (row.1 + (row.3 - size) / 2.0).floor() as i32);
@@ -447,7 +517,7 @@ impl Files {
                         }
                     });
                     // O nome (cortado com "…" se não couber), centrado na linha.
-                    let room = (row.2 - 34.0 - 2.0).max(10.0);
+                    let room = (row.2 - 34.0 - 2.0 - if can_eject { 26.0 } else { 0.0 }).max(10.0);
                     ui.at(row.0 + 34.0, row.1 + (row.3 - t.row.max(30.0)) / 2.0, room, |ui| ui.fixed_label(name, room));
                 }
                 ui.space(row_y - base);
@@ -457,7 +527,7 @@ impl Files {
         if !row_hovered && self.sidebar_drag.is_none() {
             ui.window_drag_area((panel.0, panel.1, panel.2 - 6.0, panel.3));
         }
-        chosen
+        (chosen, eject)
     }
 
     /// Chave da pasta atual na memória das visualizações.
@@ -465,6 +535,8 @@ impl Files {
         match &self.place {
             Place::Dir(dir) => files_view::key_for_path(dir),
             Place::Trash => files_view::TRASH_KEY.to_string(),
+            Place::Recents => "recents".to_string(),
+            Place::Tag(n) => format!("tag:{n}"),
         }
     }
 
@@ -507,9 +579,29 @@ impl Files {
     /// Lê de novo a pasta atual (depois de criar, renomear ou apagar).
     fn reload(&mut self) {
         self.tags.clear();
+        // Recentes e etiquetas: itens de pastas diferentes, de uma lista.
+        if self.place.virtual_place() {
+            let paths = match self.place {
+                Place::Tag(n) => files::tagged_with(n),
+                _ => mide::storage::recent::recent_files(200),
+            };
+            self.entries = paths.iter().filter_map(|p| entry_of(p)).filter(|e| self.hidden || !e.name.starts_with('.')).collect();
+            // Recentes do mais novo para o mais velho (como o Finder), salvo outra ordem.
+            if self.place != Place::Recents || self.sort != (1, false) {
+                self.sort_entries();
+            }
+            self.expanded.clear();
+            self.children.clear();
+            self.sizes.clear();
+            self.col_cache.clear();
+            self.preview_info = None;
+            self.free_space = rustix::fs::statvfs(&places::home_dir()).ok().map(|v| v.f_bavail.saturating_mul(v.f_frsize));
+            self.selection.retain(|s| s.exists());
+            return;
+        }
         let dir = match &self.place {
             Place::Dir(dir) => dir.clone(),
-            Place::Trash => Self::trash().join("files"),
+            _ => Self::trash().join("files"),
         };
         if let Some(watch) = &self.directory_watch {
             watch.set_path(dir.clone());
@@ -610,7 +702,7 @@ impl Files {
     fn target_dir(&self) -> Option<PathBuf> {
         match &self.place {
             Place::Dir(dir) => Some(dir.clone()),
-            Place::Trash => None,
+            _ => None,
         }
     }
 
@@ -911,6 +1003,8 @@ impl Files {
         match &self.place {
             Place::Dir(dir) => tracing::info!("pasta aberta: {}", dir.display()),
             Place::Trash => tracing::info!("pasta aberta: Lixeira"),
+            Place::Recents => tracing::info!("pasta aberta: Recentes"),
+            Place::Tag(n) => tracing::info!("pasta aberta: etiqueta {}", files::TAGS[*n].0),
         }
     }
 
@@ -944,6 +1038,8 @@ impl Files {
     fn title(&self) -> String {
         match &self.place {
             Place::Trash => tr!("Trash").into_owned(),
+            Place::Recents => tr!("Recents").into_owned(),
+            Place::Tag(n) => tag_name(*n),
             Place::Dir(dir) => {
                 if let Some((name, _, _)) = self.favorites.iter().find(|(_, p, _)| p == dir) {
                     return name.clone();
@@ -975,7 +1071,8 @@ impl Files {
     /// executáveis, scripts) rodam ou pedem confirmação antes (E8).
     fn open_file(&mut self, path: &Path) {
         match programs::open(path) {
-            Opened::Done => {}
+            // Aberto: entra nos Recentes (o `recently-used.xbel` que os outros apps também usam).
+            Opened::Done => mide::storage::recent::add(path, "mide-files"),
             Opened::Ask(prompt) => {
                 // Um diálogo de cada vez: abrindo vários, só o primeiro pergunta.
                 if self.prompt.is_none() {
@@ -2854,6 +2951,8 @@ impl Files {
     fn path_parts(&self) -> Vec<(String, String, PathBuf)> {
         let dir = match &self.place {
             Place::Trash => return vec![(tr!("Trash").into_owned(), "user-trash".into(), Self::trash())],
+            Place::Recents => return vec![(tr!("Recents").into_owned(), "document-open-recent".into(), PathBuf::new())],
+            Place::Tag(n) => return vec![(tag_name(*n), "tag".into(), PathBuf::new())],
             Place::Dir(dir) => dir.clone(),
         };
         let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -3347,24 +3446,62 @@ impl App for Files {
             self.menu_action(&action);
             ui.request_repaint();
         }
-        let mut items: Vec<(String, &str)> = vec![(tr!("Favorites").into_owned(), "")];
-        items.extend(self.favorites.iter().map(|(name, _, icon)| (name.clone(), *icon)));
-        items.push((tr!("Locations").into_owned(), ""));
-        items.push((tr!("Computer").into_owned(), "drive-harddisk-symbolic"));
-        items.push((tr!("Trash").into_owned(), "user-trash-symbolic"));
-        let favorites = self.favorites.len();
-        let current = match &self.place {
-            Place::Trash => favorites + 3,
-            Place::Dir(dir) if dir == Path::new("/") => favorites + 2,
-            Place::Dir(dir) => self.favorites.iter().position(|(_, p, _)| p == dir).map(|i| i + 1).unwrap_or(usize::MAX),
+        // Discos e pendrives (relidos a cada 3 s: montar e tirar mudam a lista).
+        if self.drives_read.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3)) {
+            self.drives = drives::read_drives();
+            self.drives_read = Some(std::time::Instant::now());
+        }
+        ui.wake_after(std::time::Duration::from_secs(3));
+        // Barra lateral do Tahoe: Favoritos (com Recentes e Aplicativos), Locais (o
+        // computador, os discos com ⏏ e a Lixeira) e Etiquetas. Cada linha leva o lugar
+        // que abre (os títulos, nenhum) e se dá para ejetar.
+        let mut items: Vec<(String, String)> = vec![(tr!("Favorites").into_owned(), String::new())];
+        let mut targets: Vec<Option<Place>> = vec![None];
+        let mut ejectable: Vec<bool> = vec![false];
+        let mut push = |items: &mut Vec<(String, String)>, name: String, icon: &str, place: Option<Place>, eject: bool| {
+            items.push((name, icon.to_string()));
+            targets.push(place);
+            ejectable.push(eject);
         };
+        push(&mut items, tr!("Recents").into_owned(), "document-open-recent-symbolic", Some(Place::Recents), false);
+        let apps = mide::appimage::apps_dir();
+        if apps.is_dir() {
+            push(&mut items, tr!("Applications").into_owned(), "view-app-grid-symbolic", Some(Place::Dir(apps)), false);
+        }
+        for (name, path, icon) in &self.favorites {
+            push(&mut items, name.clone(), icon, Some(Place::Dir(path.clone())), false);
+        }
+        push(&mut items, tr!("Locations").into_owned(), "", None, false);
+        push(&mut items, tr!("Computer").into_owned(), "drive-harddisk-symbolic", Some(Place::Dir(PathBuf::from("/"))), false);
+        let first_drive = items.len();
+        for d in &self.drives {
+            let icon = if drives::drive_icon(d) == "media-optical" { "media-optical-symbolic" } else { "drive-removable-media-symbolic" };
+            push(&mut items, drives::drive_name(d), icon, d.mount.clone().map(Place::Dir), true);
+        }
+        push(&mut items, tr!("Trash").into_owned(), "user-trash-symbolic", Some(Place::Trash), false);
+        push(&mut items, tr!("Tags").into_owned(), "", None, false);
+        for n in 0..files::TAGS.len() {
+            push(&mut items, tag_name(n), &format!("tag:{n}"), Some(Place::Tag(n)), false);
+        }
+        let current = targets.iter().position(|t| t.as_ref() == Some(&self.place)).unwrap_or(usize::MAX);
+        let item_refs: Vec<(String, &str)> = items.iter().map(|(n, i)| (n.clone(), i.as_str())).collect();
         // Barra lateral de vidro com a largura escolhida (arrastando a borda dela) e o
         // conteúdo à direita, até o fim da janela.
         let region = ui.region();
         let y0 = region.1 + region.3 - ui.remaining_height();
         let area = (region.0, y0, region.2, ui.remaining_height());
         let side_w = self.sidebar_resize(ui, area);
-        let chosen = self.sidebar(ui, &items, current, (area.0, area.1, side_w, area.3)).unwrap_or(current);
+        let (chosen, eject) = self.sidebar(ui, &item_refs, &ejectable, current, (area.0, area.1, side_w, area.3));
+        let chosen = chosen.unwrap_or(current);
+        if let Some(d) = eject.and_then(|i| self.drives.get(i - first_drive)).cloned() {
+            // Saindo do disco ejetado: volta à pasta pessoal.
+            if matches!(&self.place, Place::Dir(dir) if d.mount.as_ref().is_some_and(|m| dir.starts_with(m))) {
+                self.go(Place::Dir(places::home_dir()));
+            }
+            drives::eject(d);
+            self.drives_read = None;
+            ui.request_repaint();
+        }
         ui.at(area.0 + side_w, y0, (area.2 - side_w).max(1.0), |ui| self.content(ui));
         // Arrasto em andamento: a miniatura dos itens segue o ponteiro, por cima de tudo.
         if self.drag.is_none() {
@@ -3385,15 +3522,25 @@ impl App for Files {
         self.info_view(ui);
         self.prompt_view(ui);
         self.quick_look_view(ui);
-        if chosen != current {
-            let place = if chosen == favorites + 3 {
-                Place::Trash
-            } else if chosen == favorites + 2 {
-                Place::Dir(PathBuf::from("/"))
-            } else {
-                Place::Dir(self.favorites[chosen - 1].1.clone())
-            };
-            self.go(place);
+        if chosen != current && chosen < targets.len() {
+            match targets[chosen].clone() {
+                Some(place) => self.go(place),
+                // Disco ainda desmontado: monta pelo UDisks e entra nele.
+                None if (first_drive..first_drive + self.drives.len()).contains(&chosen) => {
+                    let device = self.drives[chosen - first_drive].device.clone();
+                    match std::process::Command::new("udisksctl").args(["mount", "-b", &device]).output() {
+                        Ok(out) if out.status.success() => {
+                            let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                            if let Some(mount) = text.lines().find_map(|l| l.split_once(" at ").map(|(_, p)| p.trim_end_matches('.').trim().to_string())) {
+                                self.go(Place::Dir(PathBuf::from(mount)));
+                            }
+                            self.drives_read = None;
+                        }
+                        _ => self.message = Some(tr!("Couldn’t mount the disk.").into_owned()),
+                    }
+                }
+                None => {}
+            }
             ui.request_repaint();
         }
     }

@@ -41,6 +41,7 @@ use mide::{
     kit::{run, App, Key, Theme, Tile, Ui, Window},
     places,
     programs::{self, Answer, Labels, Opened, Prompt},
+    storage::drives::{drive_icon, drive_path, eject, open_drive, read_drives, Drive},
 };
 use tiny_skia::Pixmap;
 
@@ -50,15 +51,6 @@ const CELL: (f32, f32) = (104.0, 106.0);
 const MARGIN: f32 = 14.0;
 /// Tempo segurando um arrasto em cima de uma pasta até ela abrir (pasta de mola).
 const SPRING: Duration = Duration::from_millis(1100);
-
-/// Volume removível montado ou detectado ainda desmontado (pendrive, HD, CD/DVD).
-#[derive(Clone, Debug, PartialEq)]
-struct Drive {
-    device: String,
-    mount: Option<PathBuf>,
-    fstype: String,
-    label: Option<String>,
-}
 
 /// Um ícone da área de trabalho: um arquivo ou pasta, ou um disco.
 #[derive(Clone)]
@@ -226,118 +218,8 @@ fn nearest_free(want: (usize, usize), taken: &HashSet<(usize, usize)>, cols: usi
     best.map(|(_, cell)| cell).unwrap_or(want)
 }
 
-/// Volumes montados nos lugares usuais e partições removíveis ainda desmontadas.
-fn read_drives() -> Vec<Drive> {
-    let path = std::env::var_os("MIDE_DESKTOP_MOUNTINFO").map(PathBuf::from).unwrap_or_else(|| "/proc/self/mountinfo".into());
-    let mut drives = std::fs::read_to_string(path).map(|t| parse_mountinfo(&t)).unwrap_or_default();
-    if let Ok(output) = std::process::Command::new("lsblk")
-        .args(["--json", "--paths", "--output", "PATH,TYPE,RM,TRAN,FSTYPE,LABEL,MOUNTPOINTS"])
-        .output()
-        && output.status.success()
-        && let Ok(text) = std::str::from_utf8(&output.stdout)
-    {
-        parse_unmounted_removable(text, &mut drives);
-    }
-    drives
-}
-
-fn parse_mountinfo(text: &str) -> Vec<Drive> {
-    // `\040` no ponto de montagem é um espaço (e `\011` tab, `\134` barra invertida).
-    let unescape = |s: &str| s.replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\");
-    let mut out: Vec<Drive> = Vec::new();
-    for line in text.lines() {
-        let Some((left, right)) = line.split_once(" - ") else {
-            continue;
-        };
-        let fields: Vec<&str> = left.split(' ').collect();
-        let rest: Vec<&str> = right.split(' ').collect();
-        let (Some(mount), Some(fstype), Some(device)) = (fields.get(4), rest.first(), rest.get(1)) else {
-            continue;
-        };
-        let mount = unescape(mount);
-        let user_mount = ["/media/", "/run/media/", "/mnt/"].iter().any(|p| mount.starts_with(p));
-        // Pastas de passagem (o tmpfs de /media/fabio, que só segura os discos) não
-        // contam.
-        if !user_mount || mount.trim_end_matches('/').matches('/').count() < 2 || matches!(*fstype, "tmpfs" | "autofs") {
-            continue;
-        }
-        if out.iter().any(|d| d.mount.as_deref() == Some(Path::new(&mount))) {
-            continue;
-        }
-        let mount = PathBuf::from(mount);
-        out.push(Drive { device: device.to_string(), label: mount.file_name().map(|n| n.to_string_lossy().into_owned()), mount: Some(mount), fstype: fstype.to_string() });
-    }
-    out
-}
-
-/// Volumes removíveis ainda desmontados também aparecem na Mesa: clicar neles pede
-/// ao UDisks que monte o volume, como os ambientes gráficos comuns.
-fn parse_unmounted_removable(text: &str, drives: &mut Vec<Drive>) {
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(text) else { return };
-    fn visit(node: &serde_json::Value, inherited_removable: bool, drives: &mut Vec<Drive>) {
-        let removable = node.get("rm").and_then(|v| v.as_bool().or_else(|| v.as_u64().map(|n| n != 0))).unwrap_or(false)
-            || node.get("tran").and_then(|v| v.as_str()) == Some("usb")
-            || inherited_removable;
-        let path = node.get("path").and_then(|v| v.as_str());
-        let kind = node.get("type").and_then(|v| v.as_str());
-        let fstype = node.get("fstype").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-        let mounted = node.get("mountpoints").and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|p| p.as_str().is_some_and(|s| !s.is_empty())));
-        if removable && matches!(kind, Some("part" | "disk")) && fstype.is_some() && !mounted
-            && let Some(device) = path
-            && !drives.iter().any(|d| d.device == device)
-        {
-            drives.push(Drive {
-                device: device.to_string(), mount: None, fstype: fstype.unwrap().to_string(),
-                label: node.get("label").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string),
-            });
-        }
-        if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
-            for child in children { visit(child, removable, drives); }
-        }
-    }
-    if let Some(devices) = root.get("blockdevices").and_then(|v| v.as_array()) {
-        for device in devices { visit(device, false, drives); }
-    }
-}
-
-/// Ícone do tema para um disco: CD/DVD ou removível.
-fn drive_icon(d: &Drive) -> &'static str {
-    match d.fstype.as_str() {
-        "iso9660" | "udf" => "media-optical",
-        _ => "drive-removable-media",
-    }
-}
-
-fn drive_path(drive: &Drive) -> PathBuf {
-    drive.mount.clone().unwrap_or_else(|| PathBuf::from(&drive.device))
-}
-
 fn can_move_to_trash(drive: Option<&Drive>) -> bool {
     drive.is_none()
-}
-
-fn open_drive(drive: &Drive) {
-    if let Some(mount) = &drive.mount {
-        places::open(&mount.to_string_lossy());
-        return;
-    }
-    let device = drive.device.clone();
-    std::thread::spawn(move || {
-        let result = std::process::Command::new("udisksctl").args(["mount", "-b", &device]).output();
-        match result {
-            Ok(output) if output.status.success() => {
-                let text = String::from_utf8_lossy(&output.stdout);
-                if let Some(mount) = text.lines().find_map(|line| line.split_once(" at ").map(|(_, path)| path.trim_end_matches('.').trim())) {
-                    places::open(mount);
-                    tracing::info!("montado: {device} em {mount}");
-                } else {
-                    tracing::info!("montado: {device}");
-                }
-            }
-            Ok(output) => tracing::warn!("não foi possível montar {device}: {}", String::from_utf8_lossy(&output.stderr).trim()),
-            Err(err) => tracing::warn!("não foi possível montar {device}: {err}"),
-        }
-    });
 }
 
 /// Miniatura para a área de trabalho: fotos, PDFs e vídeos com a borda branca (como
@@ -1081,29 +963,6 @@ fn cut_files(paths: &[PathBuf]) {
     }
 }
 
-/// Desmonta o disco (e desliga, se puder) numa thread: o desenho não espera.
-fn eject(drive: Drive) {
-    std::thread::spawn(move || {
-        let unmounted = if drive.mount.is_some() {
-            std::process::Command::new("udisksctl").args(["unmount", "-b", &drive.device]).status().is_ok_and(|s| s.success())
-        } else {
-            true
-        };
-        if unmounted {
-            let powered_off = std::process::Command::new("udisksctl").args(["power-off", "-b", &drive.device]).status().is_ok_and(|s| s.success());
-            if powered_off {
-                tracing::info!("ejetado: {}", drive.mount.as_deref().unwrap_or(Path::new(&drive.device)).display());
-            } else {
-                tracing::warn!("desmontado, mas não foi possível ejetar fisicamente: {}", drive.device);
-            }
-        } else if let Some(mount) = drive.mount.as_ref()
-            && !std::process::Command::new("gio").arg("mount").arg("-u").arg(mount).status().is_ok_and(|s| s.success())
-        {
-            tracing::warn!("não foi possível ejetar {}", mount.display());
-        }
-    });
-}
-
 /// Programa irmão (ao lado deste executável), ou o do PATH.
 fn sibling(name: &str) -> PathBuf {
     std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join(name))).filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from(name))
@@ -1553,6 +1412,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mide::storage::drives::{parse_mountinfo, parse_unmounted_removable};
 
     #[test]
     fn icones_em_colunas_a_partir_da_direita() {

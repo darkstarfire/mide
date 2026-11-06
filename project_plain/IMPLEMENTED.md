@@ -2624,3 +2624,12 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - **Configurações → Idioma e região:** interruptor "Relógio de 24 horas" e uma prévia ("Exemplo: 1.234.567,89 · 05/11/2026 · 14:05 · R$ 1.234,50"). Os formatos valem na hora nos apps do mide; o idioma, no próximo login.
 - Fica como está: os números da Calculadora seguem os separadores dela (vírgula decimal), porque o motor de contas usa a vírgula no próprio texto digitado.
 - Testes: unidade da região (números, datas, horas, moeda, semana) e do calendário começando na segunda; captura com a região dos EUA (barra "9:10 PM", prévia "1,234,567.89 · 11/5/2026 · 9:10 PM · $1,234.50").
+
+## v0.10.78 (2026-11-05): Arquivos com a barra lateral do Tahoe (B26, parte 1)
+
+- **Barra lateral como a do Finder:** Favoritos com **Recentes** no topo e **Aplicativos** (a pasta de apps do mide, quando existe), Lugares com o Computador, os **discos e pendrives** (com o botão ⏏ de ejetar na linha; desmontado, o clique monta pelo UDisks e entra) e a Lixeira, e a seção **Etiquetas** com as sete cores (bolinhas coloridas).
+- **Recentes:** módulo novo `mide::storage::recent`, que lê o `~/.local/share/recently-used.xbel` do freedesktop (o mesmo dos apps GTK, Firefox, LibreOffice) e acrescenta os arquivos abertos pelo Arquivos. Lista os 200 mais novos que ainda existem.
+- **Etiquetas:** o mide-ui passa a manter um índice dos itens etiquetados (`~/.local/state/mide/tagged`), atualizado ao ligar ou desligar uma etiqueta; `files::tagged_with(n)` lista os itens de uma cor sem varrer a pasta pessoal (só os que ainda existem e ainda têm a etiqueta).
+- **Discos:** o código da área de trabalho foi para a biblioteca (`mide::storage::drives`: montados, removíveis desmontados, montar, ejetar), usado pela área de trabalho e pelo Arquivos.
+- Recentes e etiquetas são lugares sem pasta de verdade: criar e colar não valem ali.
+- Testes: unidade do XBEL (ler, atualizar, criar); cenário com um arquivo nos Recentes e outro com a etiqueta vermelha: cada lugar lista o seu.

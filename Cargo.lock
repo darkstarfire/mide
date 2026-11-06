@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "mide"
-version = "0.10.77"
+version = "0.10.78"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2110,7 +2110,7 @@ dependencies = [
 [[package]]
 name = "mide-ui"
 version = "0.1.2"
-source = "git+https://github.com/fabioaacarneiro/mide-ui?branch=main#025f4d170c986195cfb2bc22f4ae3033d20becd6"
+source = "git+https://github.com/fabioaacarneiro/mide-ui?branch=main#1156837bd9666830bb70ce64a423c210357b0ce3"
 dependencies = [
  "chrono",
  "cosmic-text",
