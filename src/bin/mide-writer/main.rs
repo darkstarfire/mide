@@ -15,6 +15,7 @@ mod rich;
 use std::{
     error::Error,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use mide::kit::{run, textarea::TextDoc, textedit::Edit, window_menu, App, ButtonStyle, Choice, FileChooser, Key, MenuGroup, MenuItem, Tool, Ui, Window};
@@ -56,6 +57,19 @@ struct Editor {
     start: bool,
     /// Modo formatado (RTF); sem ele, texto simples em `doc`.
     rich: Option<rich::Rich>,
+    /// Salvamento automático (`[writer] autosave`, ligado por padrão, como no TextEdit):
+    /// um documento com arquivo é gravado sozinho alguns segundos depois da última
+    /// mudança.
+    autosave: bool,
+    /// Versão do documento vista por último e quando ela mudou.
+    edited: Option<(u64, Instant)>,
+}
+
+/// Espera depois da última mudança antes de salvar sozinho.
+const AUTOSAVE_DELAY: Duration = Duration::from_secs(3);
+
+fn autosave_setting() -> bool {
+    !matches!(mide::settings_file::get("writer", "autosave"), Some(mide::settings_file::Value::Bool(false)))
 }
 
 /// Extensões abertas no modo formatado.
@@ -83,7 +97,7 @@ fn read_rich(path: &Path, data: &[u8]) -> Option<mide::richtext::Doc> {
 
 impl Editor {
     fn open(path: Option<PathBuf>) -> Self {
-        let mut editor = Self { path: None, doc: TextDoc::default(), crlf: false, message: None, find: None, dialog: None, start: true, rich: None };
+        let mut editor = Self { path: None, doc: TextDoc::default(), crlf: false, message: None, find: None, dialog: None, start: true, rich: None, autosave: autosave_setting(), edited: None };
         // Sempre a interface de documento (documento novo enquanto nada foi lido).
         editor.rich = Some(rich::Rich::new(mide::richtext::Doc::new()));
         let Some(path) = path else {
@@ -180,6 +194,38 @@ impl Editor {
             Err(err) => {
                 self.message = Some(tr!("Couldn’t save: {err}", err = err));
                 false
+            }
+        }
+    }
+
+    /// Salvamento automático: com o documento alterado, um arquivo e nenhum diálogo
+    /// aberto, grava `AUTOSAVE_DELAY` depois da última mudança (cada tecla adia).
+    fn autosave_tick(&mut self, ui: &mut Ui) {
+        // Numa célula de tabela em edição, espera sair dela (salvar tira o cursor da célula).
+        let in_cell = self.rich.as_ref().is_some_and(|r| r.in_cell());
+        if !self.autosave || self.path.is_none() || self.dialog.is_some() || in_cell || !self.modified() {
+            self.edited = None;
+            return;
+        }
+        let version = self.rich.as_ref().map_or(self.doc.version, |r| r.version());
+        match self.edited {
+            Some((seen, at)) if seen == version => {
+                if at.elapsed() >= AUTOSAVE_DELAY {
+                    if self.save(false) {
+                        tracing::info!("salvo automaticamente");
+                    } else {
+                        // Sem conseguir gravar (pasta sem permissão, disco cheio): para
+                        // nesta janela, com o aviso à mostra, em vez de tentar sem parar.
+                        self.autosave = false;
+                    }
+                    self.edited = None;
+                } else {
+                    ui.wake_after(AUTOSAVE_DELAY.saturating_sub(at.elapsed()));
+                }
+            }
+            _ => {
+                self.edited = Some((version, Instant::now()));
+                ui.wake_after(AUTOSAVE_DELAY);
             }
         }
     }
@@ -561,6 +607,10 @@ impl App for Editor {
                     self.save(false);
                 }
                 "salvar-como" if self.dialog.is_none() => self.ask_save_as(false),
+                "salvar-auto" => {
+                    self.autosave = !self.autosave;
+                    let _ = mide::settings_file::set("writer", "autosave", Some(mide::settings_file::Value::Bool(self.autosave)));
+                }
                 "buscar" => self.toggle_find(),
                 "nova" => {
                     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mide-writer"));
@@ -588,6 +638,7 @@ impl App for Editor {
                 self.toggle_find();
             }
         }
+        self.autosave_tick(ui);
         if self.rich.is_some() {
             self.rich_view(ui, save, open);
             return;
@@ -625,6 +676,7 @@ impl App for Editor {
                         MenuItem::Separator,
                         MenuItem::action("salvar", &tr!("Save")).shortcut("Ctrl+S"),
                         MenuItem::action("salvar-como", &tr!("Save As…")).shortcut("Ctrl+Shift+S"),
+                        MenuItem::action("salvar-auto", &tr!("Save Automatically")).checked(self.autosave),
                         MenuItem::action("exportar-pdf", &tr!("Export as PDF…")),
                         MenuItem::Separator,
                         MenuItem::action("configurar-pagina", &tr!("Page Setup…")).shortcut("Ctrl+Shift+P"),
@@ -660,6 +712,7 @@ impl App for Editor {
                     MenuItem::Separator,
                     MenuItem::action("salvar", &tr!("Save")).shortcut("Ctrl+S"),
                     MenuItem::action("salvar-como", &tr!("Save As…")).shortcut("Ctrl+Shift+S"),
+                    MenuItem::action("salvar-auto", &tr!("Save Automatically")).checked(self.autosave),
                 ],
             },
             MenuGroup { title: tr!("Edit").into(), items: vec![MenuItem::action("buscar", &tr!("Find and Replace…")).shortcut("Ctrl+F")] },

@@ -1146,3 +1146,9 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Cenário: `XDG_STATE_HOME` e `XDG_CONFIG_HOME` temporários com um `mide/desktop-widgets.toml` escrito à mão (`[[widget]] kind = "clock"|"calendar"|"battery"|"disk"|"note"`, `x`, `y`, `text`) e `tests/scenario.sh "200 list" 190`. O menu do fundo aberto no alto da tela (`rclick 300 150`): aberto perto da dock, o submenu fica atrás dela.
 - Seção `area-de-trabalho`: "widgets: adicionar pelo menu, arrastar e escrever na nota".
 - Na sessão: adicionar cada tipo, arrastar, escrever na nota com janelas abertas e conferir o vidro no tema claro e no escuro.
+
+## v0.10.83 (2026-11-06): Writer
+
+- Unidade: `cargo test --bin mide-writer` (legenda numerada).
+- Seção `writer` da bateria (nova): abre um `.rtf`, digita e confere o arquivo gravado sozinho; com `[writer] autosave = false` num `XDG_CONFIG_HOME` temporário, o arquivo não muda.
+- Na sessão: escrever num .docx e fechar sem salvar (deve estar salvo); Inserir legenda numa imagem e numa tabela.

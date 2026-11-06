@@ -640,3 +640,18 @@ msgstr "Inferior"
 msgctxt "pages"
 msgid "All"
 msgstr "Todas"
+
+msgid "Save Automatically"
+msgstr "Salvar automaticamente"
+
+msgid "Insert Caption"
+msgstr "Inserir legenda"
+
+msgid "Put the cursor on an image or a table to add its caption."
+msgstr "Ponha o cursor numa imagem ou numa tabela para pôr a legenda dela."
+
+msgid "Figure {n} – "
+msgstr "Figura {n} – "
+
+msgid "Table {n} – "
+msgstr "Tabela {n} – "

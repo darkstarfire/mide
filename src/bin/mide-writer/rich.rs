@@ -483,6 +483,11 @@ impl Rich {
         self.version += 1;
     }
 
+    /// Número que muda a cada edição (o salvamento automático conta o tempo desde a última).
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
     pub fn mark_saved(&mut self) {
         self.saved_version = self.version;
     }
@@ -991,6 +996,34 @@ impl Rich {
 
     /// Formatar → Inserir sumário: o título "SUMÁRIO" e as linhas dos títulos, com o
     /// número da página à direita (acertado depois de quebrar o documento).
+    /// Legenda numerada, como a ABNT pede: "Figura N – " embaixo da imagem e
+    /// "Tabela N – " em cima da tabela, no estilo Legenda, com o cursor no fim para
+    /// escrever o título. O número conta as imagens (ou tabelas) até esta.
+    fn insert_caption(&mut self) {
+        let i = self.cursor.para;
+        let Some(p) = self.doc.paras.get(i) else {
+            return;
+        };
+        let table = if p.image.is_some() {
+            false
+        } else if p.table.is_some() {
+            true
+        } else {
+            self.message = Some(tr!("Put the cursor on an image or a table to add its caption.").into_owned());
+            return;
+        };
+        let n = self.doc.paras[..=i].iter().filter(|q| if table { q.table.is_some() } else { q.image.is_some() }).count();
+        let text = caption_text(table, n);
+        let body = self.doc.paras[i].spans[0].style.clone();
+        let style = CharStyle { size: (body_size(&self.doc) - 2.0).max(8.0), bold: false, italic: false, note: None, link: None, ..body };
+        let para = ParaStyle { align: Align::Center, line_spacing: 1.0, space_before: if table { 12.0 } else { 0.0 }, space_after: if table { 0.0 } else { 12.0 }, name: "Legenda".into(), ..ParaStyle::default() };
+        self.begin(None);
+        let at = if table { i } else { i + 1 };
+        self.doc.paras.insert(at, Paragraph::new(&text, style, para));
+        self.cursor = Pos::new(at, text.len());
+        self.anchor = self.cursor;
+    }
+
     fn insert_toc(&mut self) {
         if self.headings().is_empty() {
             self.message = Some(tr!("The document has no headings: use the Heading 1, 2 and 3 styles (¶ menu) on the section titles.").into_owned());
@@ -1576,6 +1609,7 @@ impl Rich {
                     MenuItem::Separator,
                     MenuItem::action("inserir-imagem", &tr!("Insert Image…")),
                     MenuItem::action("imagem-tamanho", &tr!("Image Size…")).enabled(self.doc.paras.get(self.cursor.para).is_some_and(|p| p.image.is_some())),
+                    MenuItem::action("legenda", &tr!("Insert Caption")).enabled(self.in_cell() || self.doc.paras.get(self.cursor.para).is_some_and(|p| p.image.is_some() || p.table.is_some())),
                     MenuItem::action("quebra-pagina", &tr!("Insert Page Break")).shortcut("Ctrl+Enter"),
                     MenuItem::action("link", &tr!("Add Link…")).shortcut("Ctrl+K"),
                     MenuItem::action("nota", &tr!("Insert Footnote…")).shortcut("Ctrl+Alt+F"),
@@ -1699,6 +1733,10 @@ impl Rich {
             "sumario" => {
                 self.leave_cell();
                 self.insert_toc();
+            }
+            "legenda" => {
+                self.leave_cell();
+                self.insert_caption();
             }
             "tabela" => {
                 self.leave_cell();
@@ -3220,6 +3258,11 @@ fn wheel_point(cx: f32, cy: f32, r: f32, hue: f32, sat: f32) -> (f32, f32) {
     (cx + a.cos() * sat * r, cy + a.sin() * sat * r)
 }
 
+/// Texto do começo de uma legenda: "Figura 2 – " ou "Tabela 1 – ".
+fn caption_text(table: bool, n: usize) -> String {
+    if table { tr!("Table {n} – ", n = n) } else { tr!("Figure {n} – ", n = n) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3326,6 +3369,36 @@ mod tests {
         assert!((dialog.ratio - 0.5).abs() < 0.001);
         assert!(dialog.keep_ratio);
         assert!(dialog.focus);
+    }
+
+    #[test]
+    fn legenda_numerada_embaixo_da_figura_e_em_cima_da_tabela() {
+        let image = || Image {
+            data: Rc::new(Vec::new()),
+            format: "png",
+            pixmap: Rc::new(tiny_skia::Pixmap::new(4, 4).unwrap()),
+            width: 40.0,
+            height: 40.0,
+        };
+        let mut doc = Doc::new();
+        doc.paras[0] = Paragraph::image(image(), CharStyle::default(), ParaStyle::default());
+        doc.paras.push(Paragraph::image(image(), CharStyle::default(), ParaStyle::default()));
+        let mut t = Paragraph::new("", CharStyle::default(), ParaStyle::default());
+        t.table = Some(Box::new(mide::richtext::Table::new(2, 2, 200.0, &CharStyle::default())));
+        doc.paras.push(t);
+        let mut rich = Rich::new(doc);
+        // Segunda figura: "Figura 2 – " logo abaixo dela, com o cursor no fim.
+        rich.cursor = Pos::new(1, 0);
+        rich.insert_caption();
+        assert_eq!(rich.doc.paras[2].text, caption_text(false, 2));
+        assert_eq!(rich.doc.paras[2].style.name, "Legenda");
+        assert_eq!(rich.cursor, Pos::new(2, rich.doc.paras[2].text.len()));
+        // A tabela (agora no índice 3): "Tabela 1 – " em cima dela.
+        rich.cursor = Pos::new(3, 0);
+        rich.insert_caption();
+        assert_eq!(rich.doc.paras[3].text, caption_text(true, 1));
+        assert!(rich.doc.paras[4].table.is_some());
+        assert!(rich.modified());
     }
 
     #[test]
