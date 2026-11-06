@@ -2666,3 +2666,11 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - O painel do ⌘⇧5 ganhou o botão Janela (Tela inteira, Janela, Área) e ficou mais largo (o Gravar cortava na borda).
 - **Pastas em inglês (I1):** as capturas vão para Imagens/**Screenshots** e as gravações para Vídeos/**Screen Recordings** (antes "Capturas de tela" e "Gravações de tela", nomes fixos em português). As capturas antigas continuam na pasta de antes.
 - Testes: unidade do pedido `janela X Y`; cenário com o ffmpeg de verdade gravando a Calculadora (quadro extraído do vídeo: só a janela, com o número digitado durante a gravação); seção `captura` com o teste novo "gravar só uma janela" e as coordenadas do painel ajustadas.
+
+## v0.10.82 (2026-11-06): widgets da mesa (B27)
+
+- Faltavam os widgets do "Mostrar a mesa". Agora a mesa da tela principal tem widgets como os do macOS Sonoma e Tahoe: cartões de vidro sobre o papel de parede, com cantos de 22 e borda de luz, no tema claro e no escuro.
+- **Tipos** (`mide::widgets`, em `src/shell/widgets.rs`): Relógio (ponteiros, o dos segundos na cor de destaque), Calendário largo (dia da semana, o dia grande, o mês com hoje destacado e o primeiro dia da semana da região), Bateria (anel verde, vermelho abaixo de 20% sem carregar), Espaço em disco (anel na cor de destaque com o livre embaixo) e Nota (texto livre, editável no próprio widget, com o título amarelo).
+- **Uso:** clique direito no vazio → Adicionar widget › tipo; o widget entra no próximo lugar livre da coluna da esquerda (os ícones ficam à direita). Arrastar muda o lugar (a nota, pela faixa do título); clique direito → Remover widget. Escrever numa nota traz a mesa para a frente enquanto o campo tem o foco, como ao renomear.
+- Lugares e textos em `~/.local/state/mide/desktop-widgets.toml`. As mesas dos monitores externos não têm widgets (como os ícones).
+- Testes: unidade (lugar livre sem cobrir os outros, gravar e ler o arquivo); cenário na seção `area-de-trabalho` adicionando Espaço em disco e Nota pelo menu, arrastando o widget e escrevendo na nota, conferido no arquivo de estado; capturas com os cinco tipos, o menu e o remover.

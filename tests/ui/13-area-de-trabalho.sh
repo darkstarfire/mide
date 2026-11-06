@@ -110,4 +110,17 @@ fi
 rm -rf "$DESK"/* ; for n in a b c; do echo x >"$DESK/$n.txt"; done
 MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "mesa à mostra: seleção por retângulo não traz as janelas de volta" 'janela "Terminal" popups=0 posição=\(-644, 76\)' "400 click 900 600; 440 click 1298 76; 480 press 1000 600; 485 move 1100 500; 490 move 1250 300; 495 move 1330 100; 500 release 1330 100; 540 list" "$TERMINAL"
 MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$DSTATE" check "mesa à mostra: clique simples no vazio traz as janelas de volta" 'janela "Terminal" popups=0 posição=\(48, 76\)' "400 click 900 600; 460 click 1000 600; 520 list" "$TERMINAL"
+# Widgets da mesa (B27): o menu do fundo adiciona (Espaço em disco e Nota), o widget
+# se arrasta pela mesa, a nota guarda o texto digitado e tudo fica no arquivo de estado.
+WSTATE="$(mktemp -d)"; WCFG="$(mktemp -d)"
+MIDE_DESKTOP_DIR="$DESK" XDG_STATE_HOME="$WSTATE" XDG_CONFIG_HOME="$WCFG" SCENARIO_OUT="$WSTATE/out" timeout 150 "$SCEN" \
+    "120 rclick 300 150; 150 move 360 345; 165 move 540 350; 172 move 560 428; 185 click 560 428; 215 rclick 300 150; 245 move 360 345; 260 move 540 350; 267 move 560 454; 280 click 560 454; 310 press 90 120; 316 move 200 120; 322 move 400 120; 328 move 500 120; 334 release 500 120; 360 click 90 300; 380 type oi; 410 list" 400 >/dev/null 2>&1
+WFILE="$WSTATE/mide/desktop-widgets.toml"
+if grep -q 'kind = "disk"' "$WFILE" 2>/dev/null && grep -q '^x = 426' "$WFILE" && grep -q 'text = "oi"' "$WFILE"; then
+    echo "ok    widgets: adicionar pelo menu, arrastar e escrever na nota"; PASS=$((PASS + 1))
+else
+    echo "FALHA widgets: adicionar pelo menu, arrastar e escrever na nota"; FAIL=$((FAIL + 1))
+    sed 's/^/      /' "$WFILE" 2>/dev/null | head -12
+fi
+rm -rf "$WSTATE" "$WCFG"
 rm -rf "$DESK" "$DSTATE" "$EDATA"

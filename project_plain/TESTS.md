@@ -1139,3 +1139,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 
 - Unidade: `media::subtitles` e `media::video` (`cargo test --lib media`).
 - Cenário: gerar um vídeo com `ffmpeg` (duas faixas de áudio, uma legenda `mov_text` embutida e um `filme.pt-BR.srt` ao lado), abrir com `mide-player` e apertar C (legenda) e F (tela cheia). Usar sempre `XDG_CONFIG_HOME` temporário: sem ele o cenário lê a configuração real do usuário (papel de parede, dock).
+
+## v0.10.82 (2026-11-06): widgets da mesa
+
+- Unidade: `cargo test --lib widgets` (lugar livre, arquivo de estado).
+- Cenário: `XDG_STATE_HOME` e `XDG_CONFIG_HOME` temporários com um `mide/desktop-widgets.toml` escrito à mão (`[[widget]] kind = "clock"|"calendar"|"battery"|"disk"|"note"`, `x`, `y`, `text`) e `tests/scenario.sh "200 list" 190`. O menu do fundo aberto no alto da tela (`rclick 300 150`): aberto perto da dock, o submenu fica atrás dela.
+- Seção `area-de-trabalho`: "widgets: adicionar pelo menu, arrastar e escrever na nota".
+- Na sessão: adicionar cada tipo, arrastar, escrever na nota com janelas abertas e conferir o vidro no tema claro e no escuro.

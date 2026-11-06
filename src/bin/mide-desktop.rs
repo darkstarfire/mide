@@ -125,6 +125,12 @@ struct Desktop {
     output: Option<String>,
     /// Na principal: as mesas dos monitores externos abertas por ela (tela, processo).
     others: Vec<(String, std::process::Child)>,
+    /// Widgets da mesa (B27), só na tela principal.
+    widgets: Vec<mide::widgets::Widget>,
+    /// Widget sendo arrastado: o índice e a distância do ponteiro ao canto dele.
+    widget_drag: Option<(usize, (f32, f32))>,
+    /// Texto das notas sendo editado (pelo índice do widget).
+    notes: HashMap<usize, mide::kit::TextDoc>,
 }
 
 thread_local! {
@@ -275,6 +281,7 @@ enum Action {
     ShowFolder,
     CleanUp,
     Wallpaper,
+    AddWidget(mide::widgets::Kind),
 }
 
 impl Desktop {
@@ -318,6 +325,9 @@ impl Desktop {
             apps: None,
             output: None,
             others: Vec::new(),
+            widgets: Vec::new(),
+            widget_drag: None,
+            notes: HashMap::new(),
         };
         app.cells = cells_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_cells(&t)).unwrap_or_default();
         app.reload();
@@ -685,6 +695,12 @@ impl Desktop {
                 self.save_cells();
             }
             (Action::Wallpaper, _) => mide::system::open_settings("wallpaper"),
+            (Action::AddWidget(kind), _) => {
+                let (x, y) = mide::widgets::free_spot(&self.widgets, kind, (area.2, area.3));
+                self.widgets.push(mide::widgets::Widget { kind, x, y, text: String::new() });
+                mide::widgets::save(&self.widgets);
+                tracing::info!("área de trabalho: widget {kind:?} em {x},{y}");
+            }
             _ => {}
         }
     }
@@ -966,6 +982,85 @@ fn cut_files(paths: &[PathBuf]) {
 /// Programa irmão (ao lado deste executável), ou o do PATH.
 fn sibling(name: &str) -> PathBuf {
     std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join(name))).filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from(name))
+}
+
+impl Desktop {
+    /// Desenha os widgets da mesa e trata arrastar, remover e o texto das notas. Diz se o
+    /// ponteiro está sobre um deles (o fundo não reage ali).
+    fn view_widgets(&mut self, ui: &mut Ui, area: (f32, f32, f32, f32), pointer: Option<(f32, f32)>, down: bool, released: bool) -> bool {
+        use mide::widgets;
+        const STRIP: f32 = 30.0;
+        let origin = (area.0, area.1);
+        let inside = |r: (f32, f32, f32, f32), p: (f32, f32)| p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3;
+        // Arrasto em curso: o widget segue o ponteiro, preso à área útil.
+        if let (Some((i, off)), Some(p)) = (self.widget_drag, pointer)
+            && down
+            && let Some(w) = self.widgets.get_mut(i)
+        {
+            let (kw, kh) = w.kind.size();
+            w.x = (p.0 - off.0 - origin.0).clamp(0.0, (area.2 - kw).max(0.0));
+            w.y = (p.1 - off.1 - origin.1).clamp(0.0, (area.3 - kh).max(0.0));
+            ui.request_repaint();
+        }
+        if released && self.widget_drag.take().is_some() {
+            widgets::save(&self.widgets);
+        }
+        let mut over = false;
+        let mut remove = None;
+        let mut text_changed = false;
+        for i in 0..self.widgets.len() {
+            let w = self.widgets[i].clone();
+            let rect = w.rect(origin);
+            widgets::draw(ui, &w, rect);
+            if pointer.is_some_and(|p| inside(rect, p)) {
+                over = true;
+            }
+            let r = ui.background(rect);
+            // A nota se arrasta pela faixa de cima (o resto é o texto); os outros, por
+            // qualquer ponto.
+            let grab = if w.kind == widgets::Kind::Note { (rect.0, rect.1, rect.2, STRIP) } else { rect };
+            if r.clicked() && let Some(p) = pointer && inside(grab, p) {
+                self.widget_drag = Some((i, (p.0 - rect.0, p.1 - rect.1)));
+            }
+            ui.context_menu(&r, |m| {
+                if m.item(&tr!("Remove Widget")) {
+                    remove = Some(i);
+                }
+            });
+            if w.kind == widgets::Kind::Note {
+                let doc = self.notes.entry(i).or_insert_with(|| mide::kit::TextDoc::new(w.text.clone()));
+                let mut changed = false;
+                let hint = tr!("Note");
+                ui.at(rect.0 + 10.0, rect.1 + STRIP - 4.0, rect.2 - 20.0, |ui| {
+                    let look = mide::kit::TextAreaLook {
+                        line_numbers: false,
+                        sans: true,
+                        size: Some(13.0),
+                        placeholder: &hint,
+                        current_line: false,
+                        colors: Some(mide::kit::TextAreaColors { background: Some([0, 0, 0, 0]), ..Default::default() }),
+                        ..Default::default()
+                    };
+                    changed = ui.text_area_with(doc, rect.3 - STRIP - 6.0, look).response.changed();
+                });
+                if changed {
+                    self.widgets[i].text = doc.text.clone();
+                    text_changed = true;
+                }
+            }
+        }
+        if text_changed {
+            widgets::save(&self.widgets);
+        }
+        if let Some(i) = remove {
+            self.widgets.remove(i);
+            self.notes.clear();
+            self.widget_drag = None;
+            widgets::save(&self.widgets);
+            ui.request_repaint();
+        }
+        over || self.widget_drag.is_some()
+    }
 }
 
 impl App for Desktop {
@@ -1267,7 +1362,13 @@ impl App for Desktop {
         // Fundo: apertar e arrastar desenha o retângulo de seleção; clique tira a
         // seleção e mostra a mesa; botão direito abre o menu da área de trabalho.
         let whole = ui.region();
-        let bg = ui.background(whole);
+        let over_widget = self.view_widgets(ui, area, pointer, down, released);
+        let mut bg = ui.background(whole);
+        if over_widget {
+            bg.clicked = false;
+            bg.secondary_clicked = false;
+            bg.hovered = false;
+        }
         // O retângulo é o componente do mide-ui (o mesmo do Arquivos).
         let can_start = bg.hovered() && !over_item && self.inline.is_none();
         let band = self.band.update(ui, whole, can_start);
@@ -1346,6 +1447,15 @@ impl App for Desktop {
                     }
                 }
             }
+            if main_screen {
+                m.submenu(None, &tr!("Add Widget"), |m| {
+                    for kind in mide::widgets::Kind::ALL {
+                        if m.item(&kind.name()) {
+                            chosen = Some(Action::AddWidget(kind));
+                        }
+                    }
+                });
+            }
             if m.item(&tr!("Change Wallpaper…")) {
                 chosen = Some(Action::Wallpaper);
             }
@@ -1366,7 +1476,8 @@ impl App for Desktop {
         // Renomeando ou com uma confirmação aberta: a camada vem para a frente das
         // janelas e pega o teclado (o nome digitado nunca fica escondido); depois, volta
         // para trás delas.
-        ui.set_raised(self.inline.is_some() || self.prompt.is_some());
+        let note_typing = ui.typing() && !self.notes.is_empty();
+        ui.set_raised(self.inline.is_some() || self.prompt.is_some() || note_typing);
         if let Some(answer) = self.prompt.as_mut().and_then(|p| p.view(ui)) {
             self.prompt = None;
             match answer {
@@ -1405,6 +1516,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "mide-desktop".to_string(),
     };
     let mut desktop = Desktop::new();
+    if output.is_none() {
+        desktop.widgets = mide::widgets::load();
+    }
     desktop.output = output;
     run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop(&namespace).accepts_files().theme_adjust(white_names), desktop)
 }

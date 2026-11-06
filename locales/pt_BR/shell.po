@@ -732,3 +732,27 @@ msgstr "Adicionar à dock"
 
 msgid "Add to Desktop"
 msgstr "Adicionar à área de trabalho"
+
+msgid "Clock"
+msgstr "Relógio"
+
+msgid "Disk Space"
+msgstr "Espaço em disco"
+
+msgid "Note"
+msgstr "Nota"
+
+msgid "Charging"
+msgstr "Carregando"
+
+msgid "No battery"
+msgstr "Sem bateria"
+
+msgid "{size} free"
+msgstr "{size} livres"
+
+msgid "Remove Widget"
+msgstr "Remover widget"
+
+msgid "Add Widget"
+msgstr "Adicionar widget"

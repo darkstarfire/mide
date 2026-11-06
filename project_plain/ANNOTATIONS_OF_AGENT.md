@@ -638,3 +638,5 @@
 - **Testar mudança do mide-ui na sessão antes de publicar:** `MIDE_UI_PATH=../mide-ui data/mide-update --all`. Depois, publicar o mide-ui e voltar o `Cargo.lock` ao GitHub (`cargo build` sem o patch) antes do commit do mide.
 - **Datas, horas e números na interface:** usar `mide::kit::region` (`time_of`, `date_of`, `number`, `currency`, `first_weekday`), nunca `%H:%M`, `%d/%m/%Y` ou o separador da tradução. Os nomes de meses e dias continuam pelo `tr`/`trc`.
 - **Testes que trocam o idioma global (`set_language`) interferem nos outros que rodam junto:** compare com o resultado das próprias funções em vez de trocar o idioma.
+- **Funções auxiliares de um app do mide-ui vão num `impl Tipo` à parte**, nunca dentro do `impl App for Tipo` (o compilador recusa métodos que não são do trait).
+- **Componente por cima do fundo da mesa:** o `ui.background` não reserva o ponteiro; os campos de `Response` são públicos, então o fundo é zerado (`clicked`, `secondary_clicked`, `hovered`) quando o ponteiro está sobre um widget.
