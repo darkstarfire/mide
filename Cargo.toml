@@ -9,6 +9,122 @@ default-run = "mide"
 name = "mide"
 path = "src/compositor/main.rs"
 
+[[bin]]
+name = "mide-about"
+path = "src/bin/mide-about.rs"
+
+[[bin]]
+name = "mide-askpass"
+path = "src/bin/mide-askpass.rs"
+
+[[bin]]
+name = "mide-bar"
+path = "src/bin/mide-bar.rs"
+
+[[bin]]
+name = "mide-chooser"
+path = "src/bin/mide-chooser.rs"
+
+[[bin]]
+name = "mide-ctl"
+path = "src/bin/mide-ctl.rs"
+
+[[bin]]
+name = "mide-desktop"
+path = "src/bin/mide-desktop.rs"
+
+[[bin]]
+name = "mide-dock"
+path = "src/bin/mide-dock.rs"
+
+[[bin]]
+name = "mide-files"
+path = "src/bin/mide-files.rs"
+
+[[bin]]
+name = "mide-install"
+path = "src/bin/mide-install.rs"
+
+[[bin]]
+name = "mide-keyboard"
+path = "src/bin/mide-keyboard.rs"
+
+[[bin]]
+name = "mide-launcher"
+path = "src/bin/mide-launcher.rs"
+
+[[bin]]
+name = "mide-lock"
+path = "src/bin/mide-lock.rs"
+
+[[bin]]
+name = "mide-logs"
+path = "src/bin/mide-logs.rs"
+
+[[bin]]
+name = "mide-new"
+path = "src/bin/mide-new.rs"
+
+[[bin]]
+name = "mide-notifications"
+path = "src/bin/mide-notifications.rs"
+
+[[bin]]
+name = "mide-player"
+path = "src/bin/mide-player.rs"
+
+[[bin]]
+name = "mide-polkit-agent"
+path = "src/bin/mide-polkit-agent.rs"
+
+[[bin]]
+name = "mide-portal"
+path = "src/bin/mide-portal.rs"
+
+[[bin]]
+name = "mide-screencast-picker"
+path = "src/bin/mide-screencast-picker.rs"
+
+[[bin]]
+name = "mide-screenshot"
+path = "src/bin/mide-screenshot.rs"
+
+[[bin]]
+name = "mide-search"
+path = "src/bin/mide-search.rs"
+
+[[bin]]
+name = "mide-settings"
+path = "src/bin/mide-settings.rs"
+
+[[bin]]
+name = "mide-sudo"
+path = "src/bin/mide-sudo.rs"
+
+[[bin]]
+name = "mide-terminal"
+path = "src/bin/mide-terminal.rs"
+
+[[bin]]
+name = "mide-calculator"
+path = "src/bin/mide-calculator/main.rs"
+
+[[bin]]
+name = "mide-code"
+path = "src/bin/mide-code/main.rs"
+
+[[bin]]
+name = "mide-login"
+path = "src/bin/mide-login/main.rs"
+
+[[bin]]
+name = "mide-screenshot-editor"
+path = "src/bin/mide-screenshot-editor/main.rs"
+
+[[bin]]
+name = "mide-writer"
+path = "src/bin/mide-writer/main.rs"
+
 [dependencies]
 # O framework de apps nativos (janelas, componentes no visual do Tahoe), projeto à
 # parte: github.com/fabioaacarneiro/mide-ui. Para mexer nele junto com o mide, veja
