@@ -424,6 +424,8 @@ pub fn child_env(command: &mut std::process::Command) {
         if let Some(num) = X11_DISPLAY_NUM.get() {
             command.env("DISPLAY", format!(":{num}"));
         }
+        // Avisa os filhos que estao rodando sob o backend X11 do mide.
+        command.env("MIDE_BACKEND", "x11");
     } else {
         command.env("WAYLAND_DISPLAY", socket_name());
     }
@@ -468,7 +470,22 @@ pub fn mide_data_dir() -> Option<std::path::PathBuf> {
         .ok()
 }
 
+/// Programas que sao clientes Wayland exclusivos e nao fazem sentido
+/// no backend X11 (nao ha servidor Wayland para se conectar).
+fn is_wayland_only(name: &str) -> bool {
+    matches!(
+        name,
+        "mide-keyboard" | "mide-notifications" | "mide-polkit-agent"
+    )
+}
+
 pub fn spawn_client(name: &str) {
+    // No backend X11, nao lança clientes Wayland-exclusivos: eles falhariam
+    // com "NoCompositor" porque nao ha servidor Wayland para se conectar.
+    if X11_BACKEND.load(std::sync::atomic::Ordering::Relaxed) && is_wayland_only(name) {
+        tracing::debug!("{name} pulado no backend X11 (cliente Wayland exclusivo)");
+        return;
+    }
     let sibling = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
