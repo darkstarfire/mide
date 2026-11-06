@@ -631,3 +631,11 @@
 - **Compilar com poucos núcleos (pedido do usuário, 2026-11-04):** `nice -n 19 cargo ... -j 4`. Com os 16 núcleos a máquina do usuário trava; a bateria também com `-j 3`.
 - **Cor sobre o destaque:** nunca branco fixo; usar `theme.on_accent` (mide-ui) ou `mide::kit::on_color(accent)` (quem desenha sozinho: barra, launcher, mesa, compositor). O destaque pode ser branco.
 - **Configuração lida a cada quadro no compositor:** `settings_file::cached` faz um `stat` e analisa o texto a cada chamada; no desenho (vidro, várias regiões por quadro), guardar o valor e reler no `reload` (como `blur::refresh_tint`).
+
+## Sessão X11 como o KWin: mapa de acoplamento (2026-11-06)
+
+- **Decisão:** o mide terá um núcleo único e duas plataformas (Wayland e X11), como o KWin. Revisa a decisão de 2026-10-19 ("sem sessão X11") no `CONTEXT.md`.
+- **Estado do port X11 atual (`x11_backend.rs`, `x11_scene.rs`, `x11_render.rs`):** é um mundo separado, com cena própria e `XGetImage` a cada quadro. Não serve de base para a interface. Só se reaproveitam a parte de EWMH/struts e a de Composite (a trocar o `XGetImage`).
+- **Acoplamento ao Smithay no núcleo (contagem de linhas que tocam tipos do Smithay ou do protocolo):** `state.rs` ~187, `wm.rs` ~151, `input.rs` ~95, `render.rs` ~87. Pontos principais: `ToplevelSurface` (em `wm.rs`: `send_configure`, `with_states`, `XdgState`), `Space<Window>` (mapear, levantar, desmapear, `output_under`), `Output`, `LayerSurface` (barra, dock e launcher).
+- **Ordem de extração proposta:** (1) interface de janela (mapear, configurar, fechar, foco, pilha, estados) usada por `wm.rs`, sem mudar comportamento no Wayland; (2) saídas e área de trabalho; (3) entrada (atalhos e ponteiro já independentes do protocolo); (4) cena e efeitos sobre texturas abstratas; (5) backend X11 novo, sobre Composite.
+- **Regra:** cada fatia compila e passa `cargo test` e a bateria `tests/ui.sh` afetada antes da próxima. O Wayland não muda de comportamento em nenhuma fatia.
