@@ -356,3 +356,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - v0.10.81 (2026-11-06): gravar só uma janela (⌘⇧5 → Janela) e as pastas Screenshots e Screen Recordings em inglês.
 - v0.10.82 (2026-11-06): widgets da mesa (Relógio, Calendário, Bateria, Espaço em disco e Nota), pelo menu do fundo → Adicionar widget.
 - v0.10.83 (2026-11-06): Writer com salvamento automático (3 s depois da última mudança) e Inserir legenda ("Figura N – ", "Tabela N – ").
+- v0.10.84 (2026-11-06): galeria do Arquivos corrigida (clique na tira escolhe, quadros e recuo alinhados, zoom da imagem pela roda, arrasto, duplo clique e Ctrl +/−/0).

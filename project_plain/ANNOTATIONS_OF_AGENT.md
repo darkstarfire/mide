@@ -640,3 +640,5 @@
 - **Testes que trocam o idioma global (`set_language`) interferem nos outros que rodam junto:** compare com o resultado das próprias funções em vez de trocar o idioma.
 - **Funções auxiliares de um app do mide-ui vão num `impl Tipo` à parte**, nunca dentro do `impl App for Tipo` (o compilador recusa métodos que não são do trait).
 - **Componente por cima do fundo da mesa:** o `ui.background` não reserva o ponteiro; os campos de `Response` são públicos, então o fundo é zerado (`clicked`, `secondary_clicked`, `hovered`) quando o ponteiro está sobre um widget.
+- **`ui.background` não reserva o ponteiro:** um item desenhado à mão com ele, dentro de uma área que tem um `ui.background` de fundo depois (o "clique no vazio tira a seleção" do Arquivos), passa o mesmo clique ao fundo. Marcar quando o ponteiro está sobre esses itens e não tratar o clique do fundo. Também: `ui.tile` é mais largo que a imagem (tem a margem do nome) e reserva o ponteiro, então não serve como ícone solto num quadro pequeno; use `ui.icon`.
+- **Página que não pode rolar** (galeria): `ui.take_scroll()` antes da página e a altura do conteúdo um pouco menor que a que sobra.

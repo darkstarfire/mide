@@ -318,6 +318,13 @@ struct Files {
     /// Galeria (imagem grande e tira de miniaturas, como no Finder): vale mais que lista
     /// e colunas.
     gallery_view: bool,
+    /// Zoom da imagem grande da galeria (1 = inteira na área), o deslocamento dela (pontos,
+    /// a partir do centro), de que item é, e o arrasto em curso (ponto inicial e
+    /// deslocamento de quando começou).
+    gallery_zoom: f32,
+    gallery_pan: (f32, f32),
+    gallery_item: Option<PathBuf>,
+    gallery_drag: Option<((f32, f32), (f32, f32))>,
     /// Agrupar por: 0 nada, 1 tipo, 2 data, 3 tamanho, 4 etiqueta (lembrado por pasta).
     group: usize,
     /// Mostrar as extensões dos nomes (`[files] extensions`, ligado por padrão).
@@ -454,6 +461,10 @@ impl Files {
                 _ => Vec::new(),
             },
             gallery_view: false,
+            gallery_zoom: 1.0,
+            gallery_pan: (0.0, 0.0),
+            gallery_item: None,
+            gallery_drag: None,
             group: 0,
             extensions: !matches!(mide::settings_file::get("files", "extensions"), Some(mide::settings_file::Value::Bool(false))),
             thumbs: HashMap::new(),
@@ -1904,11 +1915,23 @@ impl Files {
             self.quick_look = if self.quick_look.is_some() { None } else { self.primary().cloned() };
             ui.request_repaint();
         }
-        if zoom_in || zoom_out {
+        if self.mode() == 3 {
+            // Galeria: o zoom é o da imagem grande.
+            if zoom_in || zoom_out {
+                self.gallery_zoom = gallery_step(self.gallery_zoom, zoom_in);
+                self.gallery_pan = clamp_pan(self.gallery_pan, self.gallery_zoom);
+                ui.request_repaint();
+            }
+            if zoom_reset {
+                self.gallery_zoom = 1.0;
+                self.gallery_pan = (0.0, 0.0);
+                ui.request_repaint();
+            }
+        } else if zoom_in || zoom_out {
             self.zoom(if zoom_in { 1 } else { -1 });
             ui.request_repaint();
         }
-        if zoom_reset && self.icon_size != files_view::ICON_DEFAULT {
+        if self.mode() != 3 && zoom_reset && self.icon_size != files_view::ICON_DEFAULT {
             self.icon_size = files_view::ICON_DEFAULT;
             self.save_view();
             ui.request_repaint();
@@ -2579,6 +2602,10 @@ impl Files {
                 ui.request_repaint();
             }
         }
+        // Galeria: a página não rola (tudo cabe); a roda é o zoom da imagem grande.
+        let gallery_wheel = if mode == 3 { ui.take_scroll() } else { 0.0 };
+        let (mut g_zoom, mut g_pan, mut g_drag, g_item) = (self.gallery_zoom, self.gallery_pan, self.gallery_drag, self.gallery_item.clone());
+        let mut g_now: Option<PathBuf> = None;
         let size = self.icon_size;
         let shown = self.shown();
         let in_list = mode == 1;
@@ -2704,6 +2731,10 @@ impl Files {
             let selection = self.selection.clone();
             let cut_now = self.cut_now();
             let mut select = None;
+            // Galeria: o ponteiro sobre a tira ou a imagem grande (os quadros usam
+            // `ui.background`, que não reserva o ponteiro: sem isso, o fundo da pasta via
+            // o mesmo clique como clique no vazio e tirava a seleção).
+            let mut gallery_hit = false;
             let reveal = self.reveal.clone();
             let mut revealed = false;
             let inline_icon = size as f32;
@@ -2893,41 +2924,105 @@ impl Files {
                 // informações embaixo, e a tira de miniaturas para escolher.
                 let r = ui.region();
                 let g_top = r.1 + r.3 - ui.remaining_height();
-                let g_h = (r.1 + r.3 - g_top - 4.0).max(160.0);
+                // Cabe na página sem rolar (a página não pode crescer com o zoom).
+                let g_h = (r.1 + r.3 - g_top - 8.0).max(160.0);
                 let strip_h = 92.0;
                 let big_h = (g_h - strip_h - 64.0).max(80.0);
                 let chosen = self.primary().and_then(|p| shown.iter().find(|e| &e.path == p)).or_else(|| shown.first()).cloned();
                 let k = mide::ui::draw::scale();
                 if let Some(entry) = &chosen {
-                    let big = ((big_h.min(r.2 - 40.0)).max(64.0) / 32.0).round() as u32 * 32;
-                    let pix = if Self::wants_thumb(entry) { self.thumbs.get(&(entry.path.clone(), big)).cloned() } else { None };
-                    if Self::wants_thumb(entry) && pix.is_none() {
+                    // Outro item: o zoom volta a mostrar a imagem inteira.
+                    if g_item.as_ref() != Some(&entry.path) {
+                        tracing::info!("galeria: {}", entry.path.display());
+                        g_zoom = 1.0;
+                        g_pan = (0.0, 0.0);
+                        g_drag = None;
+                    }
+                    g_now = Some(entry.path.clone());
+                    let fit_side = ((big_h.min(r.2 - 40.0)).max(64.0) / 32.0).round() as u32 * 32;
+                    // Ampliada, a miniatura é pedida maior (por degraus inteiros, até 2048).
+                    let big = (fit_side * (g_zoom.ceil() as u32).max(1)).min(2048);
+                    let wants = Self::wants_thumb(entry);
+                    let mut pix = if wants { self.thumbs.get(&(entry.path.clone(), big)).cloned() } else { None };
+                    if wants && pix.is_none() {
                         wanted_big = Some((entry.path.clone(), big));
+                        // Enquanto a maior não chega, a do tamanho inteiro.
+                        pix = self.thumbs.get(&(entry.path.clone(), fit_side)).cloned();
                     }
                     let (name, icon) = label_of(entry);
-                    let area = (r.0, g_top, r.2, big_h);
+                    let area = (r.0 + 16.0, g_top, r.2 - 32.0, big_h);
                     match pix.flatten() {
                         Some(pix) => {
-                            // A imagem inteira cabendo na área, centrada.
+                            // A imagem inteira cabendo na área, centrada; com zoom, maior
+                            // e recortada na área.
                             let (pw, ph) = (pix.width() as f32 / k, pix.height() as f32 / k);
-                            let fit = (area.2 / pw).min(area.3 / ph).min(1.0);
-                            let (w, h) = (pw * fit, ph * fit);
-                            let (x, y) = (area.0 + (area.2 - w) / 2.0, area.1 + (area.3 - h) / 2.0);
+                            let base = (area.2 / pw).min(area.3 / ph);
+                            // Sem zoom, nunca maior que a imagem (miniatura pequena fica pequena).
+                            let base = if pix.width() >= fit_side.max(1) || pix.height() >= fit_side.max(1) { base } else { base.min(1.0) };
+                            let (bw, bh) = (pw * base, ph * base);
+                            let pointer = ui.input().pointer;
+                            let over_area = pointer.is_some_and(|p| p.0 >= area.0 && p.0 < area.0 + area.2 && p.1 >= area.1 && p.1 < area.1 + area.3);
+                            // Roda sobre a imagem: zoom em torno do ponteiro.
+                            if gallery_wheel.abs() > 0.5 && over_area && let Some(p) = pointer {
+                                let z2 = gallery_step(g_zoom, gallery_wheel < 0.0);
+                                let c = (area.0 + area.2 / 2.0 + g_pan.0, area.1 + area.3 / 2.0 + g_pan.1);
+                                // O ponto da imagem sob o ponteiro continua sob ele.
+                                let (ux, uy) = ((p.0 - c.0) / g_zoom, (p.1 - c.1) / g_zoom);
+                                let c2 = (p.0 - ux * z2, p.1 - uy * z2);
+                                g_pan = (c2.0 - area.0 - area.2 / 2.0, c2.1 - area.1 - area.3 / 2.0);
+                                g_zoom = z2;
+                                ui.request_repaint();
+                            }
+                            // Arrastar a imagem ampliada move o que aparece.
+                            let resp = ui.background(area);
+                            gallery_hit |= resp.hovered;
+                            if resp.double_clicked {
+                                g_zoom = if g_zoom > 1.0 { 1.0 } else { 2.0 };
+                                g_pan = (0.0, 0.0);
+                            } else if resp.clicked && g_zoom > 1.0 && let Some(p) = pointer {
+                                g_drag = Some((p, g_pan));
+                            }
+                            if let (Some((start, from)), Some(p)) = (g_drag, pointer) {
+                                if ui.input().down {
+                                    g_pan = (from.0 + p.0 - start.0, from.1 + p.1 - start.1);
+                                    ui.request_repaint();
+                                } else {
+                                    g_drag = None;
+                                }
+                            }
+                            // Sem sair da área: cada lado só anda até a borda da imagem.
+                            let (dw, dh) = (bw * g_zoom, bh * g_zoom);
+                            let lim = (((dw - area.2) / 2.0).max(0.0), ((dh - area.3) / 2.0).max(0.0));
+                            g_pan = (g_pan.0.clamp(-lim.0, lim.0), g_pan.1.clamp(-lim.1, lim.1));
+                            let (x, y) = (area.0 + (area.2 - dw) / 2.0 + g_pan.0, area.1 + (area.3 - dh) / 2.0 + g_pan.1);
+                            let scale = base * g_zoom;
                             ui.paint(|canvas, _| {
                                 let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-                                let tf = tiny_skia::Transform::from_scale(fit, fit).post_translate(x * k, y * k);
-                                canvas.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, None);
+                                let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate(x * k, y * k);
+                                let mask = tiny_skia::Rect::from_xywh(area.0 * k, area.1 * k, area.2 * k, area.3 * k).and_then(|rect| {
+                                    let mut mask = tiny_skia::Mask::new(canvas.width(), canvas.height())?;
+                                    mask.fill_path(&tiny_skia::PathBuilder::from_rect(rect), tiny_skia::FillRule::Winding, false, tiny_skia::Transform::identity());
+                                    Some(mask)
+                                });
+                                canvas.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, mask.as_ref());
                             });
                         }
+                        // Pasta ou documento: o ícone grande no meio (sem ladrilho, que
+                        // ganhava o fundo cinza de "ponteiro em cima").
                         None => {
                             let side = big_h.min(160.0);
-                            ui.at(area.0 + (area.2 - side - 44.0) / 2.0, area.1 + (area.3 - side) / 2.0, side + 44.0, |ui| {
-                                ui.tile(Tile::Icon(&icon), "", false, side as u32);
-                            });
+                            ui.at(area.0 + (area.2 - side) / 2.0, area.1 + (area.3 - side) / 2.0, side, |ui| ui.icon(&icon, side as u32));
                         }
                     }
                     // Nome e informações (tipo, tamanho, data) embaixo da imagem.
-                    let info = format!("{} — {} — {}", files::kind_text(entry), if entry.is_dir { "—".to_string() } else { files::size_text(entry.size) }, files::date_text(entry.modified, now));
+                    let mut info = if entry.is_dir {
+                        format!("{} — {}", files::kind_text(entry), files::date_text(entry.modified, now))
+                    } else {
+                        format!("{} — {} — {}", files::kind_text(entry), files::size_text(entry.size), files::date_text(entry.modified, now))
+                    };
+                    if g_zoom > 1.001 {
+                        info.push_str(&format!(" — {:.0}%", g_zoom * 100.0));
+                    }
                     ui.at(r.0, g_top + big_h + 4.0, r.2, |ui| {
                         ui.centered_title(&name);
                         ui.centered_note(&info);
@@ -2938,16 +3033,25 @@ impl Files {
                 let strip_y = g_top + g_h - strip_h + 8.0;
                 let step = thumb_side + 10.0;
                 let chosen_i = chosen.as_ref().and_then(|c| shown.iter().position(|e| e.path == c.path)).unwrap_or(0);
-                // A tira rola para o escolhido ficar no meio.
-                let offset = (chosen_i as f32 * step - (r.2 - thumb_side) / 2.0).clamp(0.0, (shown.len() as f32 * step - r.2).max(0.0));
+                // Recuo dos dois lados (o contorno do escolhido não encosta na borda).
+                let pad = 16.0;
+                let (sx, sw) = (r.0 + pad, r.2 - 2.0 * pad);
+                let total = shown.len() as f32 * step - 10.0;
+                // Cabendo, a tira fica no meio; senão rola para o escolhido ficar no meio.
+                let (start, offset) = if total <= sw {
+                    (sx + (sw - total) / 2.0, 0.0)
+                } else {
+                    (sx, (chosen_i as f32 * step - (sw - thumb_side) / 2.0).clamp(0.0, total - sw))
+                };
                 let accent = ui.theme().accent;
                 for (i, entry) in shown.iter().enumerate() {
-                    let x = r.0 + i as f32 * step - offset;
-                    if x + thumb_side < r.0 || x > r.0 + r.2 {
+                    let x = start + i as f32 * step - offset;
+                    if x < sx - 1.0 || x + thumb_side > sx + sw + 1.0 {
                         continue;
                     }
                     let rect = (x, strip_y, thumb_side, thumb_side);
                     let resp = ui.background(rect);
+                    gallery_hit |= resp.hovered;
                     let wants = Self::wants_thumb(entry);
                     let pix = if wants { self.thumbs.get(&(entry.path.clone(), size)).cloned().flatten() } else { None };
                     if wants && !self.thumbs.contains_key(&(entry.path.clone(), size)) {
@@ -2963,10 +3067,11 @@ impl Files {
                             let tf = tiny_skia::Transform::from_scale(fit, fit).post_translate(rect.0 * k + (thumb_side * k - w) / 2.0, rect.1 * k + (thumb_side * k - h) / 2.0);
                             canvas.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint::default(), tf, None);
                         }),
+                        // Ícone (pasta, documento) centrado no quadro, sem ladrilho: o
+                        // ladrilho é mais largo que o quadro e pegava o clique dos vizinhos.
                         None => {
-                            ui.at(rect.0 - 22.0, rect.1, thumb_side + 44.0, |ui| {
-                                ui.tile(Tile::Icon(&icon), "", false, (thumb_side - 8.0) as u32);
-                            });
+                            let side = thumb_side - 8.0;
+                            ui.at(rect.0 + 4.0, rect.1 + 4.0, side, |ui| ui.icon(&icon, side as u32));
                         }
                     }
                     if selected {
@@ -3172,7 +3277,7 @@ impl Files {
             // no cabeçalho da lista nem na barra de rolagem.
             let on_header = header_rect.zip(ui.input().pointer).is_some_and(|(h, p)| p.0 >= h.0 && p.0 <= h.0 + h.2 && p.1 >= h.1 && p.1 <= h.1 + h.3);
             let content = (area.0, area.1, (area.2 - 16.0).max(0.0), area.3);
-            let can_start = press.is_none() && dragging.is_none() && mode != 2 && !on_header;
+            let can_start = press.is_none() && dragging.is_none() && mode != 2 && mode != 3 && !on_header;
             let band = self.lasso.update(ui, content, can_start);
             if self.lasso.pressed() && self.lasso_base.is_none() {
                 self.lasso_base = Some(if ctrl_shift { self.selection.clone() } else { Vec::new() });
@@ -3194,7 +3299,7 @@ impl Files {
             }
             let lasso_used = self.lasso.active() || self.lasso.finished();
             let bg = ui.background(area);
-            if bg.clicked() && !lasso_used {
+            if bg.clicked() && !lasso_used && !gallery_hit {
                 self.selection.clear();
                 ui.request_repaint();
             }
@@ -3231,6 +3336,12 @@ impl Files {
             });
         });
         });
+        if mode == 3 {
+            self.gallery_zoom = g_zoom;
+            self.gallery_pan = g_pan;
+            self.gallery_drag = g_drag;
+            self.gallery_item = g_now;
+        }
         for path in wanted {
             self.thumb(&path, size);
         }
@@ -4722,6 +4833,20 @@ fn veil(ui: &mut Ui, rect: (f32, f32, f32, f32), k: f32) {
     });
 }
 
+/// Próximo degrau de zoom da imagem da galeria (de 100% a 800%, 25% de cada vez até
+/// 200% e depois 50%).
+fn gallery_step(zoom: f32, bigger: bool) -> f32 {
+    let step = if zoom >= 2.0 && bigger || zoom > 2.0 { 0.5 } else { 0.25 };
+    let next = if bigger { zoom + step } else { zoom - step };
+    ((next / 0.25).round() * 0.25).clamp(1.0, 8.0)
+}
+
+/// Deslocamento depois de mudar o zoom pelo teclado: sem zoom, a imagem volta ao meio
+/// (o desenho prende o resto à borda da imagem).
+fn clamp_pan(pan: (f32, f32), zoom: f32) -> (f32, f32) {
+    if zoom <= 1.0 { (0.0, 0.0) } else { pan }
+}
+
 /// Larguras das colunas extras da lista (Modificado, Tamanho, Tipo) que cabem em
 /// `width`: se a soma deixa o Nome com menos de 40% da largura, todas encolhem na mesma
 /// proporção (mínimo de 60 pontos cada).
@@ -4737,6 +4862,17 @@ fn fit_list_widths(widths: [f32; 3], width: f32) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zoom_da_galeria_por_degraus() {
+        assert_eq!(gallery_step(1.0, true), 1.25);
+        assert_eq!(gallery_step(1.0, false), 1.0);
+        assert_eq!(gallery_step(2.0, true), 2.5);
+        assert_eq!(gallery_step(2.5, false), 2.0);
+        assert_eq!(gallery_step(2.0, false), 1.75);
+        assert_eq!(gallery_step(8.0, true), 8.0);
+        assert_eq!(clamp_pan((30.0, -4.0), 1.0), (0.0, 0.0));
+    }
+
     #[test]
     fn renomear_varios() {
         let names: Vec<String> = ["foto 1.jpg", "foto 2.jpg", "notas"].iter().map(|s| s.to_string()).collect();

@@ -23,7 +23,7 @@ view_check() {
         echo "ok    $name"; PASS=$((PASS + 1))
     else
         echo "FALHA $name"; echo "      esperado: $expected"
-        grep -a "visualização" "$APPLOG" | sed 's/^/      /' | tail -3
+        grep -a "visualização\|galeria:" "$APPLOG" | sed 's/^/      /' | tail -3
         FAIL=$((FAIL + 1))
     fi
 }
@@ -74,5 +74,12 @@ if [ -f "$XDG_STATE_HOME/mide/files-view.toml" ] && ! ls "$XDG_STATE_HOME/mide/"
 else
     echo "FALHA estado em XDG_STATE_HOME/mide/files-view.toml, sem temporários"; FAIL=$((FAIL + 1))
 fi
+# Galeria (no fim: ela vira o padrão das pastas nunca abertas): pastas e imagens na
+# tira, centrada; clicar numa imagem a escolhe (antes o fundo da pasta tirava a
+# seleção no mesmo clique). Botão da galeria em (607, 102); a tira em y=481, com o
+# quinto quadro (uma das fotos, pela ordem guardada da seção) em x=681.
+mkdir -p "$VDIR/Galeria/Pasta A" "$VDIR/Galeria/Pasta B" "$VDIR/Galeria/Pasta C"
+for n in 0 1 2 3; do echo x >"$VDIR/Galeria/foto$n.jpg"; done
+view_check "galeria: clicar numa imagem da tira a escolhe" "galeria: $VDIR/Galeria/foto[0-9].jpg" "400 click 607 102; 460 click 681 481; 520 list" "$VDIR/Galeria"
 unset XDG_STATE_HOME
 rm -rf "$VBASE"
