@@ -243,6 +243,15 @@ struct Shared {
     drag_window: Mutex<Option<(xproto::Window, i16, i16)>>,
 }
 
+/// Número do display X11 da variável `DISPLAY` (`:99`, `host:99.0` → 99); 0 sem ela.
+fn display_number() -> i32 {
+    std::env::var("DISPLAY")
+        .ok()
+        .and_then(|d| d.rsplit(':').next().map(str::to_string))
+        .and_then(|n| n.split('.').next().and_then(|n| n.parse().ok()))
+        .unwrap_or(0)
+}
+
 impl X11Backend {
     /// Conecta ao display X11, cria a janela de composicao e registra no event loop.
     pub fn init(
@@ -251,7 +260,9 @@ impl X11Backend {
     ) -> Result<Self, Box<dyn Error>> {
         let (conn, screen_num) = RustConnection::connect(None)?;
         // Publica o numero do display para que child_env() defina DISPLAY nos filhos.
-        let _ = crate::X11_DISPLAY_NUM.set(screen_num.try_into().unwrap_or(0));
+        // O número do display (`:99` → 99), não o índice da tela: os filhos precisam
+        // abrir o mesmo servidor onde o mide roda.
+        let _ = crate::X11_DISPLAY_NUM.set(display_number());
         let conn = Arc::new(conn);
 
         let setup = conn.setup();

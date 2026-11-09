@@ -387,7 +387,15 @@ struct Kbd {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-keyboard", "mide_keyboard=info");
-    let conn = Connection::connect_to_env()?;
+    // Sem Wayland (sessão X11, ou o backend X11 do mide), o teclado é um app do kit.
+    let conn = match Connection::connect_to_env() {
+        Ok(conn) => conn,
+        Err(err) if std::env::var_os("DISPLAY").is_some() => {
+            tracing::info!("sem Wayland ({err}): teclado na tela pelo X11");
+            return run_x11();
+        }
+        Err(err) => return Err(err.into()),
+    };
     let (globals, event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();
     let mut event_loop: EventLoop<'static, Kbd> = EventLoop::try_new()?;
@@ -1468,4 +1476,150 @@ mod tests {
         assert_eq!(floating.len(), 1);
         assert!(floating[0].0 + floating[0].2 <= 400.0);
     }
+}
+
+// ---- X11: o teclado na tela como app do kit ----
+//
+// No X11 não há método de entrada (input-method-v2): o teclado é um app do mide-ui numa
+// faixa embaixo da tela, sem foco, e digita pela extensão XTEST no app que tem o foco.
+// Fica aberto enquanto estiver rodando (a tecla ⌄ fecha). O que depende de saber se
+// há campo de texto (abrir sozinho, modo tablet) só existe no Wayland.
+
+/// Altura da faixa do teclado no X11 (as teclas, sem a barra de atalhos).
+const X_KEYS_H: u32 = PANEL_H;
+
+/// Keysym de um caractere (Latin-1 direto; o resto é Unicode com o bit alto).
+fn keysym_of(c: char) -> u32 {
+    let u = c as u32;
+    if u < 0x100 { u } else { 0x0100_0000 | u }
+}
+
+/// O teclado na tela no X11: as teclas desenhadas e as teclas enviadas pelo XTEST.
+struct OskApp {
+    /// Conexão própria para digitar (XTEST); sem ela, o teclado só aparece.
+    xtest: Option<mide::kit::x11_layer::Session>,
+    page: Page,
+    shift: bool,
+    caps: bool,
+    abnt: bool,
+    text: mide::ui::text::Text,
+}
+
+impl OskApp {
+    /// Manda uma tecla do teclado para o app que tem o foco.
+    fn send(&mut self, keysym: u32, ctrl: bool) {
+        let Some(xtest) = self.xtest.as_ref() else {
+            return;
+        };
+        match xtest.type_keysym(keysym, ctrl) {
+            Ok(true) => {}
+            Ok(false) => tracing::info!("teclado na tela: o layout do servidor não tem o keysym {keysym:#x}"),
+            Err(err) => tracing::warn!("teclado na tela: XTEST falhou ({err})"),
+        }
+    }
+
+    /// Ação de uma tecla apertada (o que ela faz, mesmo para o Wayland).
+    fn press(&mut self, action: &Action, ui: &mut mide::kit::Ui) {
+        match action {
+            Action::Text(t) => {
+                for c in t.chars() {
+                    self.send(keysym_of(c), false);
+                }
+                // Shift vale para uma letra; com Caps Lock, segue.
+                if self.shift && !self.caps {
+                    self.shift = false;
+                }
+            }
+            Action::Space => self.send(0x20, false),
+            Action::Enter => self.send(0xff0d, false),
+            Action::Backspace => self.send(0xff08, false),
+            Action::Shift => {
+                if self.caps {
+                    self.caps = false;
+                    self.shift = false;
+                } else if self.shift {
+                    self.caps = true;
+                } else {
+                    self.shift = true;
+                }
+            }
+            Action::Page(page) => {
+                self.page = *page;
+                self.shift = false;
+            }
+            Action::Hide => ui.close(),
+            Action::Combo(combo) => {
+                // ctrl+z, ctrl+shift+z...: a letra é a última parte.
+                let parts: Vec<&str> = combo.split('+').collect();
+                let key = parts.last().copied().unwrap_or("");
+                let shift = parts.contains(&"shift");
+                if let Some(c) = key.chars().next() {
+                    let c = if shift { c.to_ascii_uppercase() } else { c };
+                    self.send(keysym_of(c), true);
+                }
+            }
+            // Flutuar não existe no X11 (a faixa fica no lugar).
+            Action::Float => {}
+        }
+    }
+}
+
+impl mide::kit::App for OskApp {
+    fn view(&mut self, ui: &mut mide::kit::Ui) {
+        let width = ui.available_width();
+        let upper = self.shift || self.caps;
+        let rows = rows(self.page, upper, self.abnt);
+        let placed = layout(&rows, width, 0.0, X_KEYS_H as f32);
+        // Um toque numa tecla a aperta (no quadro em que o botão foi apertado).
+        if ui.input().pressed {
+            if let Some((px, py)) = ui.input().pointer {
+                let hit = placed.iter().find(|p| px >= p.x && px < p.x + p.w && py >= p.y && py < p.y + p.h).copied();
+                if let Some(p) = hit {
+                    let action = rows[p.row][p.col].action.clone();
+                    self.press(&action, ui);
+                }
+            }
+        }
+        let theme = ui.theme().clone();
+        let key_fill = if theme.dark { [70, 70, 74, 255] } else { [255, 255, 255, 255] };
+        let special_fill = if theme.dark { [46, 46, 50, 255] } else { [220, 221, 226, 255] };
+        let ink = theme.text;
+        let text = &mut self.text;
+        ui.custom(X_KEYS_H as f32, |canvas, (ox, oy, _w, _h)| {
+            for p in &placed {
+                let key = &rows[p.row][p.col];
+                let fill = if matches!(key.action, Action::Text(_) | Action::Space) { key_fill } else { special_fill };
+                mide::ui::draw::fill_rounded(canvas, ox + p.x, oy + p.y, p.w, p.h, 6.0, mide::ui::draw::rgba(fill[0], fill[1], fill[2], fill[3]));
+                let label = key.label.as_str();
+                let size = theme.font;
+                let tw = text.measure(label, size, mide::ui::text::FontWeight::Regular);
+                let tx = ox + p.x + (p.w - tw) / 2.0;
+                let ty = oy + p.y + (p.h - size * 1.25) / 2.0;
+                text.draw(canvas, label, tx, ty, size, mide::ui::text::FontWeight::Regular, ink);
+            }
+        });
+    }
+}
+
+/// O teclado na tela no X11: a janela de faixa embaixo da tela, sem foco.
+fn run_x11() -> Result<(), Box<dyn Error>> {
+    let xtest = match mide::kit::x11_layer::Session::connect() {
+        Ok(session) if session.has_xtest() => Some(session),
+        Ok(_) => {
+            tracing::warn!("teclado na tela: o servidor X não tem XTEST; as teclas não chegam aos apps");
+            None
+        }
+        Err(err) => {
+            tracing::warn!("teclado na tela: sem conexão X para digitar ({err})");
+            None
+        }
+    };
+    let app = OskApp { xtest, page: Page::Letters, shift: false, caps: false, abnt: abnt(), text: mide::ui::text::Text::new() };
+    let window = mide::kit::Window::new("Teclado na tela")
+        .app_id("mide-keyboard")
+        .overlay("mide-keyboard")
+        .exclusive_zone(mide::kit::Edge::Bottom, X_KEYS_H)
+        .size(1, X_KEYS_H);
+    tracing::info!("teclado na tela pronto (X11)");
+    mide::kit::run(window, app).map_err(|e| e.to_string().into())
 }
