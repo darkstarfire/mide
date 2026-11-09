@@ -21,12 +21,15 @@ use std::{
 
 use chrono::{Datelike, Local, Timelike};
 use mide::tr;
+use mide::kit::x11_layer::{self, Edge, Input, Kind, LayerSpec, PointerKind, Rect};
+use mide::shell::surface::{ptr_from_x11, PtrKind, Surface, XFd};
+use smithay_client_toolkit::reexports::calloop::{generic::Generic, Interest, Mode, PostAction};
 use mide::shell::scale::{ScaleHandler, SurfaceScale};
 use mide::{
     calendar,
     system::{self, Status},
     ui::{
-        draw::{fill_rounded, px, rgba, rounded_rect, set_scale, tf, to_argb8888, vertical_gradient},
+        draw::{fill_rounded, px, rgba, rounded_rect, set_scale, tf, vertical_gradient},
         text::{FontWeight, Text},
     },
 };
@@ -43,7 +46,7 @@ use smithay_client_toolkit::{
         calloop_wayland_source::WaylandSource,
         client::{
             globals::{registry_queue_init, GlobalList},
-            protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+            protocol::{wl_output, wl_pointer, wl_seat, wl_surface},
             Connection, QueueHandle,
         },
     },
@@ -376,41 +379,66 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-bar", "mide_bar=info");
 
-    let conn = Connection::connect_to_env()?;
-    let (globals, event_queue) = registry_queue_init(&conn)?;
-    let qh = event_queue.handle();
-
-    let compositor = CompositorState::bind(&globals, &qh)?;
-    let layer_shell = LayerShell::bind(&globals, &qh)?;
-    let shm = Shm::bind(&globals, &qh)?;
-
-    let surface = compositor.create_surface(&qh);
-    let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-bar"), None);
-    layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
-    layer.set_size(0, BAR_HEIGHT);
-    layer.set_exclusive_zone(BAR_HEIGHT as i32);
-    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    layer.commit();
-
-    let bar_scale = SurfaceScale::new(&globals, &qh, layer.wl_surface());
-    let pool = SlotPool::new(1920 * BAR_HEIGHT as usize * 4, &shm)?;
+    // Wayland quando há servidor; senão, o X11 (a barra vira uma janela de camada do X).
+    let wayland = match Connection::connect_to_env() {
+        Ok(conn) => Some(conn),
+        Err(err) if std::env::var_os("DISPLAY").is_some() => {
+            tracing::info!("sem Wayland ({err}): barra numa janela X11");
+            None
+        }
+        Err(err) => return Err(err.into()),
+    };
     let (media_tx, media_rx) = std::sync::mpsc::channel();
     let (media_art_tx, media_art_rx) = std::sync::mpsc::channel();
     let media_details = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (wl, x, layer, width, queue) = match &wayland {
+        Some(conn) => {
+            let (globals, event_queue) = registry_queue_init(conn)?;
+            let qh = event_queue.handle();
+            let compositor = CompositorState::bind(&globals, &qh)?;
+            let layer_shell = LayerShell::bind(&globals, &qh)?;
+            let shm = Shm::bind(&globals, &qh)?;
+            let surface = compositor.create_surface(&qh);
+            let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-bar"), None);
+            layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
+            layer.set_size(0, BAR_HEIGHT);
+            layer.set_exclusive_zone(BAR_HEIGHT as i32);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.commit();
+            let bar_scale = SurfaceScale::new(&globals, &qh, layer.wl_surface());
+            let pool = SlotPool::new(1920 * BAR_HEIGHT as usize * 4, &shm)?;
+            let layer = Surface::Wayland { layer, pool, scale: bar_scale };
+            let wl = WlState {
+                registry_state: RegistryState::new(&globals),
+                seat_state: SeatState::new(&globals, &qh),
+                output_state: OutputState::new(&globals, &qh),
+                compositor,
+                layer_shell,
+                shm,
+                globals,
+                qh: qh.clone(),
+                pointer: None,
+            };
+            (Some(wl), None, layer, 0u32, Some(event_queue))
+        }
+        None => {
+            let session = x11_layer::Session::connect()?;
+            let (sw, _) = session.screen_size();
+            let rect = Rect { x: 0, y: 0, w: sw, h: BAR_HEIGHT };
+            let spec = LayerSpec { app_id: "mide-bar".into(), kind: Kind::Dock, rect, strut: Some((Edge::Top, BAR_HEIGHT)), keyboard: false };
+            let layer = session.layer(&spec)?;
+            (None, Some(session), Surface::X11 { layer, rect, screen_canvas: true }, sw, None)
+        }
+    };
+    let media_details_flag = media_details.clone();
     let mut bar = Bar {
-        registry_state: RegistryState::new(&globals),
-        seat_state: SeatState::new(&globals, &qh),
-        output_state: OutputState::new(&globals, &qh),
-        compositor,
-        layer_shell,
-        shm,
-        pool,
+        wl,
+        x,
         layer,
-        bar_scale,
-        width: 0,
-        configured: false,
+        width,
+        configured: wayland.is_none(),
+        x11_press_on_bar: None,
         exit: false,
-        pointer: None,
         text: Text::new(),
         focused_name: String::new(),
         focused_id: String::new(),
@@ -450,7 +478,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         recording: None,
         media_session: None,
         media_rx,
-        media_details: media_details.clone(),
+        media_details: media_details_flag,
         media_art_tx,
         media_art_rx,
         media_art_url: None,
@@ -480,9 +508,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         menu_dirty: false,
         glass_bar: Default::default(),
         glass_menu: Default::default(),
-        qh: qh.clone(),
-        // Por último: os campos de cima ainda leem os globais.
-        globals,
     };
     std::thread::spawn(move || loop {
         let session = mide::settings_file::bar_item("media")
@@ -494,9 +519,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let mut event_loop: EventLoop<Bar> = EventLoop::try_new()?;
-    WaylandSource::new(conn.clone(), event_queue)
-        .insert(event_loop.handle())
-        .map_err(|e| e.to_string())?;
+    match (&wayland, queue) {
+        (Some(conn), Some(queue)) => {
+            WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).map_err(|e| e.to_string())?;
+        }
+        _ => {
+            let fd = bar.x.as_ref().map_or(-1, |s| s.fd());
+            event_loop
+                .handle()
+                .insert_source(Generic::new(XFd(fd), Interest::READ, Mode::Level), |_, _, bar: &mut Bar| {
+                    bar.handle_x11();
+                    Ok(PostAction::Continue)
+                })
+                .map_err(|e| e.to_string())?;
+            // Primeiro quadro: no X11 não há configure do compositor, então desenha antes
+            // de esperar eventos.
+            bar.paint_bar();
+        }
+    }
     // Som, Wi-Fi e Bluetooth: lidos numa thread (os comandos levam alguns ms) a cada
     // 2 s com um painel aberto e a cada 10 s com a barra parada, ou na hora quando a
     // barra pede (depois de uma ação ou ao abrir um painel). Cada leitura roda uns 15
@@ -770,9 +810,7 @@ fn clock_format(now: chrono::DateTime<Local>, weekday: bool, date: bool, year: b
 /// Menu aberto: a camada em tela cheia (clique fora fecha), o menu mostrado, onde
 /// fica o painel e o item sob o ponteiro.
 struct Menu {
-    layer: LayerSurface,
-    /// Escala da tela para a camada do menu (desenho nítido em 125%/150%/200%).
-    scale: SurfaceScale,
+    layer: Surface,
     width: u32,
     height: u32,
     id: MenuId,
@@ -1034,9 +1072,10 @@ fn wallpaper_top_dark() -> bool {
 /// Imagem para `w` × `h` pontos na escala da superfície. Daí em diante, as funções de
 /// desenho e o texto convertem pontos em pixels: nítido em 125%/150%/200% (sem isto o
 /// compositor esticava a imagem em escala 1).
-fn canvas(scale: &SurfaceScale, w: u32, h: u32) -> Option<Pixmap> {
-    set_scale(scale.scale());
-    let (pw, ph) = scale.pixels(w, h);
+/// Tamanho do canvas: pixels da superfície para `w` × `h` pontos (escala incluída).
+fn canvas(surface: &Surface, w: u32, h: u32) -> Option<Pixmap> {
+    set_scale(surface.scale_factor());
+    let (pw, ph) = surface.pixels(w, h);
     Pixmap::new(pw, ph)
 }
 
@@ -1065,27 +1104,35 @@ fn refresh_palette() {
     PALETTE.with(|p| p.set(Palette { accent: theme.accent, on_accent: theme.on_accent, ..base }));
 }
 
-struct Bar {
-    /// Vidro atrás da barra e atrás do painel do menu aberto (desenhado pelo compositor).
-    glass_bar: mide::control_client::Glass,
-    glass_menu: mide::control_client::Glass,
+/// O que só existe no Wayland: os globais, a fila e os objetos das camadas.
+struct WlState {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
     compositor: CompositorState,
     layer_shell: LayerShell,
     shm: Shm,
-    pool: SlotPool,
-    layer: LayerSurface,
-    /// Escala da tela para a barra: a imagem é desenhada em pixels reais (pontos ×
-    /// escala) e o compositor não estica (letras e ícones nítidos).
-    bar_scale: SurfaceScale,
-    /// Globais do Wayland, para pedir a escala das camadas novas (menus e dicas).
     globals: GlobalList,
+    qh: QueueHandle<Bar>,
+    pointer: Option<wl_pointer::WlPointer>,
+}
+
+struct Bar {
+    /// Estado do Wayland (None no X11).
+    wl: Option<WlState>,
+    /// Conexão com o X11 (None no Wayland): por ela saem as janelas de menu e dica.
+    x: Option<x11_layer::Session>,
+    /// No X11, onde o último botão apertado foi (true: a barra). O botão solto vai para
+    /// o mesmo lugar, como no Wayland (a superfície que recebeu o aperto recebe o solte).
+    x11_press_on_bar: Option<bool>,
+    /// Vidro atrás da barra e atrás do painel do menu aberto (desenhado pelo compositor).
+    glass_bar: mide::control_client::Glass,
+    glass_menu: mide::control_client::Glass,
+    /// Superfície da barra (camada Wayland ou janela X11).
+    layer: Surface,
     width: u32,
     configured: bool,
     exit: bool,
-    pointer: Option<wl_pointer::WlPointer>,
     text: Text,
     focused_name: String,
     /// app_id da janela em foco (vazio sem janela em foco).
@@ -1209,15 +1256,12 @@ struct Bar {
     tip_hover: Option<(MenuId, std::time::Instant)>,
     /// Dica à mostra embaixo de um ícone da barra (I2).
     tip: Option<Tip>,
-    qh: QueueHandle<Bar>,
 }
 
 /// Dica de um ícone da barra (I2): camada pequena embaixo do ícone, no visual do
 /// `ui.tooltip` do mide-ui, sem receber cliques (eles passam para o que está atrás).
 struct Tip {
-    layer: LayerSurface,
-    scale: SurfaceScale,
-    pool: SlotPool,
+    layer: Surface,
     size: (u32, u32),
     text: String,
 }
@@ -1718,7 +1762,7 @@ impl Bar {
                 if let Some(url) = artwork_url {
                     let tx = self.media_art_tx.clone();
                     // Capa no tamanho em pixels da tela (96 pontos).
-                    let art_size = (96.0 * self.bar_scale.scale()).round() as u32;
+                    let art_size = (96.0 * self.layer.scale_factor()).round() as u32;
                     std::thread::spawn(move || {
                         if let Some(image) = mide::platform::media::load_artwork(&url, art_size) {
                             let _ = tx.send((url, image));
@@ -1869,7 +1913,7 @@ impl Bar {
             return;
         }
         let (w, h) = (self.width, BAR_HEIGHT);
-        let Some(mut pixmap) = canvas(&self.bar_scale, w, h) else {
+        let Some(mut pixmap) = canvas(&self.layer, w, h) else {
             return;
         };
         let (fw, fh) = (w as f32, h as f32);
@@ -2202,7 +2246,7 @@ impl Bar {
         if w == 0 || h == 0 {
             return;
         }
-        let Some(mut pixmap) = canvas(&menu.scale, w, h) else {
+        let Some(mut pixmap) = canvas(&menu.layer, w, h) else {
             return;
         };
         let (mx, mw, items, menu_id) = (menu.x, menu.panel_w, menu.items.clone(), menu.id);
@@ -2308,33 +2352,151 @@ impl Bar {
 
     /// Envia o pixmap para a barra (`bar = true`) ou para o menu.
     fn present_layer(&mut self, pixmap: &Pixmap, bar: bool) {
-        let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
-        let Ok((buffer, canvas)) = self.pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888) else {
+        if bar {
+            let size = (self.width, BAR_HEIGHT);
+            // No X11 não há vidro do compositor por baixo: a barra compõe sobre a cor
+            // do tema dela (o Wayland mostra o desktop através do vidro).
+            let c = pal().bar_top(255);
+            let background = [(c.red() * 255.0) as u8, (c.green() * 255.0) as u8, (c.blue() * 255.0) as u8];
+            if let Err(err) = self.layer.present(pixmap, size, background) {
+                tracing::warn!("barra: quadro não foi enviado ({err})");
+            }
+            return;
+        }
+        self.fit_menu_window();
+        let Some(menu) = self.menu.as_mut() else {
             return;
         };
-        to_argb8888(pixmap, canvas);
-        let layer = if bar {
-            &self.layer
-        } else {
-            match self.menu.as_ref() {
-                Some(menu) => &menu.layer,
-                None => return,
-            }
+        let size = (menu.width, menu.height);
+        if let Err(err) = menu.layer.present(pixmap, size, [0, 0, 0]) {
+            tracing::warn!("menu da barra: quadro não foi enviado ({err})");
+        }
+    }
+
+    /// Estado do Wayland (só chamado no caminho Wayland).
+    fn wl_mut(&mut self) -> &mut WlState {
+        self.wl.as_mut().expect("estado do Wayland")
+    }
+
+    /// Tamanho da tela no X11 (o canvas do menu é da tela inteira); (0, 0) no Wayland,
+    /// onde o compositor manda o tamanho.
+    fn screen_size(&self) -> (u32, u32) {
+        self.x.as_ref().map_or((0, 0), |s| s.screen_size())
+    }
+
+    /// Cria a superfície de um menu. No Wayland, a camada da tela inteira (transparente);
+    /// no X11, uma janela pequena que o `fit_menu_window` ajusta ao painel, presa com o
+    /// ponteiro (cliques fora dela fecham o menu, como a camada da tela inteira faz).
+    fn new_menu_surface(&mut self) -> Option<Surface> {
+        if let Some(session) = self.x.as_ref() {
+            let rect = Rect { x: 0, y: 0, w: 1, h: 1 };
+            let spec = LayerSpec { app_id: "mide-bar-menu".into(), kind: Kind::Dock, rect, strut: None, keyboard: false };
+            let layer = session.layer(&spec).ok()?;
+            let surface = Surface::X11 { layer, rect, screen_canvas: true };
+            surface.grab_pointer();
+            return Some(surface);
+        }
+        let wl = self.wl.as_mut()?;
+        let surface = wl.compositor.create_surface(&wl.qh);
+        let layer = wl.layer_shell.create_layer_surface(&wl.qh, surface, Layer::Overlay, Some("mide-bar-menu"), None);
+        layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+        layer.set_size(0, 0);
+        // Cobre a tela toda, inclusive a área da própria barra.
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.commit();
+        let scale = SurfaceScale::new(&wl.globals, &wl.qh, layer.wl_surface());
+        let pool = SlotPool::new(1 << 20, &wl.shm).ok()?;
+        Some(Surface::Wayland { layer, pool, scale })
+    }
+
+    /// No X11, a janela do menu cobre só o painel (e o submenu aberto ao lado), com
+    /// uma margem para a sombra. O quadro continua em coordenadas de tela.
+    fn fit_menu_window(&mut self) {
+        let Some(menu) = self.menu.as_mut() else {
+            return;
         };
-        // Tamanho em pontos: a imagem pode ter mais pixels (escala da tela).
-        let (scale, size) = if bar {
-            (&self.bar_scale, (self.width, BAR_HEIGHT))
-        } else {
-            match self.menu.as_ref() {
-                Some(menu) => (&menu.scale, (menu.width, menu.height)),
-                None => return,
-            }
+        let Surface::X11 { rect: current, .. } = &menu.layer else {
+            return;
         };
-        scale.set_destination(size.0, size.1);
-        let surface = layer.wl_surface();
-        surface.damage_buffer(0, 0, w, h);
-        if buffer.attach_to(surface).is_ok() {
-            layer.commit();
+        let current = *current;
+        let top0 = if menu.id.custom() { menu.panel_top } else { PANEL_TOP };
+        let mut left = menu.x;
+        let mut right = menu.x + menu.panel_w;
+        let mut top = top0;
+        let mut bottom = top0 + menu.panel_height();
+        if let Some(child) = menu.child.as_ref() {
+            left = left.min(child.x);
+            right = right.max(child.x + child.w);
+            top = top.min(child.top);
+            bottom = bottom.max(child.top + items_height(&child.items));
+        }
+        const MARGIN: f32 = 24.0;
+        let x = (left - MARGIN).floor().max(0.0) as i32;
+        // Nunca sobe para dentro da barra: ela continua por cima do menu.
+        let y = (top - MARGIN).floor().max(BAR_HEIGHT as f32) as i32;
+        let w = ((right + MARGIN).ceil() - x as f32).max(1.0) as u32;
+        let h = ((bottom + MARGIN).ceil() - y as f32).max(1.0) as u32;
+        let target = Rect { x, y, w, h };
+        if target == current {
+            return;
+        }
+        if let Err(err) = menu.layer.resize((w, h), Some(target)) {
+            tracing::warn!("menu da barra: janela não ajustou ({err})");
+        }
+    }
+
+    /// Eventos do X11: o ponteiro da barra e do menu (as coordenadas viram as da tela).
+    /// O botão solto vai para a superfície onde ele foi apertado, como no Wayland.
+    fn handle_x11(&mut self) {
+        let inputs = match self.x.as_ref().map(|s| s.poll()) {
+            Some(Ok(inputs)) => inputs,
+            Some(Err(err)) => {
+                tracing::warn!("barra: evento X11 ({err})");
+                return;
+            }
+            None => return,
+        };
+        for input in inputs {
+            match input {
+                Input::Pointer { window, x, y, kind } => {
+                    let arrived_on_bar = self.layer.is_x11(window);
+                    let arrived_on_menu = self.menu.as_ref().is_some_and(|m| m.layer.is_x11(window));
+                    if !arrived_on_bar && !arrived_on_menu {
+                        continue;
+                    }
+                    let (sx, sy) = if arrived_on_bar {
+                        self.layer.to_local(x, y)
+                    } else {
+                        self.menu.as_ref().map_or((x, y), |m| m.layer.to_local(x, y))
+                    };
+                    let (on_bar, on_menu) = match kind {
+                        PointerKind::Press(_) => {
+                            self.x11_press_on_bar = Some(arrived_on_bar);
+                            (arrived_on_bar, arrived_on_menu)
+                        }
+                        PointerKind::Release(_) => match self.x11_press_on_bar.take() {
+                            Some(pressed_on_bar) => (pressed_on_bar, !pressed_on_bar),
+                            None => (arrived_on_bar, arrived_on_menu),
+                        },
+                        _ => (arrived_on_bar, arrived_on_menu),
+                    };
+                    let kind = ptr_from_x11(kind);
+                    self.pointer_event(on_menu, on_bar, kind, sx, sy);
+                }
+                // O X não guarda o desenho de janela não exposta: cada janela redesenha
+                // quando o servidor pede (a primeira vez, logo depois de abrir).
+                Input::Expose { window } => {
+                    if self.layer.is_x11(window) {
+                        self.bar_dirty = true;
+                    } else if self.menu.as_ref().is_some_and(|m| m.layer.is_x11(window)) {
+                        self.menu_dirty = true;
+                    } else if self.tip.as_ref().is_some_and(|t| t.layer.is_x11(window)) {
+                        self.paint_tip();
+                    }
+                }
+                Input::Key { .. } | Input::Closed => {}
+            }
         }
     }
 
@@ -2536,22 +2698,14 @@ impl Bar {
             self.draw_bar();
             return;
         }
-        let surface = self.compositor.create_surface(&self.qh);
-        let layer = self
-            .layer_shell
-            .create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-bar-menu"), None);
-        layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-        layer.set_size(0, 0);
-        // Cobre a tela toda, inclusive a área da própria barra.
-        layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.commit();
-        let scale = SurfaceScale::new(&self.globals, &self.qh, layer.wl_surface());
+        let Some(layer) = self.new_menu_surface() else {
+            return;
+        };
+        let (width, height) = self.screen_size();
         self.menu = Some(Menu {
             layer,
-            scale,
-            width: 0,
-            height: 0,
+            width,
+            height,
             id,
             items,
             x,
@@ -2566,6 +2720,8 @@ impl Bar {
             dragging_keyboard_light: false,
             child: None,
         });
+        // No Wayland o `configure` do compositor desenha o menu; no X11 não há, então pede já.
+        self.draw_menu();
         self.draw_bar();
     }
 
@@ -2652,23 +2808,49 @@ impl Bar {
         let tw = (self.text.measure(&text, theme.font_small, FontWeight::Regular) + 16.0).ceil();
         let size = (tw as u32 + 2, 25);
         let x = (center - tw / 2.0).clamp(4.0, (self.width as f32 - tw - 4.0).max(4.0));
-        let surface = self.compositor.create_surface(&self.qh);
-        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-bar-tip"), None);
-        layer.set_anchor(Anchor::TOP | Anchor::LEFT);
-        layer.set_margin(BAR_HEIGHT as i32 + 4, 0, 0, x as i32 - 1);
-        layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.set_size(size.0, size.1);
-        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
-            layer.wl_surface().set_input_region(Some(region.wl_region()));
-        }
-        layer.commit();
-        let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
-            return;
+        let layer = if let Some(session) = self.x.as_ref() {
+            let rect = Rect { x: x as i32 - 1, y: BAR_HEIGHT as i32 + 4, w: size.0, h: size.1 };
+            let spec = LayerSpec { app_id: "mide-bar-tip".into(), kind: Kind::Dock, rect, strut: None, keyboard: false };
+            match session.layer(&spec) {
+                Ok(layer) => {
+                    let mut surface = Surface::X11 { layer, rect, screen_canvas: false };
+                    // A dica não recebe ponteiro (como a camada do Wayland, sem região).
+                    let _ = surface.set_input_region(Some(Rect { x: 0, y: 0, w: 0, h: 0 }));
+                    surface
+                }
+                Err(err) => {
+                    tracing::warn!("dica da barra: janela X11 não abriu ({err})");
+                    return;
+                }
+            }
+        } else {
+            let Some(wl) = self.wl.as_mut() else {
+                return;
+            };
+            let surface = wl.compositor.create_surface(&wl.qh);
+            let layer = wl.layer_shell.create_layer_surface(&wl.qh, surface, Layer::Overlay, Some("mide-bar-tip"), None);
+            layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+            layer.set_margin(BAR_HEIGHT as i32 + 4, 0, 0, x as i32 - 1);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.set_size(size.0, size.1);
+            if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&wl.compositor) {
+                layer.wl_surface().set_input_region(Some(region.wl_region()));
+            }
+            layer.commit();
+            let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &wl.shm) else {
+                return;
+            };
+            let scale = SurfaceScale::new(&wl.globals, &wl.qh, layer.wl_surface());
+            Surface::Wayland { layer, pool, scale }
         };
         tracing::debug!("dica da barra: {text}");
-        let scale = SurfaceScale::new(&self.globals, &self.qh, layer.wl_surface());
-        self.tip = Some(Tip { layer, scale, pool, size, text });
+        let on_x11 = self.x.is_some();
+        self.tip = Some(Tip { layer, size, text });
+        // No Wayland o `configure` da dica a desenha; no X11 não há configure, então desenha já.
+        if on_x11 {
+            self.paint_tip();
+        }
     }
 
     /// Desenha a dica: cápsula com a cor dos menus, cantos de 11, sombra leve e o texto
@@ -2676,7 +2858,7 @@ impl Bar {
     fn paint_tip(&mut self) {
         let Some(tip) = self.tip.as_mut() else { return };
         let (w, h) = tip.size;
-        let Some(mut pixmap) = canvas(&tip.scale, w, h) else { return };
+        let Some(mut pixmap) = canvas(&tip.layer, w, h) else { return };
         let theme = mide::kit::Theme::system();
         let (bw, bh) = (w as f32 - 2.0, 22.0);
         fill_rounded(&mut pixmap, 0.0, 2.0, bw + 2.0, bh + 1.0, 12.0, rgba(0, 0, 0, 30));
@@ -2690,20 +2872,15 @@ impl Bar {
         let text = tip.text.clone();
         self.text.draw(&mut pixmap, &text, 9.0, 1.0 + (bh - theme.font_small * 1.25) / 2.0, theme.font_small, FontWeight::Regular, theme.text);
         let Some(tip) = self.tip.as_mut() else { return };
-        let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
-        let Ok((buffer, canvas)) = tip.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
-            return;
-        };
-        to_argb8888(&pixmap, canvas);
-        tip.scale.set_destination(w, h);
-        let surface = tip.layer.wl_surface();
-        surface.damage_buffer(0, 0, pw, ph);
-        if buffer.attach_to(surface).is_ok() {
-            tip.layer.commit();
+        if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
+            tracing::warn!("dica da barra: quadro não foi enviado ({err})");
         }
     }
 
     fn close_menu(&mut self) {
+        if let Some(menu) = self.menu.as_ref() {
+            menu.layer.ungrab_pointer();
+        }
         self.media_details.store(false, std::sync::atomic::Ordering::Relaxed);
         self.close_native_submenus();
         if self.menu.take().is_some() {
@@ -2812,7 +2989,7 @@ impl Bar {
         if w == 0 || h == 0 {
             return;
         }
-        let Some(mut pixmap) = canvas(&menu.scale, w, h) else {
+        let Some(mut pixmap) = canvas(&menu.layer, w, h) else {
             return;
         };
         let top = PANEL_TOP;
@@ -4291,11 +4468,11 @@ fn spawn_sibling(name: &str) {
 
 impl ScaleHandler for Bar {
     fn surface_scale_changed(&mut self, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
-        if surface == self.layer.wl_surface() {
+        if self.layer.is_wayland(surface) {
             self.draw_bar();
-        } else if self.tip.as_ref().is_some_and(|t| t.layer.wl_surface() == surface) {
+        } else if self.tip.as_ref().is_some_and(|t| t.layer.is_wayland(surface)) {
             self.paint_tip();
-        } else if self.menu.as_ref().is_some_and(|m| m.layer.wl_surface() == surface) {
+        } else if self.menu.as_ref().is_some_and(|m| m.layer.is_wayland(surface)) {
             self.draw_menu();
         }
     }
@@ -4313,7 +4490,7 @@ impl CompositorHandler for Bar {
 
 impl OutputHandler for Bar {
     fn output_state(&mut self) -> &mut OutputState {
-        &mut self.output_state
+        &mut self.wl_mut().output_state
     }
     fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
     fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
@@ -4322,9 +4499,9 @@ impl OutputHandler for Bar {
 
 impl LayerShellHandler for Bar {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+        if self.tip.as_ref().is_some_and(|t| t.layer.layer_surface() == Some(layer)) {
             self.tip = None;
-        } else if layer == &self.layer {
+        } else if self.layer.layer_surface() == Some(layer) {
             self.exit = true;
         } else {
             self.menu = None;
@@ -4339,9 +4516,9 @@ impl LayerShellHandler for Bar {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+        if self.tip.as_ref().is_some_and(|t| t.layer.layer_surface() == Some(layer)) {
             self.paint_tip();
-        } else if layer == &self.layer {
+        } else if self.layer.layer_surface() == Some(layer) {
             self.width = configure.new_size.0;
             self.configured = true;
             self.draw_bar();
@@ -4355,19 +4532,20 @@ impl LayerShellHandler for Bar {
 
 impl SeatHandler for Bar {
     fn seat_state(&mut self) -> &mut SeatState {
-        &mut self.seat_state
+        &mut self.wl_mut().seat_state
     }
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
-        if capability == Capability::Pointer && self.pointer.is_none() {
-            if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
-                self.pointer = Some(pointer);
+        let wl = self.wl_mut();
+        if capability == Capability::Pointer && wl.pointer.is_none() {
+            if let Ok(pointer) = wl.seat_state.get_pointer(qh, &seat) {
+                wl.pointer = Some(pointer);
             }
         }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer {
-            if let Some(pointer) = self.pointer.take() {
+            if let Some(pointer) = self.wl_mut().pointer.take() {
                 pointer.release();
             }
         }
@@ -4375,160 +4553,175 @@ impl SeatHandler for Bar {
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
+impl Bar {
+    /// Um evento de ponteiro da barra ou do menu aberto (vem do Wayland ou do X11).
+    /// `x` e `y` estão em coordenadas de tela.
+    fn pointer_event(&mut self, on_menu: bool, on_bar: bool, kind: PtrKind, x: f64, y: f64) {
+        // Dicas dos ícones da barra (I2): contam enquanto o ponteiro para num ícone.
+        if on_bar {
+            match kind {
+                PtrKind::Enter { .. } | PtrKind::Motion { .. } => self.tip_motion(self.title_at(x)),
+                PtrKind::Leave { .. } => self.tip_motion(None),
+                PtrKind::Press { .. } => self.tip_pressed(),
+                _ => {}
+            }
+        }
+        match kind {
+            PtrKind::Motion { .. } | PtrKind::Enter { .. } if on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
+                self.custom_motion(x, y);
+            }
+            PtrKind::Press { button, .. } if button == BTN_LEFT && on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
+                self.custom_press(x, y);
+            }
+            PtrKind::Release { button, .. } if button == BTN_LEFT && on_menu => {
+                if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_brightness)) {
+                    if let Some(value) = self.status.brightness {
+                        system::set_brightness(value);
+                    }
+                }
+                if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_keyboard_light)) {
+                    if let Some(value) = self.status.keyboard_light {
+                        system::set_keyboard_light(value);
+                    }
+                }
+                let dragged = self.menu.as_mut().map(|m| std::mem::take(&mut m.dragging_volume)).unwrap_or(false);
+                if dragged {
+                    if let Some((value, _)) = self.status.volume {
+                        system::set_volume(value);
+                    }
+                    // Toque de confirmação do volume novo, como no macOS.
+                    mide::sounds::play("audio-volume-change");
+                    self.request_status();
+                }
+            }
+            PtrKind::Motion { .. } | PtrKind::Enter { .. } if on_menu => {
+                // Na faixa da barra, passar por outro título troca de menu.
+                if y < BAR_HEIGHT as f64 {
+                    if let Some(id) = self.title_at(x) {
+                        if self.menu.as_ref().is_some_and(|m| m.id != id) {
+                            self.open_menu(id);
+                        }
+                    }
+                }
+                // Dentro do submenu aberto ao lado: o destaque é dele.
+                if let Some(child) = self.menu.as_mut().and_then(|m| m.child.as_mut()).filter(|c| c.inside(x, y)) {
+                    let hovered = item_index(&child.items, child.x, child.w, child.top, x, y);
+                    let changed = child.hovered != hovered;
+                    child.hovered = hovered;
+                    if changed {
+                        self.draw_menu();
+                    }
+                    return;
+                }
+                let hovered = self.menu.as_ref().and_then(|m| m.item_at(x, y));
+                if self.menu.as_ref().is_some_and(|m| m.hovered != hovered) {
+                    if let Some(menu) = self.menu.as_mut() {
+                        menu.hovered = hovered;
+                    }
+                    self.draw_menu();
+                }
+                // Passar por um menu que não coube na barra abre o submenu dele; por
+                // outro item, fecha o submenu (fora dos itens, ele fica: dá para ir em
+                // diagonal até ele).
+                if let Some(i) = hovered {
+                    let submenu = self.menu.as_ref().is_some_and(|m| matches!(m.items.get(i), Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(_))))));
+                    if submenu {
+                        self.open_child(i);
+                    } else {
+                        self.close_child();
+                    }
+                }
+            }
+            // Ícone do tray: clique esquerdo ativa o app (os que só têm menu abrem o
+            // menu); o direito abre o menu.
+            PtrKind::Press { button, .. }
+                if (button == BTN_LEFT || button == BTN_RIGHT) && on_bar && matches!(self.title_at(x), Some(MenuId::Tray(_))) =>
+            {
+                let Some(MenuId::Tray(i)) = self.title_at(x) else {
+                    return;
+                };
+                let item = self.tray_items.get(i as usize).cloned();
+                match (self.tray.clone(), item) {
+                    (Some(tray), Some(item)) if button == BTN_LEFT && !item.item_is_menu => {
+                        self.close_menu();
+                        tracing::info!("tray: ativar {}", item.id);
+                        tray.activate(&item, x as i32, BAR_HEIGHT as i32);
+                    }
+                    _ => {
+                        if self.menu.as_ref().is_some_and(|m| m.id == MenuId::Tray(i)) {
+                            self.close_menu();
+                        } else {
+                            self.open_menu(MenuId::Tray(i));
+                        }
+                    }
+                }
+            }
+            PtrKind::Press { button, .. } if button == BTN_LEFT && on_bar => {
+                if let Some(id) = self.title_at(x) {
+                    if self.menu.as_ref().is_some_and(|m| m.id == id) {
+                        self.close_menu();
+                    } else {
+                        self.open_menu(id);
+                    }
+                }
+            }
+            PtrKind::Press { button, .. } if button == BTN_LEFT && on_menu => {
+                // Item do submenu aberto ao lado.
+                let child = self.menu.as_ref().and_then(|m| m.child.as_ref()).filter(|c| c.inside(x, y));
+                if let Some(child) = child {
+                    let item = item_index(&child.items, child.x, child.w, child.top, x, y).map(|i| child.items[i].clone());
+                    if let Some(MenuItem::Entry(_, _, Some(action))) = item {
+                        self.run(action);
+                    }
+                    return;
+                }
+                let index = self.menu.as_ref().and_then(|m| m.item_at(x, y));
+                let item = index.and_then(|i| self.menu.as_ref().map(|m| m.items[i].clone()));
+                let inside = self.menu.as_ref().is_some_and(|m| m.inside_panel(x, y));
+                if let (Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(_)))), Some(i)) = (&item, index) {
+                    // Clique num menu que não coube na barra: abre o submenu (o
+                    // ponteiro pode ter chegado sem passar pelo item).
+                    self.open_child(i);
+                } else if let Some(MenuItem::Entry(_, _, Some(action))) = item {
+                    self.run(action);
+                } else if y < BAR_HEIGHT as f64 && self.title_at(x).is_some() {
+                    // Clicar no título do menu aberto fecha; em outro, troca.
+                    let id = self.title_at(x);
+                    if self.menu.as_ref().map(|m| m.id) == id {
+                        self.close_menu();
+                    } else if let Some(id) = id {
+                        self.open_menu(id);
+                    }
+                } else if !inside {
+                    self.close_menu();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl PointerHandler for Bar {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
         for event in events {
-            let (x, y) = event.position;
-            let on_menu = self.menu.as_ref().is_some_and(|m| m.layer.wl_surface() == &event.surface);
-            let on_bar = self.layer.wl_surface() == &event.surface;
-            // Dicas dos ícones da barra (I2): contam enquanto o ponteiro para num ícone.
-            if on_bar {
-                match event.kind {
-                    PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => self.tip_motion(self.title_at(x)),
-                    PointerEventKind::Leave { .. } => self.tip_motion(None),
-                    PointerEventKind::Press { .. } => self.tip_pressed(),
-                    _ => {}
-                }
-            }
-            match event.kind {
-                PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } if on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
-                    self.custom_motion(x, y);
-                }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_menu && self.menu.as_ref().is_some_and(|m| m.id.custom()) => {
-                    self.custom_press(x, y);
-                }
-                PointerEventKind::Release { button, .. } if button == BTN_LEFT && on_menu => {
-                    if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_brightness)) {
-                        if let Some(value) = self.status.brightness {
-                            system::set_brightness(value);
-                        }
-                    }
-                    if self.menu.as_mut().is_some_and(|m| std::mem::take(&mut m.dragging_keyboard_light)) {
-                        if let Some(value) = self.status.keyboard_light {
-                            system::set_keyboard_light(value);
-                        }
-                    }
-                    let dragged = self.menu.as_mut().map(|m| std::mem::take(&mut m.dragging_volume)).unwrap_or(false);
-                    if dragged {
-                        if let Some((value, _)) = self.status.volume {
-                            system::set_volume(value);
-                        }
-                        // Toque de confirmação do volume novo, como no macOS.
-                        mide::sounds::play("audio-volume-change");
-                        self.request_status();
-                    }
-                }
-                PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } if on_menu => {
-                    // Na faixa da barra, passar por outro título troca de menu.
-                    if y < BAR_HEIGHT as f64 {
-                        if let Some(id) = self.title_at(x) {
-                            if self.menu.as_ref().is_some_and(|m| m.id != id) {
-                                self.open_menu(id);
-                            }
-                        }
-                    }
-                    // Dentro do submenu aberto ao lado: o destaque é dele.
-                    if let Some(child) = self.menu.as_mut().and_then(|m| m.child.as_mut()).filter(|c| c.inside(x, y)) {
-                        let hovered = item_index(&child.items, child.x, child.w, child.top, x, y);
-                        let changed = child.hovered != hovered;
-                        child.hovered = hovered;
-                        if changed {
-                            self.draw_menu();
-                        }
-                        continue;
-                    }
-                    let hovered = self.menu.as_ref().and_then(|m| m.item_at(x, y));
-                    if self.menu.as_ref().is_some_and(|m| m.hovered != hovered) {
-                        if let Some(menu) = self.menu.as_mut() {
-                            menu.hovered = hovered;
-                        }
-                        self.draw_menu();
-                    }
-                    // Passar por um menu que não coube na barra abre o submenu dele; por
-                    // outro item, fecha o submenu (fora dos itens, ele fica: dá para ir em
-                    // diagonal até ele).
-                    if let Some(i) = hovered {
-                        let submenu = self.menu.as_ref().is_some_and(|m| matches!(m.items.get(i), Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(_))))));
-                        if submenu {
-                            self.open_child(i);
-                        } else {
-                            self.close_child();
-                        }
-                    }
-                }
-                // Ícone do tray: clique esquerdo ativa o app (os que só têm menu abrem o
-                // menu); o direito abre o menu.
-                PointerEventKind::Press { button, .. }
-                    if (button == BTN_LEFT || button == BTN_RIGHT) && on_bar && matches!(self.title_at(x), Some(MenuId::Tray(_))) =>
-                {
-                    let Some(MenuId::Tray(i)) = self.title_at(x) else {
-                        continue;
-                    };
-                    let item = self.tray_items.get(i as usize).cloned();
-                    match (self.tray.clone(), item) {
-                        (Some(tray), Some(item)) if button == BTN_LEFT && !item.item_is_menu => {
-                            self.close_menu();
-                            tracing::info!("tray: ativar {}", item.id);
-                            tray.activate(&item, x as i32, BAR_HEIGHT as i32);
-                        }
-                        _ => {
-                            if self.menu.as_ref().is_some_and(|m| m.id == MenuId::Tray(i)) {
-                                self.close_menu();
-                            } else {
-                                self.open_menu(MenuId::Tray(i));
-                            }
-                        }
-                    }
-                }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_bar => {
-                    if let Some(id) = self.title_at(x) {
-                        if self.menu.as_ref().is_some_and(|m| m.id == id) {
-                            self.close_menu();
-                        } else {
-                            self.open_menu(id);
-                        }
-                    }
-                }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT && on_menu => {
-                    // Item do submenu aberto ao lado.
-                    let child = self.menu.as_ref().and_then(|m| m.child.as_ref()).filter(|c| c.inside(x, y));
-                    if let Some(child) = child {
-                        let item = item_index(&child.items, child.x, child.w, child.top, x, y).map(|i| child.items[i].clone());
-                        if let Some(MenuItem::Entry(_, _, Some(action))) = item {
-                            self.run(action);
-                        }
-                        continue;
-                    }
-                    let index = self.menu.as_ref().and_then(|m| m.item_at(x, y));
-                    let item = index.and_then(|i| self.menu.as_ref().map(|m| m.items[i].clone()));
-                    let inside = self.menu.as_ref().is_some_and(|m| m.inside_panel(x, y));
-                    if let (Some(MenuItem::Entry(_, _, Some(MenuAction::Submenu(_)))), Some(i)) = (&item, index) {
-                        // Clique num menu que não coube na barra: abre o submenu (o
-                        // ponteiro pode ter chegado sem passar pelo item).
-                        self.open_child(i);
-                    } else if let Some(MenuItem::Entry(_, _, Some(action))) = item {
-                        self.run(action);
-                    } else if y < BAR_HEIGHT as f64 && self.title_at(x).is_some() {
-                        // Clicar no título do menu aberto fecha; em outro, troca.
-                        let id = self.title_at(x);
-                        if self.menu.as_ref().map(|m| m.id) == id {
-                            self.close_menu();
-                        } else if let Some(id) = id {
-                            self.open_menu(id);
-                        }
-                    } else if !inside {
-                        self.close_menu();
-                    }
-                }
-                _ => {}
-            }
+            let on_menu = self.menu.as_ref().is_some_and(|m| m.layer.is_wayland(&event.surface));
+            let on_bar = self.layer.is_wayland(&event.surface);
+            let kind = match event.kind {
+                PointerEventKind::Enter { .. } => PtrKind::Enter {},
+                PointerEventKind::Leave { .. } => PtrKind::Leave {},
+                PointerEventKind::Motion { .. } => PtrKind::Motion {},
+                PointerEventKind::Press { button, .. } => PtrKind::Press { button },
+                PointerEventKind::Release { button, .. } => PtrKind::Release { button },
+                _ => PtrKind::Other,
+            };
+            self.pointer_event(on_menu, on_bar, kind, event.position.0, event.position.1);
         }
     }
 }
 
 impl ShmHandler for Bar {
     fn shm_state(&mut self) -> &mut Shm {
-        &mut self.shm
+        &mut self.wl_mut().shm
     }
 }
 
@@ -4537,7 +4730,7 @@ smithay_client_toolkit::delegate_dispatch2!(Bar);
 
 impl ProvidesRegistryState for Bar {
     fn registry(&mut self) -> &mut RegistryState {
-        &mut self.registry_state
+        &mut self.wl_mut().registry_state
     }
 
     registry_handlers![OutputState, SeatState];

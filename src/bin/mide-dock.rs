@@ -17,6 +17,8 @@
 //!   "Esvaziar Lixeira…", que pede confirmação antes de apagar.
 
 use mide::tr;
+use mide::kit::x11_layer::{self, Edge, Input, Kind, LayerSpec, PointerKind, Rect};
+use mide::shell::surface::{ptr_from_x11, PtrKind, Surface, XFd};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -38,6 +40,8 @@ use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     reexports::{
         calloop::{
+            generic::Generic,
+            Interest, Mode, PostAction,
             timer::{TimeoutAction, Timer},
             EventLoop, LoopHandle,
         },
@@ -304,58 +308,98 @@ struct Press {
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-dock", "mide_dock=info");
 
-    let conn = Connection::connect_to_env()?;
-    let (globals, event_queue) = registry_queue_init(&conn)?;
-    let qh = event_queue.handle();
-
-    let compositor = CompositorState::bind(&globals, &qh)?;
-    let layer_shell = LayerShell::bind(&globals, &qh)?;
-    let shm = Shm::bind(&globals, &qh)?;
-
-    let surface = compositor.create_surface(&qh);
-    let scale = SurfaceScale::new(&globals, &qh, &surface);
-    let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-dock"), None);
+    // Wayland quando há servidor; senão, o X11 (a dock vira janelas de camada do X).
+    let wayland = match Connection::connect_to_env() {
+        Ok(conn) => Some(conn),
+        Err(err) if std::env::var_os("DISPLAY").is_some() => {
+            tracing::info!("sem Wayland ({err}): dock numa janela X11");
+            None
+        }
+        Err(err) => return Err(err.into()),
+    };
     let trash_items = places::trash_count(&places::trash_dir());
-    layer.set_anchor(Anchor::BOTTOM);
-    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     ICON_SIZE_NOW.store(configured_icon_size(), std::sync::atomic::Ordering::Relaxed);
     // Sem ocultar, a dock reserva o espaço dela: janelas maximizadas param acima.
     // Com ocultar (inteligente), ela também nasce à mostra (`shown` = 1): só esconde
-    // quando o compositor avisa que há janela por cima. Antes nascia com a margem de
-    // escondida e `shown` = 1; como `covered` começa falso, nada a trazia de volta e a
-    // dock ficava fora da tela sem janela nenhuma por cima.
+    // quando o compositor avisa que há janela por cima.
     let autohide = configured_autohide();
-    layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
-    layer.set_exclusive_zone(if autohide { 0 } else { reserved_zone() });
     let mut catalog = Catalog::load();
     let items: Vec<DockApp> = pinned_ids()
         .iter()
         .filter_map(|id| catalog.find(id, true))
         .collect();
     let width = dock_width(&items);
-    layer.set_size(width, dock_height());
-    layer.commit();
-    // A faixa de revelação: sem buffer, nada aparece; só recebe o ponteiro na borda.
-    let peek_surface = compositor.create_surface(&qh);
-    let peek = layer_shell.create_layer_surface(&qh, peek_surface, Layer::Top, Some("mide-dock-peek"), None);
-    peek.set_anchor(Anchor::BOTTOM);
-    peek.set_keyboard_interactivity(KeyboardInteractivity::None);
-    peek.set_exclusive_zone(0);
-    peek.set_size(width, PEEK_HEIGHT);
-    peek.commit();
-    let peek_pool = SlotPool::new((width * PEEK_HEIGHT * 4) as usize, &shm)?;
-
-    let pool = SlotPool::new((width * dock_height() * 4) as usize, &shm)?;
+    let (wl, x, layer, peek, queue) = match &wayland {
+        Some(conn) => {
+            let (globals, event_queue) = registry_queue_init(conn)?;
+            let qh = event_queue.handle();
+            let compositor = CompositorState::bind(&globals, &qh)?;
+            let layer_shell = LayerShell::bind(&globals, &qh)?;
+            let shm = Shm::bind(&globals, &qh)?;
+            let surface = compositor.create_surface(&qh);
+            let scale = SurfaceScale::new(&globals, &qh, &surface);
+            let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mide-dock"), None);
+            layer.set_anchor(Anchor::BOTTOM);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            layer.set_margin(0, 0, BOTTOM_MARGIN, 0);
+            layer.set_exclusive_zone(if autohide { 0 } else { reserved_zone() });
+            layer.set_size(width, dock_height());
+            layer.commit();
+            let pool = SlotPool::new((width * dock_height() * 4) as usize, &shm)?;
+            let layer = Surface::Wayland { layer, pool, scale };
+            // A faixa de revelação: sem buffer, nada aparece; só recebe o ponteiro na borda.
+            let peek_surface = compositor.create_surface(&qh);
+            let peek_scale = SurfaceScale::new(&globals, &qh, &peek_surface);
+            let peek = layer_shell.create_layer_surface(&qh, peek_surface, Layer::Top, Some("mide-dock-peek"), None);
+            peek.set_anchor(Anchor::BOTTOM);
+            peek.set_keyboard_interactivity(KeyboardInteractivity::None);
+            peek.set_exclusive_zone(0);
+            peek.set_size(width, PEEK_HEIGHT);
+            peek.commit();
+            let peek_pool = SlotPool::new((width * PEEK_HEIGHT * 4) as usize, &shm)?;
+            let peek = Surface::Wayland { layer: peek, pool: peek_pool, scale: peek_scale };
+            let wl = WlState {
+                registry_state: RegistryState::new(&globals),
+                seat_state: SeatState::new(&globals, &qh),
+                output_state: OutputState::new(&globals, &qh),
+                shm,
+                globals,
+                compositor,
+                layer_shell,
+                qh: qh.clone(),
+                pointer: None,
+                keyboard: None,
+            };
+            (Some(wl), None, layer, peek, Some(event_queue))
+        }
+        None => {
+            let session = x11_layer::Session::connect()?;
+            let (sw, sh) = session.screen_size();
+            let rect = Rect {
+                x: (sw as i32 - width as i32) / 2,
+                y: sh as i32 - BOTTOM_MARGIN - dock_height() as i32,
+                w: width.max(1),
+                h: dock_height().max(1),
+            };
+            let strut = if autohide { None } else { Some((Edge::Bottom, reserved_zone() as u32)) };
+            let layer = session.layer(&LayerSpec { app_id: "mide-dock".into(), kind: Kind::Dock, rect, strut, keyboard: false })?;
+            let peek_rect = Rect { x: (sw as i32 - width as i32) / 2, y: sh as i32 - PEEK_HEIGHT as i32, w: width.max(1), h: PEEK_HEIGHT };
+            let peek = session.layer(&LayerSpec { app_id: "mide-dock-peek".into(), kind: Kind::Dock, rect: peek_rect, strut: None, keyboard: false })?;
+            (
+                None,
+                Some(session),
+                Surface::X11 { layer, rect, screen_canvas: false },
+                Surface::X11 { layer: peek, rect: peek_rect, screen_canvas: false },
+                None,
+            )
+        }
+    };
     let mut dock = Dock {
-        registry_state: RegistryState::new(&globals),
-        seat_state: SeatState::new(&globals, &qh),
-        output_state: OutputState::new(&globals, &qh),
-        shm,
-        pool,
+        wl,
+        x,
+        x11_press_target: None,
         layer,
         peek,
-        peek_pool,
-        scale,
         width,
         height: dock_height(),
         first_configure: true,
@@ -363,14 +407,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         items,
         catalog,
         press: None,
-        pointer: None,
-        keyboard: None,
         pointer_x: 0.0,
         running: HashSet::new(),
-        qh: qh.clone(),
         last_report: String::new(),
-        compositor,
-        layer_shell,
         downloads_icon: load_themed_icon(&["folder-download", "folder-downloads", "folder"], icon_px()),
         trash_empty_icon: load_themed_icon(&["user-trash", "user-trash-empty"], icon_px()),
         trash_full_icon: load_themed_icon(&["user-trash-full", "user-trash"], icon_px()),
@@ -408,17 +447,34 @@ fn main() -> Result<(), Box<dyn Error>> {
         slides: HashMap::new(),
         slide_timer: false,
         zoom_icons: HashMap::new(),
-        globals,
     };
 
+    if let Some(session) = dock.x.as_ref() {
+        dock.screen = session.screen_size();
+    }
     tracing::info!("dock pronta com {} app(s) fixado(s)", dock.items.len());
 
     // Event loop com Wayland e um timer que consulta os apps abertos no compositor.
     let mut event_loop: EventLoop<'static, Dock> = EventLoop::try_new()?;
     dock.loop_handle = Some(event_loop.handle());
-    WaylandSource::new(conn.clone(), event_queue)
-        .insert(event_loop.handle())
-        .map_err(|e| e.to_string())?;
+    match (&wayland, queue) {
+        (Some(conn), Some(queue)) => {
+            WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).map_err(|e| e.to_string())?;
+        }
+        _ => {
+            let fd = dock.x.as_ref().map_or(-1, |s| s.fd());
+            event_loop
+                .handle()
+                .insert_source(Generic::new(XFd(fd), Interest::READ, Mode::Level), |_, _, dock: &mut Dock| {
+                    dock.handle_x11();
+                    Ok(PostAction::Continue)
+                })
+                .map_err(|e| e.to_string())?;
+            // No X11 não há configure: a dock desenha já.
+            dock.first_configure = false;
+            dock.draw();
+        }
+    }
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(100)), |_, _, dock| {
@@ -580,20 +636,39 @@ fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Pat
     pb.finish()
 }
 
-struct Dock {
+/// O que só existe no Wayland: os globais, a fila e os objetos das camadas.
+struct WlState {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
     shm: Shm,
-    pool: SlotPool,
-    layer: LayerSurface,
+    globals: GlobalList,
+    compositor: CompositorState,
+    layer_shell: LayerShell,
+    qh: QueueHandle<Dock>,
+    pointer: Option<wl_pointer::WlPointer>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+}
+
+/// Qual superfície da dock recebeu um evento de ponteiro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Dock,
+    Peek,
+    Menu,
+}
+
+struct Dock {
+    /// Estado do Wayland (None no X11).
+    wl: Option<WlState>,
+    /// Conexão com o X11 (None no Wayland): por ela saem as camadas da dock.
+    x: Option<x11_layer::Session>,
+    /// No X11, onde o último botão apertado foi: o botão solto vai para o mesmo lugar.
+    x11_press_target: Option<Target>,
+    layer: Surface,
     /// Faixa invisível de `PEEK_HEIGHT` px na borda: quando a dock escondida sai toda da
     /// tela, é ela que recebe o ponteiro e mostra a dock de novo.
-    peek: LayerSurface,
-    /// Buffer transparente da faixa (sem buffer a superfície não recebe o ponteiro).
-    peek_pool: SlotPool,
-    /// Escala e viewport da superfície da dock.
-    scale: SurfaceScale,
+    peek: Surface,
     width: u32,
     height: u32,
     first_configure: bool,
@@ -602,17 +677,12 @@ struct Dock {
     items: Vec<DockApp>,
     catalog: Catalog,
     press: Option<Press>,
-    pointer: Option<wl_pointer::WlPointer>,
     /// Teclado: só chega com um painel aberto (Esc fecha).
-    keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer_x: f64,
     /// app_ids (em minúsculas) com janela aberta ou minimizada.
     running: HashSet<String>,
-    qh: QueueHandle<Dock>,
     /// Última posição dos ícones informada ao compositor.
     last_report: String,
-    compositor: CompositorState,
-    layer_shell: LayerShell,
     downloads_icon: Option<Pixmap>,
     trash_empty_icon: Option<Pixmap>,
     trash_full_icon: Option<Pixmap>,
@@ -678,7 +748,6 @@ struct Dock {
     /// Ícones carregados no tamanho da ampliação (nítidos), pelo id do app ou pilha.
     zoom_icons: HashMap<String, Option<Pixmap>>,
     /// Para pedir a escala das camadas criadas depois (ampliação, pulo, menu, dica).
-    globals: GlobalList,
     /// Ícones deslizando até o lugar novo (reordenar arrastando, como no Mac): pelo id
     /// do app, a distância que ainda falta no começo e quando começou.
     slides: HashMap<String, (f32, std::time::Instant)>,
@@ -689,9 +758,7 @@ struct Dock {
 /// Camada transparente acima da dock com os ícones ampliados (como a Ampliação do
 /// Mac): não recebe cliques; `amount` vai de 0 a 1 (entrando e saindo animada).
 struct Zoom {
-    layer: LayerSurface,
-    scale: SurfaceScale,
-    pool: SlotPool,
+    layer: Surface,
     size: (u32, u32),
     amount: f32,
     target: f32,
@@ -700,7 +767,7 @@ struct Zoom {
 
 impl Dock {
     /// Desenha a faixa e os ícones num buffer de memória e apresenta.
-    fn draw(&mut self, qh: &QueueHandle<Self>) {
+    fn draw(&mut self) {
         let start = std::time::Instant::now();
         let (w, h) = (self.width, self.height);
         let Some(mut pixmap) = canvas(w, h) else {
@@ -708,7 +775,7 @@ impl Dock {
         };
         // Escondida: nada desenhado (só a faixa invisível que recebe o ponteiro).
         if self.autohide && self.shown <= 0.0 {
-            self.present(&pixmap, qh);
+            self.present(&pixmap);
             return;
         }
 
@@ -731,7 +798,7 @@ impl Dock {
         }
         // Com a ampliação aberta, os ícones (e o que anda com eles) estão na camada dela.
         if self.zoom.is_some() {
-            self.present(&pixmap, qh);
+            self.present(&pixmap);
             return;
         }
         let line_color = if self.dark { Color::from_rgba8(235, 235, 240, 90) } else { Color::from_rgba8(60, 60, 66, 120) };
@@ -828,24 +895,16 @@ impl Dock {
             }
         }
 
-        self.present(&pixmap, qh);
+        self.present(&pixmap);
         tracing::debug!("quadro da dock: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
         self.report_icons();
     }
 
     /// Manda a imagem da dock para o compositor (sem pedir quadros contínuos: a dock
     /// só redesenha quando algo muda).
-    fn present(&mut self, pixmap: &Pixmap, _qh: &QueueHandle<Self>) {
-        let (w, h) = (pixmap.width(), pixmap.height());
-        let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
-            return;
-        };
-        mide::ui::draw::to_argb8888(pixmap, canvas);
-        let surface = self.layer.wl_surface();
-        surface.damage_buffer(0, 0, w as i32, h as i32);
-        if buffer.attach_to(surface).is_ok() {
-            self.scale.set_destination(self.width, self.height);
-            self.layer.commit();
+    fn present(&mut self, pixmap: &Pixmap) {
+        if let Err(err) = self.layer.present(pixmap, (self.width, self.height), [0, 0, 0]) {
+            tracing::warn!("dock: quadro não foi enviado ({err})");
         }
     }
 
@@ -956,21 +1015,22 @@ impl Dock {
                 let hidden = hidden_margin() as f32;
                 let margin = (hidden + (BOTTOM_MARGIN as f32 - hidden) * k).round() as i32;
                 dock.margin = margin;
-                dock.layer.set_margin(0, 0, margin, 0);
+                let screen = dock.screen_size();
+                let main_size = (dock.width, dock.height);
+                place_bottom(&mut dock.layer, main_size, margin, screen, false);
                 // Os ícones ampliados ficam noutra camada: ela desliza junto, senão eles
                 // apareceriam de uma vez no lugar final enquanto a dock ainda sobe.
-                if let Some(zoom) = dock.zoom.as_ref() {
-                    zoom.layer.set_margin(0, 0, margin, 0);
-                    zoom.layer.commit();
+                if let Some(zoom) = dock.zoom.as_mut() {
+                    let size = zoom.size;
+                    place_bottom(&mut zoom.layer, size, margin, screen, true);
                 }
-                if let Some(bounce) = dock.bounce.as_ref() {
-                    bounce.layer.set_margin(0, 0, margin, 0);
-                    bounce.layer.commit();
+                if let Some(bounce) = dock.bounce.as_mut() {
+                    let size = bounce.size;
+                    place_bottom(&mut bounce.layer, size, margin, screen, true);
                 }
                 // Ao começar a aparecer ou terminar de sumir, a imagem muda.
                 if before <= 0.0 || dock.shown <= 0.0 {
-                    let qh = dock.qh.clone();
-                    dock.draw(&qh);
+                    dock.draw();
                 } else {
                     dock.layer.commit();
                 }
@@ -1061,20 +1121,23 @@ impl Dock {
         if changed {
             self.resize();
         } else if !self.first_configure {
-            let qh = self.qh.clone();
-            self.draw(&qh);
+            self.draw();
         }
     }
 
     /// Ajusta a largura da dock ao número de itens; o compositor reconfigura e ela redesenha.
     fn resize(&mut self) {
         let width = dock_width(&self.items) + self.zoom_extra;
-        self.layer.set_size(width, dock_height());
-        // O tamanho dos ícones muda a altura: o espaço reservado acompanha.
-        if !self.autohide {
-            self.layer.set_exclusive_zone(reserved_zone());
+        let size = (width, dock_height());
+        let rect = bottom_rect(size, self.margin, self.screen_size());
+        let _ = self.layer.resize(size, Some(rect));
+        // O tamanho dos ícones muda a altura: o espaço reservado acompanha (Wayland).
+        if let Some(layer) = self.layer.layer_surface() {
+            if !self.autohide {
+                layer.set_exclusive_zone(reserved_zone());
+            }
+            layer.commit();
         }
-        self.layer.commit();
     }
 
     /// Fixados acrescentados por fora (o launcher, "Adicionar à dock"): entram no fim
@@ -1161,8 +1224,7 @@ impl Dock {
             }
             self.start_slides(before);
         }
-        let qh = self.qh.clone();
-        self.draw(&qh);
+        self.draw();
     }
 
     /// X de um app da dock agora: o arrastado segue o ponteiro (sem sair da faixa dos
@@ -1233,8 +1295,7 @@ impl Dock {
         self.slide_timer = true;
         let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
             dock.slides.retain(|_, (_, start)| start.elapsed() < mide::motion::WINDOW_MOVE);
-            let qh = dock.qh.clone();
-            dock.draw(&qh);
+            dock.draw();
             if dock.bounce.is_some() {
                 dock.paint_bounce();
             }
@@ -1359,9 +1420,7 @@ const BOUNCE_MAX: Duration = Duration::from_secs(10);
 /// destruir uma camada a cada ícone (várias por segundo, com o ponteiro passeando
 /// pela dock) coincidia com os congelamentos da tela (2026-10-28).
 struct Tip {
-    layer: LayerSurface,
-    scale: SurfaceScale,
-    pool: SlotPool,
+    layer: Surface,
     size: (u32, u32),
     /// Onde fica o centro do nome, na camada.
     center: f32,
@@ -1374,9 +1433,7 @@ struct Tip {
 }
 
 struct Bounce {
-    layer: LayerSurface,
-    scale: SurfaceScale,
-    pool: SlotPool,
+    layer: Surface,
     /// Tamanho pedido à camada: a largura acompanha a da dock (centradas na mesma
     /// borda, as casas coincidem; com a largura velha, o ícone pulava fora do lugar
     /// quando a dock crescia ou encolhia).
@@ -1470,25 +1527,16 @@ impl Dock {
             let extra = max - icon_size();
             // Em cima, espaço para o ícone ampliado pular (app abrindo).
             let size = (self.width + 4 * extra, dock_height() + extra + zoom_bounce_room(max));
-            let surface = self.compositor.create_surface(&self.qh);
-            let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
-            let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-zoom"), None);
-            layer.set_anchor(Anchor::BOTTOM);
-            layer.set_margin(0, 0, self.margin, 0);
-            layer.set_exclusive_zone(-1);
-            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-            layer.set_size(size.0, size.1);
-            if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
-                layer.wl_surface().set_input_region(Some(region.wl_region()));
-            }
-            layer.commit();
-            let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
+            let Some(layer) = self.new_bottom_surface("mide-dock-zoom", size, self.margin) else {
                 return;
             };
-            self.zoom = Some(Zoom { layer, scale, pool, size, amount: 0.0, target: 1.0, configured: false });
+            let on_x11 = self.x.is_some();
+            self.zoom = Some(Zoom { layer, size, amount: 0.0, target: 1.0, configured: on_x11 });
+            if on_x11 {
+                self.paint_zoom();
+            }
             // A dock passa a desenhar só a faixa.
-            let qh = self.qh.clone();
-            self.draw(&qh);
+            self.draw();
             if let Some(handle) = self.loop_handle.clone() {
                 let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
                     if dock.step_zoom() { TimeoutAction::ToDuration(Duration::from_millis(16)) } else { TimeoutAction::Drop }
@@ -1522,8 +1570,7 @@ impl Dock {
                 self.zoom_extra = 0;
                 self.resize();
             }
-            let qh = self.qh.clone();
-            self.draw(&qh);
+            self.draw();
             return false;
         }
         self.paint_zoom();
@@ -1629,15 +1676,8 @@ impl Dock {
             return;
         };
         let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
-        let Ok((buffer, canvas)) = zoom.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
-            return;
-        };
-        mide::ui::draw::to_argb8888(&pixmap, canvas);
-        let surface = zoom.layer.wl_surface();
-        surface.damage_buffer(0, 0, pw, ph);
-        if buffer.attach_to(surface).is_ok() {
-            zoom.scale.set_destination(size.0, size.1);
-            zoom.layer.commit();
+        if let Err(err) = zoom.layer.present(&pixmap, size, [0, 0, 0]) {
+            tracing::warn!("ampliação da dock: quadro não foi enviado ({err})");
         }
         self.report_icons();
     }
@@ -1651,33 +1691,22 @@ impl Dock {
         if app.match_ids.iter().any(|id| self.running.contains(id)) {
             return;
         }
-        let surface = self.compositor.create_surface(&self.qh);
-        let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
-        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-pulo"), None);
-        // Mesma âncora, largura e margem de baixo da dock: as posições dos ícones são
-        // as mesmas; não recebe cliques (passam para a dock embaixo).
-        layer.set_anchor(Anchor::BOTTOM);
-        layer.set_margin(0, 0, self.margin, 0);
-        layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.set_size(self.width, dock_height() + BOUNCE_ROOM);
-        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
-            layer.wl_surface().set_input_region(Some(region.wl_region()));
-        }
-        layer.commit();
-        let Ok(pool) = SlotPool::new((self.width * (dock_height() + BOUNCE_ROOM) * 4) as usize, &self.shm) else {
+        let app_id = app.id.clone();
+        let app_name = app.name.clone();
+        let size = (self.width, dock_height() + BOUNCE_ROOM);
+        let Some(layer) = self.new_bottom_surface("mide-dock-pulo", size, self.margin) else {
             return;
         };
         let now = std::time::Instant::now();
-        tracing::info!("dock: {} pulando até abrir", app.name);
-        let size = (self.width, dock_height() + BOUNCE_ROOM);
-        self.bounce = Some(Bounce { layer, scale, pool, size, app: app.id.clone(), start: now, last_check: now });
+        let now = std::time::Instant::now();
+        tracing::info!("dock: {} pulando até abrir", app_name);
+        self.bounce = Some(Bounce { layer, size, app: app_id, start: now, last_check: now });
         if let Some(handle) = self.loop_handle.clone() {
             let _ = handle.insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, dock: &mut Dock| {
                 if dock.step_bounce() { TimeoutAction::ToDuration(Duration::from_millis(16)) } else { TimeoutAction::Drop }
             });
         }
-        self.draw(&self.qh.clone());
+        self.draw();
     }
 
     /// Um quadro do pulo; devolve se continua (o app ainda sem janela).
@@ -1701,7 +1730,7 @@ impl Dock {
         if (opened && landed) || elapsed >= BOUNCE_MAX {
             tracing::info!("dock: {} abriu, fim do pulo", bounce.app);
             self.bounce = None;
-            self.draw(&self.qh.clone());
+            self.draw();
             return false;
         }
         self.paint_bounce();
@@ -1724,7 +1753,7 @@ impl Dock {
         let (w, h) = (self.width, dock_height() + BOUNCE_ROOM);
         if bounce.size != (w, h) {
             bounce.size = (w, h);
-            bounce.layer.set_size(w, h);
+            let _ = bounce.layer.resize((w, h), Some(bottom_rect((w, h), self.margin, self.screen)));
         }
         let Some(mut pixmap) = canvas(w, h) else {
             return;
@@ -1740,15 +1769,8 @@ impl Dock {
             pixmap.draw_pixmap(px(x), px(y), icon.as_ref(), &Default::default(), Transform::identity(), None);
         }
         let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
-        let Ok((buffer, canvas)) = bounce.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
-            return;
-        };
-        mide::ui::draw::to_argb8888(&pixmap, canvas);
-        let surface = bounce.layer.wl_surface();
-        surface.damage_buffer(0, 0, pw, ph);
-        if buffer.attach_to(surface).is_ok() {
-            bounce.scale.set_destination(w, h);
-            bounce.layer.commit();
+        if let Err(err) = bounce.layer.present(&pixmap, (w, h), [0, 0, 0]) {
+            tracing::warn!("pulo da dock: quadro não foi enviado ({err})");
         }
     }
 }
@@ -1878,9 +1900,7 @@ impl Panel {
 /// O painel principal fica acima do ícone; o de contexto (clique direito num item
 /// da lista) abre no ponto do clique, por cima da lista, sem fechá-la.
 struct Menu {
-    layer: LayerSurface,
-    scale: SurfaceScale,
-    pool: SlotPool,
+    layer: Surface,
     main: Panel,
     context: Option<Panel>,
     /// Centro x do ícone da dock, em coordenadas da dock.
@@ -1904,8 +1924,7 @@ impl Dock {
         if count != self.trash_items {
             self.trash_items = count;
             if !self.first_configure {
-                let qh = self.qh.clone();
-                self.draw(&qh);
+                self.draw();
             }
         }
     }
@@ -2136,18 +2155,13 @@ impl Dock {
             self.draw_menu();
             return;
         }
-        let surface = self.compositor.create_surface(&self.qh);
-        let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
-        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-menu"), None);
-        layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-        layer.set_exclusive_zone(-1);
-        // O painel recebe o teclado enquanto está aberto (Esc fecha).
-        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-        layer.commit();
-        let Ok(pool) = SlotPool::new(256 * 256 * 4, &self.shm) else {
+        let Some(layer) = self.new_menu_surface() else {
             return;
         };
-        self.menu = Some(Menu { layer, scale, pool, main, context: None, anchor_x, width, last_box: None, glass: Default::default() });
+        self.menu = Some(Menu { layer, main, context: None, anchor_x, width, last_box: None, glass: Default::default() });
+        if self.x.is_some() {
+            self.draw_menu();
+        }
     }
 
     /// Abre o menu de contexto de um item da lista no ponto (x, y), por cima dela.
@@ -2243,39 +2257,35 @@ impl Dock {
         let (bsw, bsh) = (to_px(sw) as i32, to_px(sh) as i32);
         let (pbx, pby) = (mide::ui::draw::px(bx as f32).clamp(0, bsw - 1), mide::ui::draw::px(by as f32).clamp(0, bsh - 1));
         let (pbw, pbh) = ((pixmap.width() as i32).min(bsw - pbx), (pixmap.height() as i32).min(bsh - pby));
-        let Ok((buffer, canvas)) = menu.pool.create_buffer(bsw, bsh, bsw * 4, wl_shm::Format::Argb8888) else {
+        // Canvas da tela inteira (pixels), com a caixa do painel copiada para o lugar dela.
+        let Some(mut full) = Pixmap::new(bsw as u32, bsh as u32) else {
             return;
         };
-        canvas.fill(0);
         let src_row = pixmap.width() as usize * 4;
         let row = pbw as usize * 4;
         for (r, src) in pixmap.data().chunks_exact(src_row).take(pbh as usize).enumerate() {
             let at = ((pby as usize + r) * bsw as usize + pbx as usize) * 4;
-            mide::ui::draw::argb_row(&src[..row], &mut canvas[at..at + row]);
-        }
-        let surface = menu.layer.wl_surface();
-        // Só mudou a caixa nova e a do quadro anterior (que agora fica vazia).
-        for (x, y, w, h) in [Some((pbx, pby, pbw, pbh)), menu.last_box].into_iter().flatten() {
-            surface.damage_buffer(x, y, w, h);
+            full.data_mut()[at..at + row].copy_from_slice(&src[..row]);
         }
         menu.last_box = Some((pbx, pby, pbw, pbh));
-        if buffer.attach_to(surface).is_ok() {
-            menu.scale.set_destination(sw, sh);
-            menu.layer.commit();
+        let screen = (sw as u32, sh as u32);
+        fit_box(&mut menu.layer, (pbx, pby, pbw, pbh), screen);
+        if let Err(err) = menu.layer.present(&full, screen, [0, 0, 0]) {
+            tracing::warn!("menu da dock: quadro não foi enviado ({err})");
         }
         tracing::debug!("menu da dock desenhado: {:.2} ms", start.elapsed().as_secs_f32() * 1000.0);
     }
 
-    fn menu_pointer(&mut self, event: &PointerEvent) {
-        let (x, y) = (event.position.0 as f32, event.position.1 as f32);
+    fn menu_pointer(&mut self, kind: PtrKind, x: f64, y: f64) {
+        let (x, y) = (x as f32, y as f32);
         let Some(menu) = self.menu.as_mut() else {
             return;
         };
         // O menu de contexto fica por cima: ele recebe primeiro.
         let in_context = menu.context.as_ref().is_some_and(|c| c.contains(x, y));
         let in_main = menu.main.contains(x, y);
-        match event.kind {
-            PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+        match kind {
+            PtrKind::Enter { .. } | PtrKind::Motion { .. } => {
                 let mut changed = false;
                 if let Some(context) = menu.context.as_mut() {
                     let hover = if in_context { context.row_at(y) } else { None };
@@ -2289,7 +2299,7 @@ impl Dock {
                     self.draw_menu();
                 }
             }
-            PointerEventKind::Press { button, .. } => {
+            PtrKind::Press { button, .. } => {
                 if in_context {
                     if let Some(context) = menu.context.as_mut() {
                         context.pressed = context.row_at(y);
@@ -2327,7 +2337,7 @@ impl Dock {
                 }
                 menu.main.pressed = row;
             }
-            PointerEventKind::Release { .. } => {
+            PtrKind::Release { .. } => {
                 let panel = if in_context { menu.context.as_mut() } else if in_main { Some(&mut menu.main) } else { None };
                 let Some(panel) = panel else {
                     return;
@@ -2492,15 +2502,13 @@ impl Dock {
                 self.resize();
             }
             self.zoom_icons.clear();
-            let qh = self.qh.clone();
-            self.draw(&qh);
+            self.draw();
         }
         let liquid = liquid_glass();
         if liquid != self.liquid {
             tracing::info!("vidro líquido na dock: {}", if liquid { "ligado" } else { "desligado" });
             self.liquid = liquid;
-            let qh = self.qh.clone();
-            self.draw(&qh);
+            self.draw();
         }
         let size = configured_icon_size();
         if size == icon_size() {
@@ -2613,9 +2621,8 @@ impl Dock {
             if resized || tip.margin != margin {
                 tip.size = size;
                 tip.margin = margin;
-                tip.layer.set_size(size.0, size.1);
-                tip.layer.set_margin(0, 0, margin, 0);
-                tip.layer.commit();
+                tip.layer.resize(size, Some(bottom_rect(size, margin, self.screen)));
+                place_bottom(&mut tip.layer, size, margin, self.screen, true);
             }
             // Tamanho novo: desenha no configure dele; senão, já.
             if !resized {
@@ -2623,22 +2630,14 @@ impl Dock {
             }
             return;
         }
-        let surface = self.compositor.create_surface(&self.qh);
-        let scale = SurfaceScale::new(&self.globals, &self.qh, &surface);
-        let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Overlay, Some("mide-dock-tip"), None);
-        layer.set_anchor(Anchor::BOTTOM);
-        layer.set_margin(0, 0, margin, 0);
-        layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.set_size(size.0, size.1);
-        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&self.compositor) {
-            layer.wl_surface().set_input_region(Some(region.wl_region()));
-        }
-        layer.commit();
-        let Ok(pool) = SlotPool::new((size.0 * size.1 * 4) as usize, &self.shm) else {
+        let Some(layer) = self.new_bottom_surface("mide-dock-tip", size, margin) else {
             return;
         };
-        self.tip = Some(Tip { layer, scale, pool, size, center, text: name, configured: false, margin });
+        let on_x11 = self.x.is_some();
+        self.tip = Some(Tip { layer, size, center, text: name, configured: on_x11, margin });
+        if on_x11 {
+            self.paint_tip();
+        }
     }
 
     /// Esconde a dica sem destruir a camada (fica transparente até o próximo nome).
@@ -2660,15 +2659,8 @@ impl Dock {
         let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
         // Escondida: um quadro transparente (a camada continua, sem nada à vista).
         if tip.text.is_empty() {
-            let Ok((buffer, canvas)) = tip.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
-                return;
-            };
-            canvas.fill(0);
-            let surface = tip.layer.wl_surface();
-            surface.damage_buffer(0, 0, pw, ph);
-            if buffer.attach_to(surface).is_ok() {
-                tip.scale.set_destination(w, h);
-                tip.layer.commit();
+            if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
+                tracing::warn!("dica da dock: quadro não foi enviado ({err})");
             }
             return;
         }
@@ -2684,15 +2676,8 @@ impl Dock {
             pixmap.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, tf(), None);
         }
         text.draw(&mut pixmap, &tip.text, x + 10.0, y + (bh - 13.0 * 1.25) / 2.0, 13.0, FontWeight::Regular, theme.text);
-        let Ok((buffer, canvas)) = tip.pool.create_buffer(pw, ph, pw * 4, wl_shm::Format::Argb8888) else {
-            return;
-        };
-        mide::ui::draw::to_argb8888(&pixmap, canvas);
-        let surface = tip.layer.wl_surface();
-        surface.damage_buffer(0, 0, pw, ph);
-        if buffer.attach_to(surface).is_ok() {
-            tip.scale.set_destination(w, h);
-            tip.layer.commit();
+        if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
+            tracing::warn!("dica da dock: quadro não foi enviado ({err})");
         }
     }
 
@@ -2872,7 +2857,7 @@ impl ScaleHandler for Dock {
     /// A escala da tela mudou (ou chegou a primeira): ícones no tamanho novo em pixels
     /// e tudo desenhado de novo.
     fn surface_scale_changed(&mut self, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface) {
-        let scale = (self.scale.scale() * 1000.0).round() as u32;
+        let scale = (self.layer.scale_factor() * 1000.0).round() as u32;
         if scale == SCALE_NOW.swap(scale, std::sync::atomic::Ordering::Relaxed) {
             return;
         }
@@ -2880,7 +2865,7 @@ impl ScaleHandler for Dock {
         // Os menus abertos fecham (as linhas guardam ícones no tamanho antigo).
         self.reload_icons();
         if !self.first_configure {
-            self.draw(qh);
+            self.draw();
         }
         if self.zoom.is_some() {
             self.paint_zoom();
@@ -2905,7 +2890,7 @@ impl CompositorHandler for Dock {
 
 impl OutputHandler for Dock {
     fn output_state(&mut self) -> &mut OutputState {
-        &mut self.output_state
+        &mut self.wl().output_state
     }
 
     fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
@@ -2917,22 +2902,22 @@ impl OutputHandler for Dock {
 
 impl LayerShellHandler for Dock {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if &self.peek == layer {
+        if self.peek.layer_surface() == Some(layer) {
             return;
         }
-        if self.tip.as_ref().is_some_and(|t| &t.layer == layer) {
+        if self.tip.as_ref().is_some_and(|t| t.layer.layer_surface() == Some(layer)) {
             self.tip = None;
             return;
         }
-        if self.zoom.as_ref().is_some_and(|z| &z.layer == layer) {
+        if self.zoom.as_ref().is_some_and(|z| z.layer.layer_surface() == Some(layer)) {
             self.zoom = None;
             return;
         }
-        if self.bounce.as_ref().is_some_and(|b| &b.layer == layer) {
+        if self.bounce.as_ref().is_some_and(|b| b.layer.layer_surface() == Some(layer)) {
             self.bounce = None;
             return;
         }
-        if self.menu.as_ref().is_some_and(|m| &m.layer == layer) {
+        if self.menu.as_ref().is_some_and(|m| m.layer.layer_surface() == Some(layer)) {
             self.menu = None;
             return;
         }
@@ -2942,39 +2927,31 @@ impl LayerShellHandler for Dock {
     fn configure(
         &mut self,
         _: &Connection,
-        qh: &QueueHandle<Self>,
+        _: &QueueHandle<Self>,
         layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        if &self.peek == layer {
-            // Faixa transparente: um buffer vazio a deixa mapeada e recebendo o ponteiro.
-            let (w, h) = (self.width, PEEK_HEIGHT);
-            if let Ok((buffer, canvas)) = self.peek_pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) {
-                canvas.fill(0);
-                let surface = layer.wl_surface();
-                surface.damage_buffer(0, 0, w as i32, h as i32);
-                if buffer.attach_to(surface).is_ok() {
-                    layer.commit();
-                }
-            }
+        if self.peek.layer_surface() == Some(layer) {
+            // Faixa transparente: um quadro vazio a deixa mapeada e recebendo o ponteiro.
+            let _ = self.peek.present_empty((self.width, PEEK_HEIGHT));
             return;
         }
-        if let Some(tip) = self.tip.as_mut().filter(|t| &t.layer == layer) {
+        if let Some(tip) = self.tip.as_mut().filter(|t| t.layer.layer_surface() == Some(layer)) {
             tip.configured = true;
             self.paint_tip();
             return;
         }
-        if let Some(zoom) = self.zoom.as_mut().filter(|z| &z.layer == layer) {
+        if let Some(zoom) = self.zoom.as_mut().filter(|z| z.layer.layer_surface() == Some(layer)) {
             zoom.configured = true;
             self.paint_zoom();
             return;
         }
-        if self.bounce.as_ref().is_some_and(|b| &b.layer == layer) {
+        if self.bounce.as_ref().is_some_and(|b| b.layer.layer_surface() == Some(layer)) {
             self.paint_bounce();
             return;
         }
-        if self.menu.as_ref().is_some_and(|m| &m.layer == layer) {
+        if self.menu.as_ref().is_some_and(|m| m.layer.layer_surface() == Some(layer)) {
             self.screen = configure.new_size;
             self.draw_menu();
             return;
@@ -2982,31 +2959,32 @@ impl LayerShellHandler for Dock {
         self.width = NonZeroU32::new(configure.new_size.0).map_or(self.width, NonZeroU32::get);
         self.height = NonZeroU32::new(configure.new_size.1).map_or(self.height, NonZeroU32::get);
         self.first_configure = false;
-        self.draw(qh);
+        self.draw();
     }
 }
 
 impl SeatHandler for Dock {
     fn seat_state(&mut self) -> &mut SeatState {
-        &mut self.seat_state
+        &mut self.wl().seat_state
     }
 
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
-        if capability == Capability::Pointer && self.pointer.is_none() {
-            if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
-                self.pointer = Some(pointer);
+        let wl = self.wl();
+        if capability == Capability::Pointer && wl.pointer.is_none() {
+            if let Ok(pointer) = wl.seat_state.get_pointer(qh, &seat) {
+                wl.pointer = Some(pointer);
             }
         }
-        if capability == Capability::Keyboard && self.keyboard.is_none() {
-            self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+        if capability == Capability::Keyboard && wl.keyboard.is_none() {
+            wl.keyboard = wl.seat_state.get_keyboard(qh, &seat, None).ok();
         }
     }
 
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer {
-            if let Some(pointer) = self.pointer.take() {
+            if let Some(pointer) = self.wl().pointer.take() {
                 pointer.release();
             }
         }
@@ -3042,42 +3020,19 @@ impl KeyboardHandler for Dock {
     fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: RawModifiers, _: u32) {}
 }
 
-impl PointerHandler for Dock {
-    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
-        for event in events {
-            if self.menu.as_ref().is_some_and(|m| &event.surface == m.layer.wl_surface()) {
-                self.menu_pointer(event);
-                continue;
-            }
-            // Faixa de revelação: o ponteiro encostou na borda, a dock volta.
-            if &event.surface == self.peek.wl_surface() {
-                match event.kind {
-                    PointerEventKind::Enter { .. } if !self.osk => {
-                        self.pointer_x = event.position.0;
-                        self.pointer_inside = true;
-                        if self.autohide {
-                            self.hide_at = None;
-                            self.show_target = 1.0;
-                            self.slide();
-                        }
-                    }
-                    // Saiu da faixa sem entrar na dock: a dock esconde de novo.
-                    PointerEventKind::Leave { .. } => {
-                        self.pointer_inside = false;
-                        if self.autohide {
-                            self.hide_at = Some(std::time::Instant::now() + HIDE_DELAY);
-                        }
-                    }
-                    _ => {}
-                }
-                continue;
-            }
-            if &event.surface != self.layer.wl_surface() {
-                continue;
-            }
-            match event.kind {
-                PointerEventKind::Enter { .. } => {
-                    self.pointer_x = event.position.0;
+impl Dock {
+    /// Um evento de ponteiro da dock, do menu ou da faixa de revelação (Wayland e X11).
+    /// `x` e `y` estão em coordenadas da superfície alvo.
+    fn pointer_event(&mut self, target: Target, kind: PtrKind, x: f64, y: f64) {
+        if target == Target::Menu {
+            self.menu_pointer(kind, x, y);
+            return;
+        }
+        // Faixa de revelação: o ponteiro encostou na borda, a dock volta.
+        if target == Target::Peek {
+            match kind {
+                PtrKind::Enter { .. } if !self.osk => {
+                    self.pointer_x = x;
                     self.pointer_inside = true;
                     if self.autohide {
                         self.hide_at = None;
@@ -3085,93 +3040,139 @@ impl PointerHandler for Dock {
                         self.slide();
                     }
                 }
-                PointerEventKind::Motion { .. } => {
-                    self.pointer_x = event.position.0;
-                    self.drag_to(event.position.0);
-                    self.hover_changed(self.icon_at(event.position.0));
-                    if self.press.as_ref().is_some_and(|p| p.dragged) {
-                        self.zoom_out();
-                    } else {
-                        self.zoom_in();
-                    }
-                }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT || button == BTN_RIGHT => {
-                    self.hide_previews();
-                    self.hide_tip();
-                    if button == BTN_RIGHT {
-                        // Clique direito sempre abre o menu de contexto do ícone.
-                        match self.icon_at(event.position.0) {
-                            None => {}
-                            Some(LAUNCHER) => self.toggle_menu(MenuKind::Launchpad, LAUNCHER),
-                            Some(index) if index >= self.items.len() => self.stack_click(index - self.items.len(), true),
-                            Some(index) => self.toggle_menu(MenuKind::App(index), index),
-                        }
-                        continue;
-                    }
-                    self.press = self.icon_at(event.position.0).map(|index| Press {
-                        index,
-                        start_x: event.position.0,
-                        dragged: false,
-                        grab: 0.0,
-                    });
-                    if let Some(index) = self.press.as_ref().map(|p| p.index).filter(|i| *i < self.items.len()) {
-                        let grab = event.position.0 - self.app_x(index) as f64;
-                        if let Some(press) = self.press.as_mut() {
-                            press.grab = grab;
-                        }
-                    }
-                    // O ícone apertado escurece (na dock ou na ampliação).
-                    let qh = self.qh.clone();
-                    self.draw(&qh);
-                    self.paint_zoom();
-                }
-                PointerEventKind::Release { button, .. } if button == BTN_LEFT => {
-                    if let Some(press) = self.press.take() {
-                        let qh = self.qh.clone();
-                        self.draw(&qh);
-                        self.paint_zoom();
-                        // Clicar num app ou pasta da dock fecha o launcher, como no macOS.
-                        if press.index != LAUNCHER && !press.dragged {
-                            ask_compositor("launcher close");
-                        }
-                        if press.dragged {
-                            self.settle_dragged(press.index, press.grab);
-                            save_pinned(&self.pinned_order());
-                            self.pins_mtime = pins_mtime();
-        self.pins_mtime = pins_mtime();
-                        } else if press.index == LAUNCHER {
-                            self.menu = None;
-                            tracing::info!("Launchpad");
-                            ask_compositor("launcher");
-                        } else if press.index >= self.items.len() {
-                            self.stack_click(press.index - self.items.len(), false);
-                        } else {
-                            self.activate_or_launch(press.index);
-                        }
-                    }
-                }
-                PointerEventKind::Leave { .. } => {
-                    self.press = None;
-                    self.zoom_out();
-                    // As prévias somem pelo compositor quando o ponteiro sai da dock e do
-                    // painel; aqui só cancela uma espera em andamento.
-                    self.hover_index = None;
-                    self.hover_gen += 1;
+                // Saiu da faixa sem entrar na dock: a dock esconde de novo.
+                PtrKind::Leave { .. } => {
                     self.pointer_inside = false;
-                    self.hide_tip();
-                    if self.autohide && self.covered {
-                        self.schedule_hide();
+                    if self.autohide {
+                        self.hide_at = Some(std::time::Instant::now() + HIDE_DELAY);
                     }
                 }
                 _ => {}
             }
+            return;
+        }
+        if target != Target::Dock {
+            return;
+        }
+        match kind {
+            PtrKind::Enter { .. } => {
+                self.pointer_x = x;
+                self.pointer_inside = true;
+                if self.autohide {
+                    self.hide_at = None;
+                    self.show_target = 1.0;
+                    self.slide();
+                }
+            }
+            PtrKind::Motion { .. } => {
+                self.pointer_x = x;
+                self.drag_to(x);
+                self.hover_changed(self.icon_at(x));
+                if self.press.as_ref().is_some_and(|p| p.dragged) {
+                    self.zoom_out();
+                } else {
+                    self.zoom_in();
+                }
+            }
+            PtrKind::Press { button, .. } if button == BTN_LEFT || button == BTN_RIGHT => {
+                self.hide_previews();
+                self.hide_tip();
+                if button == BTN_RIGHT {
+                    // Clique direito sempre abre o menu de contexto do ícone.
+                    match self.icon_at(x) {
+                        None => {}
+                        Some(LAUNCHER) => self.toggle_menu(MenuKind::Launchpad, LAUNCHER),
+                        Some(index) if index >= self.items.len() => self.stack_click(index - self.items.len(), true),
+                        Some(index) => self.toggle_menu(MenuKind::App(index), index),
+                    }
+                    return;
+                }
+                self.press = self.icon_at(x).map(|index| Press {
+                    index,
+                    start_x: x,
+                    dragged: false,
+                    grab: 0.0,
+                });
+                if let Some(index) = self.press.as_ref().map(|p| p.index).filter(|i| *i < self.items.len()) {
+                    let grab = x - self.app_x(index) as f64;
+                    if let Some(press) = self.press.as_mut() {
+                        press.grab = grab;
+                    }
+                }
+                // O ícone apertado escurece (na dock ou na ampliação).
+                self.draw();
+                self.paint_zoom();
+            }
+            PtrKind::Release { button, .. } if button == BTN_LEFT => {
+                if let Some(press) = self.press.take() {
+                    self.draw();
+                    self.paint_zoom();
+                    // Clicar num app ou pasta da dock fecha o launcher, como no macOS.
+                    if press.index != LAUNCHER && !press.dragged {
+                        ask_compositor("launcher close");
+                    }
+                    if press.dragged {
+                        self.settle_dragged(press.index, press.grab);
+                        save_pinned(&self.pinned_order());
+                        self.pins_mtime = pins_mtime();
+    self.pins_mtime = pins_mtime();
+                    } else if press.index == LAUNCHER {
+                        self.menu = None;
+                        tracing::info!("Launchpad");
+                        ask_compositor("launcher");
+                    } else if press.index >= self.items.len() {
+                        self.stack_click(press.index - self.items.len(), false);
+                    } else {
+                        self.activate_or_launch(press.index);
+                    }
+                }
+            }
+            PtrKind::Leave { .. } => {
+                self.press = None;
+                self.zoom_out();
+                // As prévias somem pelo compositor quando o ponteiro sai da dock e do
+                // painel; aqui só cancela uma espera em andamento.
+                self.hover_index = None;
+                self.hover_gen += 1;
+                self.pointer_inside = false;
+                self.hide_tip();
+                if self.autohide && self.covered {
+                    self.schedule_hide();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl PointerHandler for Dock {
+    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        for event in events {
+            let target = if self.menu.as_ref().is_some_and(|m| m.layer.is_wayland(&event.surface)) {
+                Target::Menu
+            } else if self.peek.is_wayland(&event.surface) {
+                Target::Peek
+            } else if self.layer.is_wayland(&event.surface) {
+                Target::Dock
+            } else {
+                continue;
+            };
+            let kind = match event.kind {
+                PointerEventKind::Enter { .. } => PtrKind::Enter {},
+                PointerEventKind::Leave { .. } => PtrKind::Leave {},
+                PointerEventKind::Motion { .. } => PtrKind::Motion {},
+                PointerEventKind::Press { button, .. } => PtrKind::Press { button },
+                PointerEventKind::Release { button, .. } => PtrKind::Release { button },
+                _ => PtrKind::Other,
+            };
+            self.pointer_event(target, kind, event.position.0, event.position.1);
         }
     }
 }
 
 impl ShmHandler for Dock {
     fn shm_state(&mut self) -> &mut Shm {
-        &mut self.shm
+        &mut self.wl().shm
     }
 }
 
@@ -3181,8 +3182,179 @@ mide::delegate_surface_scale!(Dock);
 
 impl ProvidesRegistryState for Dock {
     fn registry(&mut self) -> &mut RegistryState {
-        &mut self.registry_state
+        &mut self.wl().registry_state
     }
 
     registry_handlers![OutputState, SeatState];
+}
+
+/// Retângulo de uma superfície embaixo da tela, centrada, com `margin` px da borda de baixo.
+fn bottom_rect(size: (u32, u32), margin: i32, screen: (u32, u32)) -> Rect {
+    Rect {
+        x: (screen.0 as i32 - size.0 as i32) / 2,
+        y: screen.1 as i32 - margin - size.1 as i32,
+        w: size.0.max(1),
+        h: size.1.max(1),
+    }
+}
+
+/// Põe a superfície `margin` px acima da borda de baixo (a dock desliza assim). No
+/// Wayland muda a margem da camada; no X11 move a janela.
+fn place_bottom(surface: &mut Surface, size: (u32, u32), margin: i32, screen: (u32, u32), commit: bool) {
+    match surface {
+        Surface::Wayland { layer, .. } => {
+            layer.set_margin(0, 0, margin, 0);
+            if commit {
+                layer.commit();
+            }
+        }
+        Surface::X11 { .. } => {
+            let _ = surface.resize(size, Some(bottom_rect(size, margin, screen)));
+        }
+    }
+}
+
+/// No X11, a janela do menu cobre a caixa do painel com uma margem para a sombra.
+fn fit_box(surface: &mut Surface, (x, y, w, h): (i32, i32, i32, i32), screen: (u32, u32)) {
+    if !matches!(surface, Surface::X11 { .. }) {
+        return;
+    }
+    const MARGIN: i32 = 24;
+    let x0 = (x - MARGIN).max(0);
+    let y0 = (y - MARGIN).max(0);
+    let x1 = (x + w + MARGIN).min(screen.0 as i32);
+    let y1 = (y + h + MARGIN).min(screen.1 as i32);
+    let rect = Rect { x: x0, y: y0, w: (x1 - x0).max(1) as u32, h: (y1 - y0).max(1) as u32 };
+    let _ = surface.resize((rect.w, rect.h), Some(rect));
+}
+
+impl Dock {
+    /// Estado do Wayland (só chamado no caminho Wayland).
+    fn wl(&mut self) -> &mut WlState {
+        self.wl.as_mut().expect("estado do Wayland")
+    }
+
+    /// Tamanho da tela (X11); (0, 0) no Wayland, onde o compositor manda o tamanho.
+    fn screen_size(&self) -> (u32, u32) {
+        self.screen
+    }
+
+    /// Cria uma camada da dock embaixo, centrada e com `margin` da borda de baixo, sem
+    /// receber o ponteiro (ampliação, pulo, dica).
+    fn new_bottom_surface(&mut self, name: &str, size: (u32, u32), margin: i32) -> Option<Surface> {
+        if let Some(session) = self.x.as_ref() {
+            let rect = bottom_rect(size, margin, session.screen_size());
+            let layer = session.layer(&LayerSpec { app_id: name.into(), kind: Kind::Notification, rect, strut: None, keyboard: false }).ok()?;
+            let mut surface = Surface::X11 { layer, rect, screen_canvas: false };
+            let _ = surface.set_input_region(Some(Rect { x: 0, y: 0, w: 0, h: 0 }));
+            return Some(surface);
+        }
+        let wl = self.wl.as_mut()?;
+        let surface = wl.compositor.create_surface(&wl.qh);
+        let scale = SurfaceScale::new(&wl.globals, &wl.qh, &surface);
+        let layer = wl.layer_shell.create_layer_surface(&wl.qh, surface, Layer::Overlay, Some(name), None);
+        layer.set_anchor(Anchor::BOTTOM);
+        layer.set_margin(0, 0, margin, 0);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_size(size.0, size.1);
+        if let Ok(region) = smithay_client_toolkit::compositor::Region::new(&wl.compositor) {
+            layer.wl_surface().set_input_region(Some(region.wl_region()));
+        }
+        layer.commit();
+        let pool = SlotPool::new((size.0 * size.1 * 4) as usize, &wl.shm).ok()?;
+        Some(Surface::Wayland { layer, pool, scale })
+    }
+
+    /// Cria a camada do menu: no Wayland, a tela inteira (com teclado, Esc fecha); no
+    /// X11, uma janela que `fit_box` ajusta ao painel, presa com o ponteiro.
+    fn new_menu_surface(&mut self) -> Option<Surface> {
+        if let Some(session) = self.x.as_ref() {
+            let rect = Rect { x: 0, y: 0, w: 1, h: 1 };
+            let layer = session.layer(&LayerSpec { app_id: "mide-dock-menu".into(), kind: Kind::Notification, rect, strut: None, keyboard: false }).ok()?;
+            let surface = Surface::X11 { layer, rect, screen_canvas: true };
+            let _ = surface.grab_pointer();
+            return Some(surface);
+        }
+        let wl = self.wl.as_mut()?;
+        let surface = wl.compositor.create_surface(&wl.qh);
+        let scale = SurfaceScale::new(&wl.globals, &wl.qh, &surface);
+        let layer = wl.layer_shell.create_layer_surface(&wl.qh, surface, Layer::Overlay, Some("mide-dock-menu"), None);
+        layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+        layer.set_exclusive_zone(-1);
+        // O painel recebe o teclado enquanto está aberto (Esc fecha).
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        layer.commit();
+        let pool = SlotPool::new(256 * 256 * 4, &wl.shm).ok()?;
+        Some(Surface::Wayland { layer, pool, scale })
+    }
+
+    /// A superfície da dock que tem essa janela X11, se for uma das três.
+    fn target_of_window(&self, window: u32) -> Option<Target> {
+        if self.layer.is_x11(window) {
+            Some(Target::Dock)
+        } else if self.peek.is_x11(window) {
+            Some(Target::Peek)
+        } else if self.menu.as_ref().is_some_and(|m| m.layer.is_x11(window)) {
+            Some(Target::Menu)
+        } else {
+            None
+        }
+    }
+
+    fn surface_of(&self, target: Target) -> Option<&Surface> {
+        match target {
+            Target::Dock => Some(&self.layer),
+            Target::Peek => Some(&self.peek),
+            Target::Menu => self.menu.as_ref().map(|m| &m.layer),
+        }
+    }
+
+    /// Eventos do X11 da dock: o ponteiro (o botão solto vai para onde foi apertado, como
+    /// no Wayland) e os pedidos de desenho de cada janela.
+    fn handle_x11(&mut self) {
+        let inputs = match self.x.as_ref().map(|s| s.poll()) {
+            Some(Ok(inputs)) => inputs,
+            Some(Err(err)) => {
+                tracing::warn!("dock: evento X11 ({err})");
+                return;
+            }
+            None => return,
+        };
+        for input in inputs {
+            match input {
+                Input::Pointer { window, x, y, kind } => {
+                    let Some(arrived) = self.target_of_window(window) else {
+                        continue;
+                    };
+                    let (ox, oy) = self.surface_of(arrived).map_or((0.0, 0.0), |s| s.origin());
+                    let (sx, sy) = (x + ox, y + oy);
+                    let target = match kind {
+                        PointerKind::Press(_) => {
+                            self.x11_press_target = Some(arrived);
+                            arrived
+                        }
+                        PointerKind::Release(_) => self.x11_press_target.take().unwrap_or(arrived),
+                        _ => arrived,
+                    };
+                    let (tx, ty) = self.surface_of(target).map_or((0.0, 0.0), |s| s.origin());
+                    self.pointer_event(target, ptr_from_x11(kind), sx - tx, sy - ty);
+                }
+                Input::Expose { window } => {
+                    if self.layer.is_x11(window) {
+                        self.draw();
+                    } else if self.menu.as_ref().is_some_and(|m| m.layer.is_x11(window)) {
+                        self.menu_dirty = true;
+                    } else if self.zoom.as_ref().is_some_and(|z| z.layer.is_x11(window)) {
+                        self.paint_zoom();
+                    } else if self.bounce.as_ref().is_some_and(|b| b.layer.is_x11(window)) {
+                        self.paint_bounce();
+                    } else if self.tip.as_ref().is_some_and(|t| t.layer.is_x11(window)) {
+                        self.paint_tip();
+                    }
+                }
+                Input::Key { .. } | Input::Closed => {}
+            }
+        }
+    }
 }
