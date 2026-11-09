@@ -1765,6 +1765,12 @@ impl Dock {
             return;
         };
         let y = BOUNCE_ROOM as f32 + PADDING as f32 - lift;
+        // No X11 a janela é opaca: a forma visível fica só no ícone que sobe, para não
+        // cobrir a dock de baixo com um retângulo preto.
+        if self.x.is_some() {
+            let icon = icon_size() as i32 + 4;
+            let _ = bounce.layer.set_bounding_region(Some(Rect { x: x as i32 - 2, y: y as i32 - 2, w: icon as u32, h: icon as u32 }));
+        }
         if let (false, Some(icon)) = (zooming, &self.items[index].icon) {
             pixmap.draw_pixmap(px(x), px(y), icon.as_ref(), &Default::default(), Transform::identity(), None);
         }

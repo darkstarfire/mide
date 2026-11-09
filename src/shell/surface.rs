@@ -171,6 +171,15 @@ impl Surface {
         }
     }
 
+    /// Forma visível da janela (X11): só a parte `region` aparece. No Wayland, a camada
+    /// já é transparente, então não faz nada.
+    pub fn set_bounding_region(&mut self, region: Option<Rect>) -> Result<(), String> {
+        match self {
+            Surface::X11 { layer, .. } => layer.set_bounding_region(region).map_err(|e| e.to_string()),
+            Surface::Wayland { .. } => Ok(()),
+        }
+    }
+
     /// Prende o ponteiro (menus no X11). No Wayland o menu já recebe tudo (é tela cheia).
     pub fn grab_pointer(&self) -> bool {
         match self {
