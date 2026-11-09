@@ -471,12 +471,10 @@ pub fn mide_data_dir() -> Option<std::path::PathBuf> {
 }
 
 /// Programas que sao clientes Wayland exclusivos e nao fazem sentido
-/// no backend X11 (nao ha servidor Wayland para se conectar).
+/// no backend X11 (nao ha servidor Wayland para se conectar). As notificações
+/// (mide-notifications) têm caminho X11 próprio (janela de camada), então não entram aqui.
 fn is_wayland_only(name: &str) -> bool {
-    matches!(
-        name,
-        "mide-keyboard" | "mide-notifications" | "mide-polkit-agent"
-    )
+    matches!(name, "mide-keyboard" | "mide-polkit-agent")
 }
 
 pub fn spawn_client(name: &str) {

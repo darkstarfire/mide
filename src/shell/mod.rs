@@ -9,6 +9,7 @@ pub mod backdrop;
 pub mod launcher_layout;
 pub mod search;
 pub mod scale;
+pub mod surface;
 pub mod lockscreen;
 pub mod shortcuts;
 

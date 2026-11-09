@@ -22,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use mide::kit;
 use mide::{
     icons::{load_icon, load_icon_file, load_themed_icon},
     notify::{self, reason},
@@ -38,8 +39,9 @@ use smithay_client_toolkit::{
     reexports::{
         calloop::{
             channel,
+            generic::Generic,
             timer::{TimeoutAction, Timer},
-            EventLoop,
+            EventLoop, Interest, Mode, PostAction,
         },
         calloop_wayland_source::WaylandSource,
         client::{
@@ -225,11 +227,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     tracing::info!("servidor de notificações pronto");
 
-    let conn = Connection::connect_to_env()?;
+    let core = Core {
+        glass: Default::default(),
+        notes: Vec::new(),
+        hover: None,
+        press: None,
+        text: Text::new(),
+        icons: HashMap::new(),
+        bus,
+        dirty: false,
+        scale_f: 1.0,
+    };
+    // Sem servidor Wayland (sessão X11, ou o backend X11 do mide), os banners viram
+    // janelas de camada do X.
+    let conn = match Connection::connect_to_env() {
+        Ok(conn) => conn,
+        Err(err) if std::env::var_os("DISPLAY").is_some() => {
+            tracing::info!("sem Wayland ({err}): banners numa janela X11");
+            return run_x11(core, receiver);
+        }
+        Err(err) => return Err(err.into()),
+    };
     let (globals, event_queue) = registry_queue_init(&conn)?;
     let qh = event_queue.handle();
     let mut ui = Banners {
-        glass: Default::default(),
+        core,
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
         output_state: OutputState::new(&globals, &qh),
@@ -242,13 +264,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         configured: false,
         size: (0, 0),
         pointer: None,
-        notes: Vec::new(),
-        hover: None,
-        press: None,
-        text: Text::new(),
-        icons: HashMap::new(),
-        bus,
-        dirty: false,
         scale: None,
         globals,
     };
@@ -285,6 +300,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+/// O que o ponteiro fez sobre os banners (só o botão esquerdo conta).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pointer {
+    Move,
+    Leave,
+    Press,
+    Release,
+}
+
 /// Parte de um banner sob o ponteiro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Spot {
@@ -293,9 +317,28 @@ enum Spot {
     Button(usize, usize),
 }
 
-struct Banners {
+/// Estado que não depende do Wayland: as notificações na tela, o que está sob o ponteiro
+/// e o desenho dos banners. Os dois caminhos (Wayland e X11) usam o mesmo.
+struct Core {
     /// Vidro atrás dos banners (desenhado pelo compositor).
     glass: mide::control_client::Glass,
+    /// Da mais nova (em cima) para a mais antiga.
+    notes: Vec<Note>,
+    /// Banner sob o ponteiro (índice em `notes`).
+    hover: Option<usize>,
+    press: Option<Spot>,
+    text: Text,
+    icons: HashMap<String, Option<Pixmap>>,
+    bus: zbus::blocking::Connection,
+    /// Algo mudou: o backend desenha de novo depois dos eventos.
+    dirty: bool,
+    /// Escala da camada (1.0 no X11; `wp_fractional_scale` no Wayland).
+    scale_f: f32,
+}
+
+/// Banners no Wayland: o `Core` mais as camadas e o estado do seat.
+struct Banners {
+    core: Core,
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -309,22 +352,26 @@ struct Banners {
     configured: bool,
     size: (u32, u32),
     pointer: Option<wl_pointer::WlPointer>,
-    /// Da mais nova (em cima) para a mais antiga.
-    notes: Vec<Note>,
-    /// Banner sob o ponteiro (índice em `notes`).
-    hover: Option<usize>,
-    press: Option<Spot>,
-    text: Text,
-    icons: HashMap<String, Option<Pixmap>>,
-    bus: zbus::blocking::Connection,
-    dirty: bool,
     /// Escala da camada (`wp_fractional_scale`): em 125%/150%/200% os banners são
     /// desenhados na resolução real da tela.
     scale: Option<SurfaceScale>,
     globals: GlobalList,
 }
 
-impl Banners {
+impl std::ops::Deref for Banners {
+    type Target = Core;
+    fn deref(&self) -> &Core {
+        &self.core
+    }
+}
+
+impl std::ops::DerefMut for Banners {
+    fn deref_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+}
+
+impl Core {
     fn add(&mut self, note: Note) {
         tracing::info!("notificação {}: {}", note.id, note.summary);
         if let Some(old) = self.notes.iter_mut().find(|n| n.id == note.id) {
@@ -407,42 +454,6 @@ impl Banners {
         ((BANNER_W + 2.0 * MARGIN) as u32, h.max(1.0) as u32)
     }
 
-    /// Cria, ajusta ou remove a camada conforme as notificações e redesenha.
-    fn sync_layer(&mut self) {
-        self.dirty = false;
-        if self.notes.is_empty() {
-            if self.layer.take().is_some() {
-                self.configured = false;
-                self.pool = None;
-                self.scale = None;
-            }
-            return;
-        }
-        let size = self.surface_size();
-        match &self.layer {
-            None => {
-                let surface = self.compositor.create_surface(&self.qh);
-                self.scale = Some(SurfaceScale::new(&self.globals, &self.qh, &surface));
-                let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Top, Some("mide-notifications"), None);
-                layer.set_anchor(Anchor::TOP | Anchor::RIGHT);
-                layer.set_margin(0, 0, 0, 0);
-                layer.set_exclusive_zone(0);
-                layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-                layer.set_size(size.0, size.1);
-                layer.commit();
-                self.layer = Some(layer);
-                self.size = size;
-            }
-            Some(layer) if self.size != size => {
-                layer.set_size(size.0, size.1);
-                layer.commit();
-                self.size = size;
-                // Redesenha quando o compositor confirmar o tamanho novo.
-            }
-            Some(_) => self.draw(),
-        }
-    }
-
     /// Ícone do app no tamanho em pixels da tela (`ICON` pontos × escala).
     fn icon_for(&mut self, note_icon: Option<String>, app_name: &str) -> Option<Pixmap> {
         let size = (ICON as f32 * self.current_scale()).round() as u32;
@@ -461,25 +472,14 @@ impl Banners {
     }
 
     fn current_scale(&self) -> f32 {
-        self.scale.as_ref().map_or(1.0, SurfaceScale::scale)
+        self.scale_f
     }
 
-    fn draw(&mut self) {
-        let Some(layer) = self.layer.as_ref() else {
-            return;
-        };
-        if !self.configured {
-            return;
-        }
-        // A imagem é em pixels (tamanho em pontos × escala); o desenho, em pontos.
-        let (points_w, points_h) = self.size;
-        let (w, h) = self.scale.as_ref().map_or(self.size, |s| s.pixels(points_w, points_h));
+    /// Desenha os banners num `Pixmap` de `w` × `h` pixels (a escala já vem de `scale_f`).
+    fn render(&mut self, w: u32, h: u32) -> Option<Pixmap> {
         mide::ui::draw::set_scale(self.current_scale());
-        let Some(mut pixmap) = Pixmap::new(w, h) else {
-            return;
-        };
+        let mut pixmap = Pixmap::new(w, h)?;
         let tops = self.banner_tops();
-        let layer = layer.clone();
         let glass = mide::control_client::panel_glass();
         let rects: Vec<_> = tops.iter().zip(&self.notes).map(|(top, n)| (MARGIN, *top, BANNER_W, Self::banner_height(n), RADIUS)).collect();
         self.glass.set("mide-notifications", if glass { &rects } else { &[] });
@@ -488,25 +488,7 @@ impl Banners {
             let icon = self.icon_for(icon_name, &app_name);
             self.draw_banner(&mut pixmap, i, MARGIN, top, icon);
         }
-
-        if self.pool.is_none() {
-            self.pool = SlotPool::new((w * h * 4) as usize, &self.shm).ok();
-        }
-        let Some(pool) = self.pool.as_mut() else {
-            return;
-        };
-        let Ok((buffer, canvas)) = pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
-            return;
-        };
-        to_argb8888(&pixmap, canvas);
-        let surface = layer.wl_surface();
-        surface.damage_buffer(0, 0, w as i32, h as i32);
-        if let Some(scale) = &self.scale {
-            scale.set_destination(points_w, points_h);
-        }
-        if buffer.attach_to(surface).is_ok() {
-            layer.commit();
-        }
+        Some(pixmap)
     }
 
     fn draw_banner(&mut self, pixmap: &mut Pixmap, index: usize, x: f32, y: f32, icon: Option<Pixmap>) {
@@ -604,6 +586,74 @@ impl Banners {
     }
 
     /// O que está sob o ponto: × (só no banner com o mouse em cima), botão ou banner.
+    /// Ponteiro sobre os banners (botão esquerdo). Não desenha: marca `dirty`, e o
+    /// backend desenha depois.
+    fn pointer_event(&mut self, pointer: Pointer, x: f64, y: f64) {
+        match pointer {
+            Pointer::Move => {
+                let hover = match self.spot_at(x, y) {
+                    Some(Spot::Body(i) | Spot::Close(i) | Spot::Button(i, _)) => Some(i),
+                    None => None,
+                };
+                if hover != self.hover {
+                    self.hover = hover;
+                    self.dirty = true;
+                }
+            }
+            Pointer::Leave => {
+                if self.hover.take().is_some() {
+                    self.dirty = true;
+                }
+            }
+            Pointer::Press => {
+                self.press = self.spot_at(x, y);
+                self.dirty = true;
+            }
+            Pointer::Release => {
+                let spot = self.spot_at(x, y);
+                if self.press.take() != spot {
+                    self.dirty = true;
+                    return;
+                }
+                self.dirty = true;
+                match spot {
+                    Some(Spot::Close(i)) => {
+                        if let Some(id) = self.notes.get(i).map(|n| n.id) {
+                            self.remove(id, reason::DISMISSED);
+                        }
+                    }
+                    Some(Spot::Button(i, k)) => {
+                        if let Some(key) = self.notes.get(i).and_then(|n| n.buttons.get(k)).map(|(key, _)| key.clone()) {
+                            self.invoke(i, &key);
+                        }
+                    }
+                    Some(Spot::Body(i)) => {
+                        // Clique no banner: a ação padrão do app, e o banner sai.
+                        let (has_default, id, open, app_id) = match self.notes.get(i) {
+                            Some(n) => (n.has_default, n.id, n.open.clone(), n.app_id.clone()),
+                            None => return,
+                        };
+                        // Gravação ou captura salva: abre o arquivo (vídeo no player).
+                        if let Some(path) = open {
+                            mide::notify::activate(&path, "");
+                            self.remove(id, reason::DISMISSED);
+                        } else if has_default {
+                            self.invoke(i, "default");
+                        } else {
+                            // Sem ação do app: como no Mac, o app que avisou vem para a
+                            // frente (ou abre), e o banner sai.
+                            if let Some(app_id) = app_id {
+                                std::thread::spawn(move || mide::notify::activate("", &app_id));
+                            }
+                            self.remove(id, reason::DISMISSED);
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
     fn spot_at(&mut self, x: f64, y: f64) -> Option<Spot> {
         let (x, y) = (x as f32, y as f32);
         let tops = self.banner_tops();
@@ -682,6 +732,238 @@ fn wrap(text: &mut Text, value: &str, size: f32, max: f32, max_lines: usize) -> 
     lines
 }
 
+impl Banners {
+    /// Cria, ajusta ou remove a camada conforme as notificações e redesenha.
+    fn sync_layer(&mut self) {
+        self.dirty = false;
+        if self.notes.is_empty() {
+            if self.layer.take().is_some() {
+                self.configured = false;
+                self.pool = None;
+                self.scale = None;
+            }
+            return;
+        }
+        let size = self.surface_size();
+        match &self.layer {
+            None => {
+                let surface = self.compositor.create_surface(&self.qh);
+                self.scale = Some(SurfaceScale::new(&self.globals, &self.qh, &surface));
+                let layer = self.layer_shell.create_layer_surface(&self.qh, surface, Layer::Top, Some("mide-notifications"), None);
+                layer.set_anchor(Anchor::TOP | Anchor::RIGHT);
+                layer.set_margin(0, 0, 0, 0);
+                layer.set_exclusive_zone(0);
+                layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+                layer.set_size(size.0, size.1);
+                layer.commit();
+                self.layer = Some(layer);
+                self.size = size;
+            }
+            Some(layer) if self.size != size => {
+                layer.set_size(size.0, size.1);
+                layer.commit();
+                self.size = size;
+                // Redesenha quando o compositor confirmar o tamanho novo.
+            }
+            Some(_) => self.draw(),
+        }
+    }
+
+    /// Desenha os banners na camada (Wayland): o quadro vai por um buffer de memória.
+    fn draw(&mut self) {
+        let Some(layer) = self.layer.clone() else {
+            return;
+        };
+        if !self.configured {
+            return;
+        }
+        // A imagem é em pixels (tamanho em pontos × escala); o desenho, em pontos.
+        let (points_w, points_h) = self.size;
+        let (w, h) = self.scale.as_ref().map_or(self.size, |s| s.pixels(points_w, points_h));
+        self.scale_f = self.scale.as_ref().map_or(1.0, SurfaceScale::scale);
+        let Some(pixmap) = self.render(w, h) else {
+            return;
+        };
+        if self.pool.is_none() {
+            self.pool = SlotPool::new((w * h * 4) as usize, &self.shm).ok();
+        }
+        let Some(pool) = self.pool.as_mut() else {
+            return;
+        };
+        let Ok((buffer, canvas)) = pool.create_buffer(w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888) else {
+            return;
+        };
+        to_argb8888(&pixmap, canvas);
+        let surface = layer.wl_surface();
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        if let Some(scale) = &self.scale {
+            scale.set_destination(points_w, points_h);
+        }
+        if buffer.attach_to(surface).is_ok() {
+            layer.commit();
+        }
+    }
+}
+
+/// Banners no X11: o mesmo `Core`, numa janela de camada (`override-redirect`, sem
+/// gerenciador de janelas por cima).
+struct X11Banners {
+    core: Core,
+    session: kit::x11_layer::Session,
+    layer: Option<kit::x11_layer::Layer>,
+}
+
+impl std::ops::Deref for X11Banners {
+    type Target = Core;
+    fn deref(&self) -> &Core {
+        &self.core
+    }
+}
+
+impl std::ops::DerefMut for X11Banners {
+    fn deref_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+}
+
+impl X11Banners {
+    /// Cria, ajusta ou remove a janela conforme as notificações e redesenha.
+    fn sync_layer(&mut self) {
+        self.dirty = false;
+        if self.notes.is_empty() {
+            if let Some(layer) = self.layer.take() {
+                let _ = layer.destroy();
+            }
+            return;
+        }
+        let (w, h) = self.surface_size();
+        // Canto de cima à direita, abaixo das bordas reservadas (a barra do mide).
+        let area = self.session.work_area();
+        let rect = kit::x11_layer::Rect { x: area.x + area.w as i32 - w as i32, y: area.y, w, h };
+        match self.layer.as_mut() {
+            Some(layer) => {
+                if let Err(err) = layer.set_rect(rect) {
+                    tracing::warn!("notificações: não moveu a janela ({err})");
+                }
+            }
+            None => {
+                let spec = kit::x11_layer::LayerSpec {
+                    app_id: "mide-notifications".into(),
+                    kind: kit::x11_layer::Kind::Notification,
+                    rect,
+                    strut: None,
+                    keyboard: false,
+                };
+                match self.session.layer(&spec) {
+                    Ok(layer) => self.layer = Some(layer),
+                    Err(err) => tracing::warn!("notificações: janela X11 não abriu ({err})"),
+                }
+            }
+        }
+        self.draw();
+    }
+
+    fn draw(&mut self) {
+        if self.layer.is_none() {
+            return;
+        }
+        let (w, h) = self.surface_size();
+        let Some(pixmap) = self.render(w, h) else {
+            return;
+        };
+        if let Some(layer) = self.layer.as_mut() {
+            if let Err(err) = layer.present(&pixmap, [0, 0, 0]) {
+                tracing::warn!("notificações: quadro não foi enviado ({err})");
+            }
+        }
+    }
+
+    /// Eventos do servidor: o ponteiro sobre os banners e o pedido de redesenho.
+    fn handle_input(&mut self) {
+        let inputs = match self.session.poll() {
+            Ok(inputs) => inputs,
+            Err(err) => {
+                tracing::warn!("notificações: evento X11 ({err})");
+                return;
+            }
+        };
+        for input in inputs {
+            match input {
+                kit::x11_layer::Input::Pointer { window, x, y, kind } => {
+                    if self.layer.as_ref().map(|l| l.window()) != Some(window) {
+                        continue;
+                    }
+                    let pointer = match kind {
+                        kit::x11_layer::PointerKind::Motion | kit::x11_layer::PointerKind::Enter => Pointer::Move,
+                        kit::x11_layer::PointerKind::Leave => Pointer::Leave,
+                        kit::x11_layer::PointerKind::Press(1) => Pointer::Press,
+                        kit::x11_layer::PointerKind::Release(1) => Pointer::Release,
+                        _ => continue,
+                    };
+                    self.pointer_event(pointer, x, y);
+                }
+                kit::x11_layer::Input::Expose { .. } => self.dirty = true,
+                kit::x11_layer::Input::Key { .. } | kit::x11_layer::Input::Closed => {}
+            }
+        }
+        if self.dirty {
+            self.sync_layer();
+        }
+    }
+}
+
+/// Descritor do X para o laço de eventos (calloop) acordar quando o servidor manda algo.
+struct XFd(std::os::unix::io::RawFd);
+
+impl std::os::fd::AsFd for XFd {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: a conexão X (dona do descritor) vive enquanto o laço roda.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(self.0) }
+    }
+}
+
+/// Laço dos banners no X11: os mesmos avisos (D-Bus, expiração) do Wayland.
+fn run_x11(core: Core, receiver: channel::Channel<Msg>) -> Result<(), Box<dyn Error>> {
+    let session = kit::x11_layer::Session::connect()?;
+    let fd = session.fd();
+    let mut ui = X11Banners { core, session, layer: None };
+
+    let mut event_loop: EventLoop<X11Banners> = EventLoop::try_new()?;
+    let handle = event_loop.handle();
+    handle
+        .insert_source(Generic::new(XFd(fd), Interest::READ, Mode::Level), |_, _, ui: &mut X11Banners| {
+            ui.handle_input();
+            Ok(PostAction::Continue)
+        })
+        .map_err(|e| e.to_string())?;
+    handle
+        .insert_source(receiver, |event, _, ui: &mut X11Banners| {
+            if let channel::Event::Msg(msg) = event {
+                match msg {
+                    Msg::Notify(note) => ui.add(note),
+                    Msg::Close(id) => ui.remove(id, reason::CLOSED_BY_CALL),
+                }
+                if ui.dirty {
+                    ui.sync_layer();
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    handle
+        .insert_source(Timer::from_duration(Duration::from_millis(200)), |_, _, ui: &mut X11Banners| {
+            ui.expire();
+            if ui.dirty {
+                ui.sync_layer();
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(200))
+        })
+        .map_err(|e| e.to_string())?;
+
+    loop {
+        event_loop.dispatch(None, &mut ui)?;
+    }
+}
+
 impl ScaleHandler for Banners {
     fn surface_scale_changed(&mut self, _: &QueueHandle<Self>, _: &wl_surface::WlSurface) {
         self.draw();
@@ -749,69 +1031,17 @@ impl PointerHandler for Banners {
                 continue;
             }
             let (x, y) = event.position;
-            match event.kind {
-                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    let hover = match self.spot_at(x, y) {
-                        Some(Spot::Body(i) | Spot::Close(i) | Spot::Button(i, _)) => Some(i),
-                        None => None,
-                    };
-                    if hover != self.hover {
-                        self.hover = hover;
-                        self.draw();
-                    }
-                }
-                PointerEventKind::Leave { .. } => {
-                    if self.hover.take().is_some() {
-                        self.draw();
-                    }
-                }
-                PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
-                    self.press = self.spot_at(x, y);
-                    self.draw();
-                }
-                PointerEventKind::Release { button, .. } if button == BTN_LEFT => {
-                    let spot = self.spot_at(x, y);
-                    if self.press.take() != spot {
-                        self.draw();
-                        continue;
-                    }
-                    match spot {
-                        Some(Spot::Close(i)) => {
-                            if let Some(id) = self.notes.get(i).map(|n| n.id) {
-                                self.remove(id, reason::DISMISSED);
-                            }
-                        }
-                        Some(Spot::Button(i, k)) => {
-                            if let Some(key) = self.notes.get(i).and_then(|n| n.buttons.get(k)).map(|(key, _)| key.clone()) {
-                                self.invoke(i, &key);
-                            }
-                        }
-                        Some(Spot::Body(i)) => {
-                            // Clique no banner: a ação padrão do app, e o banner sai.
-                            let (has_default, id, open, app_id) = match self.notes.get(i) {
-                                Some(n) => (n.has_default, n.id, n.open.clone(), n.app_id.clone()),
-                                None => continue,
-                            };
-                            // Gravação ou captura salva: abre o arquivo (vídeo no player).
-                            if let Some(path) = open {
-                                mide::notify::activate(&path, "");
-                                self.remove(id, reason::DISMISSED);
-                            } else if has_default {
-                                self.invoke(i, "default");
-                            } else {
-                                // Sem ação do app: como no Mac, o app que avisou vem para a
-                                // frente (ou abre), e o banner sai.
-                                if let Some(app_id) = app_id {
-                                    std::thread::spawn(move || mide::notify::activate("", &app_id));
-                                }
-                                self.remove(id, reason::DISMISSED);
-                            }
-                        }
-                        None => {}
-                    }
-                }
-                _ => {}
-            }
+            let pointer = match event.kind {
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => Pointer::Move,
+                PointerEventKind::Leave { .. } => Pointer::Leave,
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT => Pointer::Press,
+                PointerEventKind::Release { button, .. } if button == BTN_LEFT => Pointer::Release,
+                _ => continue,
+            };
+            self.pointer_event(pointer, x, y);
+        }
+        if std::mem::take(&mut self.dirty) {
+            self.draw();
         }
     }
 }
