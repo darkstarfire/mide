@@ -3244,7 +3244,13 @@ impl Dock {
     fn new_bottom_surface(&mut self, name: &str, size: (u32, u32), margin: i32) -> Option<Surface> {
         if let Some(session) = self.x.as_ref() {
             let rect = bottom_rect(size, margin, session.screen_size());
-            let layer = session.layer(&LayerSpec { app_id: name.into(), kind: Kind::Notification, rect, strut: None, keyboard: false }).ok()?;
+            let layer = match session.layer(&LayerSpec { app_id: name.into(), kind: Kind::Notification, rect, strut: None, keyboard: false }) {
+                Ok(layer) => layer,
+                Err(err) => {
+                    tracing::warn!("dock: janela X11 {name} não abriu ({err}), rect {rect:?}");
+                    return None;
+                }
+            };
             let mut surface = Surface::X11 { layer, rect, screen_canvas: false };
             let _ = surface.set_input_region(Some(Rect { x: 0, y: 0, w: 0, h: 0 }));
             return Some(surface);
@@ -3338,6 +3344,11 @@ impl Dock {
                         _ => arrived,
                     };
                     let (tx, ty) = self.surface_of(target).map_or((0.0, 0.0), |s| s.origin());
+                    // Ao abrir a ampliação sob o ponteiro, o X manda Leave para a dock mesmo com o
+                    // ponteiro ainda sobre ela: esse Leave não é uma saída de verdade.
+                    if matches!(kind, PointerKind::Leave) && target == Target::Dock && x >= 0.0 && y >= 0.0 && x < self.width as f64 && y < self.height as f64 {
+                        continue;
+                    }
                     self.pointer_event(target, ptr_from_x11(kind), sx - tx, sy - ty);
                 }
                 Input::Expose { window } => {
