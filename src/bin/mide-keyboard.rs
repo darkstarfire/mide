@@ -1487,6 +1487,12 @@ mod tests {
 
 /// Altura da faixa do teclado no X11 (as teclas, sem a barra de atalhos).
 const X_KEYS_H: u32 = PANEL_H;
+/// Faixa de atalhos (desfazer, copiar...) acima das teclas, no X11.
+const X_BAR_H: u32 = BAR_H;
+/// Altura total da janela do teclado no X11 (atalhos + teclas).
+const X_TOTAL_H: u32 = X_BAR_H + X_KEYS_H;
+/// Rótulos dos atalhos da faixa (as ações estão em `bar_buttons(false)`, sem a de flutuar).
+const X_SHORTCUT_LABELS: [&str; 5] = ["Desfazer", "Refazer", "Recortar", "Copiar", "Colar"];
 /// Tempo segurando uma letra para abrir as variações (acentos), como no Mac.
 const X_VARIANTS_AFTER: Duration = Duration::from_millis(450);
 
@@ -1592,8 +1598,10 @@ impl mide::kit::App for OskApp {
         let width = ui.available_width();
         let upper = self.shift || self.caps;
         let rows = rows(self.page, upper, self.abnt);
-        let placed = layout(&rows, width, 0.0, X_KEYS_H as f32);
+        let placed = layout(&rows, width, X_BAR_H as f32, X_KEYS_H as f32);
         let input = ui.input().clone();
+        let shortcut_rects = shortcut_rects(width);
+        let shortcut_actions: Vec<Action> = bar_buttons(false).into_iter().take(X_SHORTCUT_LABELS.len()).map(|(_, a)| a).collect();
         let hit_at = |x: f32, y: f32| placed.iter().find(|p| x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h).copied();
 
         // Enquanto a letra segue apertada: depois do tempo, abre as variações.
@@ -1614,7 +1622,19 @@ impl mide::kit::App for OskApp {
             }
         }
 
+        let mut on_shortcut = false;
         if input.pressed && self.variants.is_none() {
+            if let Some((px, py)) = input.pointer {
+                if py < X_BAR_H as f32 {
+                    on_shortcut = true;
+                    if let Some(i) = shortcut_rects.iter().position(|(x, y, w, h)| px >= *x && px < x + w && py >= *y && py < y + h) {
+                        let action = shortcut_actions[i].clone();
+                        self.press(&action, ui);
+                    }
+                }
+            }
+        }
+        if input.pressed && self.variants.is_none() && !on_shortcut {
             if let Some((px, py)) = input.pointer {
                 if let Some(p) = hit_at(px, py) {
                     let action = rows[p.row][p.col].action.clone();
@@ -1654,9 +1674,16 @@ impl mide::kit::App for OskApp {
         let special_fill = if theme.dark { [46, 46, 50, 255] } else { [220, 221, 226, 255] };
         let ink = theme.text;
         let variants_open = self.variants.clone();
+        let shortcut_rects_draw = shortcut_rects.clone();
         let pending_key = self.pending.as_ref().map(|p| (p.row, p.col));
         let text = &mut self.text;
-        ui.custom(X_KEYS_H as f32, |canvas, (ox, oy, _w, _h)| {
+        ui.custom(X_TOTAL_H as f32, |canvas, (ox, oy, _w, _h)| {
+            for ((x, y, w, h), label) in shortcut_rects_draw.iter().zip(X_SHORTCUT_LABELS.iter()) {
+                mide::ui::draw::fill_rounded(canvas, ox + x, oy + y, *w, *h, 6.0, mide::ui::draw::rgba(key_fill[0], key_fill[1], key_fill[2], key_fill[3]));
+                let size = theme.font;
+                let tw = text.measure(label, size, mide::ui::text::FontWeight::Regular);
+                text.draw(canvas, label, ox + x + (w - tw) / 2.0, oy + y + (h - size * 1.25) / 2.0, size, mide::ui::text::FontWeight::Regular, ink);
+            }
             for p in &placed {
                 let key = &rows[p.row][p.col];
                 let fill = if matches!(key.action, Action::Text(_) | Action::Space) { key_fill } else { special_fill };
@@ -1682,6 +1709,17 @@ impl mide::kit::App for OskApp {
             }
         });
     }
+}
+
+/// Retângulos dos atalhos na faixa de cima: cinco botões centrados, na largura da janela.
+fn shortcut_rects(width: f32) -> Vec<(f32, f32, f32, f32)> {
+    let n = X_SHORTCUT_LABELS.len() as f32;
+    let gap = 8.0;
+    let bw = ((width - 16.0) / n - gap).min(150.0);
+    let total = n * bw + (n - 1.0) * gap;
+    let x0 = (width - total) / 2.0;
+    let h = X_BAR_H as f32 - 10.0;
+    (0..X_SHORTCUT_LABELS.len()).map(|i| (x0 + i as f32 * (bw + gap), 5.0, bw, h)).collect()
 }
 
 /// Variações (acentos) da tecla, em minúsculas (vazio se não tem).
@@ -1718,8 +1756,8 @@ fn run_x11() -> Result<(), Box<dyn Error>> {
     let window = mide::kit::Window::new("Teclado na tela")
         .app_id("mide-keyboard")
         .overlay("mide-keyboard")
-        .exclusive_zone(mide::kit::Edge::Bottom, X_KEYS_H)
-        .size(1, X_KEYS_H);
+        .exclusive_zone(mide::kit::Edge::Bottom, X_TOTAL_H)
+        .size(1, X_TOTAL_H);
     tracing::info!("teclado na tela pronto (X11)");
     mide::kit::run(window, app).map_err(|e| e.to_string().into())
 }
