@@ -94,6 +94,14 @@ impl Surface {
         }
     }
 
+    /// Tamanho da janela X11 (em pixels); `None` no Wayland.
+    pub fn x11_size(&self) -> Option<(u32, u32)> {
+        match self {
+            Surface::X11 { rect, .. } => Some((rect.w, rect.h)),
+            Surface::Wayland { .. } => None,
+        }
+    }
+
     /// Canto de cima à esquerda da janela na tela (X11); (0, 0) no Wayland.
     pub fn origin(&self) -> (f64, f64) {
         match self {

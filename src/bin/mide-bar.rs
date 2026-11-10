@@ -2465,6 +2465,21 @@ impl Bar {
                     if !arrived_on_bar && !arrived_on_menu {
                         continue;
                     }
+                    // O ponteiro fica preso no menu: um clique fora dele chega ao menu com
+                    // coordenadas de fora da janela. Fecha o menu, como o Wayland faz.
+                    if let PointerKind::Press(_) = kind {
+                        if arrived_on_menu && !arrived_on_bar {
+                            let outside = self
+                                .menu
+                                .as_ref()
+                                .and_then(|m| m.layer.x11_size())
+                                .is_some_and(|(w, h)| x < 0.0 || y < 0.0 || x >= w as f64 || y >= h as f64);
+                            if outside {
+                                self.close_menu();
+                                continue;
+                            }
+                        }
+                    }
                     let (sx, sy) = if arrived_on_bar {
                         self.layer.to_local(x, y)
                     } else {
