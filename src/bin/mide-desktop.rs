@@ -1543,7 +1543,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let mut desktop = Desktop::new();
     desktop.output = output;
-    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop(&namespace).accepts_files().theme(theme), desktop)
+    run(Window::new(&tr!("Desktop")).app_id("mide-desktop").desktop(&namespace).backdrop(mide::shell::backdrop::desktop_pixmap).accepts_files().theme(theme), desktop)
 }
 
 #[cfg(test)]

@@ -187,3 +187,35 @@ mod tests {
         }
     }
 }
+
+/// Fundo da área de trabalho para o X11 (sem GPU): a imagem escolhida nas Configurações
+/// (`[desktop] wallpaper`, com `~/` expandido) ajustada à tela, ou o gradiente padrão.
+/// Vira um `Pixmap` do kit (premultiplicado). `None` só se o tamanho for zero.
+pub fn desktop_pixmap(w: u32, h: u32) -> Option<tiny_skia::Pixmap> {
+    let path = crate::settings_file::cached("desktop", "wallpaper")
+        .and_then(|v| match v {
+            crate::settings_file::Value::Text(t) => Some(t.trim().to_string()),
+            _ => None,
+        })
+        .filter(|s| !s.is_empty())
+        .and_then(|raw| match raw.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(rest)),
+            None => Some(std::path::PathBuf::from(raw)),
+        });
+    let img = path
+        .and_then(|p| image::open(p).ok())
+        .map(|i| cover(&i.to_rgba8(), w, h))
+        .unwrap_or_else(|| default_gradient(w, h));
+    let (iw, ih) = (img.width(), img.height());
+    let mut data = img.into_raw();
+    // O kit guarda pixels premultiplicados; o fundo é opaco, mas a conta fica certa mesmo assim.
+    for px in data.chunks_exact_mut(4) {
+        let a = px[3] as u16;
+        if a != 255 {
+            for c in &mut px[..3] {
+                *c = ((*c as u16 * a + 127) / 255) as u8;
+            }
+        }
+    }
+    tiny_skia::Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(iw, ih)?)
+}

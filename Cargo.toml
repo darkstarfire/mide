@@ -130,7 +130,7 @@ path = "src/bin/mide-writer/main.rs"
 # parte. Fork usado pelo port X11: github.com/darkstarfire/mide-ui, branch port-x11,
 # fixado no commit (rev) para o build ser reproduzível. Ao subir um commit novo no
 # fork, troque o rev aqui e rode `cargo update -p mide-ui`.
-mide-ui = { git = "https://github.com/darkstarfire/mide-ui", rev = "a0cecac0d2b76736591774522f56609840d4f9bd" }
+mide-ui = { git = "https://github.com/darkstarfire/mide-ui", rev = "1a349e3daf82fddac2c4d49ed74729fe6302943b" }
 chrono = "0.4"
 cosmic-text = "0.19"
 freedesktop-desktop-entry = "0.8"
