@@ -539,7 +539,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
         }
         // Há janela sobre a área da dock? (`yes`/`no`; a dock que se esconde sozinha
         // só some nesse caso.)
-        Some("dock_covered") => if state.dock_covered() { "yes\n".into() } else { "no\n".into() },
+        Some("dock_covered") => if crate::x11_backend::dock_covered().unwrap_or_else(|| state.dock_covered()) { "yes\n".into() } else { "no\n".into() },
         // Área útil (sem a barra e a dock reservada): `x y largura altura`.
         // Área útil da tela principal, relativa a ela (a área de trabalho usa para pôr os
         // ícones dentro da própria camada).

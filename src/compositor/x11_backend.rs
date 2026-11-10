@@ -225,6 +225,57 @@ pub struct X11Backend {
     pub frame_count: u64,
 }
 
+/// Conexão, janelas gerenciadas e raiz, para responder "há janela sobre a dock?" fora do
+/// event loop (o controle pergunta a cada 250 ms).
+static DOCK_QUERY: std::sync::OnceLock<(Arc<RustConnection>, Arc<Mutex<LayoutState>>, xproto::Window)> = std::sync::OnceLock::new();
+
+/// Janela `mide-dock` (classe WM_CLASS) entre os filhos da raiz: (x, y, largura, altura).
+fn find_dock(conn: &RustConnection, root: xproto::Window) -> Option<(i32, i32, i32, i32)> {
+    let children = conn.query_tree(root).ok()?.reply().ok()?.children;
+    for w in children {
+        let class = conn
+            .get_property(false, w, xproto::AtomEnum::WM_CLASS, xproto::AtomEnum::STRING, 0, 256)
+            .ok()
+            .and_then(|c| c.reply().ok());
+        let is_dock = class.is_some_and(|c| c.value.split(|b| *b == 0).any(|part| part == b"mide-dock"));
+        if is_dock {
+            let g = conn.get_geometry(w).ok()?.reply().ok()?;
+            return Some((g.x as i32, g.y as i32, g.width as i32, g.height as i32));
+        }
+    }
+    None
+}
+
+/// Há alguma janela gerenciada (não minimizada) sobre a faixa em que a dock fica à mostra
+/// (margem de 8 px da borda de baixo, como no Wayland)? `None` se o backend X11 não roda.
+pub fn dock_covered() -> Option<bool> {
+    let (conn, layout, root) = DOCK_QUERY.get()?;
+    let (clients, minimized) = {
+        let l = layout.lock().ok()?;
+        (l.clients.clone(), l.minimized.clone())
+    };
+    let screen = conn.get_geometry(*root).ok()?.reply().ok()?;
+    let Some((dx, _dy, dw, dh)) = find_dock(conn, *root) else {
+        return Some(false);
+    };
+    let shown = (dx, screen.height as i32 - 8 - dh, dw, dh);
+    for w in clients.into_iter().filter(|w| !minimized.contains(w)) {
+        // `get_geometry` vem relativo ao pai (a moldura do compositor): converte para a raiz.
+        let Ok(Ok(t)) = conn.translate_coordinates(w, *root, 0, 0).map(|c| c.reply()) else {
+            continue;
+        };
+        let Ok(Ok(g)) = conn.get_geometry(w).map(|c| c.reply()) else {
+            continue;
+        };
+        let (x, y, cw, ch) = (t.dst_x as i32, t.dst_y as i32, g.width as i32, g.height as i32);
+        let overlaps = x < shown.0 + shown.2 && x + cw > shown.0 && y < shown.1 + shown.3 && y + ch > shown.1;
+        if overlaps {
+            return Some(true);
+        }
+    }
+    Some(false)
+}
+
 /// Dados que o event loop precisa para tratar os eventos e gerenciar janelas.
 struct Shared {
     conn: Arc<RustConnection>,
@@ -488,6 +539,8 @@ impl X11Backend {
             frame_count: 0,
         };
 
+        // Consulta de "há janela sobre a dock?" para o controle (ver `dock_covered`).
+        let _ = DOCK_QUERY.set((conn.clone(), layout.clone(), root));
         let shared = Arc::new(Shared {
             conn: conn.clone(),
             atoms,

@@ -426,6 +426,8 @@ pub fn child_env(command: &mut std::process::Command) {
         }
         // Avisa os filhos que estao rodando sob o backend X11 do mide.
         command.env("MIDE_BACKEND", "x11");
+        // Nome do socket de controle (os filhos falam com o compositor por ele).
+        command.env("MIDE_SOCKET", socket_name());
     } else {
         command.env("WAYLAND_DISPLAY", socket_name());
     }
