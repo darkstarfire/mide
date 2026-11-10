@@ -1491,6 +1491,8 @@ const X_KEYS_H: u32 = PANEL_H;
 const X_BAR_H: u32 = BAR_H;
 /// Altura total da janela do teclado no X11 (atalhos + teclas).
 const X_TOTAL_H: u32 = X_BAR_H + X_KEYS_H;
+/// Largura do teclado flutuante no X11 (`--float`).
+const FLOAT_X_W: u32 = 420;
 /// Rótulos dos atalhos da faixa (as ações estão em `bar_buttons(false)`, sem a de flutuar).
 const X_SHORTCUT_LABELS: [&str; 5] = ["Desfazer", "Refazer", "Recortar", "Copiar", "Colar"];
 /// Tempo segurando uma letra para abrir as variações (acentos), como no Mac.
@@ -1753,11 +1755,19 @@ fn run_x11() -> Result<(), Box<dyn Error>> {
         }
     };
     let app = OskApp { xtest, page: Page::Letters, shift: false, caps: false, abnt: abnt(), text: mide::ui::text::Text::new(), pending: None, variants: None };
-    let window = mide::kit::Window::new("Teclado na tela")
-        .app_id("mide-keyboard")
-        .overlay("mide-keyboard")
-        .exclusive_zone(mide::kit::Edge::Bottom, X_TOTAL_H)
-        .size(1, X_TOTAL_H);
+    // `--float`: teclado pequeno no canto (flutuante, como no Wayland), sem reservar a
+    // borda e sem tirar o foco de quem digita. Escolhido ao iniciar (o X11 não troca de
+    // forma ao vivo).
+    let floating = std::env::args().any(|a| a == "--float");
+    let window = if floating {
+        mide::kit::Window::new("Teclado na tela").app_id("mide-keyboard").corner("mide-keyboard").size(FLOAT_X_W, X_TOTAL_H)
+    } else {
+        mide::kit::Window::new("Teclado na tela")
+            .app_id("mide-keyboard")
+            .overlay("mide-keyboard")
+            .exclusive_zone(mide::kit::Edge::Bottom, X_TOTAL_H)
+            .size(1, X_TOTAL_H)
+    };
     tracing::info!("teclado na tela pronto (X11)");
     mide::kit::run(window, app).map_err(|e| e.to_string().into())
 }
