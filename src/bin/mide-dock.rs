@@ -428,7 +428,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         menu_dirty: false,
         config_mtime: mide::settings_file::config_path().and_then(|p| fs::metadata(p).ok()?.modified().ok()),
         pins_mtime: pins_mtime(),
-        liquid: liquid_glass(),
+        // O vidro líquido precisa do fundo do compositor (Wayland); no X11 ele sai preto e
+        // opaco nos cantos, então a dock usa o preenchimento translúcido.
+        liquid: liquid_glass() && wayland.is_some(),
         autohide,
         shown: 1.0,
         show_target: 1.0,
