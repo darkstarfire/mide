@@ -289,6 +289,8 @@ struct Shared {
     root: xproto::Window,
     /// Janela de bloqueio (override-redirect, tela cheia) quando bloqueada.
     lock_window: Option<xproto::Window>,
+    /// O `mide-lock` (ou o greeter) aberto para bloquear: a tela está bloqueada enquanto ele roda.
+    lock_child: std::sync::Mutex<Option<std::process::Child>>,
     /// Arrastre em andamento: (janela, offset_x, offset_y) do ponteiro em
     /// relacao ao canto superior-esquerdo da janela, em pixels de saida.
     drag_window: Mutex<Option<(xproto::Window, i16, i16)>>,
@@ -550,6 +552,7 @@ impl X11Backend {
             comp_window: window,
             root,
             lock_window: None,
+            lock_child: std::sync::Mutex::new(None),
             drag_window: Mutex::new(None),
         });
 
@@ -710,21 +713,8 @@ impl Shared {
                 {
                     self.update_strut(ev.window);
                 }
-                // App de bloqueio pede desbloqueio via property na raiz.
-                if ev.window == self.root && ev.atom == self.atoms.mide_unlock {
-                    if let Err(err) = self.unlock() {
-                        tracing::warn!("falha ao desbloquear tela: {err}");
-                    }
-                }
             }
             Event::KeyPress(ev) => {
-                // Janela de bloqueio: qualquer tecla desbloqueia (MVP).
-                if self.lock_window.is_some() {
-                    if let Err(err) = self.unlock() {
-                        tracing::warn!("falha ao desbloquear: {err}");
-                    }
-                    return;
-                }
                 // Atalho global pressionado na raiz? Executa a ação configurada.
                 if ev.event == self.root && !self.is_locked() {
                     if let Some(action) = self.global_binding(state, ev.detail, u16::from(ev.state)) {
@@ -1153,75 +1143,30 @@ impl Shared {
         }
     }
 
-    /// Bloqueia a sessao: cria janela override-redirect em tela cheia sobre tudo
-    /// e foca o teclado nela (equivalente X11 a ext-session-lock-v1).
-    /// Sem app de senha ainda: qualquer tecla desbloqueia (MVP).
+    /// Bloqueia a sessão abrindo o programa de bloqueio de verdade (`mide-lock`, com a
+    /// senha conferida pelo PAM; o greeter no modo de login). Não há janela própria nem
+    /// desbloqueio por tecla ou propriedade: só o programa sair destrava.
     fn lock(&self) -> Result<(), Box<dyn Error>> {
-        if self.lock_window.is_some() {
-            return Ok(()); // ja bloqueada
+        if self.is_locked() {
+            return Ok(()); // já bloqueada
         }
-        let (out_w, out_h) = self.output_size();
-        let id = self.conn.generate_id()?;
-        let aux = xproto::CreateWindowAux::new()
-            .override_redirect(1)
-            .background_pixel(0)
-            .event_mask(xproto::EventMask::KEY_PRESS | xproto::EventMask::KEY_RELEASE);
-        self.conn.create_window(
-            0,
-            id,
-            self.root,
-            0,
-            0,
-            out_w as u16,
-            out_h as u16,
-            0,
-            xproto::WindowClass::INPUT_OUTPUT,
-            0,
-            &aux,
-        )?;
-        self.conn.map_window(id)?;
-        // Foca o teclado na janela de bloqueio e a coloca no topo.
-        let _ = self.conn.set_input_focus(
-            xproto::InputFocus::NONE,
-            id,
-            0u32,
-        );
-        let aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
-        let _ = self.conn.configure_window(id, &aux);
-        self.conn.change_property32(
-            xproto::PropMode::REPLACE,
-            self.root,
-            self.atoms.net_active_window,
-            xproto::AtomEnum::WINDOW,
-            &[id],
-        )?;
-        self.conn.flush()?;
-        if let Ok(mut layout) = self.layout.lock() {
-            layout.locked = true;
+        // Como os outros programas da shell: o irmão do mide (mesma pasta de binários) e,
+        // sem ele, o nome no PATH. O ambiente é o mesmo dos filhos (sem Wayland no X11).
+        let name = crate::login::lock_program();
+        let sibling = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+            .filter(|path| path.exists());
+        let mut command = std::process::Command::new(sibling.unwrap_or_else(|| name.into()));
+        crate::child_env(&mut command);
+        let child = command.spawn()?;
+        if let Ok(mut slot) = self.lock_child.lock() {
+            *slot = Some(child);
         }
-        tracing::info!("tela de bloqueio X11 ativada (janela {})", id);
+        tracing::info!("tela de bloqueio X11: {} aberto", crate::login::lock_program());
         Ok(())
     }
 
-    /// Desbloqueia a sessao: remove a janela de bloqueio e devolve o foco.
-    fn unlock(&self) -> Result<(), Box<dyn Error>> {
-        let Some(id) = self.lock_window else {
-            return Ok(());
-        };
-        let _ = self.conn.destroy_window(id);
-        self.conn.flush()?;
-        if let Ok(mut layout) = self.layout.lock() {
-            layout.locked = false;
-        }
-        // Devolve o foco ao ponteiro (padrao do mide).
-        let _ = self.conn.set_input_focus(
-            xproto::InputFocus::POINTER_ROOT,
-            0u32,
-            0u32,
-        );
-        tracing::info!("tela de bloqueio X11 desativada");
-        Ok(())
-    }
 
     /// Traduz um evento de tecla na raiz para a acao de atalho global, se houver.
     fn global_binding(
@@ -1274,9 +1219,21 @@ impl Shared {
             .unwrap_or((0, 0))
     }
 
-    /// Esta com a tela bloqueada?
+    /// Bloqueada enquanto o programa de bloqueio roda (ele prende o teclado e o ponteiro).
     fn is_locked(&self) -> bool {
-        self.layout.lock().map(|l| l.locked).unwrap_or(false)
+        let Ok(mut slot) = self.lock_child.lock() else {
+            return false;
+        };
+        match slot.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(None) => true,
+                _ => {
+                    *slot = None;
+                    false
+                }
+            },
+            None => false,
+        }
     }
 
     /// Le `_NET_WM_STRUT`/`_NET_WM_STRUT_PARTIAL` de uma janela.
