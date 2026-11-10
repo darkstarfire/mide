@@ -1487,11 +1487,21 @@ mod tests {
 
 /// Altura da faixa do teclado no X11 (as teclas, sem a barra de atalhos).
 const X_KEYS_H: u32 = PANEL_H;
+/// Tempo segurando uma letra para abrir as variações (acentos), como no Mac.
+const X_VARIANTS_AFTER: Duration = Duration::from_millis(450);
 
 /// Keysym de um caractere (Latin-1 direto; o resto é Unicode com o bit alto).
 fn keysym_of(c: char) -> u32 {
     let u = c as u32;
     if u < 0x100 { u } else { 0x0100_0000 | u }
+}
+
+/// Uma tecla apertada que pode virar variações (segurar a letra).
+#[derive(Clone)]
+struct Pending {
+    row: usize,
+    col: usize,
+    since: Instant,
 }
 
 /// O teclado na tela no X11: as teclas desenhadas e as teclas enviadas pelo XTEST.
@@ -1503,33 +1513,46 @@ struct OskApp {
     caps: bool,
     abnt: bool,
     text: mide::ui::text::Text,
+    /// Letra apertada, esperando para virar acento (ou ser digitada ao soltar).
+    pending: Option<Pending>,
+    /// Variações abertas (letra, lista), enquanto a tecla segue apertada.
+    variants: Option<(char, Vec<String>)>,
 }
 
 impl OskApp {
-    /// Manda uma tecla do teclado para o app que tem o foco.
+    /// Manda uma tecla do teclado para o app que tem o foco. O caractere que o layout do
+    /// servidor não tem (um acento) vai pela tecla remapeada.
     fn send(&mut self, keysym: u32, ctrl: bool) {
         let Some(xtest) = self.xtest.as_ref() else {
             return;
         };
         match xtest.type_keysym(keysym, ctrl) {
             Ok(true) => {}
+            Ok(false) if !ctrl => match xtest.type_keysym_remapped(keysym) {
+                Ok(true) => {}
+                Ok(false) => tracing::info!("teclado na tela: sem tecla livre para o keysym {keysym:#x}"),
+                Err(err) => tracing::warn!("teclado na tela: remapeamento falhou ({err})"),
+            },
             Ok(false) => tracing::info!("teclado na tela: o layout do servidor não tem o keysym {keysym:#x}"),
             Err(err) => tracing::warn!("teclado na tela: XTEST falhou ({err})"),
+        }
+    }
+
+    /// Digita um texto da tecla (uma letra, ou o que ela produz).
+    fn type_text(&mut self, text: &str) {
+        for c in text.chars() {
+            self.send(keysym_of(c), false);
+        }
+        // Shift vale para uma letra; com Caps Lock, segue.
+        if self.shift && !self.caps {
+            self.shift = false;
         }
     }
 
     /// Ação de uma tecla apertada (o que ela faz, mesmo para o Wayland).
     fn press(&mut self, action: &Action, ui: &mut mide::kit::Ui) {
         match action {
-            Action::Text(t) => {
-                for c in t.chars() {
-                    self.send(keysym_of(c), false);
-                }
-                // Shift vale para uma letra; com Caps Lock, segue.
-                if self.shift && !self.caps {
-                    self.shift = false;
-                }
-            }
+            Action::Text(t) => self.type_text(t),
             Action::Space => self.send(0x20, false),
             Action::Enter => self.send(0xff0d, false),
             Action::Backspace => self.send(0xff08, false),
@@ -1570,25 +1593,74 @@ impl mide::kit::App for OskApp {
         let upper = self.shift || self.caps;
         let rows = rows(self.page, upper, self.abnt);
         let placed = layout(&rows, width, 0.0, X_KEYS_H as f32);
-        // Um toque numa tecla a aperta (no quadro em que o botão foi apertado).
-        if ui.input().pressed {
-            if let Some((px, py)) = ui.input().pointer {
-                let hit = placed.iter().find(|p| px >= p.x && px < p.x + p.w && py >= p.y && py < p.y + p.h).copied();
-                if let Some(p) = hit {
+        let input = ui.input().clone();
+        let hit_at = |x: f32, y: f32| placed.iter().find(|p| x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h).copied();
+
+        // Enquanto a letra segue apertada: depois do tempo, abre as variações.
+        if let Some(pending) = self.pending.clone() {
+            if self.variants.is_none() && pending.since.elapsed() >= X_VARIANTS_AFTER {
+                if let Action::Text(t) = &rows[pending.row][pending.col].action {
+                    if let Some(c) = t.chars().next() {
+                        let base = if upper { c.to_uppercase().next().unwrap_or(c) } else { c };
+                        let list: Vec<String> = variants(&c.to_string()).iter().map(|v| if upper { v.to_uppercase() } else { v.to_string() }).collect();
+                        if !list.is_empty() {
+                            self.variants = Some((base, list));
+                        }
+                    }
+                }
+            }
+            if self.variants.is_none() {
+                ui.request_repaint();
+            }
+        }
+
+        if input.pressed && self.variants.is_none() {
+            if let Some((px, py)) = input.pointer {
+                if let Some(p) = hit_at(px, py) {
                     let action = rows[p.row][p.col].action.clone();
-                    self.press(&action, ui);
+                    if matches!(action, Action::Text(_)) && !variants_of(&rows[p.row][p.col]).is_empty() {
+                        // Pode virar acento: decide ao soltar.
+                        self.pending = Some(Pending { row: p.row, col: p.col, since: Instant::now() });
+                    } else {
+                        self.press(&action, ui);
+                    }
                 }
             }
         }
+
+        if input.released {
+            if let Some((letter, list)) = self.variants.take() {
+                // Soltou sobre uma variação: digita essa; fora, não digita nada.
+                if let (Some((px, py)), Some(pending)) = (input.pointer, self.pending.clone()) {
+                    if let Some(key) = placed.iter().find(|p| p.row == pending.row && p.col == pending.col) {
+                        let slots = variant_slots(key, list.len());
+                        if let Some(i) = slots.iter().position(|(x, y, w, h)| px >= *x && px < x + w && py >= *y && py < y + h) {
+                            let text = list[i].clone();
+                            self.type_text(&text);
+                        }
+                    }
+                }
+                let _ = letter;
+            } else if let Some(pending) = self.pending.take() {
+                // Toque curto: a letra normal.
+                let action = rows[pending.row][pending.col].action.clone();
+                self.press(&action, ui);
+            }
+            self.pending = None;
+        }
+
         let theme = ui.theme().clone();
         let key_fill = if theme.dark { [70, 70, 74, 255] } else { [255, 255, 255, 255] };
         let special_fill = if theme.dark { [46, 46, 50, 255] } else { [220, 221, 226, 255] };
         let ink = theme.text;
+        let variants_open = self.variants.clone();
+        let pending_key = self.pending.as_ref().map(|p| (p.row, p.col));
         let text = &mut self.text;
         ui.custom(X_KEYS_H as f32, |canvas, (ox, oy, _w, _h)| {
             for p in &placed {
                 let key = &rows[p.row][p.col];
                 let fill = if matches!(key.action, Action::Text(_) | Action::Space) { key_fill } else { special_fill };
+                let fill = if pending_key == Some((p.row, p.col)) { [190, 200, 230, 255] } else { fill };
                 mide::ui::draw::fill_rounded(canvas, ox + p.x, oy + p.y, p.w, p.h, 6.0, mide::ui::draw::rgba(fill[0], fill[1], fill[2], fill[3]));
                 let label = key.label.as_str();
                 let size = theme.font;
@@ -1597,8 +1669,36 @@ impl mide::kit::App for OskApp {
                 let ty = oy + p.y + (p.h - size * 1.25) / 2.0;
                 text.draw(canvas, label, tx, ty, size, mide::ui::text::FontWeight::Regular, ink);
             }
+            // Variações (acentos): uma faixa acima da tecla apertada.
+            if let (Some((_, list)), Some((row, col))) = (&variants_open, pending_key) {
+                if let Some(p) = placed.iter().find(|p| p.row == row && p.col == col) {
+                    for (v, (vx, vy, vw, vh)) in list.iter().zip(variant_slots(p, list.len())) {
+                        let (vx, vy) = (ox + vx, oy + vy);
+                        mide::ui::draw::fill_rounded(canvas, vx, vy, vw, vh, 6.0, mide::ui::draw::rgba(255, 255, 255, 255));
+                        let tw = text.measure(v, theme.font, mide::ui::text::FontWeight::Regular);
+                        text.draw(canvas, v, vx + (vw - tw) / 2.0, vy + (vh - theme.font * 1.25) / 2.0, theme.font, mide::ui::text::FontWeight::Regular, [30, 30, 30, 255]);
+                    }
+                }
+            }
         });
     }
+}
+
+/// Variações (acentos) da tecla, em minúsculas (vazio se não tem).
+fn variants_of(key: &Key) -> Vec<&'static str> {
+    match &key.action {
+        Action::Text(t) => t.chars().next().map(|c| variants(&c.to_string()).to_vec()).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Retângulos das variações (acentos) de uma tecla: uma faixa centrada acima dela. Usado
+/// para desenhar e para saber em qual o ponteiro soltou.
+fn variant_slots(key: &Placed, n: usize) -> Vec<(f32, f32, f32, f32)> {
+    let vw = key.w.max(36.0);
+    let x0 = (key.x + key.w / 2.0 - vw * n as f32 / 2.0).max(2.0);
+    let y = key.y - key.h - 8.0;
+    (0..n).map(|i| (x0 + i as f32 * vw, y, vw - 4.0, key.h)).collect()
 }
 
 /// O teclado na tela no X11: a janela de faixa embaixo da tela, sem foco.
@@ -1614,7 +1714,7 @@ fn run_x11() -> Result<(), Box<dyn Error>> {
             None
         }
     };
-    let app = OskApp { xtest, page: Page::Letters, shift: false, caps: false, abnt: abnt(), text: mide::ui::text::Text::new() };
+    let app = OskApp { xtest, page: Page::Letters, shift: false, caps: false, abnt: abnt(), text: mide::ui::text::Text::new(), pending: None, variants: None };
     let window = mide::kit::Window::new("Teclado na tela")
         .app_id("mide-keyboard")
         .overlay("mide-keyboard")
