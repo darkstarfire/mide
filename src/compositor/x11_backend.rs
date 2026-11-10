@@ -48,6 +48,10 @@ pub struct Atoms {
     pub state_maximized_vert: xproto::Atom,
     pub state_maximized_horz: xproto::Atom,
     pub state_fullscreen: xproto::Atom,
+    pub window_type: xproto::Atom,
+    pub window_type_dock: xproto::Atom,
+    pub window_type_desktop: xproto::Atom,
+    pub window_type_notification: xproto::Atom,
     pub net_active_window: xproto::Atom,
     pub net_client_list: xproto::Atom,
     pub net_supported: xproto::Atom,
@@ -76,6 +80,10 @@ impl Atoms {
             state_maximized_vert: atom(b"_NET_WM_STATE_MAXIMIZED_VERT")?,
             state_maximized_horz: atom(b"_NET_WM_STATE_MAXIMIZED_HORZ")?,
             state_fullscreen: atom(b"_NET_WM_STATE_FULLSCREEN")?,
+            window_type: atom(b"_NET_WM_WINDOW_TYPE")?,
+            window_type_dock: atom(b"_NET_WM_WINDOW_TYPE_DOCK")?,
+            window_type_desktop: atom(b"_NET_WM_WINDOW_TYPE_DESKTOP")?,
+            window_type_notification: atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?,
             net_active_window: atom(b"_NET_ACTIVE_WINDOW")?,
             net_client_list: atom(b"_NET_CLIENT_LIST")?,
             net_supported: atom(b"_NET_SUPPORTED")?,
@@ -616,6 +624,15 @@ impl Shared {
     fn handle_event(&self, state: &mut State, event: Event) {
         match event {
             Event::MapRequest(ev) => {
+                // Barra, dock e área de trabalho são camadas: ficam onde pediram (como num
+                // gerenciador de janelas de verdade), sem cascata nem moldura; só a reserva
+                // de borda entra no cálculo da área útil.
+                if self.is_layer_window(ev.window) {
+                    let _ = self.conn.map_window(ev.window);
+                    self.update_strut(ev.window);
+                    let _ = self.conn.flush();
+                    return;
+                }
                 // Janela cliente pediu para ser mapeada: reparenta sob a
                 // janela de composicao e mapeia.
                 if let Err(err) = self.adopt_window(ev.window) {
@@ -1356,6 +1373,22 @@ impl Shared {
     }
 
     /// Le o `_NET_WM_STATE` pedido pelo cliente antes de mapear.
+    /// A janela é uma camada (dock, área de trabalho ou notificação), pelo `_NET_WM_WINDOW_TYPE`?
+    fn is_layer_window(&self, window: xproto::Window) -> bool {
+        let types: Vec<u32> = self
+            .conn
+            .get_property(false, window, self.atoms.window_type, xproto::AtomEnum::ATOM, 0, 16)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .and_then(|p| p.value32().map(|v| v.collect()))
+            .unwrap_or_default();
+        types.iter().any(|t| {
+            *t == self.atoms.window_type_dock
+                || *t == self.atoms.window_type_desktop
+                || *t == self.atoms.window_type_notification
+        })
+    }
+
     fn read_wm_state(&self, window: xproto::Window) -> Vec<u32> {
         self.conn
             .get_property(false, window, self.atoms.net_wm_state, xproto::AtomEnum::ATOM, 0, 32)
