@@ -48,6 +48,9 @@ pub struct X11Window {
     /// Regioes sujas em coordenadas da janela (x, y, w, h) em pixels de saida.
     /// Quando vazio, a janela inteira esta limpa.
     pub dirty_rects: Vec<(i16, i16, u16, u16)>,
+    /// Sem decoração do gerenciador (dica Motif do app): a cena não desenha barra nem
+    /// bordas, e o clique vai para o app.
+    pub undecorated: bool,
 }
 
 /// Altura da barra de desenho do servidor, em pontos (escala ja aplicada).
@@ -64,6 +67,10 @@ impl X11Window {
     pub fn hit_test(&self, x: i16, y: i16) -> DecorationHit {
         // Janelas em tela cheia nao tem decoraçoes.
         if self.fullscreen {
+            return DecorationHit::Client;
+        }
+        // Sem decoração do gerenciador: o app recebe o clique inteiro.
+        if self.undecorated {
             return DecorationHit::Client;
         }
         // Fora dos limites da janela.
@@ -160,6 +167,7 @@ impl X11Scene {
                 content_size: None,
                 content_dirty: true,
                 dirty_rects: Vec::new(),
+                undecorated: false,
             },
         );
     }
@@ -195,6 +203,14 @@ impl X11Scene {
             win.height = h;
             win.content_dirty = true;
             win.dirty_rects.push((0, 0, w, h));
+        }
+    }
+
+    /// Marca a janela como sem decoração (ou com decoração de volta).
+    pub fn set_undecorated(&mut self, id: xproto::Window, undecorated: bool) {
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.undecorated = undecorated;
+            self.frame_dirty = true;
         }
     }
 
@@ -296,7 +312,7 @@ impl X11Scene {
         let mut dirty_wins: Vec<_> = self
             .windows
             .values_mut()
-            .filter(|w| w.mapped && (w.content_dirty || !w.dirty_rects.is_empty()))
+            .filter(|w| w.mapped && !w.undecorated && (w.content_dirty || !w.dirty_rects.is_empty()))
             .map(|w| {
                 // Se o conteudo inteiro precisa ser recapturado, faz isso primeiro.
                 if w.content_dirty {
@@ -534,15 +550,50 @@ fn apply_shape(
     if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
         return;
     }
-    let rects: Vec<xproto::Rectangle> = windows
-        .values()
-        .filter(|w| w.mapped && w.width > 0 && w.height > 0)
-        .map(|w| xproto::Rectangle {
-            x: (w.x as f32 * k) as i16,
-            y: (w.y as f32 * k) as i16,
-            width: (w.width as f32 * k) as u16,
-            height: (w.height as f32 * k) as u16,
-        })
-        .collect();
+    // Janelas sem decoração (conteúdo inteiro) têm cantos arredondados: o recorte segue a
+    // curva na janela de composição e na própria janela do app, para o canto mostrar o
+    // que está por baixo.
+    let mut rects: Vec<xproto::Rectangle> = Vec::new();
+    for w in windows.values().filter(|w| w.mapped && w.width > 0 && w.height > 0) {
+        let (x, y) = ((w.x as f32 * k) as i16, (w.y as f32 * k) as i16);
+        let (ww, hh) = ((w.width as f32 * k) as u16, (w.height as f32 * k) as u16);
+        if w.undecorated {
+            let own = rounded_rects(ww, hh, CONTENT_RADIUS * k);
+            let _ = conn.shape_rectangles(SO::SET, SK::BOUNDING, xproto::ClipOrdering::UNSORTED, w.id, 0, 0, &own);
+            for r in own {
+                rects.push(xproto::Rectangle { x: r.x + x, y: r.y + y, ..r });
+            }
+        } else {
+            rects.push(xproto::Rectangle { x, y, width: ww, height: hh });
+        }
+    }
     let _ = conn.shape_rectangles(SO::SET, SK::BOUNDING, xproto::ClipOrdering::UNSORTED, window, 0, 0, &rects);
+}
+
+/// Raio dos cantos das janelas de conteúdo inteiro, em pontos.
+const CONTENT_RADIUS: f32 = 16.0;
+
+/// Retângulos de uma área `w` x `h` com os cantos arredondados de raio `r` (uma linha por
+/// linha de pixel, com o recuo da curva em cada extremidade).
+fn rounded_rects(w: u16, h: u16, r: f32) -> Vec<xproto::Rectangle> {
+    let (wf, hf) = (w as f32, h as f32);
+    let r = r.clamp(0.0, (wf / 2.0).min(hf / 2.0));
+    let mut out = Vec::with_capacity(h as usize);
+    for y in 0..h {
+        let yc = y as f32 + 0.5;
+        let inset = if yc < r {
+            r - (r * r - (r - yc).powi(2)).max(0.0).sqrt()
+        } else if yc > hf - r {
+            let d = yc - (hf - r);
+            r - (r * r - d * d).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let inset = inset.round() as u16;
+        if 2 * inset >= w {
+            continue;
+        }
+        out.push(xproto::Rectangle { x: inset as i16, y: y as i16, width: w - 2 * inset, height: 1 });
+    }
+    out
 }

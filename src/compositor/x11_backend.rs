@@ -45,6 +45,11 @@ pub struct Atoms {
     pub net_wm_name: xproto::Atom,
     pub utf8_string: xproto::Atom,
     pub net_wm_state: xproto::Atom,
+    /// Dica Motif: janela sem decoração do gerenciador (o app desenha a própria barra).
+    pub motif_wm_hints: xproto::Atom,
+    /// WM_CHANGE_STATE (minimizar com IconicState) e _NET_WM_MOVERESIZE (arrastar).
+    pub wm_change_state: xproto::Atom,
+    pub net_wm_moveresize: xproto::Atom,
     pub state_maximized_vert: xproto::Atom,
     pub state_maximized_horz: xproto::Atom,
     pub state_fullscreen: xproto::Atom,
@@ -77,6 +82,9 @@ impl Atoms {
             net_wm_name: atom(b"_NET_WM_NAME")?,
             utf8_string: atom(b"UTF8_STRING")?,
             net_wm_state: atom(b"_NET_WM_STATE")?,
+            motif_wm_hints: atom(b"_MOTIF_WM_HINTS")?,
+            wm_change_state: atom(b"WM_CHANGE_STATE")?,
+            net_wm_moveresize: atom(b"_NET_WM_MOVERESIZE")?,
             state_maximized_vert: atom(b"_NET_WM_STATE_MAXIMIZED_VERT")?,
             state_maximized_horz: atom(b"_NET_WM_STATE_MAXIMIZED_HORZ")?,
             state_fullscreen: atom(b"_NET_WM_STATE_FULLSCREEN")?,
@@ -521,19 +529,8 @@ impl X11Backend {
         // com owner_events=True: o cliente tambem recebe o clique normalmente, e o
         // compositor recebe copia para fazer hit-test de decocoes (barra de titulo,
         // botoes fechar/maximizar) e arrastre.
-        let _ = conn.grab_button(
-            true,
-            window,
-            xproto::EventMask::BUTTON_PRESS
-                | xproto::EventMask::BUTTON_RELEASE
-                | xproto::EventMask::POINTER_MOTION,
-            xproto::GrabMode::ASYNC,
-            xproto::GrabMode::ASYNC,
-            0u32,
-            0u32,
-            xproto::ButtonIndex::from(1),
-            xproto::ModMask::from(0u8),
-        );
+        // Sem grab de botão: os cliques vão direto às janelas (os apps recebem o clique);
+        // a barra e os botões do compositor ficam na própria janela de composição.
         let _ = conn.flush();
         let backend = X11Backend {
             conn: conn.clone(),
@@ -972,6 +969,20 @@ impl Shared {
             self.focus(ev.window);
         } else if ev.type_ == self.atoms.net_close_window {
             self.send_close(ev.window);
+        } else if ev.type_ == self.atoms.wm_change_state && data[0] == 3 {
+            // WM_CHANGE_STATE com IconicState (3): o app pede para minimizar.
+            self.minimize_window(ev.window);
+        } else if ev.type_ == self.atoms.net_wm_moveresize && data[2] == 8 {
+            // _NET_WM_MOVERESIZE, direção 8 (mover): o arrasto segue o ponteiro, como o da
+            // barra do compositor (a posição do ponteiro vira o deslocamento).
+            if let Ok(reply) = self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).ok_or(()) {
+                let at = self.scene.lock().ok().and_then(|s| s.windows.get(&ev.window).map(|w| (w.x, w.y)));
+                if let Some((wx, wy)) = at {
+                    let (ox, oy) = (reply.root_x - wx, reply.root_y - wy);
+                    *self.drag_window.lock().unwrap() = Some((ev.window, ox, oy));
+                    self.focus(ev.window);
+                }
+            }
         } else {
             tracing::trace!(
                 "X11 mensagem do cliente: janela {}, tipo {}",
@@ -1563,8 +1574,18 @@ impl Shared {
         let geom = self.conn.get_geometry(window)?.reply()?;
         self.conn
             .reparent_window(window, self.comp_window, offset, offset)?;
+        // Dica Motif (_MOTIF_WM_HINTS): flags com decorações e decorations = 0 quer dizer
+        // janela sem barra do gerenciador; o app desenha o próprio topo.
+        let undecorated = self
+            .conn
+            .get_property(false, window, self.atoms.motif_wm_hints, self.atoms.motif_wm_hints, 0, 5)?
+            .reply()
+            .ok()
+            .and_then(|r| r.value32().map(|mut v| (v.next(), v.nth(2))))
+            .is_some_and(|(flags, decorations)| flags.is_some_and(|f| f & 2 != 0) && decorations == Some(0));
         if let Ok(mut scene) = self.scene.lock() {
             scene.add_window(window, offset, offset, geom.width, geom.height);
+            scene.set_undecorated(window, undecorated);
         }
         if let Ok(mut layout) = self.layout.lock() {
             if !layout.clients.contains(&window) {
