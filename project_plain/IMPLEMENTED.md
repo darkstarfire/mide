@@ -2590,3 +2590,15 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
 - **Pacote Slackware:** `data/mide-x11-pacote` gera `/opt/mide-x11` com dono `root`, entrada `mide_x11` para o SDDM e número de build que sobe a cada pacote da mesma versão.
 
 **Limitações conhecidas:** o arrasto pela barra não move a janela sob o KWin; minimizadas não são restauradas pela dock/Alt+Tab (não testado); o foco ao clicar não é dado pelo compositor (só ao entrar com o ponteiro); os menus e popups da barra ainda têm cantos quadrados no X11.
+
+## Port X11: atalhos, restauração e foco (sessão de 2026-11-12, continuação)
+
+- **Atalhos globais de teclas especiais:** o keysym X era convertido como codepoint (`utf32_to_keysym`), e Tab virava `0x100ff09`. Nenhum atalho com tecla especial (Alt+Tab, Print, setas, Esc) funcionava no X11. Agora o keysym é usado como vem.
+- **Grab de teclas na raiz:** `XGrabKey` com `owner_events = false`, para a tecla chegar ao compositor mesmo com um app focado.
+- **Alt+Tab restaura minimizadas:** o ciclo inclui as minimizadas e restaura a escolhida.
+- **Canal de controle no X11:** `windows` lista as janelas X11 (minimizadas marcadas) e `focus <id>` restaura e foca. Antes, a dock não via as janelas no X11.
+- **Arrasto:** o kit solta o grab implícito do pressionar antes de pedir `_NET_WM_MOVERESIZE`, e o compositor prende o ponteiro durante o arrasto. Testado no compositor do `mide`.
+- **Foco ao clicar:** o kit dá o foco de teclado à janela de conteúdo no pressionar (testado).
+- **Menus e dicas da barra:** cantos pelo alfa do quadro (`Surface::present_shaped`). Testado com captura. As funções de recorte moraram no `mide-dock` e agora ficam em `shell/surface.rs`.
+
+**Pendente:** a barra de título do compositor para apps X11 comuns fica escondida atrás do app (o app é reparentado em `(x, y)`, e a barra é desenhada no mesmo lugar). Corrigir exige deslocar o app `TITLE_HEIGHT` e ajustar a geometria da cena, o maximizar, a tela cheia e o arrasto. Não feito nesta rodada.

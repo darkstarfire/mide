@@ -651,3 +651,11 @@
 - **Sem reparentar: o compositor não vê a janela:** janelas criadas como camadas (`override-redirect`) não passam pelo compositor; o recorte de título do compositor não se aplica a elas.
 - **Teste de Cargo temporário:** `[patch]` no `Cargo.toml` para testar o kit local deve ser revertido antes do commit; conferir `git diff -- Cargo.toml`.
 - **`pkill -f` e `rm -rf $VAR`:** o `pkill -f` casa com o próprio shell; o `rm -rf` com variável foi bloqueado pela checagem de segurança. Para testes, usar diretórios novos com nome único em vez de apagar.
+
+## Lições da continuação do port X11 (2026-11-12)
+
+- **`utf32_to_keysym` não é conversão de keysym:** ele trata o valor como codepoint Unicode e soma `0x01000000` a teclas especiais (Tab `0xff09` vira `0x100ff09`). Para keysym X, usar o valor como ele é.
+- **Grab de tecla com `owner_events = true` entrega ao app focado:** para atalhos de gerenciador, `false`, para a tecla chegar à raiz.
+- **Grab deixado por processo antigo:** um compositor de teste que continua vivo segura os grabs (`BadAccess` silencioso). Ao depurar atalhos, conferir se não há instâncias antigas no mesmo display, e encerrar só as próprias pelo PID.
+- **Grab implícito do pressionar:** o servidor dá ao app o grab do ponteiro até soltar o botão. O gerenciador não consegue prender o ponteiro enquanto ele existe; o app deve soltar antes de pedir o arrasto (`XUngrabPointer`), como o GTK faz.
+- **Teste com `XDG_RUNTIME_DIR` próprio:** o socket `mide-0` do `XDG_RUNTIME_DIR` pode estar em uso pela sessão real; usar um diretório curto (o limite do socket Unix é pequeno).
