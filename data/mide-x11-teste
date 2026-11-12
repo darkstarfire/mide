@@ -1,0 +1,61 @@
+#!/bin/sh
+# Teste do mide no backend X11 numa sessão de verdade, sem mexer na sessão que já está
+# rodando. Copia os programas do mide para ~/.local/share/mide-x11 e cria um xinitrc
+# próprio; depois, num terminal virtual livre, rode o `startx` que ele mostra.
+#
+# Uso:
+#   mide-x11-teste [--from PASTA]   copia os binários de PASTA (padrão: target/release
+#                                   do repositório, se existir) e prepara o teste
+#   mide-x11-teste --uninstall      remove a cópia e o xinitrc de teste
+
+set -eu
+
+DEST="${XDG_DATA_HOME:-$HOME/.local/share}/mide-x11"
+
+if [ "${1:-}" = "--uninstall" ]; then
+    rm -rf "$DEST"
+    echo "removido: $DEST"
+    exit 0
+fi
+
+FROM=""
+if [ "${1:-}" = "--from" ]; then
+    FROM="${2:-}"
+fi
+if [ -z "$FROM" ]; then
+    HERE="$(cd "$(dirname "$0")/.." && pwd)"
+    FROM="$HERE/target/release"
+fi
+if [ ! -d "$FROM" ]; then
+    echo "pasta de binários não encontrada: $FROM" >&2
+    echo "compile antes (cargo build --release) ou passe --from PASTA" >&2
+    exit 1
+fi
+
+mkdir -p "$DEST/bin"
+copied=0
+for f in "$FROM"/mide*; do
+    [ -f "$f" ] && [ -x "$f" ] || continue
+    cp "$f" "$DEST/bin/"
+    copied=$((copied + 1))
+done
+if [ "$copied" -eq 0 ]; then
+    echo "nenhum programa mide* executável em $FROM" >&2
+    exit 1
+fi
+
+# O xinitrc de teste é só este; não toca no ~/.xinitrc da pessoa.
+cat > "$DEST/xinitrc" <<XINIT
+#!/bin/sh
+# Sessão de teste do mide no backend X11 (gerada por mide-x11-teste).
+exec dbus-run-session env MIDE_BACKEND=x11 "$DEST/bin/mide"
+XINIT
+chmod +x "$DEST/xinitrc"
+
+echo "$copied programa(s) copiado(s) para $DEST/bin"
+echo
+echo "Para subir a sessão de teste:"
+echo "  1. Troque para um terminal virtual livre (Ctrl+Alt+F3, por exemplo) e entre."
+echo "  2. Rode:  startx $DEST/xinitrc -- :1 vt3"
+echo "  3. Para sair, volte ao outro terminal virtual (Ctrl+Alt+F1) e encerre o mide."
+echo "Os logs ficam em ~/.local/state/mide/logs/mide.log."
