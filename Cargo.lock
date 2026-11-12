@@ -2124,7 +2124,7 @@ dependencies = [
 [[package]]
 name = "mide-ui"
 version = "0.1.2"
-source = "git+https://github.com/darkstarfire/mide-ui?rev=442a847#442a847e2e43083526ee0c6b2b61481b6036ccec"
+source = "git+https://github.com/darkstarfire/mide-ui?rev=4dc451e#4dc451eca511c851f4ce516bb3a4a96025761d1f"
 dependencies = [
  "chrono",
  "cosmic-text",
