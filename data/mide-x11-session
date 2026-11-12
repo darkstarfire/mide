@@ -1,0 +1,13 @@
+#!/bin/sh
+# Sessão X11 do mide: é o que a tela de login executa ao escolher "mide_x11".
+# O servidor X já está de pé (o gerenciador de login o iniciou); o mide assume como
+# gerenciador de janelas. Fica em /opt/mide-x11/bin, separado do resto do sistema.
+
+export MIDE_BACKEND=x11
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=mide
+export XDG_SESSION_DESKTOP=mide
+
+# Barramento de sessão próprio, para a sessão não compartilhar serviços D-Bus com
+# outro desktop instalado (KDE, por exemplo) que esteja rodando no mesmo usuário.
+exec dbus-run-session -- /opt/mide-x11/bin/mide

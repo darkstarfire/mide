@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=mide_x11
+Comment=mide no backend X11 (teste)
+Exec=/opt/mide-x11/bin/mide-x11-session
+TryExec=/opt/mide-x11/bin/mide
+Type=Application
+DesktopNames=mide

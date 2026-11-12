@@ -1,0 +1,62 @@
+#!/bin/sh
+# Gera o pacote Slackware (.txz) de teste do mide no backend X11. Tudo fica em
+# /opt/mide-x11, exceto a entrada da tela de login (/usr/share/xsessions/mide_x11.desktop),
+# que o gerenciador de login precisa encontrar ali. `removepkg mide-x11` desfaz tudo.
+#
+# Uso: mide-x11-pacote [VERSAO] [PASTA_DOS_BINARIOS]
+#   VERSAO   padrão: a do Cargo.toml
+#   PASTA    padrão: target/release do repositório
+# Saída: target/mide-x11-pacote/mide-x11-VERSAO-x86_64-1.txz (MIDE_X11_PACOTE_DIR muda a pasta)
+
+set -eu
+
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$HERE/Cargo.toml" | head -1)}"
+FROM="${2:-$HERE/target/release}"
+OUT="${MIDE_X11_PACOTE_DIR:-$HERE/target/mide-x11-pacote}"
+ROOT="$OUT/root"
+
+[ -d "$FROM" ] || { echo "pasta de binários não encontrada: $FROM" >&2; exit 1; }
+[ -x "$FROM/mide" ] || { echo "falta $FROM/mide (compile com cargo build --release)" >&2; exit 1; }
+
+rm -rf "$ROOT"
+mkdir -p "$ROOT/opt/mide-x11/bin" "$ROOT/usr/share/xsessions" \
+         "$ROOT/usr/share/doc/mide-x11-$VERSION" "$ROOT/install"
+
+n=0
+for f in "$FROM"/mide*; do
+    [ -f "$f" ] && [ -x "$f" ] || continue
+    cp "$f" "$ROOT/opt/mide-x11/bin/"
+    n=$((n + 1))
+done
+cp "$HERE/data/mide-x11-session" "$ROOT/opt/mide-x11/bin/mide-x11-session"
+cp "$HERE/data/x11-sessions/mide_x11.desktop" "$ROOT/usr/share/xsessions/mide_x11.desktop"
+cat > "$ROOT/usr/share/doc/mide-x11-$VERSION/LEIA-ME" <<TXT
+mide no backend X11 (teste) versão $VERSION.
+
+Programas em /opt/mide-x11/bin. A entrada "mide_x11" da tela de login fica em
+/usr/share/xsessions/mide_x11.desktop. Para remover: removepkg mide-x11
+TXT
+
+cat > "$ROOT/install/slack-desc" <<DESC
+# HOW TO EDIT THIS FILE:
+# The "handy ruler" below makes it easier to edit a package description.
+# Line up the first '|' above the ':' following the base package name, and
+# the '|' on the right side marks the last digit of the package description.
+#
+mide-x11: mide-x11 (mide no backend X11, teste)
+mide-x11:
+mide-x11: Gerenciador de janelas X11 do mide, em /opt/mide-x11, com a entrada
+mide-x11: "mide_x11" na tela de login. Teste de sessão real, separado do sistema.
+mide-x11:
+mide-x11: Para remover: removepkg mide-x11
+DESC
+
+# Pacote = tar.xz com install/slack-desc. Os arquivos saem com dono root (uid/gid 0),
+# como o makepkg faz quando roda como root; o tar faz isso sem precisar de root aqui.
+mkdir -p "$OUT"
+PKG="$OUT/mide-x11-$VERSION-x86_64-1.txz"
+rm -f "$PKG"
+tar --owner=0 --group=0 --numeric-owner -cJf "$PKG" -C "$ROOT" .
+echo "$n programa(s) no pacote"
+echo "pacote: $PKG"
