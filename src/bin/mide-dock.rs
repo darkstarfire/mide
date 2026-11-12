@@ -387,7 +387,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             let strut = if autohide { None } else { Some((Edge::Bottom, reserved_zone() as u32)) };
             let layer = session.layer(&LayerSpec { app_id: "mide-dock".into(), kind: Kind::Dock, rect, strut, keyboard: false })?;
             let peek_rect = Rect { x: (sw as i32 - width as i32) / 2, y: sh as i32 - PEEK_HEIGHT as i32, w: width.max(1), h: PEEK_HEIGHT };
-            let peek = session.layer(&LayerSpec { app_id: "mide-dock-peek".into(), kind: Kind::Dock, rect: peek_rect, strut: None, keyboard: false })?;
+            let mut peek = session.layer(&LayerSpec { app_id: "mide-dock-peek".into(), kind: Kind::Dock, rect: peek_rect, strut: None, keyboard: false })?;
+            // A faixa de revelação só recebe o ponteiro: sem desenho (o fundo dela seria
+            // uma linha preta na borda da tela), com a área de entrada inteira.
+            let _ = peek.set_bounding_region(Some(Rect { x: 0, y: 0, w: 0, h: 0 }));
+            let _ = peek.set_input_region(Some(Rect { x: 0, y: 0, w: peek_rect.w, h: peek_rect.h }));
             (
                 None,
                 Some(session),
@@ -773,6 +777,66 @@ struct Zoom {
     configured: bool,
 }
 
+/// Cantos arredondados da dock no X11, sem compositor: o recorte (SHAPE) da janela segue
+/// a curva, e os cantos mostram o que está por baixo, em vez do preto da janela. Só é
+/// reaplicado quando a janela muda de tamanho.
+fn round_x11_shape(window: u32, w: u32, h: u32, radius: f32) {
+    use std::sync::{Mutex, OnceLock};
+    use x11rb::connection::{Connection as _, RequestConnection as _};
+    use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+    use x11rb::protocol::xproto::ClipOrdering;
+    use x11rb::rust_connection::RustConnection;
+    static CONN: OnceLock<Option<RustConnection>> = OnceLock::new();
+    static LAST: Mutex<Option<(u32, u32, u32)>> = Mutex::new(None);
+    if LAST.lock().ok().and_then(|g| *g) == Some((window, w, h)) {
+        return;
+    }
+    let Some(conn) = CONN.get_or_init(|| RustConnection::connect(None).ok().map(|(c, _)| c)).as_ref() else {
+        return;
+    };
+    let _ = conn.prefetch_extension_information("SHAPE");
+    if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
+        return;
+    }
+    let rects = corner_rects(w, h, radius);
+    if conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &rects).is_ok() {
+        let _ = conn.flush();
+        if let Ok(mut last) = LAST.lock() {
+            *last = Some((window, w, h));
+        }
+    }
+}
+
+/// Retângulos de uma faixa `w` x `h` com os cantos arredondados de raio `r`: uma linha
+/// por linha de pixel, com o recuo da curva em cada extremidade.
+fn corner_rects(w: u32, h: u32, r: f32) -> Vec<x11rb::protocol::xproto::Rectangle> {
+    let (wf, hf) = (w as f32, h as f32);
+    let r = r.clamp(0.0, (wf / 2.0).min(hf / 2.0));
+    let mut out = Vec::with_capacity(h as usize);
+    for y in 0..h {
+        let yc = y as f32 + 0.5;
+        let inset = if yc < r {
+            r - (r * r - (r - yc).powi(2)).max(0.0).sqrt()
+        } else if yc > hf - r {
+            let d = yc - (hf - r);
+            r - (r * r - d * d).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let inset = inset.round() as u32;
+        if 2 * inset >= w {
+            continue;
+        }
+        out.push(x11rb::protocol::xproto::Rectangle {
+            x: inset as i16,
+            y: y as i16,
+            width: (w - 2 * inset) as u16,
+            height: 1,
+        });
+    }
+    out
+}
+
 impl Dock {
     /// Desenha a faixa e os ícones num buffer de memória e apresenta.
     fn draw(&mut self) {
@@ -913,6 +977,9 @@ impl Dock {
     fn present(&mut self, pixmap: &Pixmap) {
         if let Err(err) = self.layer.present(pixmap, (self.width, self.height), [0, 0, 0]) {
             tracing::warn!("dock: quadro não foi enviado ({err})");
+        }
+        if let Some(window) = self.layer.x11_window() {
+            round_x11_shape(window, self.width, self.height, DOCK_RADIUS);
         }
     }
 

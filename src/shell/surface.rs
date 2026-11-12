@@ -48,6 +48,14 @@ impl Surface {
         }
     }
 
+    /// Id da janela X11 da superfície (`None` no Wayland).
+    pub fn x11_window(&self) -> Option<u32> {
+        match self {
+            Surface::X11 { layer, .. } => Some(layer.window()),
+            Surface::Wayland { .. } => None,
+        }
+    }
+
     /// A janela X11 é esta? (para casar com o `window` do evento).
     pub fn is_x11(&self, window: u32) -> bool {
         match self {
