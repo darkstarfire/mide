@@ -781,30 +781,37 @@ struct Zoom {
 /// a curva, e os cantos mostram o que está por baixo, em vez do preto da janela. Só é
 /// reaplicado quando a janela muda de tamanho.
 fn round_x11_shape(window: u32, w: u32, h: u32, radius: f32) {
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
+    static LAST: Mutex<Option<(u32, u32, u32)>> = Mutex::new(None);
+    if LAST.lock().ok().and_then(|g| *g) == Some((window, w, h)) {
+        return;
+    }
+    if set_x11_shape(window, &corner_rects(w, h, radius)) {
+        if let Ok(mut last) = LAST.lock() {
+            *last = Some((window, w, h));
+        }
+    }
+}
+
+/// Recorte SHAPE da janela X11 com os retângulos dados (coordenadas da janela). Vale
+/// para qualquer janela X11 do programa; devolve se o X aceitou.
+fn set_x11_shape(window: u32, rects: &[x11rb::protocol::xproto::Rectangle]) -> bool {
+    use std::sync::OnceLock;
     use x11rb::connection::{Connection as _, RequestConnection as _};
     use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
     use x11rb::protocol::xproto::ClipOrdering;
     use x11rb::rust_connection::RustConnection;
     static CONN: OnceLock<Option<RustConnection>> = OnceLock::new();
-    static LAST: Mutex<Option<(u32, u32, u32)>> = Mutex::new(None);
-    if LAST.lock().ok().and_then(|g| *g) == Some((window, w, h)) {
-        return;
-    }
     let Some(conn) = CONN.get_or_init(|| RustConnection::connect(None).ok().map(|(c, _)| c)).as_ref() else {
-        return;
+        return false;
     };
     let _ = conn.prefetch_extension_information("SHAPE");
     if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
-        return;
+        return false;
     }
-    let rects = corner_rects(w, h, radius);
-    if conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &rects).is_ok() {
-        let _ = conn.flush();
-        if let Ok(mut last) = LAST.lock() {
-            *last = Some((window, w, h));
-        }
-    }
+    let ok = conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, rects).is_ok();
+    let _ = conn.flush();
+    ok
 }
 
 /// Retângulos de uma faixa `w` x `h` com os cantos arredondados de raio `r`: uma linha
@@ -2759,6 +2766,16 @@ impl Dock {
         text.draw(&mut pixmap, &tip.text, x + 10.0, y + (bh - 13.0 * 1.25) / 2.0, 13.0, FontWeight::Regular, theme.text);
         if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
             tracing::warn!("dica da dock: quadro não foi enviado ({err})");
+        }
+        // No X11 sem compositor a janela é retangular: o recorte deixa só a cápsula,
+        // e o resto mostra o que está por baixo (sem a faixa preta).
+        if let Some(window) = tip.layer.x11_window() {
+            let mut rects = corner_rects(tw as u32, bh as u32, 12.0);
+            for r in &mut rects {
+                r.x += x.round() as i16;
+                r.y += y.round() as i16;
+            }
+            set_x11_shape(window, &rects);
         }
     }
 
