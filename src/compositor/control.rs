@@ -408,14 +408,25 @@ pub fn handle(state: &mut State, command: &str) -> String {
             "ok\n".into()
         }
         // Janelas, uma por linha: `id<TAB>app_id<TAB>título<TAB>focused|normal|minimized`.
-        Some("windows") => windows(state),
+        Some("windows") => {
+            if crate::X11_BACKEND.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::x11_backend::windows_text().unwrap_or_default()
+            } else {
+                windows(state)
+            }
+        }
         // Telas, uma por linha: `nome<TAB>descrição<TAB>here` (a da janela em foco) ou
         // `other`, para o menu Janela → Mover para.
         Some("window-outputs") => outputs_for_menu(state),
         // Foca a janela pelo número, restaurando se estiver minimizada.
         Some("focus") => {
             let id = words.next().and_then(|w| w.parse::<u64>().ok()).unwrap_or(0);
-            if focus_window_id(state, id) { "ok\n".into() } else { "none\n".into() }
+            let ok = if crate::X11_BACKEND.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::x11_backend::focus_window(id)
+            } else {
+                focus_window_id(state, id)
+            };
+            if ok { "ok\n".into() } else { "none\n".into() }
         }
         // A dock vai abrir um app: a primeira janela dele sai do ícone (efeito lâmpada).
         Some("launching") => {

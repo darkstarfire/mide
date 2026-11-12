@@ -243,6 +243,67 @@ pub struct X11Backend {
 
 /// Conexão, janelas gerenciadas e raiz, para responder "há janela sobre a dock?" fora do
 /// event loop (o controle pergunta a cada 250 ms).
+/// Estado que o canal de controle consulta para listar e focar janelas no X11.
+struct X11Query {
+    conn: Arc<RustConnection>,
+    layout: Arc<Mutex<LayoutState>>,
+    scene: Arc<Mutex<X11Scene>>,
+}
+
+static X11_QUERY: std::sync::OnceLock<X11Query> = std::sync::OnceLock::new();
+
+/// Lista de janelas para a dock (`id<TAB>app<TAB>título<TAB>focused|normal|minimized`).
+pub fn windows_text() -> Option<String> {
+    let q = X11_QUERY.get()?;
+    let (clients, minimized, active) = {
+        let l = q.layout.lock().ok()?;
+        (l.clients.clone(), l.minimized.clone(), l.active)
+    };
+    let mut out = String::new();
+    for w in clients {
+        let title = q.scene.lock().ok().and_then(|s| s.windows.get(&w).and_then(|x| x.title.clone())).unwrap_or_default();
+        let app = q
+            .conn
+            .get_property(false, w, xproto::AtomEnum::WM_CLASS, xproto::AtomEnum::STRING, 0, 256)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| {
+                let parts: Vec<&[u8]> = r.value.split(|b| *b == 0).collect();
+                String::from_utf8_lossy(parts.get(1).copied().unwrap_or(b"")).into_owned()
+            })
+            .unwrap_or_default();
+        let status = if minimized.contains(&w) {
+            "minimized"
+        } else if active == Some(w) {
+            "focused"
+        } else {
+            "normal"
+        };
+        out.push_str(&format!("{w}\t{app}\t{title}\t{status}\n"));
+    }
+    Some(out)
+}
+
+/// Foca uma janela pelo id (X11): restaura se estiver minimizada. `false` se não existe.
+pub fn focus_window(id: u64) -> bool {
+    let Some(q) = X11_QUERY.get() else { return false };
+    let w = id as xproto::Window;
+    let known = q.layout.lock().map(|l| l.clients.contains(&w)).unwrap_or(false);
+    if !known {
+        return false;
+    }
+    if let Ok(mut l) = q.layout.lock() {
+        l.minimized.retain(|m| *m != w);
+        l.active = Some(w);
+    }
+    let _ = q.conn.map_window(w);
+    let _ = q.conn.set_input_focus(xproto::InputFocus::POINTER_ROOT, w, x11rb::CURRENT_TIME);
+    let aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
+    let _ = q.conn.configure_window(w, &aux);
+    let _ = q.conn.flush();
+    true
+}
+
 static DOCK_QUERY: std::sync::OnceLock<(Arc<RustConnection>, Arc<Mutex<LayoutState>>, xproto::Window)> = std::sync::OnceLock::new();
 
 /// Janela `mide-dock` (classe WM_CLASS) entre os filhos da raiz: (x, y, largura, altura).
@@ -548,6 +609,8 @@ impl X11Backend {
 
         // Consulta de "há janela sobre a dock?" para o controle (ver `dock_covered`).
         let _ = DOCK_QUERY.set((conn.clone(), layout.clone(), root));
+        // Consulta de janelas e foco para o controle (a dock lista e restaura pelo X11).
+        let _ = X11_QUERY.set(X11Query { conn: conn.clone(), layout: layout.clone(), scene: scene.clone() });
         let shared = Arc::new(Shared {
             conn: conn.clone(),
             atoms,
