@@ -513,8 +513,10 @@ impl X11Backend {
             };
             let mask = modifiers_mask(&mods);
             for &keycode in keymap.keycodes_for_keysym(u32::from(binding.key)) {
+                // owner_events = false: a tecla vai à raiz (o compositor), mesmo com um app focado
+                // que também seleciona KeyPress; com true ela ia só para o app.
                 let _ = conn.grab_key(
-                    true,
+                    false,
                     root,
                     xproto::ModMask::from(mask),
                     keycode,
@@ -730,7 +732,7 @@ impl Shared {
             }
             Event::KeyPress(ev) => {
                 // Atalho global pressionado na raiz? Executa a ação configurada.
-                if ev.event == self.root && !self.is_locked() {
+                        if ev.event == self.root && !self.is_locked() {
                     if let Some(action) = self.global_binding(state, ev.detail, u16::from(ev.state)) {
                         if action == crate::config::Action::LockScreen {
                             if let Err(err) = self.lock() {
@@ -1246,7 +1248,9 @@ impl Shared {
         if keysym == 0 {
             return None;
         }
-        let keysym = xkbcommon::xkb::utf32_to_keysym(keysym);
+        // `keysym_for_event` já devolve o keysym X (0xff09 para Tab), não um codepoint: não
+        // converter com utf32_to_keysym (ele acrescentava 0x01000000 às teclas especiais).
+        let keysym = xkbcommon::xkb::Keysym::from(keysym);
         if let Some(action) = state.config.match_binding(mods, keysym) {
             tracing::info!("atalho global X11: {}", action);
             return Some(action);
