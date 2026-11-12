@@ -25,6 +25,35 @@ pub struct X11Render {
     pub buffer: Vec<u8>,
 }
 
+/// Envia um quadro RGB (3 bytes por pixel) ao servidor X, que na profundidade 24 usa
+/// 32 bits por pixel (BGRX). Converte e manda em pedaços de linhas, para cada
+/// requisição caber no tamanho máximo do protocolo.
+pub(crate) fn put_rgb_frame(
+    conn: &RustConnection,
+    window: xproto::Window,
+    gc: xproto::Gcontext,
+    width: u32,
+    height: u32,
+    rgb: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let row_rgb = width as usize * 3;
+    let row_bgrx = width as usize * 4;
+    let rows_per = (200_000 / row_bgrx.max(1)).max(1);
+    let mut y0 = 0usize;
+    let mut buf = Vec::with_capacity(rows_per * row_bgrx);
+    while y0 < height as usize {
+        let n = rows_per.min(height as usize - y0);
+        buf.clear();
+        for px in rgb[y0 * row_rgb..(y0 + n) * row_rgb].chunks_exact(3) {
+            buf.extend_from_slice(&[px[2], px[1], px[0], 0]);
+        }
+        conn.put_image(xproto::ImageFormat::Z_PIXMAP, window, gc, width as u16, n as u16, 0, y0 as i16, 0, 24, &buf)?;
+        y0 += n;
+    }
+    conn.flush()?;
+    Ok(())
+}
+
 impl X11Render {
     /// Cria o contexto de renderizacao associado a janela X11 existente.
     pub fn new(
@@ -302,20 +331,7 @@ impl X11Render {
         }
 
         // Copia os pixels para a janela X11 via XPutImage.
-        self._conn.put_image(
-            xproto::ImageFormat::Z_PIXMAP,
-            self.window,
-            self.gc,
-            self.width as u16,
-            self.height as u16,
-            0, // dst_x
-            0, // dst_y
-            0, // left_pad
-            24, // depth (24-bit RGB)
-            &self.buffer,
-        )?;
-        self._conn.flush()?;
-        Ok(())
+        put_rgb_frame(&self._conn, self.window, self.gc, self.width, self.height, &self.buffer)
     }
 
     /// Redimensiona o contexto quando a janela muda de tamanho.

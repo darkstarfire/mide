@@ -566,7 +566,7 @@ impl X11Backend {
         loop_handle.insert_source(
             Generic::new(FdWrapper(raw_fd), Interest::READ, Mode::Level),
             move |_, _, state: &mut State| {
-                shared_dispatch.dispatch(state);
+                shared_dispatch.dispatch(state)?;
                 Ok(PostAction::Continue)
             },
         )?;
@@ -578,7 +578,7 @@ impl X11Backend {
         let scene_clone = scene.clone();
         let mut frame_count: u64 = 0;
         loop_handle.insert_source(
-            Timer::from_duration(Duration::from_millis(16)),
+            Timer::from_duration(Duration::from_millis(33)),
             move |_, _, state: &mut State| {
                 let _ = state;
                 // Desenha o quadro completo usando a cena X11.
@@ -588,7 +588,7 @@ impl X11Backend {
                     }
                 }
                 frame_count = frame_count.wrapping_add(1);
-                smithay::reexports::calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(16))
+                smithay::reexports::calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(33))
             },
         )?;
 
@@ -605,15 +605,18 @@ impl X11Backend {
 
 impl Shared {
     /// Despacha todos os eventos X11 pendentes.
-    fn dispatch(&self, state: &mut State) {
+    /// Uma queda da conexão com o servidor X devolve erro para o laço de eventos parar.
+    /// Sem isso, o descritor continua legível e o aviso se repetiria a cada volta.
+    fn dispatch(&self, state: &mut State) -> std::io::Result<()> {
         loop {
             match self.conn.poll_for_event() {
                 Ok(Some(event)) => self.handle_event(state, event),
-                Ok(None) => break,
-                Err(err) => {
-                    tracing::warn!("erro ao ler evento X11: {err}");
-                    break;
+                Ok(None) => return Ok(()),
+                // Só a queda da conexão é fatal; erros de protocolo não impedem o resto.
+                Err(x11rb::errors::ConnectionError::IoError(err)) => {
+                    return Err(std::io::Error::new(err.kind(), format!("conexão com o servidor X11: {err}")));
                 }
+                Err(err) => tracing::debug!("evento X11 ignorado: {err}"),
             }
         }
     }
@@ -897,6 +900,10 @@ impl Shared {
                         scene.mark_content_dirty(ev.window);
                         scene.mark_dirty_rect(ev.window, ev.x as i16, ev.y as i16, ev.width as u16, ev.height as u16);
                     }
+                } else if let Ok(mut scene) = self.scene.lock() {
+                    // A janela de composição foi exposta (algo passou por cima): sem
+                    // cópia de fundo, a área precisa ser pintada de novo.
+                    scene.frame_dirty = true;
                 }
             }
             Event::ConfigureNotify(ev) => {

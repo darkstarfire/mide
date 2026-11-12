@@ -5,9 +5,8 @@
 //! e maximizar).
 
 use std::collections::HashMap;
-use x11rb::connection::Connection;
 use x11rb::protocol::xproto;
-use x11rb::protocol::xproto::ConnectionExt;
+use x11rb::rust_connection::RustConnection;
 use crate::x11_render::X11Render;
 
 /// Regiao da janela onde um clique caiu.
@@ -109,6 +108,9 @@ pub struct X11Scene {
     /// Fator de escala da saida (padrão 1,0; no X11 nao existe
     /// wp_fractional_scale_v1, entao vale para toda a sessao).
     pub output_scale: f32,
+    /// A cena mudou desde o último quadro: só então desenha e envia à tela (economiza
+    /// CPU em máquinas fracas quando nada se mexe).
+    pub frame_dirty: bool,
 }
 
 impl X11Scene {
@@ -120,22 +122,26 @@ impl X11Scene {
             output_width: 0,
             output_height: 0,
             output_scale: 1.0,
+            frame_dirty: true,
         }
     }
 
     /// Atualiza as dimensoes da saida.
     pub fn set_output_size(&mut self, width: u16, height: u16) {
+        self.frame_dirty = true;
         self.output_width = width;
         self.output_height = height;
     }
 
     /// Define o fator de escala da saida.
     pub fn set_output_scale(&mut self, scale: f32) {
+        self.frame_dirty = true;
         self.output_scale = scale;
     }
 
     /// Registra uma janela X11 cliente na cena.
     pub fn add_window(&mut self, id: xproto::Window, x: i16, y: i16, w: u16, h: u16) {
+        self.frame_dirty = true;
         self.windows.insert(
             id,
             X11Window {
@@ -160,11 +166,13 @@ impl X11Scene {
 
     /// Remove uma janela da cena.
     pub fn remove_window(&mut self, id: xproto::Window) {
+        self.frame_dirty = true;
         self.windows.remove(&id);
     }
 
     /// Marca uma janela como mapeada ou nao.
     pub fn set_mapped(&mut self, id: xproto::Window, mapped: bool) {
+        self.frame_dirty = true;
         if let Some(win) = self.windows.get_mut(&id) {
             win.mapped = mapped;
         }
@@ -179,6 +187,7 @@ impl X11Scene {
         w: u16,
         h: u16,
     ) {
+        self.frame_dirty = true;
         if let Some(win) = self.windows.get_mut(&id) {
             win.x = x;
             win.y = y;
@@ -191,6 +200,7 @@ impl X11Scene {
 
     /// Define o titulo de uma janela.
     pub fn set_title(&mut self, id: xproto::Window, title: Option<String>) {
+        self.frame_dirty = true;
         if let Some(win) = self.windows.get_mut(&id) {
             win.title = title;
         }
@@ -198,6 +208,7 @@ impl X11Scene {
 
     /// Marca o conteudo de uma janela como precisando de recaptura (appos Expose/ConfigureNotify).
     pub fn mark_content_dirty(&mut self, id: xproto::Window) {
+        self.frame_dirty = true;
         if let Some(win) = self.windows.get_mut(&id) {
             win.content_dirty = true;
         }
@@ -206,6 +217,7 @@ impl X11Scene {
     /// Marca uma regiao da janela como suja, precisando de redesenho.
     /// Coordenadas em pixels de saida, relativas ao canto superior-esquerdo da janela.
     pub fn mark_dirty_rect(&mut self, id: xproto::Window, x: i16, y: i16, w: u16, h: u16) {
+        self.frame_dirty = true;
         if let Some(win) = self.windows.get_mut(&id) {
             if w == 0 || h == 0 {
                 return;
@@ -233,6 +245,7 @@ impl X11Scene {
         fullscreen: bool,
         normal: Option<(i16, i16, u16, u16)>,
     ) {
+        self.frame_dirty = true;
         if let Some(win) = self.windows.get_mut(&id) {
             win.maximized_vert = maximized_vert;
             win.maximized_horz = maximized_horz;
@@ -270,6 +283,11 @@ impl X11Scene {
         render: &mut crate::x11_render::X11Render,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let k = self.output_scale;
+        let changed = self.frame_dirty
+            || self.windows.values().any(|w| w.content_dirty || !w.dirty_rects.is_empty());
+        if !changed {
+            return Ok(());
+        }
 
         // Fundo: cor solida (sempre desenha, pois janelas nao cobrem tudo).
         render.fill_rect(0, 0, self.output_width as u32, self.output_height as u32, (0x1a, 0x1a, 0x20));
@@ -489,20 +507,9 @@ impl X11Scene {
         }
 
         // Copia os pixels para a janela X11.
-        render._conn.put_image(
-            xproto::ImageFormat::Z_PIXMAP,
-            render.window,
-            render.gc,
-            render.width as u16,
-            render.height as u16,
-            0,
-            0,
-            0,
-            24,
-            &render.buffer,
-        )?;
-        render._conn.flush()?;
-        Ok(())
+        self.frame_dirty = false;
+        apply_shape(conn, render.window, &self.windows, k);
+        crate::x11_render::put_rgb_frame(&render._conn, render.window, render.gc, render.width, render.height, &render.buffer)
     }
 }
 
@@ -510,4 +517,32 @@ impl Default for X11Scene {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Recorte da janela de composição: só as molduras das janelas clientes ficam visíveis.
+/// O resto da tela mostra o que está por baixo (a área de trabalho), sem a cena pintar
+/// e copiar a tela inteira. Sem a extensão SHAPE, a janela fica inteira, como antes.
+fn apply_shape(
+    conn: &RustConnection,
+    window: xproto::Window,
+    windows: &HashMap<xproto::Window, X11Window>,
+    k: f32,
+) {
+    use x11rb::connection::RequestConnection as _;
+    use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+    let _ = conn.prefetch_extension_information("SHAPE");
+    if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
+        return;
+    }
+    let rects: Vec<xproto::Rectangle> = windows
+        .values()
+        .filter(|w| w.mapped && w.width > 0 && w.height > 0)
+        .map(|w| xproto::Rectangle {
+            x: (w.x as f32 * k) as i16,
+            y: (w.y as f32 * k) as i16,
+            width: (w.width as f32 * k) as u16,
+            height: (w.height as f32 * k) as u16,
+        })
+        .collect();
+    let _ = conn.shape_rectangles(SO::SET, SK::BOUNDING, xproto::ClipOrdering::UNSORTED, window, 0, 0, &rects);
 }
