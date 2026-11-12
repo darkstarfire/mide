@@ -809,9 +809,44 @@ fn set_x11_shape(window: u32, rects: &[x11rb::protocol::xproto::Rectangle]) -> b
     if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
         return false;
     }
-    let ok = conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, rects).is_ok();
+    // Uma requisição tem tamanho máximo: o primeiro bloco troca o recorte, os seguintes
+    // somam a ele (UNION).
+    let mut ok = true;
+    if rects.is_empty() {
+        ok = conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &[]).is_ok();
+    }
+    for (i, chunk) in rects.chunks(8000).enumerate() {
+        let op = if i == 0 { SO::SET } else { SO::UNION };
+        ok &= conn.shape_rectangles(op, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, chunk).is_ok();
+    }
     let _ = conn.flush();
     ok
+}
+
+/// Recorte da janela pelo alfa do quadro: o que tem alfa de `min_alpha` para cima fica
+/// visível, o resto sai. Sem compositor no X11 a janela é retangular, e as bordas
+/// semitransparentes seriam misturadas com preto (halo escuro): por isso o limite alto
+/// nas ampliações, onde as bordas são só dos ícones.
+fn shape_from_alpha(window: u32, pixmap: &tiny_skia::Pixmap, min_alpha: u8) {
+    let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
+    let data = pixmap.data();
+    let mut rects = Vec::new();
+    for y in 0..h {
+        let row = &data[y * w * 4..(y + 1) * w * 4];
+        let mut x = 0;
+        while x < w {
+            if row[x * 4 + 3] < min_alpha {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < w && row[x * 4 + 3] >= min_alpha {
+                x += 1;
+            }
+            rects.push(x11rb::protocol::xproto::Rectangle { x: start as i16, y: y as i16, width: (x - start) as u16, height: 1 });
+        }
+    }
+    set_x11_shape(window, &rects);
 }
 
 /// Retângulos de uma faixa `w` x `h` com os cantos arredondados de raio `r`: uma linha
@@ -1760,6 +1795,9 @@ impl Dock {
         let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
         if let Err(err) = zoom.layer.present(&pixmap, size, [0, 0, 0]) {
             tracing::warn!("ampliação da dock: quadro não foi enviado ({err})");
+        }
+        if let Some(window) = zoom.layer.x11_window() {
+            shape_from_alpha(window, &pixmap, 250);
         }
         self.report_icons();
     }
@@ -2750,6 +2788,10 @@ impl Dock {
             if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
                 tracing::warn!("dica da dock: quadro não foi enviado ({err})");
             }
+            // Escondida: sem nada pintado, a janela inteira sai do recorte.
+            if let Some(window) = tip.layer.x11_window() {
+                shape_from_alpha(window, &pixmap, 128);
+            }
             return;
         }
         let theme = mide::kit::Theme::system();
@@ -2767,15 +2809,10 @@ impl Dock {
         if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
             tracing::warn!("dica da dock: quadro não foi enviado ({err})");
         }
-        // No X11 sem compositor a janela é retangular: o recorte deixa só a cápsula,
-        // e o resto mostra o que está por baixo (sem a faixa preta).
+        // No X11 sem compositor a janela é retangular: o recorte pelo alfa deixa só a
+        // cápsula, e o resto mostra o que está por baixo (sem a faixa preta).
         if let Some(window) = tip.layer.x11_window() {
-            let mut rects = corner_rects(tw as u32, bh as u32, 12.0);
-            for r in &mut rects {
-                r.x += x.round() as i16;
-                r.y += y.round() as i16;
-            }
-            set_x11_shape(window, &rects);
+            shape_from_alpha(window, &pixmap, 128);
         }
     }
 
