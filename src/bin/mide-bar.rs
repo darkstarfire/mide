@@ -2373,7 +2373,7 @@ impl Bar {
             return;
         };
         let size = (menu.width, menu.height);
-        if let Err(err) = menu.layer.present(pixmap, size, [0, 0, 0]) {
+        if let Err(err) = menu.layer.present_shaped(pixmap, size, [0, 0, 0], 128) {
             tracing::warn!("menu da barra: quadro não foi enviado ({err})");
         }
     }
@@ -2902,7 +2902,7 @@ impl Bar {
         let text = tip.text.clone();
         self.text.draw(&mut pixmap, &text, 9.0, 1.0 + (bh - theme.font_small * 1.25) / 2.0, theme.font_small, FontWeight::Regular, theme.text);
         let Some(tip) = self.tip.as_mut() else { return };
-        if let Err(err) = tip.layer.present(&pixmap, (w, h), [0, 0, 0]) {
+        if let Err(err) = tip.layer.present_shaped(&pixmap, (w, h), [0, 0, 0], 128) {
             tracing::warn!("dica da barra: quadro não foi enviado ({err})");
         }
     }

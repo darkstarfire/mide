@@ -162,6 +162,24 @@ impl Surface {
         }
     }
 
+    /// Como `present`, e no X11 recorta a janela pelo alfa do quadro (cantos arredondados
+    /// e sombra fora da forma saem; sem compositor a janela é retangular e o resto sairia
+    /// preto). Só para superfícies de tamanho certo, como menus e dicas.
+    pub fn present_shaped(&mut self, canvas: &Pixmap, points: (u32, u32), background: [u8; 3], min_alpha: u8) -> Result<(), String> {
+        match self {
+            Surface::X11 { layer, rect, screen_canvas } => {
+                let (w, h) = (rect.w.max(1), rect.h.max(1));
+                let mut out = Pixmap::new(w, h).ok_or("quadro de tamanho zero")?;
+                let (dx, dy) = if *screen_canvas { (-rect.x, -rect.y) } else { (0, 0) };
+                out.draw_pixmap(dx, dy, canvas.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                layer.present(&out, background).map_err(|e| e.to_string())?;
+                shape_from_alpha(layer.window(), &out, min_alpha);
+                Ok(())
+            }
+            Surface::Wayland { .. } => self.present(canvas, points, background),
+        }
+    }
+
     /// Muda o tamanho da superfície (em pontos). No X11 também move a janela para `rect`.
     pub fn resize(&mut self, points: (u32, u32), rect: Option<Rect>) -> Result<(), String> {
         match self {
@@ -254,3 +272,60 @@ impl std::os::fd::AsFd for XFd {
         unsafe { std::os::fd::BorrowedFd::borrow_raw(self.0) }
     }
 }
+
+/// Recorte SHAPE da janela X11 com os retângulos dados (coordenadas da janela). Vale
+/// para qualquer janela X11 do programa; devolve se o X aceitou.
+pub fn set_x11_shape(window: u32, rects: &[x11rb::protocol::xproto::Rectangle]) -> bool {
+    use std::sync::OnceLock;
+    use x11rb::connection::{Connection as _, RequestConnection as _};
+    use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+    use x11rb::protocol::xproto::ClipOrdering;
+    use x11rb::rust_connection::RustConnection;
+    static CONN: OnceLock<Option<RustConnection>> = OnceLock::new();
+    let Some(conn) = CONN.get_or_init(|| RustConnection::connect(None).ok().map(|(c, _)| c)).as_ref() else {
+        return false;
+    };
+    let _ = conn.prefetch_extension_information("SHAPE");
+    if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
+        return false;
+    }
+    // Uma requisição tem tamanho máximo: o primeiro bloco troca o recorte, os seguintes
+    // somam a ele (UNION).
+    let mut ok = true;
+    if rects.is_empty() {
+        ok = conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &[]).is_ok();
+    }
+    for (i, chunk) in rects.chunks(8000).enumerate() {
+        let op = if i == 0 { SO::SET } else { SO::UNION };
+        ok &= conn.shape_rectangles(op, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, chunk).is_ok();
+    }
+    let _ = conn.flush();
+    ok
+}
+
+/// Recorte da janela pelo alfa do quadro: o que tem alfa de `min_alpha` para cima fica
+/// visível, o resto sai. Sem compositor no X11 a janela é retangular, e as bordas
+/// semitransparentes seriam misturadas com preto (halo escuro): por isso o limite alto
+/// nas ampliações, onde as bordas são só dos ícones.
+pub fn shape_from_alpha(window: u32, pixmap: &tiny_skia::Pixmap, min_alpha: u8) {
+    let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
+    let data = pixmap.data();
+    let mut rects = Vec::new();
+    for y in 0..h {
+        let row = &data[y * w * 4..(y + 1) * w * 4];
+        let mut x = 0;
+        while x < w {
+            if row[x * 4 + 3] < min_alpha {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < w && row[x * 4 + 3] >= min_alpha {
+                x += 1;
+            }
+            rects.push(x11rb::protocol::xproto::Rectangle { x: start as i16, y: y as i16, width: (x - start) as u16, height: 1 });
+        }
+    }
+    set_x11_shape(window, &rects);
+}
+

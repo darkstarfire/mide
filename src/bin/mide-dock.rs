@@ -18,6 +18,7 @@
 
 use mide::tr;
 use mide::kit::x11_layer::{self, Edge, Input, Kind, LayerSpec, PointerKind, Rect};
+use mide::shell::surface::{set_x11_shape, shape_from_alpha};
 use mide::shell::surface::{ptr_from_x11, PtrKind, Surface, XFd};
 use std::{
     collections::{HashMap, HashSet},
@@ -793,36 +794,6 @@ fn round_x11_shape(window: u32, w: u32, h: u32, radius: f32) {
     }
 }
 
-/// Recorte SHAPE da janela X11 com os retângulos dados (coordenadas da janela). Vale
-/// para qualquer janela X11 do programa; devolve se o X aceitou.
-fn set_x11_shape(window: u32, rects: &[x11rb::protocol::xproto::Rectangle]) -> bool {
-    use std::sync::OnceLock;
-    use x11rb::connection::{Connection as _, RequestConnection as _};
-    use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
-    use x11rb::protocol::xproto::ClipOrdering;
-    use x11rb::rust_connection::RustConnection;
-    static CONN: OnceLock<Option<RustConnection>> = OnceLock::new();
-    let Some(conn) = CONN.get_or_init(|| RustConnection::connect(None).ok().map(|(c, _)| c)).as_ref() else {
-        return false;
-    };
-    let _ = conn.prefetch_extension_information("SHAPE");
-    if !matches!(conn.extension_information("SHAPE"), Ok(Some(_))) {
-        return false;
-    }
-    // Uma requisição tem tamanho máximo: o primeiro bloco troca o recorte, os seguintes
-    // somam a ele (UNION).
-    let mut ok = true;
-    if rects.is_empty() {
-        ok = conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &[]).is_ok();
-    }
-    for (i, chunk) in rects.chunks(8000).enumerate() {
-        let op = if i == 0 { SO::SET } else { SO::UNION };
-        ok &= conn.shape_rectangles(op, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, chunk).is_ok();
-    }
-    let _ = conn.flush();
-    ok
-}
-
 /// Sem compositor no X11 não há transparência. Em vez de cortar as bordas
 /// semitransparentes (que sumiam, deixando pedaços), o quadro é reduzido a alfa 0 ou 255
 /// por dithering ordenado (Bayer 4x4), com a cor sem a mistura de alfa. A borda do ícone
@@ -848,32 +819,6 @@ fn dither_to_opaque(pixmap: &mut tiny_skia::Pixmap) {
             px.copy_from_slice(&[0, 0, 0, 0]);
         }
     }
-}
-
-/// Recorte da janela pelo alfa do quadro: o que tem alfa de `min_alpha` para cima fica
-/// visível, o resto sai. Sem compositor no X11 a janela é retangular, e as bordas
-/// semitransparentes seriam misturadas com preto (halo escuro): por isso o limite alto
-/// nas ampliações, onde as bordas são só dos ícones.
-fn shape_from_alpha(window: u32, pixmap: &tiny_skia::Pixmap, min_alpha: u8) {
-    let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
-    let data = pixmap.data();
-    let mut rects = Vec::new();
-    for y in 0..h {
-        let row = &data[y * w * 4..(y + 1) * w * 4];
-        let mut x = 0;
-        while x < w {
-            if row[x * 4 + 3] < min_alpha {
-                x += 1;
-                continue;
-            }
-            let start = x;
-            while x < w && row[x * 4 + 3] >= min_alpha {
-                x += 1;
-            }
-            rects.push(x11rb::protocol::xproto::Rectangle { x: start as i16, y: y as i16, width: (x - start) as u16, height: 1 });
-        }
-    }
-    set_x11_shape(window, &rects);
 }
 
 /// Retângulos de uma faixa `w` x `h` com os cantos arredondados de raio `r`: uma linha
