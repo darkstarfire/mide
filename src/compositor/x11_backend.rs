@@ -1059,16 +1059,19 @@ impl Shared {
 
     /// Alterna para a proxima janela (Alt+Tab) ou anterior (Alt+Shift+Tab).
     fn switch_windows(&self, forward: bool) {
+        // Alt+Tab percorre as janelas abertas e as minimizadas (estas voltam ao escolhê-las).
         let clients: Vec<xproto::Window> = {
             let layout = self.layout.lock().unwrap();
             layout
                 .clients
                 .iter()
                 .filter(|win_id| {
-                    self.scene
-                        .lock()
-                        .map(|s| s.windows.get(win_id).map(|win| win.mapped).unwrap_or(false))
-                        .unwrap_or(false)
+                    layout.minimized.contains(win_id)
+                        || self
+                            .scene
+                            .lock()
+                            .map(|s| s.windows.get(win_id).map(|win| win.mapped).unwrap_or(false))
+                            .unwrap_or(false)
                 })
                 .cloned()
                 .collect()
@@ -1090,7 +1093,12 @@ impl Shared {
             (idx + n - 1) % n
         };
         let next = clients[next_idx];
-        self.focus(next);
+        let minimized = self.layout.lock().map(|l| l.minimized.contains(&next)).unwrap_or(false);
+        if minimized {
+            self.restore_window(next);
+        } else {
+            self.focus(next);
+        }
     }
 
     /// Minimiza uma janela (desmapeia e guarda na lista de minimizadas).
