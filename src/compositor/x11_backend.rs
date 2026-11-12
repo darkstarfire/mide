@@ -295,8 +295,6 @@ struct Shared {
     comp_window: xproto::Window,
     /// Janela raiz do servidor X.
     root: xproto::Window,
-    /// Janela de bloqueio (override-redirect, tela cheia) quando bloqueada.
-    lock_window: Option<xproto::Window>,
     /// O `mide-lock` (ou o greeter) aberto para bloquear: a tela está bloqueada enquanto ele roda.
     lock_child: std::sync::Mutex<Option<std::process::Child>>,
     /// Arrastre em andamento: (janela, offset_x, offset_y) do ponteiro em
@@ -559,7 +557,6 @@ impl X11Backend {
             keymap,
             comp_window: window,
             root,
-            lock_window: None,
             lock_child: std::sync::Mutex::new(None),
             drag_window: Mutex::new(None),
         });
@@ -767,11 +764,6 @@ impl Shared {
                 }
             }
             Event::KeyRelease(ev) => {
-                if let Some(lock_window) = self.lock_window {
-                    if ev.event == lock_window {
-                        return;
-                    }
-                }
                 if ev.event == self.root && !self.is_locked() {
                     let _ = self.global_binding(state, ev.detail, u16::from(ev.state));
                 } else if ev.event != self.root {
@@ -785,10 +777,6 @@ impl Shared {
                     ev.event_x,
                     ev.event_y
                 );
-                // Janela de bloqueio: ignora cliques (qualquer tecla desbloqueia).
-                if self.lock_window.is_some() {
-                    return;
-                }
                 // Clique em janela cliente: hit-test de decocoes do servidor.
                 if ev.child != 0 && ev.detail == 1 {
                     if let Ok(scene) = self.scene.lock() {
