@@ -818,8 +818,7 @@ impl Shared {
                                         let drag_off_x = (ev.event_x as f32 / k) as i16 - win.x;
                                         let drag_off_y = (ev.event_y as f32 / k) as i16 - win.y;
                                         drop(scene);
-                                        *self.drag_window.lock().unwrap() =
-                                            Some((ev.child, drag_off_x, drag_off_y));
+                                        self.start_drag(ev.child, drag_off_x, drag_off_y);
                                         self.focus(ev.child);
                                         return;
                                     }
@@ -854,7 +853,7 @@ impl Shared {
                 );
                 // Cancela arrastre ao soltar o botao esquerdo.
                 if ev.detail == 1 {
-                    *self.drag_window.lock().unwrap() = None;
+                    self.end_drag();
                 }
             }
             Event::MotionNotify(ev) => {
@@ -931,6 +930,36 @@ impl Shared {
     }
 
     /// Mensagens EWMH enviadas pelos clientes (para a janela raiz).
+    /// Começa o arrasto de uma janela. O ponteiro fica preso na janela de composição
+    /// (grab), para os movimentos continuarem chegando mesmo sobre os apps.
+    fn start_drag(&self, window: xproto::Window, off_x: i16, off_y: i16) {
+        *self.drag_window.lock().unwrap() = Some((window, off_x, off_y));
+        let status = self
+            .conn
+            .grab_pointer(
+                false,
+                self.comp_window,
+                xproto::EventMask::POINTER_MOTION | xproto::EventMask::BUTTON_RELEASE,
+                xproto::GrabMode::ASYNC,
+                xproto::GrabMode::ASYNC,
+                x11rb::NONE,
+                x11rb::NONE,
+                x11rb::CURRENT_TIME,
+            )
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.status);
+        tracing::debug!("arrasto da janela {window}: grab do ponteiro {status:?}");
+        let _ = self.conn.flush();
+    }
+
+    /// Termina o arrasto e solta o ponteiro.
+    fn end_drag(&self) {
+        *self.drag_window.lock().unwrap() = None;
+        let _ = self.conn.ungrab_pointer(x11rb::CURRENT_TIME);
+        let _ = self.conn.flush();
+    }
+
     fn client_message(&self, ev: xproto::ClientMessageEvent) {
         let data = ev.data.as_data32();
         if ev.type_ == self.atoms.net_wm_state {
@@ -979,7 +1008,7 @@ impl Shared {
                 let at = self.scene.lock().ok().and_then(|s| s.windows.get(&ev.window).map(|w| (w.x, w.y)));
                 if let Some((wx, wy)) = at {
                     let (ox, oy) = (reply.root_x - wx, reply.root_y - wy);
-                    *self.drag_window.lock().unwrap() = Some((ev.window, ox, oy));
+                    self.start_drag(ev.window, ox, oy);
                     self.focus(ev.window);
                 }
             }
