@@ -1134,3 +1134,16 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Unidade: `kit::theme::tests` no mide-ui (contraste do texto sobre cada cor de destaque, mistura guardando a transparência).
 - Captura: `tests/scenario.sh "500 list" 480 -- "mide-settings appearance"` com `XDG_CONFIG_HOME` temporário e `[appearance] accent`/`theme`/`tint`; comparar o vidro da dock com o tingido ligado e desligado (`ImageChops.difference` só na área da dock).
 - Na sessão: trocar a cor de destaque e o interruptor "Tingir o vidro" com a dock e um menu da barra abertos; conferir que mudam na hora.
+
+## Port X11: janelas gerenciadas, cliques e cantos (2026-11-12)
+
+- Unidade: `cargo test x11` (mide): 2 testes ok.
+- Conformidade do kit: `mide-ui/tests/x11/conformidade.sh :65`: 20 ok.
+- ARGB com e sem compositor: `mide-ui/tests/x11/argb.sh :66` (xcompmgr dono de `_NET_WM_CM_S0`): 3 ok.
+- Fumaça do compositor em Xvfb (`:68`, barramento D-Bus isolado, `HOME` temporário): barra, dock, área de trabalho e `xterm` adotado; captura com papel de parede por baixo.
+- Queda do X: `mide` e programas da shell encerram; o log cai de 320 mil para 41 linhas.
+- `mide-about` no compositor: vermelho fecha, verde põe em tela cheia, amarelo desmapeia a janela; canto superior esquerdo com a cor do fundo.
+- `mide-about`, `mide-files` e `mide-settings` abertos juntos com o release: adotados, sem barra do compositor, cantos arredondados.
+- `mide-files` sob `kwin_x11` (gerenciador real no Xvfb `:68`): luzes respondem depois da correção de `WM_HINTS.input`; canto arredondado pelo recorte; tela cheia tira o recorte.
+- Não passa: arrastar pela barra sob o KWin (o pedido chega ao gerenciador, mas a janela não se move, e os movimentos não chegam ao app durante o arrasto).
+- Pendente de teste: restaurar minimizada pela dock e pelo Alt+Tab; cantos das barras e menus.

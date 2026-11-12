@@ -2576,3 +2576,17 @@ Pedido do usuário depois de testar a v0.10.34 no Chromebook (2256x1504, escala 
   - no mide-ui, `sidebar_glass`, `sidebar` e `menu` puxam um pouco para a cor; cartões e fundos ficam neutros;
   - o compositor guarda o tingido em memória e só relê no `reload`; trocar a cor ou o interruptor nas Configurações já pede o `reload`. A cor entra na assinatura do desfoque guardado, então o vidro é refeito na hora.
 - Testes: capturas com rosa (vidro da dock mais rosado com o tingido ligado, igual ao de antes desligado), branco no escuro, preto no claro e verde no escuro (barra lateral esverdeada); teste de unidade de contraste de todas as cores de destaque e da mistura; `cargo test`; seções `barra`, `dock`, `configuracoes` e `bloqueio` da bateria.
+
+## Port X11: janelas gerenciadas, cliques e cantos (sessão de 2026-11-12)
+
+- **Tela preta corrigida:** a cena X11 enviava RGB de 3 bytes por pixel a um servidor de 32 bits. Agora converte para BGRX e envia em pedaços.
+- **Área de trabalho visível:** a janela de composição tem recorte SHAPE só com as molduras das janelas clientes; o papel de parede e os ícones aparecem por baixo.
+- **Desenho sob demanda:** a cena só desenha e envia quando algo muda; temporizador de 33 ms (30 fps).
+- **Queda do servidor X:** o compositor, a barra, a dock e as notificações encerram (depois de 20 erros seguidos nos programas da shell).
+- **Dock:** cantos arredondados pelo recorte; faixa de revelação sem fundo preto; dica com recorte pela cápsula; ampliação com dithering do alfa, sem faixa preta.
+- **Janelas de conteúdo inteiro (kit `mide-ui`):** são janelas gerenciadas, com dica Motif sem decoração e `WM_DELETE_WINDOW`. As luzes pedem ao gerenciador: fechar, minimizar, tela cheia, maximizar e mover. `WM_HINTS.input = true`, para o KWin entregar os cliques. Cantos pelo recorte da própria janela. Sem ARGB, vidro desligado e fundo do tema.
+- **Compositor:** lê a dica Motif ao adotar a janela; janelas sem decoração não têm barra nem borda do compositor e recebem cantos arredondados; `WM_CHANGE_STATE` minimiza; `_NET_WM_MOVERESIZE` inicia arrasto.
+- **Grab de botão removido:** o grab sobre a janela de composição roubava os cliques das janelas dos apps. Títulos e botões do compositor ficam na própria janela de composição.
+- **Pacote Slackware:** `data/mide-x11-pacote` gera `/opt/mide-x11` com dono `root`, entrada `mide_x11` para o SDDM e número de build que sobe a cada pacote da mesma versão.
+
+**Limitações conhecidas:** o arrasto pela barra não move a janela sob o KWin; minimizadas não são restauradas pela dock/Alt+Tab (não testado); o foco ao clicar não é dado pelo compositor (só ao entrar com o ponteiro); os menus e popups da barra ainda têm cantos quadrados no X11.

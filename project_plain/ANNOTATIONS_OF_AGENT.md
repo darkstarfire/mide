@@ -639,3 +639,15 @@
 - **Acoplamento ao Smithay no núcleo (contagem de linhas que tocam tipos do Smithay ou do protocolo):** `state.rs` ~187, `wm.rs` ~151, `input.rs` ~95, `render.rs` ~87. Pontos principais: `ToplevelSurface` (em `wm.rs`: `send_configure`, `with_states`, `XdgState`), `Space<Window>` (mapear, levantar, desmapear, `output_under`), `Output`, `LayerSurface` (barra, dock e launcher).
 - **Ordem de extração proposta:** (1) interface de janela (mapear, configurar, fechar, foco, pilha, estados) usada por `wm.rs`, sem mudar comportamento no Wayland; (2) saídas e área de trabalho; (3) entrada (atalhos e ponteiro já independentes do protocolo); (4) cena e efeitos sobre texturas abstratas; (5) backend X11 novo, sobre Composite.
 - **Regra:** cada fatia compila e passa `cargo test` e a bateria `tests/ui.sh` afetada antes da próxima. O Wayland não muda de comportamento em nenhuma fatia.
+
+## Lições do port X11 (2026-11-12)
+
+- **Grab de botão em ancestral (`owner_events`) rouba o clique:** um grab de botão 1 na janela de composição impede o app de receber `ButtonPress`, mesmo com `owner_events=True`. Título e botões do compositor não precisam de grab (ficam na própria janela de composição).
+- **KWin não entrega clique a janela sem `WM_HINTS.input`:** janela com `input = false` é tratada como não focável; o clique vira ativação e não chega ao app. Janela de conteúdo que usa teclado precisa de `input = true`.
+- **Sem ARGB, o translúcido se mistura com a cor de fundo enviada:** o `present` usa preto por padrão. Janela de conteúdo deve enviar a cor do tema; véus e vidros precisam ser opacos.
+- **Recorte SHAPE serve sem compositor:** cantos arredondados, dica e ampliação podem ser recortados pelo próprio app ou pelo compositor; qualquer cliente pode aplicar SHAPE a qualquer janela. Tela cheia tira o recorte.
+- **Alfa por limiar corta o que está semitransparente:** cortar por alfa faz sumirem partes dos ícones; dithering ordenado (Bayer 4x4) mantém a forma e não escurece as bordas.
+- **`xwininfo -root -tree` lista janelas desmapeadas:** para saber se a janela foi minimizada, olhar o `Map State`, não a presença na lista.
+- **Sem reparentar: o compositor não vê a janela:** janelas criadas como camadas (`override-redirect`) não passam pelo compositor; o recorte de título do compositor não se aplica a elas.
+- **Teste de Cargo temporário:** `[patch]` no `Cargo.toml` para testar o kit local deve ser revertido antes do commit; conferir `git diff -- Cargo.toml`.
+- **`pkill -f` e `rm -rf $VAR`:** o `pkill -f` casa com o próprio shell; o `rm -rf` com variável foi bloqueado pela checagem de segurança. Para testes, usar diretórios novos com nome único em vez de apagar.
