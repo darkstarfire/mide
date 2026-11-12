@@ -823,6 +823,33 @@ fn set_x11_shape(window: u32, rects: &[x11rb::protocol::xproto::Rectangle]) -> b
     ok
 }
 
+/// Sem compositor no X11 não há transparência. Em vez de cortar as bordas
+/// semitransparentes (que sumiam, deixando pedaços), o quadro é reduzido a alfa 0 ou 255
+/// por dithering ordenado (Bayer 4x4), com a cor sem a mistura de alfa. A borda do ícone
+/// fica pontilhada, sem halo escuro e sem partes que desaparecem.
+fn dither_to_opaque(pixmap: &mut tiny_skia::Pixmap) {
+    const BAYER: [[u16; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    let w = pixmap.width() as usize;
+    let data = pixmap.data_mut();
+    for (i, px) in data.chunks_exact_mut(4).enumerate() {
+        let a = px[3] as u16;
+        if a == 0 {
+            continue;
+        }
+        let (x, y) = (i % w, i / w);
+        let limit = BAYER[y % 4][x % 4] * 16 + 8;
+        if a > limit {
+            // Cor sem alfa (desfaz a pré-multiplicação) e opaca.
+            for c in &mut px[..3] {
+                *c = ((*c as u16 * 255 + a / 2) / a).min(255) as u8;
+            }
+            px[3] = 255;
+        } else {
+            px.copy_from_slice(&[0, 0, 0, 0]);
+        }
+    }
+}
+
 /// Recorte da janela pelo alfa do quadro: o que tem alfa de `min_alpha` para cima fica
 /// visível, o resto sai. Sem compositor no X11 a janela é retangular, e as bordas
 /// semitransparentes seriam misturadas com preto (halo escuro): por isso o limite alto
@@ -1793,11 +1820,13 @@ impl Dock {
             return;
         };
         let (pw, ph) = (pixmap.width() as i32, pixmap.height() as i32);
+        let mut pixmap = pixmap;
+        dither_to_opaque(&mut pixmap);
         if let Err(err) = zoom.layer.present(&pixmap, size, [0, 0, 0]) {
             tracing::warn!("ampliação da dock: quadro não foi enviado ({err})");
         }
         if let Some(window) = zoom.layer.x11_window() {
-            shape_from_alpha(window, &pixmap, 250);
+            shape_from_alpha(window, &pixmap, 255);
         }
         self.report_icons();
     }
