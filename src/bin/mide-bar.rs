@@ -68,6 +68,8 @@ use smithay_client_toolkit::{
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 const BAR_HEIGHT: u32 = 28;
+/// Erros seguidos do poll do X até encerrar (queda do servidor X).
+const X_ERRORS_TO_EXIT: u32 = 20;
 const FONT: f32 = 13.5;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
@@ -439,6 +441,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         configured: wayland.is_none(),
         x11_press_on_bar: None,
         exit: false,
+        x_errors: 0,
         text: Text::new(),
         focused_name: String::new(),
         focused_id: String::new(),
@@ -1133,6 +1136,8 @@ struct Bar {
     width: u32,
     configured: bool,
     exit: bool,
+    /// Erros seguidos do poll do X: a queda da conexão repete o erro; um erro isolado não.
+    x_errors: u32,
     text: Text,
     focused_name: String,
     /// app_id da janela em foco (vazio sem janela em foco).
@@ -2450,9 +2455,19 @@ impl Bar {
     /// O botão solto vai para a superfície onde ele foi apertado, como no Wayland.
     fn handle_x11(&mut self) {
         let inputs = match self.x.as_ref().map(|s| s.poll()) {
-            Some(Ok(inputs)) => inputs,
+            Some(Ok(inputs)) => {
+                self.x_errors = 0;
+                inputs
+            }
             Some(Err(err)) => {
-                tracing::warn!("barra: evento X11 ({err})");
+                // Queda do servidor X: o erro se repete a cada volta. Depois de vários
+                // seguidos, a barra encerra junto com o X; um erro isolado é ignorado.
+                self.x_errors += 1;
+                tracing::debug!("barra: evento X11 ({err})");
+                if self.x_errors >= X_ERRORS_TO_EXIT {
+                    tracing::warn!("barra: servidor X perdido ({err}); encerrando");
+                    self.exit = true;
+                }
                 return;
             }
             None => return,

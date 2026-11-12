@@ -70,6 +70,8 @@ use zbus::zvariant::OwnedValue;
 
 const BUS_NAME: &str = "org.freedesktop.Notifications";
 const OBJECT_PATH: &str = "/org/freedesktop/Notifications";
+/// Erros seguidos do poll do X até encerrar (queda do servidor X).
+const X_ERRORS_TO_EXIT: u32 = 20;
 
 const BANNER_W: f32 = 344.0;
 const BANNER_H: f32 = 74.0;
@@ -811,6 +813,8 @@ struct X11Banners {
     core: Core,
     session: kit::x11_layer::Session,
     layer: Option<kit::x11_layer::Layer>,
+    /// Erros seguidos do poll do X: a queda da conexão repete o erro.
+    x_errors: u32,
 }
 
 impl std::ops::Deref for X11Banners {
@@ -879,12 +883,21 @@ impl X11Banners {
     }
 
     /// Eventos do servidor: o ponteiro sobre os banners e o pedido de redesenho.
-    fn handle_input(&mut self) {
+    fn handle_input(&mut self) -> Result<(), String> {
         let inputs = match self.session.poll() {
-            Ok(inputs) => inputs,
+            Ok(inputs) => {
+                self.x_errors = 0;
+                inputs
+            }
             Err(err) => {
-                tracing::warn!("notificações: evento X11 ({err})");
-                return;
+                // Queda do servidor X: o erro se repete. Depois de vários seguidos, o
+                // laço para e o processo sai; um erro isolado é ignorado.
+                self.x_errors += 1;
+                tracing::debug!("notificações: evento X11 ({err})");
+                if self.x_errors >= X_ERRORS_TO_EXIT {
+                    return Err(format!("servidor X perdido: {err}"));
+                }
+                return Ok(());
             }
         };
         for input in inputs {
@@ -909,6 +922,7 @@ impl X11Banners {
         if self.dirty {
             self.sync_layer();
         }
+        Ok(())
     }
 }
 
@@ -926,13 +940,13 @@ impl std::os::fd::AsFd for XFd {
 fn run_x11(core: Core, receiver: channel::Channel<Msg>) -> Result<(), Box<dyn Error>> {
     let session = kit::x11_layer::Session::connect()?;
     let fd = session.fd();
-    let mut ui = X11Banners { core, session, layer: None };
+    let mut ui = X11Banners { core, session, layer: None, x_errors: 0 };
 
     let mut event_loop: EventLoop<X11Banners> = EventLoop::try_new()?;
     let handle = event_loop.handle();
     handle
         .insert_source(Generic::new(XFd(fd), Interest::READ, Mode::Level), |_, _, ui: &mut X11Banners| {
-            ui.handle_input();
+            ui.handle_input().map_err(std::io::Error::other)?;
             Ok(PostAction::Continue)
         })
         .map_err(|e| e.to_string())?;

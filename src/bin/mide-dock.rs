@@ -195,6 +195,9 @@ const BTN_RIGHT: u32 = 0x111;
 /// Distância mínima em pixels para um clique virar arrasto.
 const DRAG_THRESHOLD: f64 = 6.0;
 
+/// Erros seguidos do poll do X até encerrar (queda do servidor X).
+const X_ERRORS_TO_EXIT: u32 = 20;
+
 /// Um app na dock, resolvido a partir do `.desktop`.
 #[derive(Clone)]
 struct DockApp {
@@ -404,6 +407,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         height: dock_height(),
         first_configure: true,
         exit: false,
+        x_errors: 0,
         items,
         catalog,
         press: None,
@@ -675,6 +679,8 @@ struct Dock {
     height: u32,
     first_configure: bool,
     exit: bool,
+    /// Erros seguidos do poll do X (ver a barra).
+    x_errors: u32,
     /// Fixados primeiro (na ordem salva), depois os abertos que não estão fixados.
     items: Vec<DockApp>,
     catalog: Catalog,
@@ -3328,9 +3334,18 @@ impl Dock {
     /// no Wayland) e os pedidos de desenho de cada janela.
     fn handle_x11(&mut self) {
         let inputs = match self.x.as_ref().map(|s| s.poll()) {
-            Some(Ok(inputs)) => inputs,
+            Some(Ok(inputs)) => {
+                self.x_errors = 0;
+                inputs
+            }
             Some(Err(err)) => {
-                tracing::warn!("dock: evento X11 ({err})");
+                // Queda do servidor X (ver a barra): encerra depois de vários erros seguidos.
+                self.x_errors += 1;
+                tracing::debug!("dock: evento X11 ({err})");
+                if self.x_errors >= X_ERRORS_TO_EXIT {
+                    tracing::warn!("dock: servidor X perdido ({err}); encerrando");
+                    self.exit = true;
+                }
                 return;
             }
             None => return,
