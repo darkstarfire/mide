@@ -6,7 +6,7 @@
 # Uso: mide-x11-pacote [VERSAO] [PASTA_DOS_BINARIOS]
 #   VERSAO   padrão: a do Cargo.toml
 #   PASTA    padrão: target/release do repositório
-# Saída: target/mide-x11-pacote/mide-x11-VERSAO-x86_64-1.txz (MIDE_X11_PACOTE_DIR muda a pasta)
+# Saída: target/mide-x11-pacote/mide-x11-VERSAO-x86_64-BUILD.txz (BUILD sobe a cada pacote da mesma versão) (MIDE_X11_PACOTE_DIR muda a pasta)
 
 set -eu
 
@@ -55,8 +55,19 @@ DESC
 # Pacote = tar.xz com install/slack-desc. Os arquivos saem com dono root (uid/gid 0),
 # como o makepkg faz quando roda como root; o tar faz isso sem precisar de root aqui.
 mkdir -p "$OUT"
-PKG="$OUT/mide-x11-$VERSION-x86_64-1.txz"
+# Número da build (o campo antes de .txz): sobe a cada pacote da mesma versão, para o
+# upgradepkg instalar por cima; versão nova volta a 1. Os pacotes anteriores ficam na pasta.
+BUILD=0
+for f in "$OUT"/mide-x11-"$VERSION"-x86_64-*.txz; do
+    [ -f "$f" ] || continue
+    num="${f##*-}"
+    num="${num%.txz}"
+    case "$num" in ''|*[!0-9]*) continue ;; esac
+    [ "$num" -gt "$BUILD" ] && BUILD="$num"
+done
+BUILD=$((BUILD + 1))
+PKG="$OUT/mide-x11-$VERSION-x86_64-$BUILD.txz"
 rm -f "$PKG"
 tar --owner=0 --group=0 --numeric-owner -cJf "$PKG" -C "$ROOT" .
 echo "$n programa(s) no pacote"
-echo "pacote: $PKG"
+echo "pacote: $PKG (build $BUILD)"
