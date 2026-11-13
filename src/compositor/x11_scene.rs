@@ -83,16 +83,15 @@ impl X11Window {
             let btn_x_start = self.width as i16
                 - BTN_MARGIN as i16
                 - BTN_SIZE as i16;
-            if x >= btn_x_start && x <= self.width as i16 {
+            // Botao maximizar fica a esquerda do fechar: a faixa dos dois comeca em max_x.
+            let close_x = btn_x_start;
+            let max_x = close_x.saturating_sub(BTN_SIZE as i16).saturating_sub(2);
+            if x >= max_x && x <= self.width as i16 {
                 // Botao fechar (mais a direita) ou maximizar (ao lado).
-                let close_x = btn_x_start;
-                let max_x = close_x.saturating_sub(BTN_SIZE as i32 as i16).saturating_sub(2);
                 if x >= close_x {
                     DecorationHit::Close
-                } else if x >= max_x {
-                    DecorationHit::Maximize
                 } else {
-                    DecorationHit::Title
+                    DecorationHit::Maximize
                 }
             } else {
                 DecorationHit::Title

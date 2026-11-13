@@ -711,9 +711,10 @@ impl Shared {
                     .map(|(v, h, f, _)| v || h || f)
                     .unwrap_or(false);
                 if !special {
+                    let t = self.title_h(ev.window);
                     let aux = xproto::ConfigureWindowAux::new()
                         .x(ev.x as i32)
-                        .y(ev.y as i32)
+                        .y(ev.y as i32 + t as i32)
                         .width(ev.width as u32)
                         .height(ev.height as u32);
                     let _ = self.conn.configure_window(ev.window, &aux);
@@ -842,10 +843,13 @@ impl Shared {
                     ev.event_x,
                     ev.event_y
                 );
+                // Clique no topo de uma janela cai na área do compositor (o app fica abaixo da
+                // barra): o alvo é a moldura sob o ponteiro.
+                let hit_id = if ev.child != 0 { ev.child } else { self.frame_at(ev.event_x, ev.event_y).unwrap_or(0) };
                 // Clique em janela cliente: hit-test de decocoes do servidor.
-                if ev.child != 0 && ev.detail == 1 {
+                if hit_id != 0 && ev.detail == 1 {
                     if let Ok(scene) = self.scene.lock() {
-                        if let Some(win) = scene.windows.get(&ev.child) {
+                        if let Some(win) = scene.windows.get(&hit_id) {
                             if win.mapped {
                                 let k = scene.output_scale;
                                 // ev.event_x/y sao relativos à janela de
@@ -857,21 +861,21 @@ impl Shared {
                                 match win.hit_test(wx, wy) {
                                     DecorationHit::Close => {
                                         drop(scene);
-                                        self.send_close(ev.child);
+                                        self.send_close(hit_id);
                                         return;
                                     }
                                     DecorationHit::Maximize => {
                                         let (vert, horz, full, normal) =
-                                            scene.state_of(ev.child).unwrap_or((false, false, false, None));
+                                            scene.state_of(hit_id).unwrap_or((false, false, false, None));
                                         drop(scene);
                                         let new_vert = !vert || !horz;
                                         let new_horz = new_vert;
                                         if let Err(err) =
-                                            self.apply_state(ev.child, new_vert, new_horz, false)
+                                            self.apply_state(hit_id, new_vert, new_horz, false)
                                         {
                                             tracing::warn!(
                                                 "falha ao alternar maximizar janela {}: {err}",
-                                                ev.child
+                                                hit_id
                                             );
                                         }
                                         return;
@@ -883,8 +887,8 @@ impl Shared {
                                         let drag_off_x = (ev.event_x as f32 / k) as i16 - win.x;
                                         let drag_off_y = (ev.event_y as f32 / k) as i16 - win.y;
                                         drop(scene);
-                                        self.start_drag(ev.child, drag_off_x, drag_off_y);
-                                        self.focus(ev.child);
+                                        self.start_drag(hit_id, drag_off_x, drag_off_y);
+                                        self.focus(hit_id);
                                         return;
                                     }
                                     DecorationHit::Client => {}
@@ -894,8 +898,8 @@ impl Shared {
                     }
                 }
                 // Foca a janela cliente sob o ponteiro, se houver.
-                if ev.child != 0 {
-                    self.focus(ev.child);
+                if hit_id != 0 {
+                    self.focus(hit_id);
                 }
             }
             Event::EnterNotify(ev) => {
@@ -930,13 +934,15 @@ impl Shared {
                     let off_y = *off_y;
                     let nx: i32 = ev.event_x as i32 - off_x as i32;
                     let ny: i32 = ev.event_y as i32 - off_y as i32;
+                    let t = self.title_h(win);
                     let aux = xproto::ConfigureWindowAux::new()
                         .x(nx)
-                        .y(ny);
+                        .y(ny + t as i32);
                     let _ = self.conn.configure_window(win, &aux);
                     drop(drag);
                     if let Ok(mut scene) = self.scene.lock() {
-                        scene.update_window(win, nx as i16, ny as i16, 0u16, 0u16);
+                        let (w, h) = scene.windows.get(&win).map(|w| (w.width, w.height)).unwrap_or((0, 0));
+                        scene.update_window(win, nx as i16, ny as i16, w, h);
                     }
                     let _ = self.conn.flush();
                     return;
@@ -982,8 +988,9 @@ impl Shared {
                     }
                     self.recompute_work_area();
                 } else {
+                    let t = self.title_h(ev.window);
                     if let Ok(mut scene) = self.scene.lock() {
-                        scene.update_window(ev.event, ev.x, ev.y, ev.width, ev.height);
+                        scene.update_window(ev.window, ev.x, ev.y - t, ev.width, ev.height + t as u16);
                         scene.mark_content_dirty(ev.window);
                         scene.mark_dirty_rect(ev.window, ev.x as i16, ev.y as i16, ev.width as u16, ev.height as u16);
                     }
@@ -1550,6 +1557,34 @@ impl Shared {
     }
 
     /// Aplica maximizar/tela cheia a uma janela, guardando a geometria original.
+    /// Altura da barra de título desenhada pelo compositor para a janela (0 sem barra:
+    /// sem decoração, em tela cheia ou fora do mapa).
+    fn title_h(&self, window: xproto::Window) -> i16 {
+        self.scene
+            .lock()
+            .ok()
+            .and_then(|s| s.windows.get(&window).map(|w| if w.undecorated || w.fullscreen { 0 } else { super::x11_scene::TITLE_HEIGHT as i16 }))
+            .unwrap_or(0)
+    }
+
+    /// Janela cuja moldura (barra incluída) contém o ponto (coordenadas da saída).
+    fn frame_at(&self, ex: i16, ey: i16) -> Option<xproto::Window> {
+        let scene = self.scene.lock().ok()?;
+        let k = scene.output_scale;
+        let (px, py) = ((ex as f32 / k) as i32, (ey as f32 / k) as i32);
+        scene
+            .windows
+            .values()
+            .find(|w| {
+                w.mapped
+                    && px >= w.x as i32
+                    && px < w.x as i32 + w.width as i32
+                    && py >= w.y as i32
+                    && py < w.y as i32 + w.height as i32
+            })
+            .map(|w| w.id)
+    }
+
     fn apply_state(
         &self,
         window: xproto::Window,
@@ -1569,6 +1604,8 @@ impl Shared {
                 height: out_h as u32,
             });
         let geom = self.conn.get_geometry(window)?.reply()?;
+        let old_t = self.title_h(window);
+        let undecorated = self.scene.lock().ok().and_then(|s| s.windows.get(&window).map(|w| w.undecorated)).unwrap_or(false);
         let (old_vert, old_horz, old_full, old_normal) = self
             .scene
             .lock()
@@ -1577,12 +1614,14 @@ impl Shared {
             .unwrap_or((false, false, false, None));
         let was_special = old_vert || old_horz || old_full;
         let will_special = maximized_vert || maximized_horz || fullscreen;
+        // Geometria da moldura (com a barra): o app fica `TITLE_HEIGHT` abaixo dela.
+        let cur = (geom.x, geom.y - old_t, geom.width, geom.height + old_t as u16);
         let normal = if !was_special && will_special {
-            Some((geom.x, geom.y, geom.width, geom.height))
+            Some(cur)
         } else {
             old_normal
         };
-        let base = normal.unwrap_or((geom.x, geom.y, geom.width, geom.height));
+        let base = normal.unwrap_or(cur);
         let (mut x, mut y, mut w, mut h) = base;
         if fullscreen {
             x = 0;
@@ -1602,15 +1641,16 @@ impl Shared {
             h = work.height as u16;
         }
 
+        let new_t: i16 = if fullscreen || undecorated { 0 } else { super::x11_scene::TITLE_HEIGHT as i16 };
         if let Ok(mut scene) = self.scene.lock() {
             scene.set_state(window, maximized_vert, maximized_horz, fullscreen, normal);
             scene.update_window(window, x, y, w, h);
         }
         let aux = xproto::ConfigureWindowAux::new()
             .x(x as i32)
-            .y(y as i32)
+            .y(y as i32 + new_t as i32)
             .width(w as u32)
-            .height(h as u32);
+            .height((h as i32 - new_t as i32).max(1) as u32);
         self.conn.configure_window(window, &aux)?;
         self.update_wm_state_property(window, maximized_vert, maximized_horz, fullscreen)?;
         self.conn.flush()?;
@@ -1676,8 +1716,6 @@ impl Shared {
         let offset = 40 + ((slot % 8) as i16) * 40;
 
         let geom = self.conn.get_geometry(window)?.reply()?;
-        self.conn
-            .reparent_window(window, self.comp_window, offset, offset)?;
         // Dica Motif (_MOTIF_WM_HINTS): flags com decorações e decorations = 0 quer dizer
         // janela sem barra do gerenciador; o app desenha o próprio topo.
         let undecorated = self
@@ -1687,8 +1725,12 @@ impl Shared {
             .ok()
             .and_then(|r| r.value32().map(|mut v| (v.next(), v.nth(2))))
             .is_some_and(|(flags, decorations)| flags.is_some_and(|f| f & 2 != 0) && decorations == Some(0));
+        // Com barra do compositor, o app fica abaixo dela; a moldura inclui a barra.
+        let t: i16 = if undecorated { 0 } else { super::x11_scene::TITLE_HEIGHT as i16 };
+        self.conn
+            .reparent_window(window, self.comp_window, offset, offset + t)?;
         if let Ok(mut scene) = self.scene.lock() {
-            scene.add_window(window, offset, offset, geom.width, geom.height);
+            scene.add_window(window, offset, offset, geom.width, geom.height + t as u16);
             scene.set_undecorated(window, undecorated);
         }
         if let Ok(mut layout) = self.layout.lock() {
