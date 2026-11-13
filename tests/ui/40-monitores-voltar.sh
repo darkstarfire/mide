@@ -27,9 +27,19 @@ if [ -x "$JANELA" ]; then
     # Janela solta volta ao mesmo lugar da tela.
     check "monitor de volta: a janela solta volta ao mesmo lugar" 'janela "Comum" popups=0 posição=\(1648, 315\) visível=400x300' \
         "$PARA_SEGUNDA; 440 unplug HEADLESS-2; 700 list; 710 plug HEADLESS-2; 760 list" "$JANELA comum"
+    # Solta: vai para o meio da área útil da principal (barra dela em y 199..229).
+    check "monitor desconectado: a janela solta vai para o meio da principal" 'janela "Comum" popups=0 posição=\(483, 229\) visível=400x300' \
+        "$PARA_SEGUNDA; 440 unplug HEADLESS-2; 700 list" "$JANELA comum"
     # Mudada de lugar pelo usuário enquanto a tela estava fora: fica onde está.
-    check "janela mexida enquanto a tela estava fora fica onde está" 'janela "Comum" popups=0 posição=\(348, 415\) visível=400x300' \
-        "$PARA_SEGUNDA; 440 unplug HEADLESS-2; 700 press 300 61; 705 move 400 200; 710 move 600 400; 715 release 600 400; 730 plug HEADLESS-2; 790 list" "$JANELA comum"
+    check "janela mexida enquanto a tela estava fora fica onde está" 'janela "Comum" popups=0 posição=\(383, 329\) visível=400x300' \
+        "$PARA_SEGUNDA; 440 unplug HEADLESS-2; 700 press 683 214; 705 move 640 260; 710 move 583 314; 715 release 583 314; 730 plug HEADLESS-2; 790 list" "$JANELA comum"
+    # Maior que a principal (1600x900 na segunda tela): encolhe para caber em 90% da
+    # área útil, no meio; com a tela de volta, volta ao tamanho de antes.
+    GRANDE_SEGUNDA="410 press 300 61; 415 move 900 100; 420 move 1600 100; 425 release 1600 100"
+    check "monitor desconectado: janela maior que a principal encolhe e fica no meio" 'janela "Grande" popups=0 posição=\(68, 92\) visível=1229x575' \
+        "$GRANDE_SEGUNDA; 450 unplug HEADLESS-2; 700 list" "$JANELA grande"
+    check "monitor de volta: a janela encolhida volta ao tamanho de antes" 'janela "Grande" popups=0 posição=\(1366, 115\) visível=1600x900' \
+        "$GRANDE_SEGUNDA; 450 unplug HEADLESS-2; 700 plug HEADLESS-2; 780 list" "$JANELA grande"
     unset MIDE_HEADLESS_OUTPUTS
 else
     echo "pulo  monitores: janelas voltam (rode cargo build --examples)"

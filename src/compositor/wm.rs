@@ -302,6 +302,25 @@ impl State {
         self.area_for(&window)
     }
 
+    /// Janela solta levada para outra tela (a dela saiu): cabe em até 90% da área útil
+    /// `area` (encolhe se for maior; tamanho fixo não muda) e fica no meio, deslocada
+    /// `step` (várias em escada).
+    pub fn fit_free_in(&mut self, window: &Window, area: smithay::utils::Rectangle<i32, Logical>, step: i32) {
+        let size = window.geometry().size;
+        let bar = bar_height_for(window);
+        let size = if crate::state::fixed_size(window) { (size.w, size.h) } else { (size.w.max(1), size.h.max(1)) };
+        let ((x, y), (w, h)) = crate::outputs::fit_free(size, bar, (area.loc.x, area.loc.y, area.size.w, area.size.h), step);
+        let (w, h) = if crate::state::fixed_size(window) { size } else { (w, h) };
+        if (w, h) != size
+            && let Some(t) = window.toplevel()
+        {
+            t.with_pending_state(|s| s.size = Some((w, h).into()));
+            t.send_pending_configure();
+            tracing::info!("janela encolhida para {w}x{h} (cabe na tela que ficou)");
+        }
+        self.space.map_element(window.clone(), (x, y), false);
+    }
+
     /// Centraliza a janela na tela dela, sem mudar o tamanho (como o "Centralizar" do
     /// menu Janela do Mac).
     pub fn center_window(&mut self, surface: &ToplevelSurface) {

@@ -2806,3 +2806,19 @@ e a tira precisava rolar para os lados com a roda para chegar aos outros itens.
 - A tira anda de miniatura em miniatura: as que aparecem ficam sempre inteiras e
   centralizadas (sem um pedaço cortado na borda). Trocar o escolhido pelas setas ou pelo
   clique anda só o necessário para ele ficar à vista; a posição da tira é guardada.
+
+## v0.10.89 (2026-11-13): janelas reorganizadas quando um monitor sai
+
+Pedido do usuário: com um monitor removido, as janelas dele precisam ser remapeadas na
+tela que ficou: as maximizadas continuam maximizadas e as soltas maiores que a tela
+encolhem para até 90% da área útil e ficam no meio.
+
+- Maximizadas (e as encaixadas numa parte da tela) já iam para a principal no mesmo
+  estado; continua assim.
+- Soltas: antes iam para o canto de cima, em escada, mesmo maiores que a tela. Agora
+  ficam no meio da área útil (sem a barra e a dock), em escada leve de 24 pontos quando
+  são várias, e as que não cabem encolhem para até 90% da largura e da altura (com a
+  barra de título); janelas de tamanho fixo só mudam de lugar.
+- Quando a tela volta, a janela que o mide encolheu volta ao tamanho de antes e à tela
+  dela (dentro dela), se ninguém a mexeu.
+- Conta em `outputs::fit_free` (testada), aplicada por `State::fit_free_in`.

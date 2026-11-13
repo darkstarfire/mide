@@ -19,6 +19,8 @@
 //!   clique no conteúdo pede para entrar ou sair da tela cheia
 //!   (`xdg_toplevel.set_fullscreen`, como o F11 dos navegadores); `ja` pede tela cheia
 //!   antes do primeiro quadro (como um jogo).
+//! - `mide-janela-teste grande`: janela "Grande" 1600x900, maior que a tela de 1366x768
+//!   (seção `monitores-voltar`: levada de uma tela que saiu, encolhe e fica no meio);
 //! - `mide-janela-teste toque`: janela "Toque" 400x300 (app_id `teste-toque`, como um
 //!   app de terceiros) que trata `wl_touch`: um dedo encostando pinta a janela de verde.
 //!
@@ -298,6 +300,7 @@ fn main() {
             }
         }
         "toque" => app.open(&qh, "Toque", 400, 300, WindowDecorations::RequestServer, false, None),
+        "grande" => app.open(&qh, "Grande", 1600, 900, WindowDecorations::RequestServer, false, None),
         "ssd-max" => app.open_with(&qh, "SSD", 500, 300, WindowDecorations::RequestServer, false, None, true),
         _ => app.open(&qh, "Comum", 400, 300, WindowDecorations::RequestServer, false, None),
     }

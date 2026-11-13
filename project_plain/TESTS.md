@@ -1195,3 +1195,11 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Capturas com 40 itens (12 pastas e 28 fotos): começo, rolada pela roda, no fim (barra
   encostada à direita) e pelas setas (o escolhido continua à vista).
 - Seção 25: o clique na tira (agora em y=470, x=721) continua escolhendo a imagem.
+
+## v0.10.89 (2026-11-13): monitor que sai
+
+- Teste de unidade `janela_solta_cabe_em_90_por_cento_e_fica_no_meio`.
+- Seção 40: a solta vai para o meio da principal; a mexida enquanto a tela estava fora
+  fica onde está; a "Grande" (1600x900, modo novo do `mide-janela-teste`) encolhe para
+  1229x575 no meio e volta a 1600x900 com a tela de volta; as maximizadas como antes.
+- Falta o usuário conferir com os monitores de verdade.

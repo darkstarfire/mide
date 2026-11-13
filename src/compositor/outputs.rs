@@ -134,13 +134,21 @@ pub struct Displaced<W> {
     /// Onde o mide pôs a janela na tela que a recebeu: se ela não está mais lá (o
     /// usuário a mudou de lugar), fica onde está.
     pub placed_at: (i32, i32),
+    /// Tamanho de antes, quando o mide a encolheu para caber na tela que a recebeu
+    /// (volta a ele com a tela de origem).
+    pub size: Option<(i32, i32)>,
 }
 
 /// Guarda de onde a janela veio. Uma janela já tirada de outra tela antes continua
 /// com a origem primeira (só o lugar onde foi posta muda).
 pub fn remember<W: PartialEq>(list: &mut Vec<Displaced<W>>, entry: Displaced<W>) {
     match list.iter_mut().find(|d| d.window == entry.window) {
-        Some(old) => old.placed_at = entry.placed_at,
+        Some(old) => {
+            old.placed_at = entry.placed_at;
+            if old.size.is_none() {
+                old.size = entry.size;
+            }
+        }
         None => list.push(entry),
     }
 }
@@ -254,10 +262,10 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
             })
             .cloned()
             .collect();
-        for (i, window) in lost.into_iter().enumerate() {
-            let offset = 32 * i as i32;
-            let loc = area.loc + smithay::utils::Point::from((48 + offset, 48 + offset));
-            let origin = leaving_windows.iter().position(|d| d.window == window).map(|i| leaving_windows.swap_remove(i));
+        let mut free = 0;
+        for window in lost {
+            let loc = area.loc + smithay::utils::Point::from((48, 48));
+            let mut origin = leaving_windows.iter().position(|d| d.window == window).map(|i| leaving_windows.swap_remove(i));
             let toplevel = window.toplevel().cloned();
             // Maximizada ou numa parte da tela: o mesmo na principal (como no macOS);
             // solta: num canto da área útil, em escada.
@@ -267,7 +275,17 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
                     let r = from_fraction(frac, (area.loc.x, area.loc.y, area.size.w, area.size.h));
                     state.snap_to(&t, smithay::utils::Rectangle::new((r.0, r.1).into(), (r.2, r.3).into()), left);
                 }
-                _ => state.space.map_element(window.clone(), loc, false),
+                // Solta: no meio da área útil, encolhida para caber em 90% dela se
+                // for maior (a tela que ficou pode ser menor); várias, em escada leve.
+                _ => {
+                    let before = window.geometry().size;
+                    state.fit_free_in(&window, area, 24 * free);
+                    free += 1;
+                    let after = window.toplevel().and_then(|t| t.with_pending_state(|s| s.size)).unwrap_or(before);
+                    if let Some(origin) = origin.as_mut().filter(|_| after != before) {
+                        origin.size = Some((before.w, before.h));
+                    }
+                }
             }
             if let Some(mut origin) = origin {
                 let at = state.space.element_location(&window).unwrap_or(loc);
@@ -291,6 +309,23 @@ pub fn place(state: &mut crate::state::State, live: &[smithay::output::Output]) 
         _ => {}
     }
     state.wake();
+}
+
+/// Lugar e tamanho de uma janela solta levada para outra tela: no máximo 90% da área
+/// útil (largura, e altura contando a barra de título `bar`), centralizada, deslocada
+/// `step` para baixo e para a direita (várias em escada) sem sair da área. Devolve a
+/// posição do conteúdo (abaixo da barra) e o tamanho do conteúdo.
+pub fn fit_free(size: (i32, i32), bar: i32, area: (i32, i32, i32, i32), step: i32) -> ((i32, i32), (i32, i32)) {
+    let (ax, ay, aw, ah) = area;
+    let max_w = (aw as f32 * 0.9) as i32;
+    let max_h = (ah as f32 * 0.9) as i32 - bar;
+    let (w, h) = (size.0.min(max_w).max(1), size.1.min(max_h).max(1));
+    let x = ax + (aw - w) / 2 + step;
+    let y = ay + (ah - h - bar) / 2 + bar + step;
+    // Sem passar da borda (a escada para no canto).
+    let x = x.min(ax + aw - w).max(ax);
+    let y = y.min(ay + ah - h).max(ay + bar);
+    ((x, y), (w, h))
 }
 
 /// Janelas numa tela (pelo ponto do meio do topo, como a conta das janelas perdidas),
@@ -325,7 +360,7 @@ pub(crate) fn windows_on(
             } else {
                 Fit::Free
             };
-            Some(Displaced { window: w.clone(), output: name.to_string(), rel: (loc.x - geo.loc.x, loc.y - geo.loc.y), fit, placed_at: (loc.x, loc.y) })
+            Some(Displaced { window: w.clone(), output: name.to_string(), rel: (loc.x - geo.loc.x, loc.y - geo.loc.y), fit, placed_at: (loc.x, loc.y), size: None })
         })
         .collect()
 }
@@ -368,7 +403,13 @@ fn bring_back(state: &mut crate::state::State, live: &[smithay::output::Output],
                 state.snap_to(&t, smithay::utils::Rectangle::new((r.0, r.1).into(), (r.2, r.3).into()), left);
             }
             _ => {
-                let size = d.window.geometry().size;
+                let mut size = d.window.geometry().size;
+                // Encolhida para caber na outra tela: volta ao tamanho de antes.
+                if let (Some((w, h)), Some(t)) = (d.size, d.window.toplevel()) {
+                    t.with_pending_state(|s| s.size = Some((w, h).into()));
+                    t.send_pending_configure();
+                    size = (w, h).into();
+                }
                 let (x, y) = back_location(d.rel, (size.w, size.h), (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h));
                 state.space.map_element(d.window.clone(), (x, y), false);
             }
@@ -466,8 +507,24 @@ mod tests {
         assert_eq!(presence(&mut missing, true, false, t1 + Duration::from_secs(1)), Presence::Back);
     }
 
+    #[test]
+    fn janela_solta_cabe_em_90_por_cento_e_fica_no_meio() {
+        // Área útil de 1366x700 começando em (0, 30); janela de 1800x1000 com barra de 28.
+        let ((x, y), (w, h)) = fit_free((1800, 1000), 28, (0, 30, 1366, 700), 0);
+        assert_eq!((w, h), (1229, 602));
+        assert_eq!(x, (1366 - 1229) / 2);
+        // A barra em cima e o conteúdo, juntos, no meio da área.
+        assert_eq!(y - 28, 30 + (700 - 602 - 28) / 2);
+        // Pequena: não muda de tamanho, só vai para o meio.
+        let ((x, _), (w, h)) = fit_free((600, 400), 28, (0, 30, 1366, 700), 0);
+        assert_eq!((w, h, x), (600, 400, 383));
+        // Em escada, sem sair da área.
+        let ((x, y), _) = fit_free((1800, 1000), 28, (0, 30, 1366, 700), 400);
+        assert!(x + 1229 <= 1366 && y + 602 <= 730);
+    }
+
     fn displaced(window: u32, output: &str) -> Displaced<u32> {
-        Displaced { window, output: output.into(), rel: (0, 30), fit: Fit::Maximized, placed_at: (0, 28) }
+        Displaced { window, output: output.into(), rel: (0, 30), fit: Fit::Maximized, placed_at: (0, 28), size: None }
     }
 
     #[test]
