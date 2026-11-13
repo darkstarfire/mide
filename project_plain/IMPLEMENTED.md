@@ -2792,3 +2792,17 @@ alterna entre as janelas do mesmo app.
   de 90% da área útil da tela (sem a barra e a dock); se as linhas não couberem na
   altura, as miniaturas (e os ícones do ⌘Tab) encolhem até um quarto do tamanho.
 
+## v0.10.88 (2026-11-13): galeria do Arquivos com a tira separada e rolável
+
+Pedido do usuário (com foto): faltava separar o item em destaque das miniaturas de baixo,
+e a tira precisava rolar para os lados com a roda para chegar aos outros itens.
+
+- A tira fica numa faixa própria, com uma linha em cima e um fundo levemente diferente,
+  separada da imagem grande (que continua com o zoom pela roda, o arrasto e o duplo
+  clique).
+- A roda sobre a tira anda uma miniatura por volta (para baixo = para a direita); a
+  barra de rolagem embaixo das miniaturas aparece quando elas não cabem, e clicar ou
+  arrastar no trilho leva a tira até ali.
+- A tira anda de miniatura em miniatura: as que aparecem ficam sempre inteiras e
+  centralizadas (sem um pedaço cortado na borda). Trocar o escolhido pelas setas ou pelo
+  clique anda só o necessário para ele ficar à vista; a posição da tira é guardada.

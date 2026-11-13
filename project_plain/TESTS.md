@@ -1190,3 +1190,8 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Teste de unidade `grade_quebra_linhas_e_encolhe` (linhas equilibradas, uma linha com
   poucas, encolher dentro da altura) e captura com 8 janelas em duas linhas de 4.
 
+## v0.10.88 (2026-11-13): tira da galeria
+
+- Capturas com 40 itens (12 pastas e 28 fotos): começo, rolada pela roda, no fim (barra
+  encostada à direita) e pelas setas (o escolhido continua à vista).
+- Seção 25: o clique na tira (agora em y=470, x=721) continua escolhendo a imagem.

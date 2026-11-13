@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "mide"
-version = "0.10.87"
+version = "0.10.88"
 dependencies = [
  "anyhow",
  "chrono",

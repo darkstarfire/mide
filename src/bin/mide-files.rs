@@ -325,6 +325,9 @@ struct Files {
     gallery_pan: (f32, f32),
     gallery_item: Option<PathBuf>,
     gallery_drag: Option<((f32, f32), (f32, f32))>,
+    /// Quanto a tira de miniaturas da galeria está rolada (pontos); `None` até a
+    /// primeira vez (aí ela começa com o escolhido no meio).
+    gallery_strip: Option<f32>,
     /// Agrupar por: 0 nada, 1 tipo, 2 data, 3 tamanho, 4 etiqueta (lembrado por pasta).
     group: usize,
     /// Mostrar as extensões dos nomes (`[files] extensions`, ligado por padrão).
@@ -463,6 +466,7 @@ impl Files {
             gallery_view: false,
             gallery_zoom: 1.0,
             gallery_pan: (0.0, 0.0),
+            gallery_strip: None,
             gallery_item: None,
             gallery_drag: None,
             group: 0,
@@ -2605,6 +2609,8 @@ impl Files {
         // Galeria: a página não rola (tudo cabe); a roda é o zoom da imagem grande.
         let gallery_wheel = if mode == 3 { ui.take_scroll() } else { 0.0 };
         let (mut g_zoom, mut g_pan, mut g_drag, g_item) = (self.gallery_zoom, self.gallery_pan, self.gallery_drag, self.gallery_item.clone());
+        let mut g_strip = self.gallery_strip;
+        let mut g_changed = false;
         let mut g_now: Option<PathBuf> = None;
         let size = self.icon_size;
         let shown = self.shown();
@@ -2926,7 +2932,8 @@ impl Files {
                 let g_top = r.1 + r.3 - ui.remaining_height();
                 // Cabe na página sem rolar (a página não pode crescer com o zoom).
                 let g_h = (r.1 + r.3 - g_top - 8.0).max(160.0);
-                let strip_h = 92.0;
+                // Faixa de baixo: as miniaturas (64), o espaço em volta e a barra de rolagem.
+                let strip_h = 112.0;
                 let big_h = (g_h - strip_h - 64.0).max(80.0);
                 let chosen = self.primary().and_then(|p| shown.iter().find(|e| &e.path == p)).or_else(|| shown.first()).cloned();
                 let k = mide::ui::draw::scale();
@@ -2934,6 +2941,7 @@ impl Files {
                     // Outro item: o zoom volta a mostrar a imagem inteira.
                     if g_item.as_ref() != Some(&entry.path) {
                         tracing::info!("galeria: {}", entry.path.display());
+                        g_changed = true;
                         g_zoom = 1.0;
                         g_pan = (0.0, 0.0);
                         g_drag = None;
@@ -3028,25 +3036,86 @@ impl Files {
                         ui.centered_note(&info);
                     });
                 }
-                // Tira de miniaturas: um quadro por item, o escolhido destacado.
+                // Tira de miniaturas, separada da imagem por uma linha e com um fundo
+                // próprio (como no Finder): um quadro por item, o escolhido destacado. Rola
+                // para os lados com a roda (sobre ela) ou pela barra embaixo.
                 let thumb_side = 64.0;
-                let strip_y = g_top + g_h - strip_h + 8.0;
+                let band_y = g_top + g_h - strip_h;
+                let strip_y = band_y + 14.0;
                 let step = thumb_side + 10.0;
                 let chosen_i = chosen.as_ref().and_then(|c| shown.iter().position(|e| e.path == c.path)).unwrap_or(0);
+                {
+                    let t = ui.theme().clone();
+                    let rgba = |c: [u8; 4]| tiny_skia::Color::from_rgba8(c[0], c[1], c[2], c[3]);
+                    let band = if t.dark { [255, 255, 255, 10] } else { [0, 0, 0, 8] };
+                    ui.paint(move |canvas, _| {
+                        mide::ui::draw::fill_rounded(canvas, r.0, band_y, r.2, strip_h, 0.0, rgba(band));
+                        mide::ui::draw::fill_rounded(canvas, r.0, band_y, r.2, 1.0, 0.0, rgba(t.line));
+                    });
+                }
                 // Recuo dos dois lados (o contorno do escolhido não encosta na borda).
                 let pad = 16.0;
                 let (sx, sw) = (r.0 + pad, r.2 - 2.0 * pad);
-                let total = shown.len() as f32 * step - 10.0;
-                // Cabendo, a tira fica no meio; senão rola para o escolhido ficar no meio.
-                let (start, offset) = if total <= sw {
-                    (sx + (sw - total) / 2.0, 0.0)
-                } else {
-                    (sx, (chosen_i as f32 * step - (sw - thumb_side) / 2.0).clamp(0.0, total - sw))
+                // A tira anda de miniatura em miniatura (`g_strip` é a primeira à vista):
+                // as que aparecem ficam inteiras e centralizadas, sem um pedaço cortado.
+                let len = shown.len();
+                let n_vis = (((sw + 10.0) / step).floor() as usize).max(1);
+                let max_first = len.saturating_sub(n_vis) as f32;
+                let pointer = ui.input().pointer;
+                let over_strip = pointer.is_some_and(|p| p.1 >= band_y && p.1 < band_y + strip_h && p.0 >= r.0 && p.0 < r.0 + r.2);
+                let mut first = match g_strip {
+                    Some(f) => f,
+                    // A primeira vez: o escolhido no meio.
+                    None => chosen_i as f32 - (n_vis / 2) as f32,
                 };
+                // Outro escolhido (setas, clique): anda só o necessário para ele aparecer.
+                if g_changed {
+                    let c = chosen_i as f32;
+                    if c < first.round() {
+                        first = c;
+                    } else if c >= first.round() + n_vis as f32 {
+                        first = c + 1.0 - n_vis as f32;
+                    }
+                }
+                // Roda sobre a tira: uma miniatura por volta da roda (para baixo = direita).
+                if over_strip && gallery_wheel.abs() > 0.5 && max_first > 0.0 {
+                    first += gallery_wheel / 40.0;
+                    ui.request_repaint();
+                }
+                // Barra de rolagem embaixo das miniaturas (só quando não cabem): clicar ou
+                // arrastar no trilho leva a tira até ali.
+                if max_first > 0.0 {
+                    let track = (sx, strip_y + thumb_side + 14.0, sw, 6.0);
+                    let hit = (track.0, track.1 - 6.0, track.2, track.3 + 12.0);
+                    let resp = ui.background(hit);
+                    gallery_hit |= resp.hovered;
+                    let thumb_w = (sw * n_vis as f32 / len as f32).max(32.0);
+                    if resp.hovered && ui.input().down && let Some(p) = pointer {
+                        let frac = ((p.0 - track.0 - thumb_w / 2.0) / (track.2 - thumb_w)).clamp(0.0, 1.0);
+                        first = frac * max_first;
+                        ui.request_repaint();
+                    }
+                    let shown_first = first.clamp(0.0, max_first).round();
+                    let tx = track.0 + shown_first / max_first * (track.2 - thumb_w);
+                    let (track_c, thumb_c) = if ui.theme().dark { ([255, 255, 255, 24], [255, 255, 255, 110]) } else { ([0, 0, 0, 18], [0, 0, 0, 90]) };
+                    ui.paint(move |canvas, _| {
+                        let rgba = |c: [u8; 4]| tiny_skia::Color::from_rgba8(c[0], c[1], c[2], c[3]);
+                        mide::ui::draw::fill_rounded(canvas, track.0, track.1, track.2, track.3, 3.0, rgba(track_c));
+                        mide::ui::draw::fill_rounded(canvas, tx, track.1, thumb_w, track.3, 3.0, rgba(thumb_c));
+                    });
+                }
+                first = first.clamp(0.0, max_first);
+                g_strip = Some(first);
+                let first_i = first.round() as usize;
+                let in_view = len.min(n_vis);
+                let used = in_view as f32 * step - 10.0;
+                // As que aparecem, centralizadas; a primeira à vista no começo.
+                let start = sx + (sw - used) / 2.0 - first_i as f32 * step;
+                let offset = 0.0;
                 let accent = ui.theme().accent;
                 for (i, entry) in shown.iter().enumerate() {
                     let x = start + i as f32 * step - offset;
-                    if x < sx - 1.0 || x + thumb_side > sx + sw + 1.0 {
+                    if i < first_i || i >= first_i + n_vis {
                         continue;
                     }
                     let rect = (x, strip_y, thumb_side, thumb_side);
@@ -3341,6 +3410,7 @@ impl Files {
             self.gallery_pan = g_pan;
             self.gallery_drag = g_drag;
             self.gallery_item = g_now;
+            self.gallery_strip = g_strip;
         }
         for path in wanted {
             self.thumb(&path, size);

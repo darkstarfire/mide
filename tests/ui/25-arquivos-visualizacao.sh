@@ -76,10 +76,10 @@ else
 fi
 # Galeria (no fim: ela vira o padrão das pastas nunca abertas): pastas e imagens na
 # tira, centrada; clicar numa imagem a escolhe (antes o fundo da pasta tirava a
-# seleção no mesmo clique). Botão da galeria em (607, 102); a tira em y=481, com o
-# quinto quadro (uma das fotos, pela ordem guardada da seção) em x=681.
+# seleção no mesmo clique). Botão da galeria em (607, 102); a tira em y=470, com o
+# quinto quadro (uma das fotos, pela ordem guardada da seção) em x=721.
 mkdir -p "$VDIR/Galeria/Pasta A" "$VDIR/Galeria/Pasta B" "$VDIR/Galeria/Pasta C"
 for n in 0 1 2 3; do echo x >"$VDIR/Galeria/foto$n.jpg"; done
-view_check "galeria: clicar numa imagem da tira a escolhe" "galeria: $VDIR/Galeria/foto[0-9].jpg" "400 click 607 102; 460 click 681 481; 520 list" "$VDIR/Galeria"
+view_check "galeria: clicar numa imagem da tira a escolhe" "galeria: $VDIR/Galeria/foto[0-9].jpg" "400 click 607 102; 460 click 721 470; 520 list" "$VDIR/Galeria"
 unset XDG_STATE_HOME
 rm -rf "$VBASE"
