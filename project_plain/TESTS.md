@@ -1166,3 +1166,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Falta o usuário: instalar de verdade numa máquina (Debian/Ubuntu, Fedora ou Arch) e,
   principalmente, num Slackware 15.0 (os SlackBuilds, o pacote, o runlevel 4 com o
   greetd), e remover.
+
+## v0.10.86 (2026-11-13): seletor de arquivos
+
+- Capturas do `mide-chooser` em 1366x768 (modos pasta e salvar): barra lateral de vidro com
+  os botões da janela, margens de 24 dos lados e embaixo, "Salvar como:" alinhado à lista.
+- `cargo test chooser` e clippy do mide-ui.
+- Falta o usuário conferir abrindo/salvando pelo VS Code e pelo navegador na sessão.
+- Seção 18 (bloqueio): no estilo Mac, a tecla Super+L bloqueia, ⌘L (Alt físico) não
+  bloqueia e ⌃⌘Q bloqueia. Testes de unidade `keycaps` (teclado comum, estilo Mac e
+  teclas especiais). Capturas dos menus da barra (sistema, Arquivo e Janela) nos dois
+  estilos de teclado.
+

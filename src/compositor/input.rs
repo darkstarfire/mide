@@ -293,6 +293,7 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
         match raw {
             29 | 97 => state.mac_keys.ctrl = pressed,
             56 => state.mac_keys.command = pressed,
+            125 | 126 => state.mac_keys.option = pressed,
             _ => {}
         }
         let mapped = if pressed {
@@ -425,6 +426,15 @@ fn key_input(state: &mut State, keycode: smithay::input::keyboard::Keycode, key_
             // o ⌘ como Ctrl, então os atalhos com Ctrl também valem com o ⌘ (⌘Espaço
             // abre o buscador). Bloquear exige o Ctrl (⌘L é do app).
             let mac_mods = Modifiers { logo: state.mac_keys.command, ctrl: state.mac_keys.ctrl, ..modifiers };
+            // A tecla Super física com L bloqueia também no estilo Mac (onde ela é o ⌥),
+            // como no GNOME e no Windows: o atalho `super+l` vale pela tecla do desenho
+            // do Windows, e o ⌘L continua do app (barra de endereço).
+            if mac && state.mac_keys.option && !state.mac_keys.command && state.shortcut_capture.is_none() {
+                let physical = Modifiers { logo: true, ctrl: state.mac_keys.ctrl, alt: false, shift: modifiers.shift };
+                if state.config.match_binding(physical, key) == Some(Action::LockScreen) {
+                    return FilterResult::Intercept(Some(Action::LockScreen));
+                }
+            }
             let modifiers = if mac && !terminal && state.shortcut_capture.is_none() {
                 match state.config.match_binding(mac_mods, key) {
                     Some(Action::LockScreen) if !mac_mods.ctrl => {}

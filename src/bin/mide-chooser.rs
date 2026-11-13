@@ -74,7 +74,8 @@ fn main() {
     tracing::info!("seletor: {} em {}", req.title, chooser.dir().display());
     let done = Rc::new(RefCell::new(None));
     let title = if req.title.is_empty() { tr!("Choose File").into_owned() } else { req.title.clone() };
-    let window = Window::new(&title).app_id("mide-chooser").size(720, 500).min_size(420, 360);
+    // Janela de conteúdo inteiro (Tahoe): os botões da janela ficam na barra lateral.
+    let window = Window::new(&title).app_id("mide-chooser").size(760, 520).min_size(420, 360).full_size_content();
     if let Err(err) = run(window, Chooser { chooser, done: done.clone() }) {
         eprintln!("mide-chooser: {err}");
         std::process::exit(2);

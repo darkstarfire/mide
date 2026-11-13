@@ -855,6 +855,8 @@ impl State {
 pub struct MacKeys {
     pub ctrl: bool,
     pub command: bool,
+    /// A tecla Super física (o ⌥ no estilo Mac) apertada.
+    pub option: bool,
     pub pressed: std::collections::HashMap<u32, u32>,
 }
 

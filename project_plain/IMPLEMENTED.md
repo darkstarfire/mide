@@ -2731,3 +2731,39 @@ remover do sistema.
 - `mide-check` mostra a instalação no sistema (versão e lugar, ou o pacote do Slackware).
 - Opções: `--install`, `--remove`, `--distro`, `--yes`, `--dry-run`, `--no-build`,
   `--no-deps`, `--prefix`, `--destdir` e as das partes (`--x11`/`--no-x11` etc.).
+
+## v0.10.86 (2026-11-13): seletor de arquivos no visual do Tahoe
+
+Pedido do usuário (com foto, abrindo uma pasta pelo VS Code): a janela do seletor tinha a
+barra de título do compositor, fora do visual das Configurações, e os botões de baixo com
+espaços errados até as bordas.
+
+- `mide-chooser` passou a ser janela de conteúdo inteiro (`full_size_content`), um pouco
+  maior (760x520).
+- No mide-ui, o `FileChooser` ocupando a janela (`embedded`) usa a barra lateral de vidro
+  flutuante (`sidebar_panel`, arrastável, com os botões da janela no topo, como as
+  Configurações e o Arquivos), a barra de ferramentas sem linha à direita, a lista, e
+  embaixo "Nova pasta" à esquerda e Cancelar/principal à direita, com a mesma margem do
+  tema dos lados e embaixo. Janela estreita (menos de 560): sem a barra lateral, com os
+  botões da janela na barra de ferramentas.
+- O diálogo por cima dos apps (Abrir/Salvar do Writer, do Code...) continua igual; as
+  partes (barra, lista, linhas de baixo, botões, lugares) viraram métodos usados pelos dois.
+- O botão "Nova pasta" ficou do tamanho do texto (antes, 120 fixos).
+
+Atalhos (pedidos do usuário no mesmo dia):
+
+- **Super+L bloqueia também no estilo Mac.** Com o teclado no estilo Mac, a tecla Super
+  física é o ⌥ e o `super+l` dos atalhos era lido como ⌘L (que fica com o app), então
+  nada bloqueava. Agora a tecla Super física com L bloqueia (como no GNOME e no Windows),
+  seguindo o atalho `super+l` das Configurações; o ⌘L continua do app (barra de
+  endereço) e o ⌃⌘Q continua bloqueando.
+- **Atalhos desenhados nos menus da barra, como no macOS** (`mide::keycaps`): ⌃ ⌥ ⇧ ⌘ na
+  ordem do Mac e as teclas ↩ ⎋ ⌫ ⌦ ⇥ ⇞ ⇟ e setas, em vez de "Ctrl+Alt+N". No estilo
+  Mac, o Ctrl de um atalho de app é o ⌘ (os apps recebem o ⌘ como Ctrl): "Ctrl+Alt+N"
+  aparece "⌥⌘N"; nos atalhos do mide (com Super), o Ctrl é o ⌃ ("⌃⌘F"). No teclado
+  comum, Ctrl é ⌃ e a tecla Super é ⌘. Vale para os apps do mide, os GTK, os com
+  dbusmenu e o tray.
+- Menu do mide: "Bloquear tela" com o atalho (⌃⌘Q no estilo Mac, ⌘L no comum). Menu
+  Janela (da barra e o dos apps do mide-ui): Preencher ⌘↑, metades ⌘← e ⌘→, voltar ao
+  tamanho anterior ⌘↓.
+

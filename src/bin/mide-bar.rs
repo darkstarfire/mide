@@ -185,8 +185,16 @@ enum MenuItem {
 /// onde eles vêm.
 const PANEL_TOP: f32 = BAR_HEIGHT as f32 + mide::ui::draw::ARROW_H + 2.0;
 
+/// Item de menu; o atalho vem em texto ("Ctrl+Shift+Z") e aparece desenhado como no
+/// macOS ("⇧⌘Z"), seguindo o teclado no estilo Mac (`mide::keycaps`).
 fn entry(label: impl Into<String>, shortcut: &str, action: Option<MenuAction>) -> MenuItem {
-    MenuItem::Entry(label.into(), shortcut.to_string(), action)
+    MenuItem::Entry(label.into(), mide::keycaps::glyphs(shortcut, mide::keycaps::mac_style()), action)
+}
+
+/// Atalho de bloquear a tela mostrado no menu do mide: no estilo Mac, o ⌃⌘Q do Mac;
+/// no teclado comum, o Super+L.
+fn lock_shortcut() -> &'static str {
+    if mide::keycaps::mac_style() { "Ctrl+Super+Q" } else { "Super+L" }
 }
 
 /// Item de submenu, com o recuo que os menus da barra usam para os submenus.
@@ -315,7 +323,7 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
             entry(tr!("Restart…"), "", Some(MenuAction::Confirm(MenuId::ConfirmRestart))),
             entry(tr!("Shut Down…"), "", Some(MenuAction::Confirm(MenuId::ConfirmShutdown))),
             MenuItem::Separator,
-            entry(mide::i18n::trc("system menu", "Lock Screen"), "", Some(MenuAction::Power(system::Power::Lock))),
+            entry(mide::i18n::trc("system menu", "Lock Screen"), lock_shortcut(), Some(MenuAction::Power(system::Power::Lock))),
             entry(tr!("Log Out…"), "", Some(MenuAction::Confirm(MenuId::ConfirmLogout))),
         ],
         MenuId::App => vec![
@@ -342,19 +350,19 @@ fn menu_items(id: MenuId, app: &str) -> Vec<MenuItem> {
         // `Bar::window_extras`.
         MenuId::Window => vec![
             entry(tr!("Minimize"), "Super+H", window("minimize")),
-            entry(tr!("Fill"), "", window("fill")),
+            entry(tr!("Fill"), "Super+Up", window("fill")),
             entry(tr!("Center"), "", window("center")),
             MenuItem::Separator,
             entry(tr!("Move & Resize"), "", None),
-            entry(sub(tr!("Left Half")), "", window("left")),
-            entry(sub(tr!("Right Half")), "", window("right")),
+            entry(sub(tr!("Left Half")), "Super+Left", window("left")),
+            entry(sub(tr!("Right Half")), "Super+Right", window("right")),
             entry(sub(tr!("Top Half")), "", window("top")),
             entry(sub(tr!("Bottom Half")), "", window("bottom")),
             entry(sub(tr!("Top Left Quarter")), "", window("top-left")),
             entry(sub(tr!("Top Right Quarter")), "", window("top-right")),
             entry(sub(tr!("Bottom Left Quarter")), "", window("bottom-left")),
             entry(sub(tr!("Bottom Right Quarter")), "", window("bottom-right")),
-            entry(sub(tr!("Return to Previous Size")), "", window("restore")),
+            entry(sub(tr!("Return to Previous Size")), "Super+Down", window("restore")),
             entry(tr!("Full Screen Tile"), "", None),
             entry(sub(tr!("Left of Screen")), "", window("left")),
             entry(sub(tr!("Right of Screen")), "", window("right")),

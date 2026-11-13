@@ -5,6 +5,15 @@ export MIDE_LOCK_TEST_PASSWORD=teste
 SCENARIO_WAIT=16 check "Super+L bloqueia a tela" "autoteste: tela bloqueada \(1 tela" "430 combo super+l; 650 list" "$TERMINAL"
 SCENARIO_WAIT=16 check "senha errada mantém bloqueada" "autoteste: tela bloqueada" "430 combo super+l; 620 type errada; 622 key enter; 760 list" "$TERMINAL"
 SCENARIO_WAIT=16 check "senha certa desbloqueia" "autoteste: tela livre, desbloqueios: 1" "430 combo super+l; 620 type teste; 622 key enter; 760 list" "$TERMINAL"
+# Teclado no estilo Mac (a tecla Super é o ⌥): a tecla Super com L bloqueia também,
+# como no GNOME e no Windows; ⌘L (o Alt físico) é do app e não bloqueia; ⌃⌘Q bloqueia.
+MACCFG="$(mktemp -d)"
+mkdir -p "$MACCFG/mide"
+printf '[keyboard]\nmac_style = true\n' > "$MACCFG/mide/config.toml"
+XDG_CONFIG_HOME="$MACCFG" SCENARIO_WAIT=16 check "estilo Mac: tecla Super+L bloqueia a tela" "autoteste: tela bloqueada" "430 combo super+l; 650 list" "$TERMINAL"
+XDG_CONFIG_HOME="$MACCFG" check_count "estilo Mac: ⌘L fica com o app (não bloqueia)" "bloqueio pedido" 0 "430 combo alt+l; 520 list" "$TERMINAL"
+XDG_CONFIG_HOME="$MACCFG" SCENARIO_WAIT=16 check "estilo Mac: ⌃⌘Q bloqueia a tela" "autoteste: tela bloqueada" "430 combo ctrl+alt+q; 650 list" "$TERMINAL"
+rm -rf "$MACCFG"
 unset MIDE_LOCK_TEST_PASSWORD
 # Dois monitores: uma tela de bloqueio em cada.
 MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 SCENARIO_WAIT=16 check "bloqueio cobre os dois monitores" "autoteste: tela bloqueada \(2 tela" "400 combo super+l; 650 list"

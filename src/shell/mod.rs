@@ -12,6 +12,7 @@ pub mod scale;
 pub mod lockscreen;
 pub mod shortcuts;
 pub mod widgets;
+pub mod keycaps;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::shell::{appmenu, motion};
