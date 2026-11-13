@@ -1,0 +1,35 @@
+#!/bin/sh
+# Coleta, só para leitura, o que é preciso para analisar o teste do mide no X11
+# (sessão mide_x11 do SDDM). Gera um diretório com os arquivos e um .tar.gz para enviar.
+#
+# Uso (dentro da sessão de teste, ou depois dela):
+#   mide-x11-coleta [PASTA]
+# Padrão de PASTA: ~/mide-x11-coleta-AAAAMMDD-HHMM
+
+set -u
+
+STAMP="$(date +%Y%m%d-%H%M)"
+OUT="${1:-$HOME/mide-x11-coleta-$STAMP}"
+mkdir -p "$OUT"
+
+{
+    echo "== data"; date
+    echo "== sessao"; env | grep -E '^(DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|MIDE_BACKEND|XDG_SESSION_DESKTOP)=' || true
+    echo "== pacotes mide"; ls /var/log/packages 2>/dev/null | grep -i '^mide' || true
+    echo "== binario mide"; ls -l /opt/mide-x11/bin/mide 2>/dev/null || echo "sem /opt/mide-x11/bin/mide"
+    echo "== processos mide"; ps -eo pid,etime,args | grep '[m]ide' || true
+    echo "== saidas (xrandr)"; xrandr --query 2>/dev/null || echo "xrandr indisponivel"
+    echo "== janelas (raiz, arvore)"; xwininfo -root -tree 2>/dev/null | head -200 || true
+    echo "== foco"; xdotool getwindowfocus 2>/dev/null || true
+    echo "== GL"; glxinfo -B 2>/dev/null || echo "glxinfo indisponivel"
+} > "$OUT/resumo.txt" 2>&1
+
+for f in "$HOME/.local/state/mide/logs/mide.log" "$HOME/.local/state/mide/session.log"; do
+    [ -f "$f" ] && cp "$f" "$OUT/" 2>/dev/null
+done
+[ -f /var/log/Xorg.0.log ] && cp /var/log/Xorg.0.log "$OUT/" 2>/dev/null
+[ -f "$HOME/.local/share/sddm/xorg-session.log" ] && cp "$HOME/.local/share/sddm/xorg-session.log" "$OUT/" 2>/dev/null
+
+tar -czf "$OUT.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")" 2>/dev/null
+echo "coleta em: $OUT"
+echo "arquivo para enviar: $OUT.tar.gz"
