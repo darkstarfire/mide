@@ -46,11 +46,30 @@ pub struct Preview {
     /// Alternador de janelas (Alt+Tab): painel no meio da tela, a escolhida é a
     /// `hovered`, sem o × e sem sumir com o ponteiro.
     pub switcher: bool,
+    /// Que alternador: todas as janelas, os apps (⌘Tab, com os ícones) ou as janelas
+    /// do app em uso (⌘`).
+    pub kind: SwitcherKind,
     /// Quando apareceu (entra esmaecendo, com "Transições suaves"); `None` sem transição.
     pub since: Option<std::time::Instant>,
     /// Desde quando o ponteiro está na prévia `hovered` (para espiar a janela).
     pub hover_since: Option<std::time::Instant>,
 }
+
+/// Os alternadores do teclado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SwitcherKind {
+    /// Todas as janelas (e as prévias da dock).
+    #[default]
+    Windows,
+    /// Um app por vez, como o ⌘Tab do Mac: `ids` tem a janela de cima de cada app.
+    Apps,
+    /// Só as janelas do app em uso, como o ⌘` do Mac.
+    AppWindows,
+}
+
+/// Lado do ícone no alternador de apps e o espaço em volta dele.
+const APP_ICON: i32 = 96;
+const APP_CELL: i32 = APP_ICON + 24;
 
 /// Duração da entrada das prévias e do alternador.
 pub const APPEAR: std::time::Duration = mide::motion::PREVIEW_APPEAR;
@@ -125,14 +144,28 @@ pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logica
     if windows.is_empty() {
         return None;
     }
-    // No alternador, só as que cabem na tela.
-    let fit = ((out.size.w - 16 - 2 * PAD + GAP) / (THUMB_W + GAP)).max(1) as usize;
-    let windows: Vec<(u64, Window)> = if preview.switcher { windows.into_iter().take(fit).collect() } else { windows };
-    let n = windows.len() as i32;
-    let w = n * THUMB_W + (n - 1) * GAP + 2 * PAD;
-    let h = THUMB_H + TITLE_H + 2 * PAD;
+    let apps = preview.switcher && preview.kind == SwitcherKind::Apps;
+    // Alternador de apps: células quadradas com o ícone; o das janelas, as miniaturas.
+    let (base_w, base_h, gap) = if apps { (APP_CELL, APP_CELL, 4) } else { (THUMB_W, THUMB_H, GAP) };
+    let n = windows.len();
+    // Alternador: todas as janelas, em linhas que quebram, com o painel em no máximo
+    // 90% da área útil da tela (sem a barra e a dock); se nem assim couber, as
+    // miniaturas encolhem. Prévias da dock: uma linha, no tamanho normal.
+    let (cols, rows, k) = if preview.switcher {
+        let area = state.usable_area_of(&output).unwrap_or(out);
+        let max = ((area.size.w as f32 * 0.9) as i32 - 2 * PAD, (area.size.h as f32 * 0.9) as i32 - 2 * PAD);
+        grid(n, (base_w, base_h), gap, max)
+    } else {
+        (n, 1, 1.0)
+    };
+    let cell_w = (base_w as f32 * k).round() as i32;
+    let cell_h = (base_h as f32 * k).round() as i32;
+    let row_h = cell_h + TITLE_H;
+    let w = cols as i32 * cell_w + (cols as i32 - 1) * gap + 2 * PAD;
+    let h = rows as i32 * row_h + (rows as i32 - 1) * gap + 2 * PAD;
     let (x, y) = if preview.switcher {
-        (out.loc.x + (out.size.w - w).max(16) / 2, out.loc.y + (out.size.h - h) / 2)
+        let area = state.usable_area_of(&output).unwrap_or(out);
+        (area.loc.x + (area.size.w - w).max(0) / 2, area.loc.y + (area.size.h - h).max(0) / 2)
     } else {
         let center = dock.loc.x + preview.dock_x;
         ((center - w / 2).clamp(out.loc.x + 8, out.loc.x + out.size.w - w - 8), dock.loc.y - 10 - h)
@@ -142,13 +175,39 @@ pub fn layout(state: &State, preview: &Preview) -> Option<(Rectangle<i32, Logica
         .into_iter()
         .enumerate()
         .map(|(i, (id, window))| {
-            let bx = x + PAD + i as i32 * (THUMB_W + GAP);
-            let boxed = Rectangle::new((bx, y + PAD).into(), (THUMB_W, THUMB_H).into());
-            let close = Rectangle::new((bx + THUMB_W - CLOSE + 6, y + PAD - 6).into(), (CLOSE, CLOSE).into());
+            let (row, col) = (i / cols, i % cols);
+            // A última linha (incompleta) fica centralizada.
+            let in_row = (n - row * cols).min(cols) as i32;
+            let shift = (cols as i32 - in_row) * (cell_w + gap) / 2;
+            let bx = x + PAD + shift + col as i32 * (cell_w + gap);
+            let by = y + PAD + row as i32 * (row_h + gap);
+            let boxed = Rectangle::new((bx, by).into(), (cell_w, cell_h).into());
+            let close = Rectangle::new((bx + cell_w - CLOSE + 6, by - 6).into(), (CLOSE, CLOSE).into());
             Thumb { id, window, boxed, close }
         })
         .collect();
     Some((panel, thumbs))
+}
+
+/// Grade do alternador para `n` células de `cell` (sem o título embaixo) separadas
+/// por `gap`, dentro de `max`: (colunas, linhas, tamanho relativo das células). Quebra
+/// em linhas quando não cabe na largura e encolhe as células quando as linhas não
+/// cabem na altura (até um quarto do tamanho). As linhas ficam equilibradas (7 em
+/// duas linhas: 4 e 3, não 6 e 1).
+fn grid(n: usize, cell: (i32, i32), gap: i32, max: (i32, i32)) -> (usize, usize, f32) {
+    let n = n.max(1);
+    let mut k = 1.0_f32;
+    loop {
+        let (cw, ch) = ((cell.0 as f32 * k).round() as i32, (cell.1 as f32 * k).round() as i32 + TITLE_H);
+        let fit = ((max.0 + gap) / (cw + gap)).max(1) as usize;
+        let rows = n.div_ceil(fit.min(n));
+        let cols = n.div_ceil(rows);
+        let height = rows as i32 * ch + (rows as i32 - 1) * gap;
+        if height <= max.1 || k <= 0.25 {
+            return (cols, rows, k);
+        }
+        k = (k - 0.05).max(0.25);
+    }
 }
 
 /// O ponto está sobre o painel ou sobre a dock? (Fora dos dois, as prévias somem.)
@@ -213,7 +272,13 @@ pub fn elements(
     }
     let mut front: Vec<MideRenderElement> = Vec::new();
     let mut middle: Vec<MideRenderElement> = Vec::new();
+    if preview.switcher && preview.kind == SwitcherKind::Apps {
+        app_cells(renderer, preview, &thumbs, panel, dark, e, shaders, titles, &mut middle);
+    }
     for (i, thumb) in thumbs.iter().enumerate() {
+        if preview.switcher && preview.kind == SwitcherKind::Apps {
+            break;
+        }
         let hovered = preview.hovered == Some(i);
         // × no canto da prévia sob o ponteiro.
         // Botão de fechar no canto da prévia sob o ponteiro, como no GNOME: círculo
@@ -229,7 +294,8 @@ pub fn elements(
         }
         // Título embaixo da miniatura.
         let title = crate::render::window_title(&thumb.window);
-        let title_bar = Rectangle::new((thumb.boxed.loc.x - 40, thumb.boxed.loc.y + THUMB_H).into(), (THUMB_W + 80, TITLE_H).into());
+        let (tw, th) = (thumb.boxed.size.w, thumb.boxed.size.h);
+        let title_bar = Rectangle::new((thumb.boxed.loc.x - 40, thumb.boxed.loc.y + th).into(), (tw + 80, TITLE_H).into());
         if let Some(el) = crate::title::element(renderer, titles, &title, true, title_bar, 1.0) {
             middle.push(MideRenderElement::from(el));
         }
@@ -239,10 +305,10 @@ pub fn elements(
         let bar_h = crate::state::bar_height_for(&thumb.window);
         if geo.size.w > 0 && geo.size.h > 0 {
             let full_h = geo.size.h + bar_h;
-            let scale = (THUMB_W as f64 / geo.size.w as f64).min(THUMB_H as f64 / full_h as f64).min(1.0);
+            let scale = (tw as f64 / geo.size.w as f64).min(th as f64 / full_h as f64).min(1.0);
             let shown = (geo.size.w as f64 * scale, full_h as f64 * scale);
-            let frame_x = thumb.boxed.loc.x as f64 + (THUMB_W as f64 - shown.0) / 2.0;
-            let frame_y = thumb.boxed.loc.y as f64 + (THUMB_H as f64 - shown.1) / 2.0;
+            let frame_x = thumb.boxed.loc.x as f64 + (tw as f64 - shown.0) / 2.0;
+            let frame_y = thumb.boxed.loc.y as f64 + (th as f64 - shown.1) / 2.0;
             let bar_shown = bar_h as f64 * scale;
             let target = (frame_x, frame_y + bar_shown);
             // A superfície começa antes da área visível (sombras do app): desloca.
@@ -270,7 +336,7 @@ pub fn elements(
         // desligado nas Configurações, só um véu branco). Um fundo escuro aqui fazia as
         // bordas claras das letras do título aparecerem como pontinhos brancos.
         if hovered {
-            let glow = Rectangle::new(thumb.boxed.loc - Point::from((6, 6)), (THUMB_W + 12, THUMB_H + TITLE_H + 8).into());
+            let glow = Rectangle::new(thumb.boxed.loc - Point::from((6, 6)), (tw + 12, th + TITLE_H + 8).into());
             // Alternador (Alt+Tab): a escolhida na cor de destaque do sistema (Aparência),
             // com o fundo translúcido e o contorno na cor cheia: o título segue legível.
             if preview.switcher {
@@ -297,4 +363,117 @@ pub fn elements(
     let border = Rectangle::new(panel.loc - Point::from((1, 1)), (panel.size.w + 2, panel.size.h + 2).into());
     out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, border, fade(if dark { [1.0, 1.0, 1.0, 0.14] } else { [0.0, 0.0, 0.0, 0.16] }), 15)));
     out
+}
+
+/// Alternador de apps (⌘Tab), como no Mac: o ícone grande de cada app, o escolhido
+/// num quadrado arredondado translúcido e o nome dele embaixo.
+#[allow(clippy::too_many_arguments)]
+fn app_cells(
+    renderer: &mut GlesRenderer,
+    preview: &Preview,
+    thumbs: &[Thumb],
+    panel: Rectangle<i32, Logical>,
+    dark: bool,
+    alpha: f32,
+    shaders: &Shaders,
+    titles: &mut TitleRenderer,
+    out: &mut Vec<MideRenderElement>,
+) {
+    use smithay::backend::renderer::element::{memory::MemoryRenderBufferRenderElement, Kind};
+    let scale = crate::clip::scale().ceil().max(1.0) as i32;
+    for (i, thumb) in thumbs.iter().enumerate() {
+        let app = crate::render::app_id_of(&thumb.window);
+        // Ícone na proporção da célula (ela encolhe com muitos apps).
+        let side = (thumb.boxed.size.w * APP_ICON / APP_CELL).max(8);
+        let pad = (thumb.boxed.size.w - side) / 2;
+        let at = thumb.boxed.loc + Point::from((pad, pad));
+        let location = crate::clip::phys(at).to_f64();
+        APP_ICONS.with(|icons| {
+            let mut icons = icons.borrow_mut();
+            let buffer = icons.entry((app.to_lowercase(), scale * side)).or_insert_with(|| app_icon(&app, scale, side));
+            if let Some(buffer) = buffer
+                && let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, location, buffer, Some(alpha), None, None, Kind::Unspecified)
+            {
+                out.push(MideRenderElement::Title(el));
+            }
+        });
+        if preview.hovered == Some(i) {
+            // Nome do app embaixo do escolhido (o da janela, sem `app_id`).
+            let name = app_name(&app).unwrap_or_else(|| crate::render::window_title(&thumb.window));
+            let bar = Rectangle::new((panel.loc.x, thumb.boxed.loc.y + thumb.boxed.size.h + 2).into(), (panel.size.w, TITLE_H).into());
+            if let Some(el) = crate::title::element(renderer, titles, &name, true, bar, alpha) {
+                out.push(MideRenderElement::from(el));
+            }
+            let fill = if dark { [1.0, 1.0, 1.0, 0.16] } else { [0.0, 0.0, 0.0, 0.12] };
+            out.push(MideRenderElement::from(decorations::rounded_rect_element(shaders, thumb.boxed, [fill[0], fill[1], fill[2], fill[3] * alpha], 18)));
+        }
+    }
+}
+
+thread_local! {
+    /// Ícones dos apps no alternador, por `app_id` e tamanho em pixels.
+    static APP_ICONS: std::cell::RefCell<std::collections::HashMap<(String, i32), Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>>> = Default::default();
+    /// Apps instalados (nome e ícone de cada `.desktop`), lidos uma vez.
+    static INSTALLED: Vec<(String, String, Option<String>)> = mide::apps::load_handlers()
+        .into_iter()
+        .map(|a| (a.id.to_lowercase(), a.name, a.icon))
+        .collect();
+}
+
+/// O `.desktop` de um `app_id`: pelo id inteiro ou pela última parte
+/// (`org.gnome.Calculator` casa com `gnome-calculator`? não; com `calculator`, sim).
+fn installed_for<T>(app_id: &str, pick: impl Fn(&(String, String, Option<String>)) -> Option<T>) -> Option<T> {
+    let id = app_id.to_lowercase();
+    if id.is_empty() {
+        return None;
+    }
+    let last = |s: &str| s.rsplit('.').next().unwrap_or(s).to_string();
+    INSTALLED.with(|apps| {
+        apps.iter()
+            .find(|a| a.0 == id)
+            .or_else(|| apps.iter().find(|a| last(&a.0) == last(&id)))
+            .and_then(&pick)
+    })
+}
+
+/// Nome do app (do `.desktop`), para mostrar embaixo do ícone escolhido.
+fn app_name(app_id: &str) -> Option<String> {
+    installed_for(app_id, |a| Some(a.1.clone()))
+}
+
+/// Ícone do app no tamanho do alternador, nos pixels da tela.
+fn app_icon(app_id: &str, scale: i32, side: i32) -> Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer> {
+    use smithay::backend::allocator::Fourcc;
+    use smithay::utils::Transform;
+    let px = (side * scale) as u32;
+    let icon = installed_for(app_id, |a| a.2.clone());
+    let lower = app_id.to_lowercase();
+    let mut names: Vec<&str> = Vec::new();
+    if let Some(icon) = icon.as_deref() {
+        names.push(icon);
+    }
+    names.extend([lower.as_str(), "application-x-executable", "applications-other"]);
+    let pixmap = mide::icons::load_themed_icon(&names, px)?;
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    Some(smithay::backend::renderer::element::memory::MemoryRenderBuffer::from_slice(pixmap.data(), Fourcc::Abgr8888, (w, h), scale, Transform::Normal, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grid;
+
+    #[test]
+    fn grade_quebra_linhas_e_encolhe() {
+        // Cabem 5 por linha: 12 viram 3 linhas de 4 (equilibradas).
+        assert_eq!(grid(12, (200, 128), 14, (1100, 700)), (4, 3, 1.0));
+        // 7 em duas linhas: 4 e 3.
+        assert_eq!(grid(7, (200, 128), 14, (1100, 700)).0, 4);
+        // Poucas: uma linha só.
+        assert_eq!(grid(3, (200, 128), 14, (1100, 700)), (3, 1, 1.0));
+        // Muitas para a altura: encolhem e continuam dentro dela.
+        let (cols, rows, k) = grid(60, (200, 128), 14, (1100, 600));
+        assert!(k < 1.0 && cols * rows >= 60);
+        let row_h = (128.0 * k).round() as i32 + super::TITLE_H;
+        assert!(rows as i32 * row_h + (rows as i32 - 1) * 14 <= 600);
+    }
 }

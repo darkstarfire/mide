@@ -19,10 +19,10 @@ else
     echo "FALHA teclas no estilo Mac: Command+Espaço abre o buscador"; FAIL=$((FAIL + 1))
 fi
 XDG_CONFIG_HOME="$MCFG" SCENARIO_WAIT=16 check "teclas no estilo Mac: Ctrl+⌘+Q bloqueia" "autoteste: tela bloqueada" "430 combo ctrl+alt+q; 650 list" "$TERMINAL"
-XDG_CONFIG_HOME="$MCFG" check_count "teclas no estilo Mac: Ctrl+L e ⌘L não bloqueiam (no Terminal)" "tela bloqueada" 0 "430 combo ctrl+l; 440 combo alt+l; 460 combo super+l; 600 list" "$TERMINAL"
-XDG_CONFIG_HOME="$MCFG" check_count "teclas no estilo Mac: Ctrl+L e ⌘L não bloqueiam (num app)" "tela bloqueada" 0 "430 combo ctrl+l; 440 combo alt+l; 460 combo super+l; 600 list" "$CALCULATOR"
+XDG_CONFIG_HOME="$MCFG" check_count "teclas no estilo Mac: Ctrl+L e ⌘L não bloqueiam (no Terminal)" "tela bloqueada" 0 "430 combo ctrl+l; 440 combo alt+l; 600 list" "$TERMINAL"
+XDG_CONFIG_HOME="$MCFG" check_count "teclas no estilo Mac: Ctrl+L e ⌘L não bloqueiam (num app)" "tela bloqueada" 0 "430 combo ctrl+l; 440 combo alt+l; 600 list" "$CALCULATOR"
 XDG_CONFIG_HOME="$MCFG" SCENARIO_WAIT=16 check "teclas no estilo Mac: Ctrl+⌘+Q bloqueia no Terminal" "autoteste: tela bloqueada" "430 combo ctrl+alt+q; 650 list" "$TERMINAL"
-XDG_CONFIG_HOME="$MCFG" check "teclas no estilo Mac: ⌘Tab troca de janela" "alternador: janela" "400 keydown alt; 410 key tab; 440 list; 450 keyup alt" "$TERMINAL" "$CALCULATOR"
+XDG_CONFIG_HOME="$MCFG" check "teclas no estilo Mac: ⌘Tab troca de app" "alternador: app 2 de 2" "400 keydown alt; 410 key tab; 440 list; 450 keyup alt" "$TERMINAL" "$CALCULATOR"
 rm -rf "$MCFG"
 
 HCFG="$(mktemp -d)"

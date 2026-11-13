@@ -2767,3 +2767,28 @@ Atalhos (pedidos do usuário no mesmo dia):
   Janela (da barra e o dos apps do mide-ui): Preencher ⌘↑, metades ⌘← e ⌘→, voltar ao
   tamanho anterior ⌘↓.
 
+## v0.10.87 (2026-11-13): ⌘Tab troca de app e ⌥Tab/⌘` passa pelas janelas do app
+
+Pedido do usuário (como já fez no Glove): o ⌘Tab troca entre os apps e o Alt+Tab
+alterna entre as janelas do mesmo app.
+
+- **⌘Tab (`super+tab`, `switch_apps`):** como no Mac, um ícone grande por app aberto
+  (a janela de cima de cada um), do usado por último para o mais antigo, com as
+  minimizadas no fim; o escolhido num quadrado arredondado translúcido e o nome do app
+  embaixo. Soltar o ⌘ traz a janela de cima do app. Dois Terminais contam como um app.
+- **⌥Tab (`alt+tab`) e ⌘` (`super+grave`, e `super+apostrophe` para a tecla acima do
+  Tab no ABNT2), `switch_app_windows`:** só as janelas do app em uso, com as
+  miniaturas de antes; com uma janela só do app, nada abre.
+- No estilo Mac, o ⌘ é o Alt físico e o ⌥ a tecla Super: Alt+Tab físico troca de app e
+  Super+Tab físico passa pelas janelas do app. No teclado comum, Super+Tab troca de app
+  e Alt+Tab passa pelas janelas do app.
+- O alternador de todas as janelas continua como ação (`switch_windows`), sem atalho
+  padrão; as quatro ações novas aparecem em Configurações → Teclado para mudar.
+- Ícones dos apps pelo `.desktop` (pelo `app_id` inteiro ou pela última parte), no
+  tamanho real da tela, guardados por app e escala.
+- **Todas as janelas no alternador** (pedido do usuário no mesmo dia): antes, o painel
+  mostrava só as que cabiam numa linha e as outras sumiam. Agora as miniaturas quebram
+  em linhas equilibradas (7 viram 4 e 3), a última centralizada, e o painel nunca passa
+  de 90% da área útil da tela (sem a barra e a dock); se as linhas não couberem na
+  altura, as miniaturas (e os ícones do ⌘Tab) encolhem até um quarto do tamanho.
+

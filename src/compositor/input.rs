@@ -4,6 +4,7 @@
 //! recebe as teclas. O ponteiro envia movimento, botões e rolagem à superfície
 //! que estiver sob o cursor.
 
+use crate::preview::SwitcherKind;
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyState,
@@ -600,8 +601,12 @@ fn run_action(state: &mut State, action: Action) {
                 state.toggle_fullscreen(&toplevel);
             }
         }
-        Action::SwitchWindows => switch_windows(state, true),
-        Action::SwitchWindowsBack => switch_windows(state, false),
+        Action::SwitchWindows => switch_windows(state, true, SwitcherKind::Windows),
+        Action::SwitchWindowsBack => switch_windows(state, false, SwitcherKind::Windows),
+        Action::SwitchApps => switch_windows(state, true, SwitcherKind::Apps),
+        Action::SwitchAppsBack => switch_windows(state, false, SwitcherKind::Apps),
+        Action::SwitchAppWindows => switch_windows(state, true, SwitcherKind::AppWindows),
+        Action::SwitchAppWindowsBack => switch_windows(state, false, SwitcherKind::AppWindows),
         Action::Maximize | Action::Unmaximize | Action::ToggleMaximize | Action::Minimize | Action::TileLeft | Action::TileRight => {
             use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
             let Some(toplevel) = focused_toplevel(state) else {
@@ -657,17 +662,25 @@ fn focused_toplevel(state: &State) -> Option<smithay::wayland::shell::xdg::Tople
     state.window_for(&focus)?.toplevel().cloned()
 }
 
-/// Alt+Tab: abre o alternador (painel com as janelas, a de cima primeiro, já na
-/// próxima) ou avança/volta a escolha. Soltar o Alt foca a escolhida.
-fn switch_windows(state: &mut State, forward: bool) {
-    let mut ids: Vec<u64> = state.space.elements().rev().map(crate::state::window_id).collect();
-    ids.extend(state.minimized.iter().rev().map(|m| crate::state::window_id(&m.window)));
-    if ids.is_empty() {
+/// Alternadores do teclado: abre o painel (já na próxima) ou avança/volta a escolha;
+/// soltar o modificador foca a escolhida. `kind`: todas as janelas, os apps (⌘Tab, um
+/// por app, com a janela de cima de cada um) ou as janelas do app em uso (⌘`). A
+/// ordem é a das janelas, a de cima primeiro (a usada por último), e as minimizadas
+/// no fim.
+fn switch_windows(state: &mut State, forward: bool, kind: SwitcherKind) {
+    let open = state.preview.as_ref().filter(|p| p.switcher && p.kind == kind).map(|p| p.ids.clone());
+    let ids = match open {
+        // Com o painel aberto, a lista não muda (só a escolha anda).
+        Some(ids) => ids,
+        None => switcher_ids(state, kind),
+    };
+    // Um app só (⌘Tab) mostra o painel com ele; uma janela só do app (⌘`), nada.
+    if ids.is_empty() || (kind == SwitcherKind::AppWindows && ids.len() < 2) {
         return;
     }
     let n = ids.len();
     let step = |i: usize| if forward { (i + 1) % n } else { (i + n - 1) % n };
-    let current = state.preview.as_ref().filter(|p| p.switcher);
+    let current = state.preview.as_ref().filter(|p| p.switcher && p.kind == kind);
     let next = match current {
         Some(p) => step(p.hovered.unwrap_or(0)),
         None => step(0),
@@ -677,9 +690,37 @@ fn switch_windows(state: &mut State, forward: bool) {
         Some(p) => p.since,
         None => state.config.effects.transitions.then(std::time::Instant::now),
     };
-    tracing::info!("alternador: janela {} de {n}", next + 1);
-    state.preview = Some(crate::preview::Preview { ids, dock_x: 0, hovered: Some(next), on_close: false, switcher: true, since, hover_since: None });
+    let what = if kind == SwitcherKind::Apps { "app" } else { "janela" };
+    tracing::info!("alternador: {what} {} de {n} (janela {})", next + 1, ids[next]);
+    state.preview = Some(crate::preview::Preview { ids, dock_x: 0, hovered: Some(next), on_close: false, switcher: true, kind, since, hover_since: None });
     state.wake();
+}
+
+/// Janelas do alternador `kind`, a de cima primeiro e as minimizadas no fim.
+fn switcher_ids(state: &State, kind: SwitcherKind) -> Vec<u64> {
+    let mut windows: Vec<Window> = state.space.elements().rev().cloned().collect();
+    windows.extend(state.minimized.iter().rev().map(|m| m.window.clone()));
+    // O app de cada janela (sem `app_id`, cada janela é um app).
+    let app = |w: &Window| {
+        let id = crate::render::app_id_of(w).to_lowercase();
+        if id.is_empty() { format!("#{}", crate::state::window_id(w)) } else { id }
+    };
+    match kind {
+        SwitcherKind::Windows => windows.iter().map(crate::state::window_id).collect(),
+        SwitcherKind::Apps => {
+            let mut seen = std::collections::HashSet::new();
+            windows.iter().filter(|w| seen.insert(app(w))).map(crate::state::window_id).collect()
+        }
+        SwitcherKind::AppWindows => {
+            // O app da janela com o foco (sem foco, o da janela de cima).
+            let focused = focused_toplevel(state).and_then(|t| windows.iter().find(|w| w.toplevel() == Some(&t)).cloned());
+            let Some(current) = focused.or_else(|| windows.first().cloned()) else {
+                return Vec::new();
+            };
+            let wanted = app(&current);
+            windows.iter().filter(|w| app(w) == wanted).map(crate::state::window_id).collect()
+        }
+    }
 }
 
 /// Fecha o alternador: foca a janela escolhida (ou só fecha, com Esc).

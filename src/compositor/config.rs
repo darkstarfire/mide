@@ -38,9 +38,15 @@ pub enum Action {
     TileRight,
     /// Janela em foco: entra ou sai da tela cheia (⌃⌘F, como no Mac).
     ToggleFullscreen,
-    /// Alternar janelas (Alt+Tab): para a próxima, ou para a anterior.
+    /// Alternar janelas (todas): para a próxima, ou para a anterior.
     SwitchWindows,
     SwitchWindowsBack,
+    /// Trocar de app, como o ⌘Tab do Mac: um ícone por app aberto.
+    SwitchApps,
+    SwitchAppsBack,
+    /// Janelas só do app em uso, como o ⌘` do Mac.
+    SwitchAppWindows,
+    SwitchAppWindowsBack,
     /// Minimiza todas as janelas (mostra a área de trabalho).
     ShowDesktop,
     /// Visão de todas as janelas (como o Mission Control).
@@ -565,10 +571,18 @@ const DEFAULT_KEYBINDINGS: &[(&str, &str)] = &[
     // Terminal de atalho: desce do topo e some com a mesma tecla (como o Guake).
     ("f12", "launch:mide-terminal --hotkey"),
     // Janelas, como no GNOME.
-    ("alt+tab", "switch_windows"),
-    ("alt+shift+tab", "switch_windows_back"),
-    ("super+tab", "switch_windows"),
-    ("super+shift+tab", "switch_windows_back"),
+    // Como no Mac: ⌘Tab troca de app (um ícone por app) e ⌥Tab ou ⌘` passam pelas
+    // janelas do app em uso. No estilo Mac, o ⌘ é o Alt físico e o ⌥ a tecla Super;
+    // fora dele, Super+Tab troca de app e Alt+Tab passa pelas janelas do app. A tecla
+    // acima do Tab é o ` no teclado americano e o ' no ABNT2.
+    ("super+tab", "switch_apps"),
+    ("super+shift+tab", "switch_apps_back"),
+    ("alt+tab", "switch_app_windows"),
+    ("alt+shift+tab", "switch_app_windows_back"),
+    ("super+grave", "switch_app_windows"),
+    ("super+shift+grave", "switch_app_windows_back"),
+    ("super+apostrophe", "switch_app_windows"),
+    ("super+shift+apostrophe", "switch_app_windows_back"),
     ("super+up", "maximize"),
     ("super+down", "unmaximize"),
     ("alt+f10", "toggle_maximize"),
@@ -820,6 +834,10 @@ fn parse_action(action: &str) -> Result<Action, Box<dyn Error>> {
         ("toggle_fullscreen", Action::ToggleFullscreen),
         ("switch_windows", Action::SwitchWindows),
         ("switch_windows_back", Action::SwitchWindowsBack),
+        ("switch_apps", Action::SwitchApps),
+        ("switch_apps_back", Action::SwitchAppsBack),
+        ("switch_app_windows", Action::SwitchAppWindows),
+        ("switch_app_windows_back", Action::SwitchAppWindowsBack),
         ("show_desktop", Action::ShowDesktop),
         ("overview", Action::Overview),
         ("lock_screen", Action::LockScreen),
@@ -855,6 +873,10 @@ impl fmt::Display for Action {
             Action::ToggleFullscreen => write!(f, "toggle_fullscreen"),
             Action::SwitchWindows => write!(f, "switch_windows"),
             Action::SwitchWindowsBack => write!(f, "switch_windows_back"),
+            Action::SwitchApps => write!(f, "switch_apps"),
+            Action::SwitchAppsBack => write!(f, "switch_apps_back"),
+            Action::SwitchAppWindows => write!(f, "switch_app_windows"),
+            Action::SwitchAppWindowsBack => write!(f, "switch_app_windows_back"),
             Action::ShowDesktop => write!(f, "show_desktop"),
             Action::Overview => write!(f, "overview"),
             Action::LockScreen => write!(f, "lock_screen"),

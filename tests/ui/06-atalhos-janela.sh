@@ -2,6 +2,11 @@
 echo "== atalhos de janela (como no GNOME)"
 # Dois Terminais: a de cima (80, 108) tem o foco. Alt+Tab escolhe a outra ao soltar o Alt.
 check "Alt+Tab foca a outra janela" "alternador: janela [0-9]+ escolhida" "500 combo alt+tab; 560 list" "$TERMINAL" "$TERMINAL"
+# Super+Tab troca de app (um por app, como o ⌘Tab do Mac); Alt+Tab passa só pelas
+# janelas do app em uso (com uma janela só do app, nada acontece).
+check "Super+Tab troca de app" "alternador: app 2 de 2" "500 keydown super; 510 key tab; 540 list; 560 keyup super" "$TERMINAL" "$CALCULATOR"
+check "Super+Tab: dois Terminais contam como um app" "alternador: app 2 de 2" "500 keydown super; 510 key tab; 540 list; 560 keyup super" "$TERMINAL" "$TERMINAL" "$CALCULATOR"
+check_count "Alt+Tab com uma janela só do app não abre o alternador" "alternador: janela" 0 "500 combo alt+tab; 560 list" "$TERMINAL" "$CALCULATOR"
 check "Super+← põe a janela na metade esquerda" "$FOOT posição=\(0, 28\) visível=683x673" "500 combo super+left; 560 list" "$TERMINAL"
 check "Super+→ põe a janela na metade direita" "$FOOT posição=\(683, 28\) visível=683x673" "500 combo super+right; 560 list" "$TERMINAL"
 check "Super+↑ maximiza" "$FOOT posição=\(0, 28\) visível=1366x673" "500 combo super+up; 560 list" "$TERMINAL"

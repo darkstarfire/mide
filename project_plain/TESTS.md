@@ -1178,3 +1178,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   teclas especiais). Capturas dos menus da barra (sistema, Arquivo e Janela) nos dois
   estilos de teclado.
 
+## v0.10.87 (2026-11-13): alternador de apps
+
+- Seção 06: Super+Tab troca de app ("app 2 de 2"), dois Terminais contam como um app,
+  Alt+Tab com uma janela só do app não abre nada; Alt+Tab entre dois Terminais continua.
+- Seção 12 (estilo Mac): ⌘Tab troca de app.
+- Seção 44 (tela cheia, estilo Mac): ⌥Tab Tab chega à terceira janela do app.
+- Captura do ⌘Tab com Terminal, Calculadora e Arquivos (ícones genéricos no teste, sem
+  o tema de ícones instalado no ambiente de teste).
+- Falta o usuário conferir na sessão, com os ícones de verdade.
+- Teste de unidade `grade_quebra_linhas_e_encolhe` (linhas equilibradas, uma linha com
+  poucas, encolher dentro da altura) e captura com 8 janelas em duas linhas de 4.
+

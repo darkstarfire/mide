@@ -1427,7 +1427,7 @@ mod radius_tests {
 
 /// Título da janela (vazio se o app não definiu um).
 /// `app_id` da janela (vazio sem ele).
-fn app_id_of(window: &Window) -> String {
+pub(crate) fn app_id_of(window: &Window) -> String {
     window
         .toplevel()
         .and_then(|t| {

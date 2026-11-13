@@ -169,8 +169,8 @@ msgstr "apagar tela monitor desligar energia dpms protetor"
 msgid "Accent color"
 msgstr "Cor de destaque"
 
-msgid "appearance color accent blue purple pink red orange yellow green graphite"
-msgstr "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite accent"
+msgid "appearance color accent blue purple pink red orange yellow green graphite white black tint tinted glass"
+msgstr "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite branco preto tingir tingido vidro accent"
 
 msgid "theme light dark mode night colors"
 msgstr "tema claro escuro modo noturno dark cores"
@@ -1478,3 +1478,15 @@ msgstr "Exemplo: {number} · {date} · {time} · {money}"
 
 msgid "Formats take effect now in mide apps; the language takes effect at the next login. The languages in the list are the ones installed on the system (locale -a)."
 msgstr "Os formatos valem na hora nos apps do mide; o idioma vale no próximo login. Os idiomas da lista são os instalados no sistema (locale -a)."
+
+msgid "Switch apps"
+msgstr "Trocar de app"
+
+msgid "Switch apps (backwards)"
+msgstr "Trocar de app (para trás)"
+
+msgid "Switch windows of the current app"
+msgstr "Alternar entre as janelas do app"
+
+msgid "Switch windows of the current app (backwards)"
+msgstr "Alternar entre as janelas do app (para trás)"

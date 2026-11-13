@@ -399,6 +399,7 @@ pub fn handle(state: &mut State, command: &str) -> String {
                         hovered: None,
                         on_close: false,
                         switcher: false,
+                        kind: crate::preview::SwitcherKind::Windows,
                         since: state.config.effects.transitions.then(std::time::Instant::now),
                         hover_since: None,
                     });

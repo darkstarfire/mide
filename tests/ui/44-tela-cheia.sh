@@ -44,14 +44,15 @@ if [ -x "$JANELA" ]; then
     # tela cheia). Antes, ia para a superfície de antes da mudança, ou para nenhuma.
     check "toque parado depois do verde chega ao app" "$ANTES" "400 click 103 61; 480 tap; 560 list" "$JANELA cheia"
     check "toque parado depois do Alt+Tab chega à janela da frente" "$CHEIA" "400 move 300 200; 420 combo alt+tab; 460 tap; 540 list" "$JANELA cheia" "$JANELA comum"
-    # Estilo Mac: ⌘Tab, Tab com o ⌘ apertado anda no alternador (antes, soltar o Tab já
-    # escolhia, e só dava para trocar entre as duas de cima).
+    # Estilo Mac: ⌥Tab, Tab com o ⌥ (a tecla Super) apertado anda pelas janelas do app
+    # (as três são do mesmo app; o ⌘Tab troca de app). Antes, soltar o Tab já escolhia,
+    # e só dava para trocar entre as duas de cima.
     FSMAC="$(mktemp -d)"
     mkdir -p "$FSMAC/mide"
     printf '[keyboard]\nmac_style = true\n' >"$FSMAC/mide/config.toml"
-    XDG_CONFIG_HOME="$FSMAC" check "estilo Mac: ⌘Tab Tab chega à terceira janela" "alternador: janela 3 de 3" "400 keydown alt; 410 key tab; 430 key tab; 450 keyup alt; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
-    XDG_CONFIG_HOME="$FSMAC" check_last "estilo Mac: ⌘Tab Tab traz a terceira para a frente" 'janela "Cheia"' "400 keydown alt; 410 key tab; 430 key tab; 450 keyup alt; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
-    XDG_CONFIG_HOME="$FSMAC" check_last "estilo Mac: soltar o ⌘ escolhe a janela" 'janela "Comum"' "400 keydown alt; 410 key tab; 450 keyup alt; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
+    XDG_CONFIG_HOME="$FSMAC" check "estilo Mac: ⌥Tab Tab chega à terceira janela" "alternador: janela 3 de 3" "400 keydown super; 410 key tab; 430 key tab; 450 keyup super; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
+    XDG_CONFIG_HOME="$FSMAC" check_last "estilo Mac: ⌥Tab Tab traz a terceira para a frente" 'janela "Cheia"' "400 keydown super; 410 key tab; 430 key tab; 450 keyup super; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
+    XDG_CONFIG_HOME="$FSMAC" check_last "estilo Mac: soltar o ⌥ escolhe a janela" 'janela "Comum"' "400 keydown super; 410 key tab; 450 keyup super; 500 list" "$JANELA cheia" "$JANELA comum" "$JANELA csd"
     rm -rf "$FSMAC"
     # Dois monitores: só a tela da janela fica em tela cheia.
     MIDE_HEADLESS_OUTPUTS=1366x768,1920x1080 check "dois monitores: a tela da janela em tela cheia" "tela HEADLESS-1 em tela cheia" "400 click 103 61; 480 list" "$JANELA cheia"

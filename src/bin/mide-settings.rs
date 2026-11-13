@@ -2399,6 +2399,10 @@ impl ShortcutEditor {
 
 /// Ações do mide que um atalho novo pode fazer (além de abrir um app).
 const FIXED_ACTIONS: &[&str] = &[
+    "switch_apps",
+    "switch_apps_back",
+    "switch_app_windows",
+    "switch_app_windows_back",
     "switch_windows",
     "switch_windows_back",
     "maximize",
@@ -2457,6 +2461,10 @@ fn describe_action(action: &str, apps: &[mide::apps::App]) -> String {
         "toggle_launcher" => tr!("Show or hide the launcher"),
         "toggle_search" => tr!("Show or hide search"),
         "next_layout" => tr!("Next keyboard layout"),
+        "switch_apps" => tr!("Switch apps"),
+        "switch_apps_back" => tr!("Switch apps (backwards)"),
+        "switch_app_windows" => tr!("Switch windows of the current app"),
+        "switch_app_windows_back" => tr!("Switch windows of the current app (backwards)"),
         "switch_windows" => tr!("Switch windows"),
         "switch_windows_back" => tr!("Switch windows (backwards)"),
         "maximize" => tr!("Maximize window"),
