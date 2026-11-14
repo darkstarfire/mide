@@ -45,10 +45,10 @@ if tg_log cantos | grep -q "barra: central de controle (gesto do canto)" && tg_l
 else
     falha "cantos de cima abrem a central de controle e as notificações"
 fi
-# Modo tablet: janela nova abre ocupando a tela.
+# Modo tablet: janela nova abre ocupando a tela (sem barra de título, como no iPad).
 if [ -x "$JANELA" ]; then
     tg_run maxi "300 tablet on; 500 list" "sleep 2; $JANELA comum"
-    if tg_log maxi | grep -qE 'janela "Comum" popups=0 posição=\(0, 58\) visível=1366x'; then
+    if tg_log maxi | grep -qE 'janela "Comum" popups=0 posição=\(0, 28\) visível=1366x'; then
         ok "no modo tablet a janela nova ocupa a tela"
     else
         falha "no modo tablet a janela nova ocupa a tela ($(tg_log maxi | grep -o 'janela "Comum" popups=0 posição=([0-9, ]*) visível=[0-9x]*' | tail -1))"

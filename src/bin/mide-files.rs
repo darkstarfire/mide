@@ -150,7 +150,9 @@ struct Files {
     place: Place,
     back: Vec<Place>,
     forward: Vec<Place>,
-    entries: Vec<Entry>,
+    /// Itens da pasta, compartilhados com o desenho (sem copiar a lista a cada quadro:
+    /// numa pasta de milhares de itens eram milhares de nomes e caminhos copiados).
+    entries: std::rc::Rc<Vec<Entry>>,
     /// Itens escolhidos (Ctrl+clique e Shift+clique escolhem vários); o último é o
     /// principal (teclas, Shift+clique a partir dele).
     selection: Vec<PathBuf>,
@@ -193,7 +195,10 @@ struct Files {
     /// O campo do nome ainda precisa receber o foco.
     focus_rename: bool,
     /// Etiquetas de cor de cada item já lido (relidas ao recarregar a pasta).
-    tags: HashMap<PathBuf, Vec<usize>>,
+    /// Etiquetas lidas de cada item, pelo caminho em bytes (o hash de um `PathBuf`
+    /// desmonta o caminho em partes; o de um `OsString`, não). Compartilhado com o
+    /// desenho sem copiar o mapa a cada quadro.
+    tags: std::rc::Rc<HashMap<std::ffi::OsString, Vec<usize>>>,
     /// Renomear no lugar (Enter, como no Finder): o item, o nome sendo digitado e se o
     /// campo ainda precisa receber o foco.
     inline: Option<(PathBuf, String, bool)>,
@@ -218,7 +223,8 @@ struct Files {
     favorites: Vec<(String, PathBuf, &'static str)>,
     /// Miniaturas por (arquivo, tamanho): imagens, folhas de texto e as dos geradores
     /// do sistema (`mide::thumbnails`).
-    thumbs: HashMap<(PathBuf, u32), Option<Pixmap>>,
+    /// Miniaturas prontas (compartilhadas: o desenho não copia a imagem a cada quadro).
+    thumbs: HashMap<(PathBuf, u32), Option<std::rc::Rc<Pixmap>>>,
     waiting: HashSet<(PathBuf, u32)>,
     to_loader: Sender<(PathBuf, u32)>,
     from_loader: Receiver<((PathBuf, u32), Option<Pixmap>)>,
@@ -286,6 +292,8 @@ struct Files {
     /// Discos e pendrives da barra lateral (Locais) e quando foram lidos.
     drives: Vec<drives::Drive>,
     drives_read: Option<std::time::Instant>,
+    /// Leitura dos discos em andamento (numa thread: o `lsblk` travava o quadro).
+    drives_rx: Option<std::sync::mpsc::Receiver<Vec<drives::Drive>>>,
     /// Abas (vazio: uma só, sem a barra de abas) e a ativa.
     tabs: Vec<Tab>,
     tab: usize,
@@ -408,7 +416,7 @@ impl Files {
             directory_watch: None,
             back: Vec::new(),
             forward: Vec::new(),
-            entries: Vec::new(),
+            entries: Default::default(),
             selection: Vec::new(),
             list_view: false,
             column_view: false,
@@ -437,12 +445,13 @@ impl Files {
             sidebar_width: ViewMemory::load().sidebar_width(),
             sidebar_drag: None,
             sidebar_icons: HashMap::new(),
-            tags: HashMap::new(),
+            tags: Default::default(),
             message: None,
             undo: Vec::new(),
             favorites: files::favorites(),
             drives: Vec::new(),
             drives_read: None,
+            drives_rx: None,
             tabs: Vec::new(),
             tab: 0,
             close_window: false,
@@ -549,13 +558,7 @@ impl Files {
         ui.glass_fill(panel, radius);
         // Borda de luz do vidro.
         let edge = if t.dark { [255, 255, 255, 34] } else { [0, 0, 0, 20] };
-        ui.paint(|canvas, _| {
-            if let Some(path) = draw::rounded_rect(panel.0 + 0.5, panel.1 + 0.5, panel.2 - 1.0, panel.3 - 1.0, radius - 0.5) {
-                let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
-                paint.set_color(rgba(edge));
-                canvas.stroke_path(&path, &paint, &tiny_skia::Stroke { width: 1.0, ..Default::default() }, draw::tf(), None);
-            }
-        });
+        ui.paint(|canvas, _| draw::stroke_rounded(canvas, panel.0 + 0.5, panel.1 + 0.5, panel.2 - 1.0, panel.3 - 1.0, radius - 0.5, 1.0, rgba(edge)));
         ui.window_controls(x + 20.0, y0 + (mide::kit::TOOLBAR_HEIGHT - 14.0) / 2.0);
         // Ícones dos itens (poucos, carregados uma vez no tamanho em pixels da tela).
         let scale = draw::scale();
@@ -719,14 +722,14 @@ impl Files {
 
     /// Lê de novo a pasta atual (depois de criar, renomear ou apagar).
     fn reload(&mut self) {
-        self.tags.clear();
+        std::rc::Rc::make_mut(&mut self.tags).clear();
         // Recentes e etiquetas: itens de pastas diferentes, de uma lista.
         if self.place.virtual_place() {
             let paths = match self.place {
                 Place::Tag(n) => files::tagged_with(n),
                 _ => mide::storage::recent::recent_files(200),
             };
-            self.entries = paths.iter().filter_map(|p| entry_of(p)).filter(|e| self.hidden || !e.name.starts_with('.')).collect();
+            self.entries = std::rc::Rc::new(paths.iter().filter_map(|p| entry_of(p)).filter(|e| self.hidden || !e.name.starts_with('.')).collect());
             // Recentes do mais novo para o mais velho (como o Finder), salvo outra ordem.
             if self.place != Place::Recents || self.sort != (1, false) {
                 self.sort_entries();
@@ -749,14 +752,14 @@ impl Files {
         } else {
             self.directory_watch = mide::storage::directory_watch::DirectoryWatch::new(dir.clone());
         }
-        self.entries = match files::list_dir(&dir, self.hidden) {
+        self.entries = std::rc::Rc::new(match files::list_dir(&dir, self.hidden) {
             Ok(list) => list,
             Err(err) if self.place == Place::Trash && err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(err) => {
                 self.message = Some(tr!("Couldn’t open the folder: {err}", err = err));
                 Vec::new()
             }
-        };
+        });
         self.sort_entries();
         // Pastas abertas na lista: relê o que há dentro (e esquece as que sumiram).
         self.expanded.retain(|p| p.is_dir());
@@ -776,14 +779,14 @@ impl Files {
     }
 
     fn sort_entries(&mut self) {
-        sort_list(&mut self.entries, self.sort);
+        sort_list(std::rc::Rc::make_mut(&mut self.entries).as_mut_slice(), self.sort);
         // Agrupar por: os grupos em ordem, cada um na ordem escolhida (ordenação
         // estável: a da coluna continua dentro do grupo).
         if self.group > 0 {
             let now = std::time::SystemTime::now();
-            let mut keyed: Vec<(u32, Entry)> = std::mem::take(&mut self.entries).into_iter().map(|e| (group_of(self.group, &e, now).0, e)).collect();
+            let mut keyed: Vec<(u32, Entry)> = std::mem::take(std::rc::Rc::make_mut(&mut self.entries)).into_iter().map(|e| (group_of(self.group, &e, now).0, e)).collect();
             keyed.sort_by_key(|(k, _)| *k);
-            self.entries = keyed.into_iter().map(|(_, e)| e).collect();
+            self.entries = std::rc::Rc::new(keyed.into_iter().map(|(_, e)| e).collect());
         }
         for list in self.children.values_mut() {
             sort_list(list, self.sort);
@@ -1302,18 +1305,18 @@ impl Files {
 
     /// Itens mostrados agora (com a busca e os filtros aplicados). Na pasta pessoal,
     /// os resultados da thread de busca.
-    fn shown(&self) -> Vec<Entry> {
+    fn shown(&self) -> std::rc::Rc<Vec<Entry>> {
         let now = std::time::SystemTime::now();
         let (kind, date) = (self.search_kind, self.search_date);
         if self.search.trim().is_empty() {
-            return self.entries.clone();
+            return std::rc::Rc::clone(&self.entries);
         }
         let base: Vec<Entry> = if self.search_scope == 1 {
             self.search_results.as_ref().map(|(_, r)| r.clone()).unwrap_or_default()
         } else {
             files::filter(&self.entries, &self.search)
         };
-        base.into_iter().filter(|e| passes_filters(e, kind, date, now)).collect()
+        std::rc::Rc::new(base.into_iter().filter(|e| passes_filters(e, kind, date, now)).collect())
     }
 
     /// Busca na pasta pessoal: começa (ou recomeça) a thread quando o texto muda e
@@ -1782,7 +1785,7 @@ impl Files {
             .thumbs
             .iter()
             .find(|((p, _), img)| p == first && img.is_some())
-            .and_then(|(_, img)| img.clone())
+            .and_then(|(_, img)| img.as_deref().cloned())
             .or_else(|| {
                 // Atalho `.desktop`: o ícone do app que ele abre (o mesmo mostrado na pasta).
                 let name = match &entry {
@@ -1818,7 +1821,7 @@ impl Files {
             let size_now = size;
             self.thumbs.retain(|(_, s), _| *s == size_now);
         }
-        self.thumbs.get(&key).and_then(Option::as_ref)
+        self.thumbs.get(&key).and_then(|p| p.as_deref())
     }
 
     /// Quem ganha miniatura: arquivos comuns, menos os atalhos `.desktop` (mostram o
@@ -2558,7 +2561,7 @@ impl Files {
         // Miniaturas que chegaram.
         while let Ok((key, thumb)) = self.from_loader.try_recv() {
             self.waiting.remove(&key);
-            self.thumbs.insert(key, thumb);
+            self.thumbs.insert(key, thumb.map(std::rc::Rc::new));
             ui.request_repaint();
         }
         if !self.waiting.is_empty() {
@@ -2631,15 +2634,15 @@ impl Files {
         let col_dirs = if mode == 2 { self.column_dirs() } else { Vec::new() };
         let mut col_lists: Vec<Vec<Entry>> = Vec::new();
         for dir in &col_dirs {
-            let list = if self.place == Place::Dir(dir.clone()) { shown.clone() } else { self.column_list(dir) };
+            let list = if self.place == Place::Dir(dir.clone()) { shown.as_ref().clone() } else { self.column_list(dir) };
             col_lists.push(list);
         }
         // Nas colunas, ↑ e ↓ andam na coluna do item escolhido.
-        let key_list: Vec<Entry> = if mode == 2 {
+        let key_list: std::rc::Rc<Vec<Entry>> = if mode == 2 {
             let primary = self.primary().cloned();
-            col_lists.iter().rev().find(|l| primary.as_ref().is_some_and(|p| l.iter().any(|e| &e.path == p))).cloned().unwrap_or_else(|| shown.clone())
+            col_lists.iter().rev().find(|l| primary.as_ref().is_some_and(|p| l.iter().any(|e| &e.path == p))).cloned().map(std::rc::Rc::new).unwrap_or_else(|| shown.clone())
         } else if in_list {
-            row_entries.clone()
+            std::rc::Rc::new(row_entries.clone())
         } else {
             shown.clone()
         };
@@ -2705,11 +2708,11 @@ impl Files {
             visible.extend(list.iter());
         }
         for entry in visible {
-            if !self.tags.contains_key(&entry.path) {
-                self.tags.insert(entry.path.clone(), files::tags_of(&entry.path));
+            if !self.tags.contains_key(entry.path.as_os_str()) {
+                std::rc::Rc::make_mut(&mut self.tags).insert(entry.path.clone().into_os_string(), files::tags_of(&entry.path));
             }
         }
-        let tags_map = self.tags.clone();
+        let tags_map = std::rc::Rc::clone(&self.tags);
         // Colunas da lista redimensionadas: grava quando o botão é solto.
         if self.list_widths != self.list_widths_saved && !ui.input().down {
             self.list_widths_saved = self.list_widths;
@@ -2815,7 +2818,7 @@ impl Files {
                 }
                 // Bolinhas das etiquetas: no canto do ícone (grade) ou no fim do nome
                 // (lista e colunas), como no Finder.
-                let entry_tags: Vec<usize> = tags_map.get(&entry.path).cloned().unwrap_or_default();
+                let entry_tags: &[usize] = tags_map.get(entry.path.as_os_str()).map(Vec::as_slice).unwrap_or(&[]);
                 if !entry_tags.is_empty() {
                     let rect = r.rect;
                     let n = entry_tags.len() as f32;
@@ -3012,7 +3015,7 @@ impl Files {
                                     mask.fill_path(&tiny_skia::PathBuilder::from_rect(rect), tiny_skia::FillRule::Winding, false, tiny_skia::Transform::identity());
                                     Some(mask)
                                 });
-                                canvas.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, mask.as_ref());
+                                canvas.draw_pixmap(0, 0, Pixmap::as_ref(&pix), &paint, tf, mask.as_ref());
                             });
                         }
                         // Pasta ou documento: o ícone grande no meio (sem ladrilho, que
@@ -3134,7 +3137,7 @@ impl Files {
                             let fit = (thumb_side * k / pw).min(thumb_side * k / ph);
                             let (w, h) = (pw * fit, ph * fit);
                             let tf = tiny_skia::Transform::from_scale(fit, fit).post_translate(rect.0 * k + (thumb_side * k - w) / 2.0, rect.1 * k + (thumb_side * k - h) / 2.0);
-                            canvas.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint::default(), tf, None);
+                            canvas.draw_pixmap(0, 0, Pixmap::as_ref(&pix), &tiny_skia::PixmapPaint::default(), tf, None);
                         }),
                         // Ícone (pasta, documento) centrado no quadro, sem ladrilho: o
                         // ladrilho é mais largo que o quadro e pegava o clique dos vizinhos.
@@ -3256,20 +3259,31 @@ impl Files {
                 let mut video_click: Option<PathBuf> = None;
                 // Agrupar por: cada grupo com o título em cima e a grade dele.
                 let now_group = std::time::SystemTime::now();
-                let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
-                for entry in &shown {
+                let mut groups: Vec<(String, Vec<&Entry>)> = Vec::new();
+                for entry in shown.iter() {
                     let title = if self.group > 0 { group_of(self.group, entry, now_group).1 } else { String::new() };
                     match groups.last_mut() {
-                        Some((t, list)) if *t == title => list.push(entry.clone()),
-                        _ => groups.push((title, vec![entry.clone()])),
+                        Some((t, list)) if *t == title => list.push(entry),
+                        _ => groups.push((title, vec![entry])),
                     }
                 }
                 for (title, group) in &groups {
                 if !title.is_empty() {
                     ui.heading(title);
                 }
+                let lasso_down = ui.input().down;
                 ui.wrap(|ui| {
                     for entry in group {
+                        // Fora da parte à vista: só o lugar na grade (e o retângulo para a
+                        // seleção por retângulo, com o botão apertado, e para mostrar o
+                        // item pedido), sem preparar nome, ícone e miniatura.
+                        if ui.tile_hidden(size) {
+                            let r = ui.tile_skip(size);
+                            if lasso_down || reveal.as_ref() == Some(&entry.path) {
+                                item(ui, entry, r);
+                            }
+                            continue;
+                        }
                         let selected = selection.contains(&entry.path);
                         let (name, icon) = label_of(entry);
                         let wants = Self::wants_thumb(entry);
@@ -3277,7 +3291,7 @@ impl Files {
                         let here = video_now.as_ref().filter(|(p, ..)| *p == entry.path);
                         let image = match (here.and_then(|(_, pix, _)| pix.as_ref()), cached) {
                             (Some(frame), _) => Tile::Image(frame),
-                            (None, Some(Some(pix))) => Tile::Image(pix),
+                            (None, Some(Some(pix))) => Tile::Image(pix.as_ref()),
                             _ => Tile::Icon(&icon),
                         };
                         let r = ui.tile(image, &name, selected, size);
@@ -3642,7 +3656,7 @@ impl Files {
                         if let Err(err) = files::toggle_tag(&path, i) {
                             self.message = Some(tr!("Couldn’t apply the tag: {err}", err = err));
                         }
-                        self.tags.remove(&path);
+                        std::rc::Rc::make_mut(&mut self.tags).remove(path.as_os_str());
                     }
                     ui.request_repaint();
                 }
@@ -4036,7 +4050,7 @@ impl Files {
     /// Começa a apresentação de slides: as imagens escolhidas (ou todas as da pasta, a
     /// partir da escolhida), em tela cheia, trocando a cada 3 s, como no Finder.
     fn start_slideshow(&mut self, ui: &mut Ui) {
-        let images: Vec<PathBuf> = self.shown().into_iter().filter(|e| e.is_image()).map(|e| e.path).collect();
+        let images: Vec<PathBuf> = self.shown().iter().filter(|e| e.is_image()).map(|e| e.path.clone()).collect();
         let chosen: Vec<PathBuf> = images.iter().filter(|p| self.selection.contains(p)).cloned().collect();
         let (list, start) = if chosen.len() > 1 {
             (chosen, 0)
@@ -4633,9 +4647,27 @@ impl App for Files {
             ui.request_repaint();
         }
         // Discos e pendrives (relidos a cada 3 s: montar e tirar mudam a lista).
-        if self.drives_read.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3)) {
-            self.drives = drives::read_drives();
+        // Numa thread: ler os discos roda o `lsblk` (um processo), e isso na linha
+        // principal travava o quadro uns 15 ms a cada 3 segundos, em cada janela.
+        if let Some(rx) = &self.drives_rx {
+            if let Ok(list) = rx.try_recv() {
+                if list != self.drives {
+                    self.drives = list;
+                    ui.request_repaint();
+                }
+                self.drives_rx = None;
+            } else {
+                ui.request_tick();
+            }
+        }
+        if self.drives_rx.is_none() && self.drives_read.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3)) {
             self.drives_read = Some(std::time::Instant::now());
+            let (tx, rx) = channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(drives::read_drives());
+            });
+            self.drives_rx = Some(rx);
+            ui.request_tick();
         }
         ui.wake_after(std::time::Duration::from_secs(3));
         // Barra lateral do Tahoe: Favoritos (com Recentes e Aplicativos), Locais (o

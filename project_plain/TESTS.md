@@ -1203,3 +1203,20 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   fica onde está; a "Grande" (1600x900, modo novo do `mide-janela-teste`) encolhe para
   1229x575 no meio e volta a 1600x900 com a tela de volta; as maximizadas como antes.
 - Falta o usuário conferir com os monitores de verdade.
+
+## v0.10.90 (2026-11-14): desempenho
+
+- Medições com o log do quadro do mide-ui (`RUST_LOG=mide_ui::kit=debug`: "quadro do app:
+  X ms (passadas N, view Y ms, menus Z ms)") e um perfil por amostragem temporário.
+- Testes de unidade novos no mide-ui (`fast_shapes`): o retângulo arredondado novo bate
+  com o do tiny-skia (só a borda difere, pouco), a colagem com transparência e o
+  contorno só na borda.
+- Capturas: Arquivos, Configurações e launcher iguais a antes.
+- Bateria inteira (o mide-ui é comum a tudo): 774 ok e 28 falhas, nenhuma do desempenho.
+  Seção 49 (teclado na tela) com as coordenadas de antes da v0.10.40 (o teclado desce
+  70 pontos com a dock escondida: camada em (0, 431)); seção 50 com a janela do modo
+  tablet em (0, 28) (sem barra de título desde a v0.10.41); seção 27 com o seletor de
+  antes da v0.10.86 (agora 760x520 em (303, 104), a.txt em (553, 226), botão principal
+  em (994, 584), "Só leitura" em (1018, 542)). Seção 15 (editor): o Code não recebia as
+  teclas ao abrir, defeito antigo (falha igual com o mide-ui anterior), corrigido no
+  mide-ui (identidade da divisória).

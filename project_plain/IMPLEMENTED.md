@@ -2822,3 +2822,50 @@ encolhem para até 90% da área útil e ficam no meio.
 - Quando a tela volta, a janela que o mide encolheu volta ao tamanho de antes e à tela
   dela (dentro dela), se ninguém a mexeu.
 - Conta em `outputs::fit_free` (testada), aplicada por `State::fit_free_in`.
+
+## v0.10.90 (2026-11-14): desempenho do Arquivos, da mesa e do mide-ui
+
+Pedido do usuário: o mide fica lento com pastas de muitos arquivos, muitas janelas e a
+mesa cheia de ícones. Medido antes de mexer (tempo de cada quadro no log de depuração e
+um perfil por amostragem, temporário, que não ficou no código), numa pasta de 2.600
+itens e numa mesa com 300.
+
+O que custava e o que mudou:
+- **mide-ui, formas arredondadas** (o que mais aparece: botões, cápsulas, painéis,
+  seleção): passavam pelo rasterizador genérico do tiny-skia, que amostra cada pixel da
+  borda 4 vezes. Agora `fill_rounded`, `clear_rounded` e o novo `stroke_rounded`
+  calculam a cobertura pela distância à borda, com o miolo de cada linha num trecho só
+  (cor opaca preenchida de uma vez). As cápsulas da barra de ferramentas, a barra
+  lateral de vidro e a do Arquivos usam o contorno novo.
+- **mide-ui, colar imagens** (ícones, miniaturas, textos): `blit_px` direto nos bytes.
+- **mide-ui, memória a cada quadro:** a imagem da janela e as das áreas com rolagem
+  eram criadas do zero a cada quadro; agora são reaproveitadas. O vidro não apaga mais
+  a área antes de pintá-la (a pintura já substitui).
+- **mide-ui, grades grandes:** `Ui::tile_hidden`/`Ui::tile_skip` deixam o app pular o
+  que não aparece.
+- **Arquivos:** a cada quadro copiava a lista inteira de itens (duas vezes), o mapa de
+  etiquetas de todos os itens e cada miniatura à vista, e preparava nome e ícone até
+  dos itens fora da tela. Agora a lista, as etiquetas e as miniaturas são
+  compartilhadas (`Rc`), as etiquetas são indexadas pelos bytes do caminho (o hash de
+  um `PathBuf` desmonta o caminho), e a grade pula os itens fora da tela. Ler os discos
+  (`lsblk`, a cada 3 s) saiu da linha principal (travava o quadro uns 15 ms).
+- **Mesa:** lia as etiquetas de cada ícone do disco a cada quadro (uma chamada ao
+  sistema por ícone a cada movimento do ponteiro); agora só com o menu aberto.
+
+Resultado (build de desenvolvimento, otimizado, com a máquina ocupada por outros
+programas): Arquivos na pasta de 2.600 itens, de ~20 ms por quadro para ~8,6 ms
+(mediana); mesa com 300 ícones, de ~11,3 ms para ~9,5 ms. O compositor com 6 a 12
+janelas ficou em ~0,5 ms de processador e de GPU por quadro (com picos de 7 a 14 ms de
+GPU quando o desfoque do vidro é refeito); não era o gargalo.
+
+Bateria inteira depois da mudança: as falhas eram de testes que tinham ficado velhos e
+de um defeito antigo do Code, nada do desempenho. Corrigidos junto:
+- **Code perdia o foco do texto ao abrir:** quando o servidor de linguagem falhava, o
+  painel de símbolos sumia e a divisória dele deixava de gastar um número de componente;
+  o editor, desenhado depois, mudava de número e o foco ficava num número velho
+  (digitar não entrava no texto até um clique). No mide-ui, a divisória (`split`,
+  `split_vertical`, `sidebar_panel` e as versões só da divisória) passou a ter a
+  identidade pela área que divide, fora do contador.
+- Coordenadas da bateria atualizadas: seletor de arquivos no visual do Tahoe (v0.10.86),
+  teclado na tela embaixo com a dock escondida (v0.10.40) e janela sem barra de título
+  no modo tablet (v0.10.41).

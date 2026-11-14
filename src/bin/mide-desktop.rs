@@ -1254,7 +1254,9 @@ impl App for Desktop {
                 } else {
                     Vec::new()
                 };
-                let tags = files::tags_of(&item.path);
+                // Só com o menu aberto (ler as etiquetas de cada item a cada quadro era uma
+                // chamada ao sistema por ícone, a cada movimento do ponteiro).
+                let tags = if ui.menu_open().is_some() || r.secondary_clicked() { files::tags_of(&item.path) } else { Vec::new() };
                 ui.context_menu(&r, |m| {
                     if let Some(chosen) = Self::item_menu(m, item, count, &apps, &tags) {
                         action = Some((chosen, Some(item.clone())));
@@ -1506,6 +1508,7 @@ fn white_names(theme: &mut Theme) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let _logging = mide::logging::init("mide-desktop", "mide_desktop=info");
+
     warm_drag_text();
     // `--output NOME`: a mesa de um monitor externo (aberta pela mesa principal), numa
     // camada que o compositor põe naquela tela pelo nome depois do `@`.

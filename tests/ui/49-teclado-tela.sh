@@ -27,9 +27,9 @@ if command -v zenity >/dev/null; then
 
     osk_run abre sempre "600 list"
     osk_check "campo de texto ativo: o teclado aparece (opção ligada)" "teclado na tela: aberto" "$OSK/abre.log"
-    osk_check "o teclado fica acima da dock" 'camada "mide-keyboard" em \(0, 361\) 1366x340' "$OSK/abre.log"
+    osk_check "o teclado aparece embaixo, com a dock escondida" 'camada "mide-keyboard" em \(0, 431\) 1366x340' "$OSK/abre.log"
 
-    osk_run digita sempre "700 click 1070 498; 720 click 1070 554; 740 press 185 554; 790 move 60 495; 800 release 60 495; 830 click 461 611; 850 click 1153 611; 870 click 1059 667; 950 list" 796
+    osk_run digita sempre "700 click 1070 568; 720 click 1070 624; 740 press 185 624; 790 move 60 565; 800 release 60 565; 830 click 461 681; 850 click 1153 681; 870 click 1059 737; 950 list" 796
     if [ "$(cat "$OSK/digita.txt" 2>/dev/null)" = "olá" ]; then
         echo "ok    digitar \"olá\" (segurar o a para o á, apagar e Enter) chega ao app"; PASS=$((PASS + 1))
     else
@@ -38,7 +38,7 @@ if command -v zenity >/dev/null; then
     osk_check "segurar uma letra mostra as variações" "variações de a: á@" "$OSK/digita.log"
     osk_check "o campo fechado (Enter) esconde o teclado" "teclado na tela: fechado" "$OSK/digita.log"
 
-    osk_run esconde sempre "700 click 1185 667; 800 list"
+    osk_run esconde sempre "700 click 1185 737; 800 list"
     osk_check "a tecla de esconder fecha o teclado" "teclado na tela: fechado" "$OSK/esconde.log"
 
     # Fora do modo tablet e sem a opção, o campo ativo não abre o teclado.
@@ -50,16 +50,16 @@ if command -v zenity >/dev/null; then
     fi
 
     # Como no iPad: puxar o "q" para baixo digita 1; segurar o espaço vira trackpad;
-    # a barra de atalhos (desfazer em (155, 447)) e o botão de flutuar em (1211, 447):
+    # a barra de atalhos (desfazer em (155, 517)) e o botão de flutuar em (1211, 517):
     # o teclado flutuante fica com 400 de largura.
-    osk_run ipad sempre "700 press 185 498; 712 move 185 530; 720 release 185 530; 760 click 155 447; 800 press 683 667; 850 move 760 667; 860 move 800 667; 870 release 800 667; 900 click 1211 447; 980 list"
+    osk_run ipad sempre "700 press 185 568; 712 move 185 600; 720 release 185 600; 760 click 155 517; 800 press 683 737; 850 move 760 737; 860 move 800 737; 870 release 800 737; 900 click 1211 517; 980 list"
     osk_check "puxar a letra de cima para baixo digita o número" "letra puxada para baixo \(1\)" "$OSK/ipad.log"
     osk_check "segurar o espaço vira trackpad" "trackpad \(espaço segurado\)" "$OSK/ipad.log"
     osk_check "barra de atalhos (desfazer)" "barra de atalhos \(edit-undo-symbolic\)" "$OSK/ipad.log"
     osk_check "o teclado fica flutuante (menor)" 'camada "mide-keyboard" em \([0-9]+, [0-9]+\) 400x' "$OSK/ipad.log"
     # Dois espaços viram ". " (o teclado volta acoplado: o anterior gravou o flutuante).
     printf '[keyboard]\non_screen = true\n' > "$OSK/sempre/mide/config.toml"
-    osk_run ponto sempre "700 click 1070 498; 720 click 683 667; 723 click 683 667; 760 click 1059 667; 850 list"
+    osk_run ponto sempre "700 click 1070 568; 720 click 683 737; 723 click 683 737; 760 click 1059 737; 850 list"
     if [ "$(cat "$OSK/ponto.txt" 2>/dev/null)" = "o. " ]; then
         echo "ok    dois espaços viram ponto e espaço"; PASS=$((PASS + 1))
     else
@@ -69,10 +69,10 @@ if command -v zenity >/dev/null; then
     # Escala 1,5: o painel em pixels da tela (2049 de largura) e nítido.
     printf '[keyboard]\non_screen = true\n[monitors.outputs."HEADLESS-1"]\nscale = 1.5\n' > "$OSK/sempre/mide/config.toml"
     MIDE_WINIT_SIZE=2049x1152 osk_run escala sempre "600 list" 600
-    osk_check "em escala 1,5 o teclado aparece" 'camada "mide-keyboard" em \(0, 361\) 1366x340' "$OSK/escala.log"
-    # A letra "q" (centro em (185, 498) pontos = (277, 747) pixels) tem pixels escuros
+    osk_check "em escala 1,5 o teclado aparece" 'camada "mide-keyboard" em \(0, 431\) 1366x340' "$OSK/escala.log"
+    # A letra "q" (centro em (185, 568) pontos = (277, 852) pixels) tem pixels escuros
     # nítidos: o centro da letra é bem mais escuro que a tecla branca em volta.
-    Q="$(python3 -c "import sys; from PIL import Image; i=Image.open(sys.argv[1]).convert('L'); print(min(i.getpixel((x, y)) for x in range(268, 287) for y in range(735, 760)))" "$OSK/escala-out/frame.png" 2>/dev/null)"
+    Q="$(python3 -c "import sys; from PIL import Image; i=Image.open(sys.argv[1]).convert('L'); print(min(i.getpixel((x, y)) for x in range(268, 287) for y in range(840, 865)))" "$OSK/escala-out/frame.png" 2>/dev/null)"
     if [ -n "$Q" ] && [ "$Q" -lt 90 ]; then
         echo "ok    em escala 1,5 as letras das teclas saem nítidas"; PASS=$((PASS + 1))
     else

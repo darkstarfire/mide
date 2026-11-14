@@ -3,11 +3,11 @@ echo "== Seletor de arquivos do mide pelo portal (B25)"
 # O "app" do cenário pede ao backend do portal (org.freedesktop.impl.portal.desktop.mide,
 # do mide-portal) como o xdg-desktop-portal faria, e a resposta do gdbus vai para um
 # arquivo. Barramento D-Bus próprio (scenario-dbus.sh): nada toca o barramento da sessão.
-# Janela do seletor (720x500) no meio da área útil, em (323, 129), com a barra lateral
-# (Favoritos, Locais) à esquerda: na pasta de teste, Sub em (583, 243), a.txt (585, 281),
-# b.md (585, 319), c.png (585, 357) e "nota fiscal ç.txt" (618, 395); botão principal
-# (encostado à direita) em (975, 571). Salvar tem o nome em cima (a lista desce 8 px) e o interruptor
-# "Só leitura" em (998, 523).
+# Janela do seletor (760x520, visual do Tahoe) no meio da área útil, em (303, 104), com a
+# barra lateral de vidro (Favoritos, Locais) à esquerda: na pasta de teste, Sub em
+# (551, 188), a.txt (553, 226), b.md (553, 264), c.png (556, 302) e "nota fiscal ç.txt"
+# (586, 340); botão principal (encostado à direita) em (994, 584). Salvar tem o nome em
+# cima (a lista desce 42 px) e o interruptor "Só leitura" em (1018, 542).
 # Barra lateral igual em qualquer máquina: as pastas do usuário (que entram nos
 # Favoritos quando existem) apontam para a pasta pessoal e não aparecem; ficam a pasta
 # pessoal, a Área de trabalho do teste e o Computador. Com as pastas de verdade (oito
@@ -90,33 +90,33 @@ ABRIR="'current_folder': <b'$PASTA'>"
 pedido OpenFile "{'multiple': <true>, $ABRIR}"
 portal_check "Abrir vários: Ctrl+clique e Abrir devolve os dois (resposta 0)" \
     "^\(uint32 0, \{'uris': <\['$URI/a.txt', '$URI/b.md'\]>\}\)" \
-    "400 click 585 281; 420 keydown ctrl; 430 click 585 319; 440 keyup ctrl; 470 click 975 571; 520 list" \
+    "400 click 553 226; 420 keydown ctrl; 430 click 553 264; 440 keyup ctrl; 470 click 994 584; 520 list" \
     "seletor: escolhido $PASTA/b.md"
 portal_check "janela do seletor no meio da tela, com o título do pedido" "uint32 0" \
-    "400 click 585 281; 410 list; 470 click 975 571; 520 list" 'janela "Escolher" .*posição=\(323, 129\)'
+    "400 click 553 226; 410 list; 470 click 994 584; 520 list" 'janela "Escolher" .*posição=\(303, 104\)'
 portal_check "nome com espaço e acento volta em percent-encoding" \
     "'uris': <\['$URI/nota%20fiscal%20%C3%A7.txt'\]>" \
-    "400 click 618 395; 470 click 975 571; 520 list"
+    "400 click 586 340; 470 click 994 584; 520 list"
 portal_check "Esc cancela (resposta 1) e fecha a janela" "^\(uint32 1, @a\{sv\} \{\}\)" \
     "400 key esc; 520 list" "seletor: cancelado"
 portal_check "Shift+clique escolhe o intervalo" "'uris': <\['$URI/a.txt', '$URI/b.md', '$URI/c.png', '$URI/nota%20fiscal%20%C3%A7.txt'\]>" \
-    "400 click 585 281; 420 keydown shift; 430 click 618 395; 440 keyup shift; 470 click 975 571; 520 list"
+    "400 click 553 226; 420 keydown shift; 430 click 586 340; 440 keyup shift; 470 click 994 584; 520 list"
 pedido OpenFile "{$ABRIR}"
 portal_check "sem multiple, Ctrl+clique fica com um só" "^\(uint32 0, \{'uris': <\['$URI/b.md'\]>\}\)" \
-    "400 click 585 281; 420 keydown ctrl; 430 click 585 319; 440 keyup ctrl; 470 click 975 571; 520 list"
+    "400 click 553 226; 420 keydown ctrl; 430 click 553 264; 440 keyup ctrl; 470 click 994 584; 520 list"
 pedido OpenFile "{'directory': <true>, 'accept_label': <'_Escolher pasta'>, $ABRIR}"
 portal_check "directory: escolhe a pasta Sub" "^\(uint32 0, \{'uris': <\['$URI/Sub'\]>\}\)" \
-    "400 click 583 243; 470 click 975 571; 520 list"
+    "400 click 551 188; 470 click 994 584; 520 list"
 pedido OpenFile "{'filters': <[('Textos', [(uint32 0, '*.txt')]), ('Imagens', [(uint32 1, 'image/*')])]>, 'current_filter': <('Imagens', [(uint32 1, 'image/*')])>, $ABRIR}"
 # Filtro Imagens: só Sub e c.png (na segunda linha).
 portal_check "filtro por tipo esconde os textos e volta em current_filter" \
     "'uris': <\['$URI/c.png'\]>&&'current_filter': <\('Imagens', \[\(uint32 1, 'image/\*'\)\]\)>" \
-    "400 click 585 281; 470 click 975 571; 520 list"
+    "400 click 553 226; 470 click 994 584; 520 list"
 SALVAR="'current_folder': <b'$PASTA'>, 'choices': <[('ro', 'Só leitura', @a(ss) [], 'false')]>"
 pedido SaveFile "{'current_name': <'novo nome.txt'>, $SALVAR}"
 portal_check "Salvar: Enter no nome, opção marcada volta em choices" \
     "^\(uint32 0, &&'uris': <\['$URI/novo%20nome.txt'\]>&&'choices': <\[\('ro', 'true'\)\]>&&'writable': <true>" \
-    "400 click 998 523; 450 key enter; 520 list"
+    "400 click 1018 542; 450 key enter; 520 list"
 pedido SaveFile "{'current_name': <'a.txt'>, 'current_folder': <b'$PASTA'>}"
 portal_check "Salvar por cima pergunta antes (Enter, Enter substitui)" "'uris': <\['$URI/a.txt'\]>" \
     "400 key enter; 440 key enter; 520 list"
@@ -124,7 +124,7 @@ portal_check "Salvar por cima: Esc no aviso volta ao nome (sem resposta)" SEM_RE
     "400 key enter; 440 key esc; 520 list" 'janela "Escolher"'
 pedido SaveFiles "{'files': <[b'um.png', b'dois.png']>, 'current_folder': <b'$PASTA'>}"
 portal_check "Salvar vários: a pasta escolhida com cada nome" \
-    "'uris': <\['$URI/Sub/um.png', '$URI/Sub/dois.png'\]>" "400 click 583 243; 470 click 975 571; 520 list"
+    "'uris': <\['$URI/Sub/um.png', '$URI/Sub/dois.png'\]>" "400 click 551 188; 470 click 994 584; 520 list"
 pedido OpenFile "{$ABRIR}" 4
 portal_check "Close do pedido fecha o seletor (resposta 1)" "uint32 1" "700 list" "seletor: pedido fechado pelo app"
 if sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -q 'janela "Escolher"'; then
@@ -175,7 +175,7 @@ python3 -I '$PDIR/cliente.py' '$PASTA' '$RESPOSTA'
 EOF
     : >"$RESPOSTA"
     MIDE_PRIVATE_BUS=1 MIDE_PORTAL_FORCE=1 SCENARIO_GRACE=3 timeout 150 dbus-run-session --config-file="$PDIR/bus.conf" -- tests/scenario.sh \
-        "600 list; 620 click 585 281; 660 click 975 571; 720 list" -- "sh '$PDIR/app.sh'" >/dev/null 2>&1
+        "600 list; 620 click 553 226; 660 click 994 584; 720 list" -- "sh '$PDIR/app.sh'" >/dev/null 2>&1
     if grep -q "^(0, {'uris': \['$URI/a.txt'\]})" "$RESPOSTA" && sed 's/\x1b\[[0-9;]*m//g' "$OUT/mide.log" | grep -q 'janela "Abrir pelo portal"'; then
         echo "ok    xdg-desktop-portal de verdade usa o seletor do mide (Response 0 com o arquivo)"; PASS=$((PASS + 1))
     else
