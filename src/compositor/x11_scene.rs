@@ -5,9 +5,10 @@
 //! e maximizar).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use x11rb::protocol::xproto;
 use x11rb::rust_connection::RustConnection;
-use crate::x11_render::X11Render;
+use crate::x11_render::{put_rgb_frame, X11Render};
 
 /// Regiao da janela onde um clique caiu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +21,8 @@ pub enum DecorationHit {
     Close,
     /// Botao maximizar/restaurar.
     Maximize,
+    /// Botao minimizar (à esquerda do maximizar).
+    Minimize,
 }
 
 /// Janela X11 cliente conhecida pela cena.
@@ -51,6 +54,9 @@ pub struct X11Window {
     /// Sem decoração do gerenciador (dica Motif do app): a cena não desenha barra nem
     /// bordas, e o clique vai para o app.
     pub undecorated: bool,
+    /// Janela X da barra do compositor (filha da janela de composição, empilhada logo
+    /// acima do cliente). None quando a janela não tem barra do compositor.
+    pub bar: Option<xproto::Window>,
 }
 
 /// Altura da barra de desenho do servidor, em pontos (escala ja aplicada).
@@ -86,12 +92,15 @@ impl X11Window {
             // Botao maximizar fica a esquerda do fechar: a faixa dos dois comeca em max_x.
             let close_x = btn_x_start;
             let max_x = close_x.saturating_sub(BTN_SIZE as i16).saturating_sub(2);
-            if x >= max_x && x <= self.width as i16 {
-                // Botao fechar (mais a direita) ou maximizar (ao lado).
+            let min_x = max_x.saturating_sub(BTN_SIZE as i16).saturating_sub(2);
+            if x >= min_x && x <= self.width as i16 {
+                // Fechar (mais a direita), maximizar e minimizar (à esquerda deles).
                 if x >= close_x {
                     DecorationHit::Close
-                } else {
+                } else if x >= max_x {
                     DecorationHit::Maximize
+                } else {
+                    DecorationHit::Minimize
                 }
             } else {
                 DecorationHit::Title
@@ -117,6 +126,12 @@ pub struct X11Scene {
     /// A cena mudou desde o último quadro: só então desenha e envia à tela (economiza
     /// CPU em máquinas fracas quando nada se mexe).
     pub frame_dirty: bool,
+    /// Janelas de barra: barra -> cliente.
+    pub bars: HashMap<xproto::Window, xproto::Window>,
+    /// Última geometria e visibilidade aplicadas a cada barra (evita configurar à toa).
+    pub bar_state: HashMap<xproto::Window, (i16, i16, u16, bool)>,
+    /// Contextos de desenho das barras (buffer e gc de cada janela de barra).
+    pub bar_renders: HashMap<xproto::Window, X11Render>,
 }
 
 impl X11Scene {
@@ -129,6 +144,71 @@ impl X11Scene {
             output_height: 0,
             output_scale: 1.0,
             frame_dirty: true,
+            bars: HashMap::new(),
+            bar_state: HashMap::new(),
+            bar_renders: HashMap::new(),
+        }
+    }
+
+    /// Liga a janela de barra `bar` ao cliente `client`.
+    pub fn attach_bar(&mut self, client: xproto::Window, bar: xproto::Window) {
+        if let Some(win) = self.windows.get_mut(&client) {
+            win.bar = Some(bar);
+            self.bars.insert(bar, client);
+            self.frame_dirty = true;
+        }
+    }
+
+    /// Solta a barra de um cliente (ao destruí-lo) e devolve a janela dela.
+    pub fn take_bar(&mut self, client: xproto::Window) -> Option<xproto::Window> {
+        let bar = self.windows.get_mut(&client)?.bar.take()?;
+        self.bars.remove(&bar);
+        self.bar_state.remove(&bar);
+        self.bar_renders.remove(&bar);
+        Some(bar)
+    }
+
+    /// Cliente dono de uma janela de barra (None se `bar` não é barra).
+    pub fn client_of_bar(&self, bar: xproto::Window) -> Option<xproto::Window> {
+        self.bars.get(&bar).copied()
+    }
+
+    /// Desenha a barra de cada cliente visível na própria janela da barra. Assim ela
+    /// fica na pilha junto com o cliente: some onde outra janela passa por cima, como
+    /// nos apps do mide.
+    fn draw_bars(&mut self, conn: &Arc<RustConnection>) {
+        let k = self.output_scale;
+        let visible: Vec<(xproto::Window, u16, bool, bool)> = self
+            .windows
+            .values()
+            .filter_map(|w| match w.bar {
+                Some(bar) if w.mapped && !w.undecorated && !w.fullscreen => {
+                    Some((bar, w.width, w.maximized_vert, w.maximized_horz))
+                }
+                _ => None,
+            })
+            .collect();
+        for (bar, width, maximized_vert, maximized_horz) in visible {
+            let bw = ((width as f32 * k) as u32).max(1);
+            let bh = TITLE_HEIGHT as u32;
+            if self.bar_renders.get(&bar).is_none_or(|r| r.width != bw) {
+                match X11Render::new(conn.clone(), bar, bw, bh) {
+                    Ok(render) => {
+                        self.bar_renders.insert(bar, render);
+                    }
+                    Err(err) => {
+                        tracing::warn!("barra X11 {bar}: {err}");
+                        continue;
+                    }
+                }
+            }
+            let Some(render) = self.bar_renders.get_mut(&bar) else {
+                continue;
+            };
+            draw_title_bar(render, bw, bh, maximized_vert, maximized_horz);
+            if let Err(err) = put_rgb_frame(conn, bar, render.gc, bw, bh, &render.buffer) {
+                tracing::warn!("barra X11 {bar}: quadro não enviado ({err})");
+            }
         }
     }
 
@@ -167,6 +247,7 @@ impl X11Scene {
                 content_dirty: true,
                 dirty_rects: Vec::new(),
                 undecorated: false,
+                bar: None,
             },
         );
     }
@@ -523,6 +604,8 @@ impl X11Scene {
 
         // Copia os pixels para a janela X11.
         self.frame_dirty = false;
+        let bars_conn = render._conn.clone();
+        self.draw_bars(&bars_conn);
         apply_shape(conn, render.window, &self.windows, k);
         crate::x11_render::put_rgb_frame(&render._conn, render.window, render.gc, render.width, render.height, &render.buffer)
     }
@@ -532,6 +615,31 @@ impl Default for X11Scene {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Desenha a barra de título (ícone, botões fechar e maximizar, linha de baixo) num
+/// contexto cuja origem é o canto de cima à esquerda da própria janela da barra.
+fn draw_title_bar(render: &mut X11Render, w: u32, h: u32, maximized_vert: bool, maximized_horz: bool) {
+    let btn_size = BTN_SIZE as u32;
+    let btn_margin = BTN_MARGIN as u32;
+    let tcolor = X11Render::title_color(maximized_vert, maximized_horz, false);
+    render.fill_rect(0, 0, w, h, tcolor);
+    render.draw_title_marks(8, 8, 16, 16, (0xc0, 0xc0, 0xc0));
+
+    let close_x = w as i32 - btn_margin as i32 - btn_size as i32;
+    let max_x = close_x - (btn_size as i32 + 2);
+    let btn_y = (h as i32 - btn_size as i32) / 2;
+
+    render.draw_close(close_x, btn_y, btn_size, (0xd0, 0x40, 0x40));
+    render.stroke_rect(close_x, btn_y, btn_size, btn_size, (0x60, 0x20, 0x20), 1);
+    render.draw_maximize(max_x, btn_y, btn_size, (0x40, 0x80, 0xd0));
+    render.stroke_rect(max_x, btn_y, btn_size, btn_size, (0x20, 0x40, 0x70), 1);
+    let min_x = max_x - (btn_size as i32 + 2);
+    render.fill_rect(min_x, btn_y, btn_size, btn_size, (0xe0, 0xa0, 0x30));
+    render.stroke_rect(min_x, btn_y, btn_size, btn_size, (0x80, 0x58, 0x18), 1);
+    // Traço horizontal no meio: o sinal de minimizar.
+    render.fill_rect(min_x + 7, btn_y + btn_size as i32 / 2 - 1, btn_size - 14, 2, (0x60, 0x40, 0x10));
+    render.hline(0, h as i32 - 1, w, (0x40, 0x40, 0x48));
 }
 
 /// Recorte da janela de composição: só as molduras das janelas clientes ficam visíveis.

@@ -366,6 +366,9 @@ struct Shared {
     comp_window: xproto::Window,
     /// Janela raiz do servidor X.
     root: xproto::Window,
+    /// Profundidade e visual da raiz: as janelas de barra são criadas com eles.
+    root_depth: u8,
+    root_visual: xproto::Visualid,
     /// O `mide-lock` (ou o greeter) aberto para bloquear: a tela está bloqueada enquanto ele roda.
     lock_child: std::sync::Mutex<Option<std::process::Child>>,
     /// Arrastre em andamento: (janela, offset_x, offset_y) do ponteiro em
@@ -640,6 +643,8 @@ impl X11Backend {
             keymap,
             comp_window: window,
             root,
+            root_depth: screen.root_depth,
+            root_visual: screen.root_visual,
             lock_child: std::sync::Mutex::new(None),
             drag_window: Mutex::new(None),
         });
@@ -718,17 +723,20 @@ impl Shared {
     /// Uma queda da conexão com o servidor X devolve erro para o laço de eventos parar.
     /// Sem isso, o descritor continua legível e o aviso se repetiria a cada volta.
     fn dispatch(&self, state: &mut State) -> std::io::Result<()> {
-        loop {
+        let result = loop {
             match self.conn.poll_for_event() {
                 Ok(Some(event)) => self.handle_event(state, event),
-                Ok(None) => return Ok(()),
+                Ok(None) => break Ok(()),
                 // Só a queda da conexão é fatal; erros de protocolo não impedem o resto.
                 Err(x11rb::errors::ConnectionError::IoError(err)) => {
-                    return Err(std::io::Error::new(err.kind(), format!("conexão com o servidor X11: {err}")));
+                    break Err(std::io::Error::new(err.kind(), format!("conexão com o servidor X11: {err}")));
                 }
                 Err(err) => tracing::debug!("evento X11 ignorado: {err}"),
             }
-        }
+        };
+        // Barras acompanham os clientes depois de cada leva de eventos (posição e pilha).
+        self.sync_bars();
+        result
     }
 
     fn handle_event(&self, state: &mut State, event: Event) {
@@ -770,7 +778,7 @@ impl Shared {
                 }
             }
             Event::MapNotify(ev) => {
-                if ev.window == self.comp_window {
+                if ev.window == self.comp_window || self.is_bar(ev.window) {
                     return;
                 }
                 let managed = self
@@ -794,6 +802,9 @@ impl Shared {
                 }
             }
             Event::UnmapNotify(ev) => {
+                if self.is_bar(ev.window) {
+                    return;
+                }
                 let managed = self
                     .scene
                     .lock()
@@ -808,6 +819,9 @@ impl Shared {
                 }
             }
             Event::DestroyNotify(ev) => {
+                if self.is_bar(ev.window) {
+                    return;
+                }
                 let managed = self
                     .scene
                     .lock()
@@ -815,6 +829,9 @@ impl Shared {
                     .unwrap_or(false);
                 if managed {
                     if let Ok(mut scene) = self.scene.lock() {
+                        if let Some(bar) = scene.take_bar(ev.window) {
+                            let _ = self.conn.destroy_window(bar);
+                        }
                         scene.remove_window(ev.window);
                     }
                     if let Ok(mut layout) = self.layout.lock() {
@@ -893,7 +910,11 @@ impl Shared {
                 );
                 // Clique no topo de uma janela cai na área do compositor (o app fica abaixo da
                 // barra): o alvo é a moldura sob o ponteiro.
-                let hit_id = if ev.child != 0 { ev.child } else { self.frame_at(ev.event_x, ev.event_y).unwrap_or(0) };
+                let hit_id = if ev.child != 0 {
+                    self.client_for_child(ev.child)
+                } else {
+                    self.frame_at(ev.event_x, ev.event_y).unwrap_or(0)
+                };
                 // Clique em janela cliente: hit-test de decocoes do servidor.
                 if hit_id != 0 && ev.detail == 1 {
                     if let Ok(scene) = self.scene.lock() {
@@ -910,6 +931,11 @@ impl Shared {
                                     DecorationHit::Close => {
                                         drop(scene);
                                         self.send_close(hit_id);
+                                        return;
+                                    }
+                                    DecorationHit::Minimize => {
+                                        drop(scene);
+                                        self.minimize_window(hit_id);
                                         return;
                                     }
                                     DecorationHit::Maximize => {
@@ -1022,6 +1048,9 @@ impl Shared {
                 }
             }
             Event::ConfigureNotify(ev) => {
+                if self.is_bar(ev.window) {
+                    return;
+                }
                 tracing::trace!(
                     "X11 configuracao: janela {}, ({}, {}), {}x{}",
                     ev.window,
@@ -1744,6 +1773,113 @@ impl Shared {
         Ok(())
     }
 
+    /// Cria a janela de barra de um cliente, filha da janela de composição. Ela é
+    /// empilhada logo acima do cliente por `sync_bars`.
+    fn create_bar(&self) -> Result<xproto::Window, Box<dyn Error>> {
+        let bar = self.conn.generate_id()?;
+        let aux = xproto::CreateWindowAux::new().backing_store(xproto::BackingStore::WHEN_MAPPED);
+        self.conn.create_window(
+            self.root_depth,
+            bar,
+            self.comp_window,
+            0,
+            0,
+            1,
+            super::x11_scene::TITLE_HEIGHT,
+            0,
+            xproto::WindowClass::INPUT_OUTPUT,
+            self.root_visual,
+            &aux,
+        )?;
+        Ok(bar)
+    }
+
+    /// Mantém cada barra no lugar do cliente: mesma posição e tamanho, mapeada quando o
+    /// cliente está, e logo acima dele na pilha. Roda no fim de cada leva de eventos.
+    /// As próprias barras geram eventos, que são ignorados em `handle_event`; o laço
+    /// converge porque só mexe quando algo está fora do lugar.
+    fn sync_bars(&self) {
+        let Ok(mut guard) = self.scene.lock() else {
+            return;
+        };
+        if guard.bars.is_empty() {
+            return;
+        }
+        let scene = &mut *guard;
+        for _ in 0..3 {
+            let Ok(cookie) = self.conn.query_tree(self.comp_window) else {
+                return;
+            };
+            let Ok(tree) = cookie.reply() else {
+                return;
+            };
+            // Filhos da janela de composição, do fundo para o topo.
+            let order = tree.children;
+            let k = scene.output_scale;
+            let items: Vec<(xproto::Window, xproto::Window, (i16, i16, u16, bool))> = scene
+                .windows
+                .values()
+                .filter_map(|w| {
+                    let bar = w.bar?;
+                    let visible = w.mapped && !w.undecorated && !w.fullscreen;
+                    let geom = (
+                        (w.x as f32 * k) as i16,
+                        (w.y as f32 * k) as i16,
+                        ((w.width as f32 * k) as u16).max(1),
+                        visible,
+                    );
+                    Some((w.id, bar, geom))
+                })
+                .collect();
+            let mut changed = false;
+            for (client, bar, (x, y, width, visible)) in items {
+                let state = (x, y, width, visible);
+                if scene.bar_state.get(&bar) != Some(&state) {
+                    let aux = xproto::ConfigureWindowAux::new()
+                        .x(x as i32)
+                        .y(y as i32)
+                        .width(width as u32)
+                        .height(super::x11_scene::TITLE_HEIGHT as u32);
+                    let _ = self.conn.configure_window(bar, &aux);
+                    if visible {
+                        let _ = self.conn.map_window(bar);
+                    } else {
+                        let _ = self.conn.unmap_window(bar);
+                    }
+                    scene.bar_state.insert(bar, state);
+                    changed = true;
+                }
+                if visible {
+                    let pos_client = order.iter().position(|w| *w == client);
+                    let pos_bar = order.iter().position(|w| *w == bar);
+                    if let (Some(pc), Some(pb)) = (pos_client, pos_bar) {
+                        if pb != pc + 1 {
+                            let aux = xproto::ConfigureWindowAux::new()
+                                .sibling(client)
+                                .stack_mode(xproto::StackMode::ABOVE);
+                            let _ = self.conn.configure_window(bar, &aux);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            let _ = self.conn.flush();
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// A janela é uma barra de cliente (não é app nem camada).
+    fn is_bar(&self, id: xproto::Window) -> bool {
+        self.scene.lock().map(|s| s.bars.contains_key(&id)).unwrap_or(false)
+    }
+
+    /// Janela que recebe um clique num filho: a barra vira o cliente dela.
+    fn client_for_child(&self, id: xproto::Window) -> xproto::Window {
+        self.scene.lock().ok().and_then(|s| s.client_of_bar(id)).unwrap_or(id)
+    }
+
     /// Adota uma janela cliente: reparenta sob a janela de composicao, registra
     /// na cena e a mapeia.
     fn adopt_window(&self, window: xproto::Window) -> Result<(), Box<dyn Error>> {
@@ -1780,6 +1916,16 @@ impl Shared {
         if let Ok(mut scene) = self.scene.lock() {
             scene.add_window(window, offset, offset, geom.width, geom.height + t as u16);
             scene.set_undecorated(window, undecorated);
+        }
+        if !undecorated {
+            match self.create_bar() {
+                Ok(bar) => {
+                    if let Ok(mut scene) = self.scene.lock() {
+                        scene.attach_bar(window, bar);
+                    }
+                }
+                Err(err) => tracing::warn!("barra da janela X11 {window}: {err}"),
+            }
         }
         if let Ok(mut layout) = self.layout.lock() {
             if !layout.clients.contains(&window) {
