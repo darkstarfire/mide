@@ -429,8 +429,10 @@ montar() {
     install -d "$PALCO$P/bin" "$PALCO$P/share/mide" "$PALCO/usr/share/wayland-sessions" \
         "$PALCO/usr/share/xdg-desktop-portal/portals" "$PALCO/usr/share/dbus-1/services" \
         "$PALCO/etc/pam.d" "$PALCO/etc/xdg/xdg-desktop-portal-wlr" "$PALCO/var/lib/mide"
-    # Programas: o compositor procura os auxiliares (barra, dock...) ao lado dele.
-    for f in target/release/mide target/release/mide-*; do
+    # Programas: o compositor procura os auxiliares (barra, dock...) ao lado dele. Os
+    # do mios (instalador e boas-vindas) vão junto: só aparecem no mios (os atalhos e o
+    # início automático deles vêm do mios-release e da imagem do live).
+    for f in target/release/mide target/release/mide-* target/release/mios-*; do
         case "$f" in *.d | *.rlib) continue ;; esac
         [ -f "$f" ] && [ -x "$f" ] && install -m755 "$f" "$PALCO$P/bin/"
     done
