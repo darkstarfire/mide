@@ -2999,3 +2999,26 @@ distribuição (o apt do mios), sem catálogo próprio:
   usa, no idioma da sessão, e os ícones já em cache (o maior tamanho baixado); os
   instalados pelo estado do dpkg.
 - Seções com contexto de tradução próprio (`store`): "Play" é "Jogar" aqui.
+
+## v0.10.97 (2026-11-16): ISO do mios pelo CI (M3 e M4)
+
+- **Identidade (M3):** pacote `mios-release` (`packaging/mios-release/build-deb.sh`): o
+  `os-release`, o `issue` e o `issue.net` do mios no lugar dos do Debian (desviados com o
+  `dpkg-divert`, as atualizações do `base-files` não os trocam de volta), o
+  `lsb-release`, `GRUB_DISTRIBUTOR="mios"`, os temas do GRUB (com as fontes `.pf2`) e
+  do Plymouth, e a configuração padrão dos usuários novos (papel de parede automático do
+  mios). Versão do mios em `iso/VERSION` (1.0).
+- **Pacote do mide:** `packaging/debian/build-deb.sh` monta tudo pelo `install.sh`
+  (`--prefix /usr --destdir`) e gera o `mide_<versão>_amd64.deb` com as dependências.
+- **ISO (M4):** `iso/live` (configuração do live-build do Debian 13: GRUB no BIOS e no
+  UEFI com o tema do mios e as entradas "mios", "mios (Português do Brasil)", "mios (safe
+  graphics)" e "UEFI Firmware Settings"; lista enxuta de pacotes; o hook com o greetd e
+  o greeter do mide, o modo live entrando direto na sessão do usuário `mios`, idiomas
+  inglês e português e o nome da máquina), `iso/build.sh` e `iso/ci.sh`.
+- **CI:** `.github/workflows/iso.yml` (Actions → mios ISO → Run workflow, e as tags
+  `mios-*`) gera os `.deb` e a ISO num contêiner Debian 13 (~20 minutos, com cache do
+  cargo e dos pacotes) e guarda a ISO (1,5 GB) e os pacotes como artefatos.
+- Correções no caminho: `cmake` para compilar o mide numa máquina limpa,
+  `gtk-update-icon-cache` para o tema de ícones, o `user-setup` para o live-config criar
+  o usuário do modo live (sem ele, o greetd não achava o usuário) e o greetd depois do
+  live-config; o GRUB sem a caixa preta enquanto carrega.

@@ -1283,3 +1283,14 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   capturas e ícones) e `le_o_catalogo_do_sistema` (`--ignored`).
 - Capturas: Descobrir com os ícones e a página do Inkscape em português.
 - Instalar e remover pedem a senha: falta conferir com o usuário.
+
+## v0.10.97 (2026-11-16): ISO
+
+- A ISO do CI no QEMU (`-enable-kvm -bios /usr/share/ovmf/OVMF.fd -cdrom ... -vga
+  virtio`), com capturas pelo monitor: o GRUB com o tema e as quatro entradas, o
+  Plymouth (logo e barra de progresso) e a sessão do mide no modo live com o papel de
+  parede do mios, a barra e a dock.
+- Diagnóstico de boot: o kernel e o initrd tirados da ISO com o `7z`, boot com
+  `-kernel/-initrd -append "... console=ttyS0 systemd.journald.forward_to_console=1"` e
+  a serial num arquivo (`-serial file:`); `lsinitramfs`/`unmkinitramfs` para ver o que
+  entrou no initrd.
