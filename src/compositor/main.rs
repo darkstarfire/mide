@@ -118,7 +118,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     )?;
 
-    let config = config::Config::load()?;
+    // Um config.toml com erro não impede o mide de abrir: os padrões valem até o
+    // arquivo ser corrigido (as Configurações regravam ele inteiro).
+    let config = match config::Config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!("configuração com erro, usando os padrões: {err}");
+            config::Config::defaults()?
+        }
+    };
     tracing::info!("{} atalho(s) configurado(s)", config.bindings.len());
     tracing::info!(effects = ?config.effects, "configuração de efeitos visuais carregada");
     let mut state = State::new(display_handle, config, loop_handle.clone())?;

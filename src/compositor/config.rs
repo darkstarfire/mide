@@ -638,11 +638,21 @@ pub struct Config {
 impl Config {
     /// Carrega o arquivo do usuário, se existir, sobre os atalhos padrão.
     pub fn load() -> Result<Self, Box<dyn Error>> {
+        Self::load_from(config_path())
+    }
+
+    /// Só os padrões, sem ler o arquivo do usuário: a partida com um `config.toml` que
+    /// não dá para ler (o mide abre assim mesmo, para a pessoa não ficar sem entrar).
+    pub fn defaults() -> Result<Self, Box<dyn Error>> {
+        Self::load_from(None)
+    }
+
+    fn load_from(path: Option<PathBuf>) -> Result<Self, Box<dyn Error>> {
         let mut dark = false;
         let mut power = Power::default();
         let mut display = Display::default();
         let mut tablet = Tablet::default();
-        let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match config_path() {
+        let (user, effects, desktop, keyboard, monitors, input, lock, opacity) = match path {
             Some(path) if path.exists() => {
                 let text = fs::read_to_string(&path)?;
                 let mut file = toml::from_str::<FileConfig>(&text)
@@ -908,6 +918,21 @@ impl fmt::Display for Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layouts_do_teclado_e_arquivo_com_erro() {
+        let dir = std::env::temp_dir().join(format!("mide-config-teste-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        // O que o instalador do mios grava: um texto com os layouts.
+        std::fs::write(&path, "[keyboard]\nlayouts = \"br\"\n").unwrap();
+        assert_eq!(Config::load_from(Some(path.clone())).unwrap().keyboard.layouts, "br");
+        // Uma lista não é aceita (o erro da primeira ISO); os padrões continuam valendo.
+        std::fs::write(&path, "[keyboard]\nlayouts = [\"br\"]\n").unwrap();
+        assert!(Config::load_from(Some(path)).is_err());
+        assert!(!Config::defaults().unwrap().bindings.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn cfg(entries: &[(&str, &str)]) -> Result<Config, Box<dyn Error>> {
         let map = entries

@@ -178,10 +178,11 @@ pub fn install(plan: &Plan) -> Result<(), String> {
     if !chpasswd.wait().map_err(|e| e.to_string())?.success() {
         return Err("chpasswd failed".into());
     }
-    // Teclado também no mide do usuário (a sessão lê o config.toml).
+    // Teclado também no mide do usuário (a sessão lê o config.toml; `layouts` é um
+    // texto com os layouts separados por vírgula, como "br,us:intl").
     let config = format!("{TARGET}/home/{}/.config/mide/config.toml", plan.username);
     if let Ok(text) = std::fs::read_to_string(&config) {
-        let _ = std::fs::write(&config, format!("{text}\n[keyboard]\nlayouts = [\"{keyboard}\"]\n"));
+        let _ = std::fs::write(&config, format!("{text}\n[keyboard]\nlayouts = \"{keyboard}\"\n"));
         let _ = chroot(&["chown", "-R", &format!("{0}:{0}", plan.username), &format!("/home/{}/.config", plan.username)]);
     }
 
