@@ -3065,3 +3065,23 @@ App novo `mide-disks` ("Disks"/"Discos"), como o Utilitário de Disco do Mac:
   partição, rótulo, ejetar/desligar, gravar imagem e montar imagens), que o instalador
   do mios (M9) também vai usar. O polkit pede a senha nas operações de administrador.
 - A ISO leva o `wimtools`; o pacote do mide o recomenda.
+
+## v0.10.100 (2026-11-16): Claude no Code (M10)
+
+Painel do Claude no `mide-code`, à direita de tudo (botão de balão na barra, Visualizar →
+Claude ou Ctrl+Shift+L; o Ctrl+L continua indo para a linha), com a divisória arrastável:
+- Conversa com o Claude Code instalado na máquina (`claude -p` no formato `stream-json`),
+  rodando na pasta do projeto aberto. A conversa continua entre mensagens (`--resume`
+  com a sessão) e "Nova conversa" começa outra.
+- Entra com a conta do Claude, pela assinatura, sem chave de API: "Entrar com o Claude"
+  roda `claude auth login --claudeai` (o navegador termina o login) e o painel confere
+  sozinho (`claude auth status`) até entrar. Sem o `claude` instalado, mostra o comando
+  para instalar.
+- Mostra as respostas, cada ferramenta usada (Ler, Escrever, Editar, Rodar, Buscar,
+  com o arquivo relativo ao projeto e ✓/✕ no fim) e o modelo.
+- Cada ferramenta pede licença no painel (`--permission-prompt-tool stdio`): Negar,
+  Permitir ou "Sempre nesta conversa" (aquela ferramenta passa sozinha até a próxima
+  conversa). "Parar" interrompe o que o Claude está fazendo.
+- Símbolo de conversa novo no mide-ui (`chat-symbolic`).
+- Outros agentes ficam para depois: o painel só depende dos eventos do módulo
+  `src/bin/mide-code/agent.rs`.

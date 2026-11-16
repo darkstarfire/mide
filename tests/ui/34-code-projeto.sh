@@ -5,8 +5,8 @@
 # e a volta ao projeto da última vez.
 #
 # Coordenadas (1366x768; a janela do Code, 1040x640, nasce em (48, 76)):
-# - Barra de ferramentas em y=102 (com a gaveta): abrir arquivo x=833, terminal
-#   x=1008, Preferências x=1048.
+# - Barra de ferramentas em y=99 (com a gaveta): abrir arquivo x=782, terminal
+#   x=924, Claude x=988, Preferências x=1052.
 # - Gaveta (barra lateral de vidro do kit, 230 de largura): primeira linha em y=190,
 #   segunda em y=216; a divisória do kit entre x=274 e x=282. O menu de uma linha abre logo abaixo dela: Renomear +100,
 #   Duplicar +126, Lixeira +152, Copiar caminho +187, Mostrar no Arquivos +213 (em y,
@@ -53,7 +53,7 @@ ok_if "code: arquivo da gaveta solto embaixo divide o editor" grep -q 'editor di
 # Terminal integrado: botão da barra abre o shell na pasta do projeto; Ctrl+J fecha
 # e abre de novo (o mesmo shell).
 new_project
-code_run "300 click 600 400; 330 click 955 99; 400 type touch_criado; 420 key enter; 460 combo ctrl+j; 480 combo ctrl+j; 500 type touch_outro; 510 key enter; 560 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
+code_run "300 click 600 400; 330 click 924 99; 400 type touch_criado; 420 key enter; 460 combo ctrl+j; 480 combo ctrl+j; 500 type touch_outro; 510 key enter; 560 list" MIDE_CODE_TEST_SHELL=/bin/sh -- "'$CDIR/proj'"
 ok_if "code: terminal integrado roda comandos na pasta do projeto" test -f "$CDIR/proj/criado"
 ok_if "code: Ctrl+J fecha e abre o terminal" test -f "$CDIR/proj/outro"
 

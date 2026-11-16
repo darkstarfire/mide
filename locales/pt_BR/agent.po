@@ -1,0 +1,73 @@
+# Tradução do mide para o português do Brasil: o painel do Claude no Code
+# (src/bin/mide-code/agent.rs).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Couldn’t start Claude Code: {err}"
+msgstr "Não foi possível iniciar o Claude Code: {err}"
+
+msgid "Claude Code stopped."
+msgstr "O Claude Code parou."
+
+msgid "Claude Code reported an error: {err}"
+msgstr "O Claude Code avisou um erro: {err}"
+
+msgid "Read"
+msgstr "Ler"
+
+msgid "Write"
+msgstr "Escrever"
+
+msgid "Web"
+msgstr "Web"
+
+msgid "New Conversation"
+msgstr "Nova conversa"
+
+msgid "Looking for Claude Code…"
+msgstr "Procurando o Claude Code…"
+
+msgid "Claude Code isn’t installed. Install it in the terminal with:"
+msgstr "O Claude Code não está instalado. Instale no terminal com:"
+
+msgid "Check Again"
+msgstr "Conferir de novo"
+
+msgid "Sign in with your Claude account (subscription, no API key). The browser opens to finish."
+msgstr "Entre com a sua conta do Claude (pela assinatura, sem chave de API). O navegador abre para terminar."
+
+msgid "Sign In with Claude"
+msgstr "Entrar com o Claude"
+
+msgid "Ask Claude to explain, change or create code in this project. Each change asks for your permission."
+msgstr "Peça ao Claude para explicar, mudar ou criar código neste projeto. Cada mudança pede a sua licença."
+
+msgid "You"
+msgstr "Você"
+
+msgid "Allow {tool}?"
+msgstr "Permitir {tool}?"
+
+msgid "Deny"
+msgstr "Negar"
+
+msgid "Always in This Conversation"
+msgstr "Sempre nesta conversa"
+
+msgid "Allow"
+msgstr "Permitir"
+
+msgid "Claude is working…"
+msgstr "O Claude está trabalhando…"
+
+msgid "Message Claude"
+msgstr "Mensagem para o Claude"
+
+msgid "Claude (Ctrl+Shift+L)"
+msgstr "Claude (Ctrl+Shift+L)"
+
+msgid "Claude"
+msgstr "Claude"

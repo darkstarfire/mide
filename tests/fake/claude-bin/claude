@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+# claude falso para os testes do painel do Claude no Code (tests/ui/56-code-claude.sh):
+# fala o mesmo protocolo stream-json do Claude Code (`claude -p --input-format stream-json
+# --output-format stream-json --permission-prompt-tool stdio`), pede licença para
+# escrever criado.txt e escreve só se for permitido.
+import json, sys, os
+def out(v):
+    print(json.dumps(v), flush=True)
+args = sys.argv[1:]
+if args[:2] == ["auth", "status"]:
+    out({"loggedIn": os.environ.get("FAKE_CLAUDE_LOGGED", "1") == "1", "authMethod": "claude.ai"})
+    sys.exit(0)
+if args[:2] == ["auth", "login"]:
+    sys.exit(0)
+log = open(os.environ.get("FAKE_CLAUDE_LOG", "/dev/null"), "a")
+out({"type": "system", "subtype": "init", "session_id": "sessao-teste", "model": "claude-teste"})
+for line in sys.stdin:
+    msg = json.loads(line)
+    log.write(line); log.flush()
+    if msg.get("type") != "user":
+        continue
+    text = msg["message"]["content"]
+    out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Vou criar o arquivo pedido: " + text}, {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": os.getcwd() + "/criado.txt", "content": "oi"}}]}})
+    out({"type": "control_request", "request_id": "r1", "request": {"subtype": "can_use_tool", "tool_name": "Write", "input": {"file_path": os.getcwd() + "/criado.txt", "content": "oi"}, "description": "criado.txt"}})
+    resp = json.loads(sys.stdin.readline())
+    log.write(json.dumps(resp) + "\n"); log.flush()
+    allow = resp["response"]["response"]["behavior"] == "allow"
+    if allow:
+        open(resp["response"]["response"]["updatedInput"]["file_path"], "w").write("oi")
+    out({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": not allow}]}})
+    out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Pronto." if allow else "Tudo bem, não criei."}]}})
+    out({"type": "result", "total_cost_usd": 0.0, "is_error": False, "session_id": "sessao-teste"})

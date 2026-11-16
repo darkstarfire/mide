@@ -25,6 +25,7 @@
 //!   tabulação, gaveta e servidores de linguagem.
 //! - Arquivos soltos na janela abrem em abas.
 
+mod agent;
 mod ext_servers;
 mod lsp_ui;
 mod store_ui;
@@ -271,6 +272,10 @@ pub(crate) struct Code {
     docs: Vec<Doc>,
     cur: usize,
     root: Option<PathBuf>,
+    /// Conversa com o Claude Code (painel à direita).
+    agent: agent::Agent,
+    agent_open: bool,
+    agent_width: f32,
     expanded: HashSet<PathBuf>,
     config: Config,
     /// Servidores rodando (pelo comando) e os que falharam (não tenta de novo).
@@ -350,6 +355,9 @@ impl Code {
             docs: Vec::new(),
             cur: 0,
             root: None,
+            agent: agent::Agent::new(),
+            agent_open: false,
+            agent_width: 340.0,
             expanded: HashSet::new(),
             config: Config::load(),
             servers: HashMap::new(),
@@ -1289,6 +1297,7 @@ impl Code {
             }
             "problems" => self.overlay = Overlay::Problems { sel: 0, go: false },
             "extensions" => self.open_store(),
+            "agent" => self.agent_open = !self.agent_open,
             "outline" => {
                 self.config.outline = !self.config.outline;
                 let _ = self.config.save();
@@ -1410,7 +1419,7 @@ impl Code {
         } else if shift("s") {
             run.push("save-as");
         }
-        for (key, action) in [("n", "new"), ("w", "close-tab"), ("q", "quit"), ("t", "goto-file"), ("l", "goto-line"), ("/", "comment"), (",", "prefs"), ("=", "zoom-in"), ("+", "zoom-in"), ("-", "zoom-out"), ("0", "zoom-reset"), (".", "code-actions"), ("r", "symbols")] {
+        for (key, action) in [("n", "new"), ("w", "close-tab"), ("q", "quit"), ("t", "goto-file"), ("/", "comment"), (",", "prefs"), ("=", "zoom-in"), ("+", "zoom-in"), ("-", "zoom-out"), ("0", "zoom-reset"), (".", "code-actions"), ("r", "symbols")] {
             if input.shortcut(key) {
                 run.push(action);
             }
@@ -1444,6 +1453,12 @@ impl Code {
         }
         if shift("x") {
             run.push("extensions");
+        }
+        // Ctrl+L: ir para a linha; Ctrl+Shift+L: o painel do Claude.
+        if plain("l") {
+            run.push("goto-line");
+        } else if shift("l") {
+            run.push("agent");
         }
         // Ctrl+I: dica do símbolo; Ctrl+Shift+I: formatar (como no VS Code).
         if plain("i") {
@@ -2356,7 +2371,7 @@ impl App for Code {
                     clicked = Some("drawer");
                 }
                 ui.toolbar_title(&title, 360.0);
-                ui.push_right(8.0 * mide::kit::TOOLBAR_SEG + 2.0 * 4.0 + 8.0 + 8.0);
+                ui.push_right(9.0 * mide::kit::TOOLBAR_SEG + 2.0 * 4.0 + 8.0 + 8.0);
                 match ui.tool_group(&[
                     Tool::new("document-open-symbolic", &tr!("Open File (Ctrl+O)")),
                     Tool::new("folder-open-symbolic", &tr!("Open Folder (Ctrl+Shift+O)")),
@@ -2371,14 +2386,16 @@ impl App for Code {
                     Tool::new("edit-find-symbolic", &tr!("Find and Replace (Ctrl+F)")).on(finding),
                     Tool::new("utilities-terminal-symbolic", &tr!("Terminal (Ctrl+J)")).on(term_on),
                     Tool::new("view-sidebar-end-symbolic", &tr!("Symbols Panel")).on(outline_on),
+                    Tool::new("chat-symbolic", &tr!("Claude (Ctrl+Shift+L)")).on(self.agent_open),
                     Tool::new("application-x-addon-symbolic", &tr!("Extensions (Ctrl+Shift+X)")),
                     Tool::new("preferences-system-symbolic", &tr!("Settings (Ctrl+,)")),
                 ]) {
                     Some(0) => clicked = Some("find"),
                     Some(1) => clicked = Some("terminal"),
                     Some(2) => clicked = Some("outline"),
-                    Some(3) => clicked = Some("extensions"),
-                    Some(4) => clicked = Some("prefs"),
+                    Some(3) => clicked = Some("agent"),
+                    Some(4) => clicked = Some("extensions"),
+                    Some(5) => clicked = Some("prefs"),
                     _ => {}
                 }
             });
@@ -2497,7 +2514,23 @@ impl App for Code {
         // Só com o que mostrar: servidor de linguagem para o arquivo ou símbolos lidos.
         // Respiro em volta do editor: à direita e embaixo, para o texto não encostar na
         // borda da janela nem na barra de status.
-        let total = (cl, body_top, (cw - EDGE_GAP).max(160.0), (status_y - body_top - EDGE_GAP).max(60.0));
+        let mut total = (cl, body_top, (cw - EDGE_GAP).max(160.0), (status_y - body_top - EDGE_GAP).max(60.0));
+        // Painel do Claude à direita de tudo (antes do de símbolos, que divide o que
+        // sobra: áreas diferentes, divisórias diferentes).
+        if self.agent_open {
+            let max_agent = (total.2 - 300.0).max(AGENT_MIN);
+            let agent_w = self.agent_width.clamp(AGENT_MIN, max_agent);
+            let mut left = total.2 - agent_w;
+            let (r, rest, agent_rect) = ui.split_divider(total, &mut left, 300.0_f32.min(total.2 - AGENT_MIN), total.2 - AGENT_MIN);
+            self.agent_width = (total.2 - left).clamp(AGENT_MIN, max_agent);
+            if r.submitted() {
+                self.divider_moved();
+            }
+            let agent_rect = (agent_rect.0 + SIDE_GAP / 2.0, agent_rect.1, (agent_rect.2 - SIDE_GAP / 2.0).max(60.0), agent_rect.3);
+            total = (rest.0, rest.1, (rest.2 - SIDE_GAP / 2.0).max(160.0), rest.3);
+            self.agent_panel(ui, agent_rect);
+        }
+        let total = total;
         let mut body = total;
         if self.config.outline && self.outline_useful() {
             // Editor e painel de símbolos com a divisória do kit (arrastável, como a da
@@ -2757,6 +2790,7 @@ impl App for Code {
                 items: vec![
                     MenuItem::action("palette", &tr!("Command Palette…")).shortcut("Ctrl+Shift+P"),
                     MenuItem::action("outline", &tr!("Symbols Panel")).checked(self.config.outline),
+                    MenuItem::action("agent", &tr!("Claude")).shortcut("Ctrl+Shift+L").checked(self.agent_open),
                     MenuItem::action("breadcrumbs", &tr!("Path Bar")).checked(self.config.breadcrumbs),
                     MenuItem::action("extensions", &tr!("Extensions…")).shortcut("Ctrl+Shift+X"),
                     MenuItem::Separator,
@@ -2949,6 +2983,8 @@ const EDGE_GAP: f32 = 10.0;
 const BREADCRUMB_H: f32 = 24.0;
 /// Menor largura do painel de símbolos.
 const OUTLINE_MIN: f32 = 160.0;
+/// Largura mínima do painel do Claude.
+const AGENT_MIN: f32 = 260.0;
 /// Respiro entre a gaveta do projeto e o editor (o recuo da barra lateral flutuante).
 const SIDE_GAP: f32 = 8.0;
 /// Respiro à direita da barra de abas (o + não encosta na borda da janela), como o

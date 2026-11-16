@@ -1313,3 +1313,16 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   do `/dev/loop-control`, que não existe nesta máquina sem o módulo `loop`).
 - Formatar, particionar e criar pendrives de verdade: falta conferir com o usuário (com
   um pendrive).
+
+## v0.10.100 (2026-11-16): Claude no Code
+
+- Seção nova `56-code-claude` com um `claude` falso (`tests/fake/claude-bin/claude`, o
+  mesmo protocolo `stream-json`): a mensagem chega ao programa, Permitir responde
+  `allow` e o arquivo é criado, Negar responde `deny` e nada é escrito.
+- Teste `eventos_do_claude_viram_a_conversa` (os eventos viram as linhas, o pedido de
+  licença e o "sempre nesta conversa").
+- Seções 34 e 35 do Code passando (a 34 com a coordenada nova do botão do terminal).
+- Capturas: painel vazio, conversa com o pedido de licença, conversa terminada com o
+  arquivo na gaveta e a tela de entrar com a conta.
+- O protocolo foi conferido antes com o `claude` de verdade (licença pedida e
+  permitida, arquivo criado). Falta o usuário conversar pela conta dele na sessão.
