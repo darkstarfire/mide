@@ -5,7 +5,8 @@ desktop-image: "background.jpg"
 desktop-image-scale-method: "crop"
 desktop-color: "#0a0f2e"
 terminal-font: "Noto Sans Regular 16"
-terminal-box: "menu_*.png"
+# Enquanto o GRUB carrega o sistema: só o fundo (sem a caixa preta do terminal).
+terminal-box: "none_*.png"
 
 + boot_menu {
     left = 32%
