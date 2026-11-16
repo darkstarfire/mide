@@ -23,6 +23,10 @@ while [ $# -gt 0 ]; do
 done
 
 versao="$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)"
+# Montagens fora de uma versão (a ISO de um commit qualquer) ganham um sufixo, como
+# "+git1a2b3c4": ficam acima do pacote publicado com o mesmo número, e o apt não troca
+# o pacote do commit pelo da internet.
+versao="$versao${MIDE_VERSION_SUFFIX:-}"
 arquitetura="$(dpkg --print-architecture)"
 raiz="$(readlink -m "target/deb/mide-root")"
 rm -rf "$raiz"

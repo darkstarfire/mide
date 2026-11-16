@@ -34,7 +34,12 @@ jobs:
       - name: Build packages and ISO (Debian 13 container)
         run: |
           mkdir -p .ci-cache/cargo
+          # Fora de uma tag, os pacotes da ISO levam o commit na versão (acima dos
+          # publicados no apt com o mesmo número; ver packaging/debian/build-deb.sh).
+          sufixo=""
+          [ "$GITHUB_REF_TYPE" = tag ] || sufixo="+git${GITHUB_SHA::7}"
           docker run --rm --privileged \
+            -e MIDE_VERSION_SUFFIX="$sufixo" \
             -v "$PWD:/src" -w /src \
             -v "$PWD/.ci-cache/cargo:/root/.cargo" \
             debian:trixie iso/ci.sh

@@ -27,7 +27,7 @@ done
 versao="$(cat iso/VERSION)"
 # Versão do pacote: a do mios mais a do mide (sobe a cada versão, e o apt atualiza a
 # identidade, os temas e a fonte do apt junto com o mide).
-pacote_versao="$versao+$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)"
+pacote_versao="$versao+$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)${MIDE_VERSION_SUFFIX:-}"
 raiz="$(readlink -m target/deb/mios-release-root)"
 rm -rf "$raiz"
 mkdir -p "$saida" "$raiz/DEBIAN" "$raiz/usr/lib/mios" "$raiz/etc/default/grub.d" "$raiz/etc/skel/.config/mide"
