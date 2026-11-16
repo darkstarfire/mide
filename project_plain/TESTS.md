@@ -1294,3 +1294,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   `-kernel/-initrd -append "... console=ttyS0 systemd.journald.forward_to_console=1"` e
   a serial num arquivo (`-serial file:`); `lsinitramfs`/`unmkinitramfs` para ver o que
   entrou no initrd.
+
+## v0.10.98 (2026-11-16): repositório apt
+
+- Repositório local com os `.deb` do CI e o `mios-release`, assinado pelo
+  `apt-publish.sh`; o `apt-get update` (como usuário, com `Dir::State`/`Dir::Cache`
+  próprios e `signed-by` com a chave do mios) aceita a assinatura e o `apt-cache policy`
+  mostra o `mide` e o `mios-release`.

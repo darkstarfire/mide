@@ -7,7 +7,8 @@
 #   - /etc/lsb-release e GRUB_DISTRIBUTOR=mios (o nome no menu do GRUB);
 #   - os temas do GRUB e do Plymouth (data/mios), já com as fontes .pf2;
 #   - a configuração padrão do mide para usuários novos (/etc/skel): o papel de parede
-#     automático do mios.
+#     automático do mios;
+#   - o repositório apt do mios (chave e fonte), para as atualizações do mide.
 #
 # Uso: packaging/mios-release/build-deb.sh [--out DIR]   (padrão: target/deb)
 # Precisa do grub-mkfont (grub-common) e do dpkg-deb.
@@ -24,6 +25,9 @@ while [ $# -gt 0 ]; do
 done
 
 versao="$(cat iso/VERSION)"
+# Versão do pacote: a do mios mais a do mide (sobe a cada versão, e o apt atualiza a
+# identidade, os temas e a fonte do apt junto com o mide).
+pacote_versao="$versao+$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)"
 raiz="$(readlink -m target/deb/mios-release-root)"
 rm -rf "$raiz"
 mkdir -p "$saida" "$raiz/DEBIAN" "$raiz/usr/lib/mios" "$raiz/etc/default/grub.d" "$raiz/etc/skel/.config/mide"
@@ -65,6 +69,17 @@ cp data/mios/plymouth/mios/* "$raiz/usr/share/plymouth/themes/mios/"
 echo 'GRUB_THEME="/boot/grub/themes/mios/theme.txt"' >>"$raiz/etc/default/grub.d/mios.cfg"
 echo 'GRUB_GFXMODE="1920x1080,1366x768,auto"' >>"$raiz/etc/default/grub.d/mios.cfg"
 
+# Repositório apt do mios (as atualizações do mide): a chave pública e a fonte, em
+# formato deb822. É um repositório "plano" nos Releases do GitHub (a release "apt").
+install -d "$raiz/usr/share/keyrings" "$raiz/etc/apt/sources.list.d"
+install -m644 data/mios/apt/mios-archive-keyring.gpg "$raiz/usr/share/keyrings/"
+cat >"$raiz/etc/apt/sources.list.d/mios.sources" <<'EOF'
+Types: deb
+URIs: https://github.com/fabioaacarneiro/mide/releases/download/apt/
+Suites: ./
+Signed-By: /usr/share/keyrings/mios-archive-keyring.gpg
+EOF
+
 # Usuários novos: o papel de parede automático do mios (claro e escuro).
 cat >"$raiz/etc/skel/.config/mide/config.toml" <<'EOF'
 [desktop]
@@ -74,7 +89,7 @@ EOF
 
 cat >"$raiz/DEBIAN/control" <<EOF
 Package: mios-release
-Version: $versao
+Version: $pacote_versao
 Architecture: all
 Maintainer: mide <https://github.com/fabioaacarneiro/mide>
 Section: admin
@@ -124,9 +139,11 @@ exit 0
 EOF
 chmod 755 "$raiz/DEBIAN/postinst" "$raiz/DEBIAN/postrm"
 # Arquivos de configuração (o dpkg pergunta antes de trocar um que o usuário mudou).
-printf '%s\n' /etc/lsb-release /etc/default/grub.d/mios.cfg /etc/skel/.config/mide/config.toml >"$raiz/DEBIAN/conffiles"
+printf '%s\n' /etc/lsb-release /etc/default/grub.d/mios.cfg /etc/skel/.config/mide/config.toml /etc/apt/sources.list.d/mios.sources >"$raiz/DEBIAN/conffiles"
 echo "Installed-Size: $(du -sk --exclude=DEBIAN "$raiz" | cut -f1)" >>"$raiz/DEBIAN/control"
 
-pacote="$saida/mios-release_${versao}_all.deb"
+pacote="$saida/mios-release_${pacote_versao}_all.deb"
+# Sem escrita para o grupo e os outros (o umask de quem gera não importa).
+chmod -R go-w "$raiz"
 dpkg-deb --root-owner-group --build -Zxz "$raiz" "$pacote"
 echo "$pacote"

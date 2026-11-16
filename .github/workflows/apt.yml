@@ -1,0 +1,59 @@
+# Publica o repositório apt do mios (os pacotes do mide e do mios-release, assinados)
+# na release "apt" deste repositório, a cada versão (tags v*) ou à mão.
+# Nas máquinas com o mios, o apt já vem configurado (pacote mios-release).
+name: mios apt
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mios-apt
+  cancel-in-progress: false
+
+jobs:
+  apt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Cache (cargo)
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/cargo
+            target/release
+          key: mios-apt-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            mios-apt-${{ runner.os }}-
+            mios-${{ runner.os }}-
+
+      - name: Build packages (Debian 13 container)
+        run: |
+          mkdir -p .ci-cache/cargo
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            -v "$PWD/.ci-cache/cargo:/root/.cargo" \
+            debian:trixie packaging/ci-debs.sh
+          sudo chown -R "$(id -u):$(id -g)" target .ci-cache
+
+      - name: Sign and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIOS_APT_GPG_KEY: ${{ secrets.MIOS_APT_GPG_KEY }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq dpkg-dev apt-utils
+          printf '%s\n' "$MIOS_APT_GPG_KEY" | gpg --batch --import
+          mkdir -p target/apt
+          cp target/deb/mide_*.deb target/deb/mios-release_*.deb target/apt/
+          packaging/apt-publish.sh target/apt --upload

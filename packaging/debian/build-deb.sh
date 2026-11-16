@@ -66,5 +66,7 @@ tamanho="$(du -sk --exclude=DEBIAN "$raiz" | cut -f1)"
 echo "Installed-Size: $tamanho" >>"$raiz/DEBIAN/control"
 
 pacote="$saida/mide_${versao}_${arquitetura}.deb"
+# Sem escrita para o grupo e os outros (o umask de quem gera não importa).
+chmod -R go-w "$raiz"
 dpkg-deb --root-owner-group --build -Zxz "$raiz" "$pacote"
 echo "$pacote"

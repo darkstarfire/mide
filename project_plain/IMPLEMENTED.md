@@ -3022,3 +3022,23 @@ distribuição (o apt do mios), sem catálogo próprio:
   `gtk-update-icon-cache` para o tema de ícones, o `user-setup` para o live-config criar
   o usuário do modo live (sem ele, o greetd não achava o usuário) e o greetd depois do
   live-config; o GRUB sem a caixa preta enquanto carrega.
+
+## v0.10.98 (2026-11-16): repositório apt do mios (M5)
+
+Decisão do usuário: o repositório fica nos Releases do próprio `mide` (sem token manual).
+- Repositório apt "plano" na release `apt` do GitHub:
+  `deb [signed-by=/usr/share/keyrings/mios-archive-keyring.gpg] https://github.com/fabioaacarneiro/mide/releases/download/apt/ ./`
+  (os Releases aceitam arquivos de até 2 GB; o pacote do mide tem ~130 MB, acima do
+  limite de 100 MB do GitHub Pages).
+- Chave de assinatura própria do mios (ed25519, `data/mios/apt/FINGERPRINT`); a
+  privada só no segredo `MIOS_APT_GPG_KEY` do Actions; a pública em
+  `data/mios/apt/mios-archive-keyring.gpg` e no pacote `mios-release`, que também traz
+  `/etc/apt/sources.list.d/mios.sources` (deb822).
+- `packaging/apt-publish.sh`: `Packages`, `Release` (Origin/Label mios), `InRelease` e
+  `Release.gpg` assinados e, com `--upload`, a publicação na release `apt` (tira os
+  `.deb` antigos).
+- `.github/workflows/apt.yml`: a cada tag `v*` (ou à mão), gera os pacotes num contêiner
+  Debian 13 (`packaging/ci-debs.sh`, o mesmo da ISO) e publica.
+- O `mios-release` passa a ter a versão "1.0+<versão do mide>": sobe a cada versão e o
+  apt atualiza a identidade, os temas e a fonte junto com o mide. Arquivos dos pacotes
+  sem escrita para o grupo (o umask de quem gera não importa mais).
