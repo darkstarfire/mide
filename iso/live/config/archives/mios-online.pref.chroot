@@ -1,0 +1,7 @@
+# Só durante a montagem da ISO (o live-build tira os *.pref.chroot da imagem final):
+# o repositório apt do mios na internet fica de fora, para a ISO levar os pacotes do
+# commit que está sendo montado (mesma versão publicada com outro conteúdo fazia o apt
+# querer "voltar" ao pacote da internet). O sistema instalado continua com ele.
+Package: *
+Pin: origin "github.com"
+Pin-Priority: -1
