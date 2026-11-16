@@ -1,0 +1,126 @@
+# Tradução do mide para o português do Brasil: instalador (mios-installer) e boas-vindas (mios-welcome) do mios.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Account"
+msgstr "Conta"
+
+msgid "All Set"
+msgstr "Tudo pronto"
+
+msgid "Choose Your Look"
+msgstr "Escolha a aparência"
+
+msgid "Choose the Disk"
+msgstr "Escolha o disco"
+
+msgid "Configuring…"
+msgstr "Configurando…"
+
+msgid "Confirm password"
+msgstr "Confirme a senha"
+
+msgid "Copying mios to the disk…"
+msgstr "Copiando o mios para o disco…"
+
+msgid "Create Your Account"
+msgstr "Crie sua conta"
+
+msgid "Creating your account…"
+msgstr "Criando sua conta…"
+
+msgid "Enjoy mios. Updates arrive automatically in Software Update."
+msgstr "Aproveite o mios. As atualizações chegam sozinhas na Atualização de Software."
+
+msgid "Everything on the chosen disk will be erased."
+msgstr "Tudo no disco escolhido será apagado."
+
+msgid "Everything on the disk will be erased. This can’t be undone."
+msgstr "Tudo no disco será apagado. Não dá para desfazer."
+
+msgid "Finishing the setup…"
+msgstr "Terminando a configuração…"
+
+msgid "Install apps from the Store in the dock"
+msgstr "Instale apps pela Loja, na dock"
+
+msgid "Install mios"
+msgstr "Instalar o mios"
+
+msgid "Installing mios"
+msgstr "Instalando o mios"
+
+msgid "Keyboard and Region"
+msgstr "Teclado e região"
+
+msgid "Log in automatically"
+msgstr "Entrar automaticamente"
+
+msgid "Making the disk start the computer…"
+msgstr "Preparando o disco para iniciar o computador…"
+
+msgid "No disk of 16 GB or more found."
+msgstr "Nenhum disco de 16 GB ou mais encontrado."
+
+msgid "Open the launcher with all apps"
+msgstr "Abrir o launcher com todos os apps"
+
+msgid "Preparing the disk…"
+msgstr "Preparando o disco…"
+
+msgid "Ready to Install"
+msgstr "Pronto para instalar"
+
+msgid "Restart the computer and remove the installation drive."
+msgstr "Reinicie o computador e tire o pendrive de instalação."
+
+msgid "Search apps, files and settings"
+msgstr "Buscar apps, arquivos e ajustes"
+
+msgid "Start Using mios"
+msgstr "Começar a usar o mios"
+
+msgid "Take a screenshot of an area"
+msgstr "Capturar uma área da tela"
+
+msgid "The installation failed"
+msgstr "A instalação falhou"
+
+msgid "The installation stopped without an answer."
+msgstr "A instalação parou sem resposta."
+
+msgid "The passwords are different."
+msgstr "As senhas são diferentes."
+
+msgid "The user name uses lowercase letters, numbers, - and _, starting with a letter."
+msgstr "O nome de usuário usa letras minúsculas, números, - e _, começando com uma letra."
+
+msgid "Time Zone"
+msgstr "Fuso horário"
+
+msgid "Try mios"
+msgstr "Experimentar o mios"
+
+msgid "User name"
+msgstr "Nome de usuário"
+
+msgid "Welcome"
+msgstr "Boas-vindas"
+
+msgid "Welcome to mios"
+msgstr "Boas-vindas ao mios"
+
+msgid "You can change it later in Settings → Appearance."
+msgstr "Dá para mudar depois em Configurações → Aparência."
+
+msgid "Your Mac inspired system is ready. Here are a few things to set up before you start."
+msgstr "Seu sistema inspirado no Mac está pronto. Antes de começar, algumas coisas para ajustar."
+
+msgid "mios is a Mac inspired operating system, with the mide desktop. Choose your language."
+msgstr "O mios é um sistema operacional inspirado no Mac, com o desktop mide. Escolha o idioma."
+
+msgid "mios is installed"
+msgstr "O mios está instalado"

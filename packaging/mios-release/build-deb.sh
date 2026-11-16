@@ -80,6 +80,11 @@ Suites: ./
 Signed-By: /usr/share/keyrings/mios-archive-keyring.gpg
 EOF
 
+# Boas-vindas no primeiro login (o mios-welcome some depois de vistas e não abre no
+# modo live).
+install -d "$raiz/etc/xdg/autostart"
+printf '[Desktop Entry]\nType=Application\nName=Welcome\nName[pt_BR]=Boas-vindas\nExec=mios-welcome\nNoDisplay=true\nOnlyShowIn=mide;\n' >"$raiz/etc/xdg/autostart/mios-welcome.desktop"
+
 # Usuários novos: o papel de parede automático do mios (claro e escuro).
 cat >"$raiz/etc/skel/.config/mide/config.toml" <<'EOF'
 [desktop]

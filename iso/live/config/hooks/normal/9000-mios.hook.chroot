@@ -32,3 +32,48 @@ printf '[Unit]\nAfter=live-config.service systemd-user-sessions.service\n' >/etc
 systemctl set-default graphical.target
 
 echo mios >/etc/hostname
+
+# Só no modo live (o instalador tira do sistema instalado): o instalador no launcher e
+# abrindo sozinho, e o teste automático (parâmetro mios.autoinstall=DISCO do kernel).
+cat >/usr/share/applications/mios-installer.desktop <<'DESK'
+[Desktop Entry]
+Type=Application
+Name=Install mios
+Name[pt_BR]=Instalar o mios
+Exec=mios-installer
+Icon=system-software-install
+Categories=System;
+OnlyShowIn=mide;
+DESK
+install -d /etc/xdg/autostart
+cat >/etc/xdg/autostart/mios-installer-live.desktop <<'DESK'
+[Desktop Entry]
+Type=Application
+Name=Install mios
+Exec=mios-installer
+NoDisplay=true
+OnlyShowIn=mide;
+DESK
+install -d /usr/lib/mios
+cat >/usr/lib/mios/autoinstall <<'SCRIPT'
+#!/bin/sh
+# Teste automático: instala no disco do parâmetro mios.autoinstall=DISCO e desliga.
+disco="$(sed -n 's/.*mios\.autoinstall=\([^ ]*\).*/\1/p' /proc/cmdline)"
+exec /usr/bin/mios-installer --auto "${disco:-/dev/vda}"
+SCRIPT
+chmod 755 /usr/lib/mios/autoinstall
+cat >/etc/systemd/system/mios-autoinstall.service <<'UNIT'
+[Unit]
+Description=mios automatic installation (tests)
+ConditionKernelCommandLine=mios.autoinstall
+After=live-config.service systemd-udev-settle.service local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/mios/autoinstall
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable mios-autoinstall.service

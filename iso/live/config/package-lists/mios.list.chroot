@@ -60,6 +60,12 @@ exfatprogs
 cryptsetup
 udisks2
 rsync
+# Instalador do mios: o sistema descompactado e o GRUB no UEFI e no BIOS.
+squashfs-tools
+grub2-common
+grub-efi-amd64-bin
+grub-pc-bin
+efibootmgr
 # Pendrive de boot do Windows (dividir o install.wim maior que 4 GB).
 wimtools
 
