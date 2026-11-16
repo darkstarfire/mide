@@ -29,6 +29,9 @@ use crate::state::State;
 use crate::x11_render::X11Render;
 use crate::x11_scene::{DecorationHit, X11Scene};
 
+/// Geometria e visibilidade de uma peça da decoração: (x, y, largura, altura, visível).
+type PieceState = (i16, i16, u16, u16, bool);
+
 /// Wrapper sem assumir propriedade do fd, para uso com `calloop::Generic`.
 struct FdWrapper(RawFd);
 
@@ -1830,7 +1833,7 @@ impl Shared {
             let order = tree.children;
             let k = scene.output_scale;
             // Por cliente: suas peças, na ordem da cadeia, com a geometria e a visibilidade.
-            let clients: Vec<(xproto::Window, Vec<(xproto::Window, (i16, i16, u16, u16, bool))>)> = scene
+            let clients: Vec<(xproto::Window, Vec<(xproto::Window, PieceState)>)> = scene
                 .windows
                 .values()
                 .filter(|w| !w.decos.is_empty())
@@ -1872,8 +1875,8 @@ impl Shared {
                     continue;
                 };
                 let mut above = client;
-                let mut expected = pos_client + 1;
-                for (deco, _) in &pieces {
+                for (i, (deco, _)) in pieces.iter().enumerate() {
+                    let expected = pos_client + 1 + i;
                     let pos_deco = order.iter().position(|w| w == deco);
                     if pos_deco != Some(expected) {
                         let aux = xproto::ConfigureWindowAux::new()
@@ -1883,7 +1886,6 @@ impl Shared {
                         changed = true;
                     }
                     above = *deco;
-                    expected += 1;
                 }
             }
             let _ = self.conn.flush();
