@@ -1,0 +1,24 @@
+#!/bin/sh
+# Configuração do live-build para a ISO do mios (Debian 13 por baixo). Rodada pelo
+# `lb config` (o iso/build.sh chama).
+set -e
+lb config noauto \
+    --distribution trixie \
+    --architectures amd64 \
+    --archive-areas "main contrib non-free non-free-firmware" \
+    --binary-images iso-hybrid \
+    --bootloaders grub-pc,grub-efi \
+    --debian-installer none \
+    --memtest none \
+    --linux-flavours amd64 \
+    --apt-recommends false \
+    --firmware-chroot true \
+    --firmware-binary true \
+    --security true \
+    --updates true \
+    --iso-application "mios" \
+    --iso-publisher "mios" \
+    --iso-volume "mios" \
+    --image-name mios \
+    --bootappend-live "boot=live components quiet splash username=mios user-fullname=mios hostname=mios" \
+    "${@}"

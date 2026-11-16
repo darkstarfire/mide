@@ -7,3 +7,4 @@
 # Quadros e logs de depuração dos testes
 *.rgba
 perf.data*
+/.ci-cache

@@ -1,0 +1,30 @@
+#!/bin/sh
+# Ajustes do mios dentro do chroot da ISO: login pelo greeter do mide (e, no modo live,
+# direto na sessão do usuário mios), idiomas, nome da máquina e o alvo gráfico.
+set -e
+
+# Idiomas: inglês (padrão) e português do Brasil.
+sed -i -E 's/^# *(en_US\.UTF-8 UTF-8)/\1/; s/^# *(pt_BR\.UTF-8 UTF-8)/\1/' /etc/locale.gen
+locale-gen
+
+# greetd com o greeter do mide; no modo live, a sessão do usuário mios abre direto
+# (initial_session). O instalador do mios tira o initial_session do sistema instalado.
+install -d -m755 /etc/greetd /etc/mide/login/mide
+cp /etc/skel/.config/mide/config.toml /etc/mide/login/mide/config.toml
+install -d -m755 -o _greetd /var/lib/mide-login
+cat >/etc/greetd/config.toml <<'CONF'
+[terminal]
+vt = 7
+
+[default_session]
+command = "env XDG_CONFIG_HOME=/etc/mide/login XDG_STATE_HOME=/var/lib/mide-login XDG_DATA_DIRS=/usr/local/share:/usr/share MIDE_BACKEND=drm /usr/bin/mide --login"
+user = "_greetd"
+
+[initial_session]
+command = "env XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=mide XDG_CURRENT_DESKTOP=mide /usr/bin/mide-session"
+user = "mios"
+CONF
+systemctl enable greetd.service
+systemctl set-default graphical.target
+
+echo mios >/etc/hostname

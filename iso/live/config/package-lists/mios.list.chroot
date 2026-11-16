@@ -1,0 +1,66 @@
+# Pacotes da ISO do mios, além do mide e do mios-release (config/packages.chroot).
+# Enxuto: só o que um desktop precisa; nada de servidor web nem serviços de servidor.
+
+# Modo live e o sistema
+live-boot
+live-config
+live-config-systemd
+systemd-sysv
+systemd-timesyncd
+linux-image-amd64
+firmware-linux
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-sof-signed
+intel-microcode
+amd64-microcode
+sudo
+locales
+console-setup
+keyboard-configuration
+tzdata
+dbus-user-session
+polkitd
+pkexec
+ca-certificates
+curl
+
+# Rede, Bluetooth e som
+network-manager
+wpasupplicant
+bluez
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+alsa-ucm-conf
+
+# Tela, login e início
+greetd
+xwayland
+mesa-vulkan-drivers
+libgl1-mesa-dri
+plymouth
+plymouth-themes
+grub-common
+iio-sensor-proxy
+brightnessctl
+
+# Discos (o instalador e o app Discos)
+dosfstools
+mtools
+parted
+gdisk
+e2fsprogs
+ntfs-3g
+exfatprogs
+cryptsetup
+udisks2
+rsync
+
+# Fontes e navegador
+fonts-noto-core
+fonts-noto-color-emoji
+firefox-esr
+xdg-user-dirs

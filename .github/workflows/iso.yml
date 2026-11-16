@@ -1,0 +1,58 @@
+# Gera a ISO do mios (Debian 13 por baixo, com o mide) e os pacotes .deb.
+# Roda à mão (Actions → mios ISO → Run workflow) e nas tags mios-*.
+name: mios ISO
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["mios-*"]
+
+jobs:
+  iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      # O runner vem com ~14 GB livres: tira o que não usamos (SDKs de outras linguagens).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Cache (cargo and Debian packages)
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/cargo
+            target/release
+            target/iso/work/cache
+          key: mios-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'iso/live/config/package-lists/*') }}
+          restore-keys: mios-${{ runner.os }}-
+
+      - name: Build packages and ISO (Debian 13 container)
+        run: |
+          mkdir -p .ci-cache/cargo
+          docker run --rm --privileged \
+            -v "$PWD:/src" -w /src \
+            -v "$PWD/.ci-cache/cargo:/root/.cargo" \
+            debian:trixie iso/ci.sh
+          sudo chown -R "$(id -u):$(id -g)" target .ci-cache
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: mios-iso
+          path: |
+            target/iso/mios-*.iso
+            target/iso/mios-*.iso.sha256
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: mios-debs
+          path: target/deb/*.deb
+          retention-days: 14
