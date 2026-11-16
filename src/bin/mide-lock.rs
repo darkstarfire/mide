@@ -215,8 +215,8 @@ impl App for Lock {
             self.failures += 1;
             self.shake = Some(Instant::now());
         }
-        // O relógio anda; o campo balança por meio segundo.
-        ui.wake_after(Duration::from_secs(1));
+        // O relógio anda (na virada do minuto); o campo balança por meio segundo.
+        ui.wake_after(lockscreen::next_redraw());
         let shaking = self.shake.is_some_and(|t| t.elapsed() < Duration::from_millis(450));
         if shaking {
             ui.request_tick();

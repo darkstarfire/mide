@@ -1326,3 +1326,20 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   arquivo na gaveta e a tela de entrar com a conta.
 - O protocolo foi conferido antes com o `claude` de verdade (licença pedida e
   permitida, arquivo criado). Falta o usuário conversar pela conta dele na sessão.
+
+## v0.10.101 (2026-11-16): tela de bloqueio e instalador do mios
+
+- Tela de bloqueio medida num cenário (processador do `mide-lock` em 20 s pelo
+  `/proc/PID/stat`): de 1,9% para 0,4% de um núcleo; teste `cursor_para_de_piscar_sem_uso`
+  no mide-ui e `tela_de_bloqueio_redesenha_no_minuto_ou_em_15_s`.
+- Teste `layouts_do_teclado_e_arquivo_com_erro` (o formato que o instalador grava e os
+  padrões com um arquivo com erro).
+- Bateria inteira (mudança no mide-ui): 679 ok; as falhas que faltavam os exemplos
+  (`cargo build --examples`, apagados na limpeza do `target/`) passaram depois. Fica a do
+  LibreOffice no X11: o próprio LibreOffice (25.2.3, VCL GTK 3) cai ao abrir pelo
+  `xwayland-satellite` ("Unspecified Application Error", depois de chamar uma função do
+  Wayland numa tela X11); não é do mide, a investigar.
+- Instalação automática no QEMU (UEFI, `mios.autoinstall=/dev/vda`): particionar,
+  copiar, usuário, GRUB e initramfs em 216 s; o sistema instalado dá boot pelo disco e
+  chega à tela de login do mios em português. A sessão não abria pelo `config.toml`
+  (corrigido); falta repetir com a ISO nova.

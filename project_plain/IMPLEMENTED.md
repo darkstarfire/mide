@@ -3085,3 +3085,19 @@ Claude ou Ctrl+Shift+L; o Ctrl+L continua indo para a linha), com a divisória a
 - Símbolo de conversa novo no mide-ui (`chat-symbolic`).
 - Outros agentes ficam para depois: o painel só depende dos eventos do módulo
   `src/bin/mide-code/agent.rs`.
+
+## v0.10.101 (2026-11-16): tela de bloqueio sem gastar processador, e correções do instalador do mios
+
+- Tela de bloqueio: o cursor do campo da senha piscava para sempre e redesenhava a tela
+  inteira (em todas as telas) duas vezes por segundo, também com a tela apagada (15–19%
+  de um núcleo na sessão do usuário). No mide-ui, o cursor de texto agora para de
+  piscar e fica aceso 10 s depois da última tecla ou movimento do ponteiro, como no GTK;
+  vale para todos os campos de texto dos apps. O relógio da tela de bloqueio se redesenha
+  na virada do minuto (ou a cada 15 s, pela bateria e pelo Wi-Fi), não mais a cada segundo.
+- Instalador do mios (M9, em teste): o pacote do mide passa a levar o `mios-installer` e
+  o `mios-welcome`; o teclado vai ao `config.toml` do usuário no formato certo
+  (`layouts = "br"`; a lista fazia a sessão instalada não abrir).
+- Compositor: com um `config.toml` que não dá para ler, o mide abre com os padrões e
+  registra o erro (antes não abria, e a pessoa ficava presa na tela de login).
+- ISO do CI: os pacotes de um commit levam `+git<commit>` na versão, para o apt não
+  trocá-los pelos publicados com o mesmo número.

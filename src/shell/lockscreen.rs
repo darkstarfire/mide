@@ -140,6 +140,15 @@ pub fn centered(ui: &mut Ui, s: &str, cx: f32, y: f32, size: f32, weight: FontWe
 
 /// A data pequena em cima da hora grande, como no Sonoma e no Tahoe; `top` é o alto da
 /// data. Devolve onde a hora termina.
+/// Quando a tela de bloqueio precisa se redesenhar sozinha: na virada do minuto (o
+/// relógio não mostra segundos) ou em 15 s (bateria e Wi-Fi), o que vier antes. Redesenhar
+/// a cada segundo custava 15–19% de um núcleo com telas grandes, mesmo apagadas.
+pub fn next_redraw() -> Duration {
+    let now = Local::now();
+    let into_minute = u64::from(now.second()) * 1000 + u64::from(now.timestamp_subsec_millis() % 1000);
+    Duration::from_millis(60_000u64.saturating_sub(into_minute) + 20).min(Duration::from_secs(15))
+}
+
 pub fn clock(ui: &mut Ui, cx: f32, top: f32) -> f32 {
     let now = Local::now();
     let date = crate::calendar::long_date(now.date_naive());
@@ -441,6 +450,12 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tela_de_bloqueio_redesenha_no_minuto_ou_em_15_s() {
+        let d = next_redraw();
+        assert!(d > Duration::ZERO && d <= Duration::from_secs(15), "{d:?}");
+    }
 
     #[test]
     fn opcoes_da_janela_de_login() {
