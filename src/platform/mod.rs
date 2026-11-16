@@ -1,4 +1,4 @@
-//! Sistema e sessão: estado e ações do sistema (som, rede, energia), informações da máquina, telas, teclado, aparência, configuração, itens de início, contas de usuário, senha de administrador, portal e canal de controle do compositor.
+//! Sistema e sessão: estado e ações do sistema (som, rede, energia), informações da máquina, telas, teclado, aparência, configuração, itens de início, contas de usuário, processos, senha de administrador, portal e canal de controle do compositor.
 
 pub mod system;
 pub mod logging;
@@ -13,6 +13,7 @@ pub mod elevate;
 pub mod portal;
 pub mod battery;
 pub mod accounts;
+pub mod processes;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::platform::{control_client, media, settings_file, sounds};

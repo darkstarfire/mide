@@ -2907,3 +2907,30 @@ Pedidos do usuário junto do plano do mios:
   do arrasto é montada em pixels da tela (mesa, Arquivos e miniatura da captura) e o
   mide-ui a entrega ao compositor no tamanho em pontos (`wp_viewporter`), nítida em
   125, 150 e 200%.
+
+## v0.10.93 (2026-11-16): Monitor de Recursos (M1)
+
+App novo `mide-monitor` ("Resource Monitor"/"Monitor de Recursos"), como o Monitor de
+Atividade do Mac, no visual do Tahoe:
+- **Abas** (segmentado na barra de ferramentas, Ctrl+1…5): CPU (% CPU, tempo de CPU,
+  threads, PID, usuário), Memória (memória residente), Energia (impacto energético pelo
+  uso do processador, já que o Linux não mede energia por processo), Disco (bytes lidos
+  e escritos, só dos processos do usuário, como no `top`) e Rede (as placas, com
+  recebidos, enviados e pacotes: o Linux não dá a rede por processo sem privilégio).
+- **Lista** com o nome e o ícone do app instalado (pelo nome do programa), colunas que
+  ordenam ao clicar no título, busca (nome, PID ou linha de comando) e Visualizar →
+  Todos os processos / Meus processos / Processos ativos.
+- **Encerrar** (⊗ ou Visualizar → Encerrar processo): pergunta como o Mac
+  (Forçar encerramento / Cancelar / Encerrar; SIGKILL ou SIGTERM). **Obter informações**
+  (ⓘ, duplo clique ou Ctrl+I): processo pai, usuário, PID, CPU, memória, threads e a
+  linha de comando.
+- **Painel de baixo** com os números e o gráfico de cada aba: carga da CPU (sistema em
+  vermelho e usuário na cor de destaque, empilhados), pressão da memória do kernel (PSI;
+  sem ela, a memória usada), impacto energético com a bateria (carga, alimentação,
+  tempo restante, consumo), dados lidos/escritos e recebidos/enviados por segundo.
+- **Frequência de atualização** em Visualizar (1, 2 ou 5 s); a leitura roda numa
+  thread e acorda a janela.
+- Núcleo novo `mide::processes` (`/proc/stat`, `/proc/PID/{stat,status,statm,cmdline,io}`,
+  `meminfo`, `pressure/memory`, `diskstats`, `net/dev`), com testes de unidade.
+- mide-ui: `Ui::history_graph` (gráfico de histórico, séries empilhadas ou em linha com
+  área) e os símbolos `process-stop-symbolic` e `dialog-information-symbolic`.

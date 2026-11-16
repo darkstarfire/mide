@@ -1,0 +1,208 @@
+# Tradução do mide para o português do Brasil: Monitor de Recursos (mide-monitor).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "% CPU"
+msgstr "% CPU"
+
+msgid "% CPU:"
+msgstr "% CPU:"
+
+msgid "Active Processes"
+msgstr "Processos ativos"
+
+msgid "All Processes"
+msgstr "Todos os processos"
+
+msgid "Are you sure you want to quit this process?"
+msgstr "Tem certeza de que quer encerrar este processo?"
+
+msgid "Available:"
+msgstr "Disponível:"
+
+msgid "Bytes Read"
+msgstr "Bytes lidos"
+
+msgid "Bytes Written"
+msgstr "Bytes escritos"
+
+msgid "CPU"
+msgstr "CPU"
+
+msgid "CPU Load"
+msgstr "Carga da CPU"
+
+msgid "CPU Time"
+msgstr "Tempo de CPU"
+
+msgid "CPU Time:"
+msgstr "Tempo de CPU:"
+
+msgid "Cached Files:"
+msgstr "Arquivos em cache:"
+
+msgid "Cores:"
+msgstr "Núcleos:"
+
+msgid "Couldn’t quit “{name}”: {err}"
+msgstr "Não foi possível encerrar “{name}”: {err}"
+
+msgid "Data read:"
+msgstr "Dados lidos:"
+
+msgid "Data received:"
+msgstr "Dados recebidos:"
+
+msgid "Data sent:"
+msgstr "Dados enviados:"
+
+msgid "Data written:"
+msgstr "Dados escritos:"
+
+msgid "Disk"
+msgstr "Disco"
+
+msgid "Energy Impact"
+msgstr "Impacto energético"
+
+msgid "Force Quit"
+msgstr "Forçar encerramento"
+
+msgid "Idle:"
+msgstr "Ocioso:"
+
+msgid "Memory Pressure"
+msgstr "Pressão da memória"
+
+msgid "Memory Used"
+msgstr "Memória usada"
+
+msgid "Memory Used:"
+msgstr "Memória usada:"
+
+msgid "Memory:"
+msgstr "Memória:"
+
+msgid "My Processes"
+msgstr "Meus processos"
+
+msgid "PID"
+msgstr "PID"
+
+msgid "Packets In"
+msgstr "Pacotes recebidos"
+
+msgid "Packets Out"
+msgstr "Pacotes enviados"
+
+msgid "Parent Process:"
+msgstr "Processo pai:"
+
+msgid "Physical Memory:"
+msgstr "Memória física:"
+
+msgid "Process ID:"
+msgstr "ID do processo:"
+
+msgid "Process Name"
+msgstr "Nome do processo"
+
+msgid "Processes:"
+msgstr "Processos:"
+
+msgid "Quit Process"
+msgstr "Encerrar processo"
+
+msgid "Quit Resource Monitor"
+msgstr "Sair do Monitor de Recursos"
+
+msgid "Read/sec:"
+msgstr "Leituras/s:"
+
+msgid "Reading the system…"
+msgstr "Lendo o sistema…"
+
+msgid "Received"
+msgstr "Recebidos"
+
+msgid "Received/sec:"
+msgstr "Recebidos/s:"
+
+msgid "Resource Monitor"
+msgstr "Monitor de Recursos"
+
+msgid "Sent"
+msgstr "Enviados"
+
+msgid "Sent/sec:"
+msgstr "Enviados/s:"
+
+msgid "Shared:"
+msgstr "Compartilhada:"
+
+msgid "Swap Used:"
+msgstr "Swap usado:"
+
+msgid "System:"
+msgstr "Sistema:"
+
+msgid "Threads"
+msgstr "Threads"
+
+msgid "Threads:"
+msgstr "Threads:"
+
+msgid "Update Every 2 Seconds"
+msgstr "Atualizar a cada 2 segundos"
+
+msgid "Update Every 5 Seconds"
+msgstr "Atualizar a cada 5 segundos"
+
+msgid "Update Every Second"
+msgstr "Atualizar a cada segundo"
+
+msgid "Uptime:"
+msgstr "Ligado há:"
+
+msgid "User"
+msgstr "Usuário"
+
+msgid "User:"
+msgstr "Usuário:"
+
+msgid "Written/sec:"
+msgstr "Escritas/s:"
+
+msgid "{d} d {h} h {m} min"
+msgstr "{d} d {h} h {m} min"
+
+msgid "{h} h {m} min"
+msgstr "{h} h {m} min"
+
+msgid "“{name}” will be closed. Unsaved changes may be lost."
+msgstr "“{name}” será fechado. O que não foi salvo pode se perder."
+
+msgctxt "process"
+msgid "Quit"
+msgstr "Encerrar"
+
+msgid "On Battery"
+msgstr "Na bateria"
+
+msgid "Power Adapter"
+msgstr "Na tomada"
+
+msgid "Battery:"
+msgstr "Bateria:"
+
+msgid "Power Source:"
+msgstr "Alimentação:"
+
+msgid "Time Remaining:"
+msgstr "Tempo restante:"
+
+msgid "Power Use:"
+msgstr "Consumo:"

@@ -1243,3 +1243,13 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Teste de unidade `caminho_solto_entre_aspas_quando_precisa`.
 - `cargo test` (626 aprovados), `tests/ui.sh area-de-trabalho terminal arquivos
   captura-miniatura arrastar-entre` (71 ok).
+
+## v0.10.93 (2026-11-16): Monitor de Recursos
+
+- Seção nova `52-monitor`: a janela abre e a primeira leitura do `/proc` vai ao log
+  ("monitor: N processos, M núcleos, K placas de rede"), passando pelas abas Memória e
+  Rede.
+- Testes de unidade em `mide::processes` (stat com parênteses e espaços no nome, nome
+  cortado pelo kernel, CPU entre duas leituras, memória, disco, rede, pressão, tamanhos
+  e uma leitura do `/proc` de verdade).
+- Capturas das cinco abas em 1366x768.
