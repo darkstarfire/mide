@@ -230,13 +230,13 @@ escolher_distro() {
 # Os nomes são os do README e do INSTALATION.md (conferidos no Debian 13).
 pacotes_compilar() {
     case "$DISTRO" in
-        debian) echo build-essential git curl pkg-config libinput-dev libseat-dev libudev-dev libgbm-dev \
+        debian) echo build-essential cmake git curl pkg-config libinput-dev libseat-dev libudev-dev libgbm-dev \
             libdrm-dev libxkbcommon-dev libpam0g-dev libwayland-dev libegl-dev libglib2.0-dev libgudev-1.0-dev ;;
-        fedora) echo gcc git curl pkgconf-pkg-config libinput-devel libseat-devel systemd-devel mesa-libgbm-devel \
+        fedora) echo gcc gcc-c++ cmake git curl pkgconf-pkg-config libinput-devel libseat-devel systemd-devel mesa-libgbm-devel \
             libdrm-devel libxkbcommon-devel pam-devel wayland-devel mesa-libEGL-devel glib2-devel libgudev-devel ;;
-        arch) echo base-devel git curl libinput seatd mesa libdrm libxkbcommon pam wayland glib2 libgudev ;;
+        arch) echo base-devel cmake git curl libinput seatd mesa libdrm libxkbcommon pam wayland glib2 libgudev ;;
         # Instalação completa do Slackware: as bibliotecas já trazem os cabeçalhos.
-        slackware) echo gcc make pkg-config git curl libinput libxkbcommon mesa libdrm wayland glib2 libgudev \
+        slackware) echo gcc make cmake pkg-config git curl libinput libxkbcommon mesa libdrm wayland glib2 libgudev \
             eudev elogind pam ;;
     esac
 }
