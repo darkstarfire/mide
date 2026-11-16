@@ -169,8 +169,8 @@ msgstr "apagar tela monitor desligar energia dpms protetor"
 msgid "Accent color"
 msgstr "Cor de destaque"
 
-msgid "appearance color accent blue purple pink red orange yellow green graphite"
-msgstr "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite accent"
+msgid "appearance color accent blue purple pink red orange yellow green graphite white black tint tinted glass"
+msgstr "aparencia cor destaque azul roxo rosa vermelho laranja amarelo verde grafite branco preto tom tingido vidro accent"
 
 msgid "theme light dark mode night colors"
 msgstr "tema claro escuro modo noturno dark cores"

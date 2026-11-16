@@ -295,15 +295,14 @@ fn switch(state: &mut State, dir: i32) {
     if !state.config.effects.animations {
         return;
     }
-    if let (Some(loc), Some(toplevel), Some(geo)) =
-        (state.space.element_location(&window), window.toplevel(), state.space.output_geometry(&output))
+    if let (Some(loc), true, Some(geo)) =
+        (state.space.element_location(&window), window.toplevel().is_some(), state.space.output_geometry(&output))
     {
         let size = window.geometry().size;
-        let surface = toplevel.wl_surface().clone();
-        state.animations.retain(|a| a.surface != surface);
+        state.animations.retain(|a| a.window_id != window_id(&window));
         state.animations.push(WindowAnimation {
             window: window.clone(),
-            surface,
+            window_id: window_id(&window),
             from_loc: loc + Point::from((dir * geo.size.w, 0)),
             from_size: size,
             to_loc: loc,

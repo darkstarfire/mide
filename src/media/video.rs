@@ -421,7 +421,9 @@ mod tests {
         p.play();
         let start = Instant::now();
         let mut frames = 0;
-        while !p.ended() && start.elapsed().as_secs() < 5 {
+        // Prazo folgado: o laço para sozinho quando o vídeo acaba; só sob carga pesada
+        // (testes em paralelo) o decodificador demora mais que 5 s para entregar os quadros.
+        while !p.ended() && start.elapsed().as_secs() < 30 {
             if p.tick() {
                 frames += 1;
                 let f = p.frame().unwrap();

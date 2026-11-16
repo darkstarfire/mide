@@ -41,7 +41,7 @@ pub fn candidate(state: &State, output: &Output, mode: (i32, i32)) -> Result<Can
         return Err("janela sem xdg_toplevel".into());
     };
     let surface = toplevel.wl_surface().clone();
-    if state.animation_for(&surface).is_some() {
+    if state.animation_for(crate::state::window_id(&window)).is_some() {
         return Err("animação da janela".into());
     }
     // Nada do mide por cima: aviso de volume, arrasto, prévias, encaixe, barra revelada,

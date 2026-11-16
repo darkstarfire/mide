@@ -19,7 +19,7 @@ use smithay::{
 };
 
 use crate::state::{
-    bar_height_for, window_id, MinimizedWindow, MoveGrab, State, WindowAnimation, WindowId, ANIMATION_DURATION,
+    bar_height_for, toplevel_id, window_id, MinimizedWindow, MoveGrab, State, WindowAnimation, WindowId, ANIMATION_DURATION,
     GENIE_DURATION,
 };
 
@@ -358,7 +358,7 @@ impl State {
     /// tamanho de antes para restaurar.
     fn fill_area(&mut self, surface: &ToplevelSurface, window: &Window, area: smithay::utils::Rectangle<i32, Logical>, tiled: Option<bool>) {
         let window = window.clone();
-        let already = surface.current_state().states.contains(XdgState::Maximized) || self.tiled.contains(surface.wl_surface());
+        let already = surface.current_state().states.contains(XdgState::Maximized) || self.tiled.contains(&toplevel_id(surface));
 
         let from_loc = self.space.element_location(&window);
         let from_size = window.geometry().size;
@@ -369,11 +369,11 @@ impl State {
         self.unsnap_fix = None;
         if !already && from_size.w > 0 && from_size.h > 0 {
             if let Some(loc) = from_loc {
-                self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
-                self.restore_positions.push((surface.wl_surface().clone(), loc));
+                self.restore_positions.retain(|(s, _)| *s != toplevel_id(surface));
+                self.restore_positions.push((toplevel_id(surface), loc));
             }
-            self.restore_sizes.retain(|(s, _)| s != surface.wl_surface());
-            self.restore_sizes.push((surface.wl_surface().clone(), from_size));
+            self.restore_sizes.retain(|(s, _)| *s != toplevel_id(surface));
+            self.restore_sizes.push((toplevel_id(surface), from_size));
         }
         // Maximizando no modo tablet sem barra: a janela ainda não está no estado
         // maximizada, mas já vai ficar sem a barra de título.
@@ -382,10 +382,10 @@ impl State {
         let to_loc: Point<i32, Logical> = (area.loc.x, area.loc.y + bar_h).into();
         let to_size: Size<i32, Logical> = (area.size.w, (area.size.h - bar_h).max(1)).into();
         if let (Some(from_loc), true) = (from_loc, self.config.effects.animations) {
-            self.animations.retain(|a| &a.surface != surface.wl_surface());
+            self.animations.retain(|a| a.window_id != toplevel_id(surface));
             self.animations.push(WindowAnimation {
                 window: window.clone(),
-                surface: surface.wl_surface().clone(),
+                window_id: toplevel_id(surface),
                 from_loc,
                 from_size,
                 to_loc,
@@ -420,9 +420,9 @@ impl State {
             s.size = Some(to_size);
         });
         surface.send_configure();
-        self.tiled.retain(|s| s != surface.wl_surface());
+        self.tiled.retain(|s| *s != toplevel_id(surface));
         if tiled.is_some() {
-            self.tiled.push(surface.wl_surface().clone());
+            self.tiled.push(toplevel_id(surface));
         }
         // O conteúdo começa abaixo da barra de título, que fica no topo da área.
         self.space.map_element(window, to_loc, true);
@@ -430,7 +430,7 @@ impl State {
 
     /// A janela está encaixada (maximizada, numa metade, terço ou quarto)?
     pub fn is_snapped(&self, surface: &ToplevelSurface) -> bool {
-        self.tiled.contains(surface.wl_surface()) || surface.with_pending_state(|s| s.states.contains(XdgState::Maximized))
+        self.tiled.contains(&toplevel_id(surface)) || surface.with_pending_state(|s| s.states.contains(XdgState::Maximized))
     }
 
     /// Tamanho para restaurar uma janela que nunca esteve solta (nasceu maximizada):
@@ -454,13 +454,13 @@ impl State {
         let restore = self
             .restore_sizes
             .iter()
-            .position(|(s, _)| s == surface.wl_surface())
+            .position(|(s, _)| *s == toplevel_id(surface))
             .map(|i| self.restore_sizes.remove(i).1)
             .filter(|s| s.w > 0 && s.h > 0)
             .unwrap_or_else(|| Self::fallback_restore_size(size));
-        self.restore_positions.retain(|(s, _)| s != surface.wl_surface());
-        self.tiled.retain(|s| s != surface.wl_surface());
-        self.animations.retain(|a| &a.surface != surface.wl_surface());
+        self.restore_positions.retain(|(s, _)| *s != toplevel_id(surface));
+        self.tiled.retain(|s| *s != toplevel_id(surface));
+        self.animations.retain(|a| a.window_id != toplevel_id(surface));
         surface.with_pending_state(|s| {
             s.states.unset(XdgState::Maximized);
             for tiled in [XdgState::TiledLeft, XdgState::TiledRight, XdgState::TiledTop, XdgState::TiledBottom] {
@@ -535,12 +535,12 @@ impl State {
         }
         // Apps GTK pedem "desmaximizar" ao abrir, sem estarem maximizados. Nesse caso
         // não há o que restaurar, e a janela não pode sair do lugar.
-        let tiled = self.tiled.contains(surface.wl_surface());
+        let tiled = self.tiled.contains(&toplevel_id(surface));
         if !surface.current_state().states.contains(XdgState::Maximized) && !tiled {
             surface.send_configure();
             return;
         }
-        self.tiled.retain(|s| s != surface.wl_surface());
+        self.tiled.retain(|s| *s != toplevel_id(surface));
         // Restaurada pelo usuário: não volta sozinha à tela de onde saiu.
         self.displaced.retain(|d| d.window != window);
         // Pede de volta o tamanho que a janela tinha antes de maximizar, para a
@@ -552,7 +552,7 @@ impl State {
         let saved = self
             .restore_sizes
             .iter()
-            .position(|(s, _)| s == surface.wl_surface())
+            .position(|(s, _)| *s == toplevel_id(surface))
             .map(|i| self.restore_sizes.remove(i).1)
             .filter(|s| s.w > 0 && s.h > 0);
         let fallback = saved.is_none();
@@ -569,7 +569,7 @@ impl State {
         let restore = self
             .restore_positions
             .iter()
-            .position(|(s, _)| s == surface.wl_surface())
+            .position(|(s, _)| *s == toplevel_id(surface))
             .map(|i| self.restore_positions.remove(i).1)
             .filter(|_| !fallback)
             .or_else(|| {
@@ -585,11 +585,11 @@ impl State {
             restore_size,
             self.config.effects.animations,
         ) {
-            self.animations.retain(|a| &a.surface != surface.wl_surface());
+            self.animations.retain(|a| a.window_id != toplevel_id(surface));
             let from_size = window.geometry().size;
             self.animations.push(WindowAnimation {
                 window: window.clone(),
-                surface: surface.wl_surface().clone(),
+                window_id: toplevel_id(surface),
                 from_loc,
                 from_size,
                 to_loc: restore,
@@ -689,20 +689,20 @@ impl State {
         let follow = self.dock_icon_for(&window).is_some();
         // Restaurando ainda (clique rápido no ícone): volta de onde a lâmpada está, sem
         // recomeçar do tamanho cheio.
-        let start = self.reverse_start(surface, false);
+        let start = self.reverse_start(window_id(&window), false);
         self.minimized.push(MinimizedWindow {
             window: window.clone(),
             loc,
             size,
         });
-        self.animations.retain(|a| &a.surface != surface);
+        self.animations.retain(|a| a.window_id != window_id(&window));
         if !self.config.effects.animations {
             // Sem animação, a janela sai do espaço na hora.
             self.space.unmap_elem(&window);
         } else {
         self.animations.push(WindowAnimation {
             window: window.clone(),
-            surface: surface.clone(),
+            window_id: window_id(&window),
             from_loc: loc,
             from_size: size,
             to_loc: target.0,
@@ -731,19 +731,19 @@ impl State {
         };
         // Nenhuma outra entrada da mesma janela fica para trás (ela receberia o input).
         self.minimized.retain(|m| m.window != window);
-        let Some(surface) = window.toplevel().map(|t| t.wl_surface().clone()) else {
+        if window.toplevel().is_none() {
             return;
-        };
+        }
         let target = self.dock_target(&window, size);
         let follow = self.dock_icon_for(&window).is_some();
         // Minimizando ainda (clique rápido no ícone): a lâmpada inverte de onde está.
-        let start = self.reverse_start(&surface, true);
+        let start = self.reverse_start(window_id(&window), true);
         self.space.map_element(window.clone(), loc, true);
-        self.animations.retain(|a| a.surface != surface);
+        self.animations.retain(|a| a.window_id != window_id(&window));
         if self.config.effects.animations {
         self.animations.push(WindowAnimation {
             window: window.clone(),
-            surface: surface.clone(),
+            window_id: window_id(&window),
             from_loc: target.0,
             from_size: target.1,
             to_loc: loc,
@@ -879,10 +879,10 @@ impl State {
         }
         tracing::info!("abrindo pela dock: {app_id} sai do ícone");
         let size = window.geometry().size;
-        self.animations.retain(|a| &a.surface != toplevel.wl_surface());
+        self.animations.retain(|a| a.window_id != toplevel_id(&toplevel));
         self.animations.push(WindowAnimation {
             window: window.clone(),
-            surface: toplevel.wl_surface().clone(),
+            window_id: toplevel_id(&toplevel),
             from_loc: icon.loc,
             from_size: icon.size,
             to_loc: loc,
@@ -903,12 +903,12 @@ impl State {
     /// verdadeiro: a que está em andamento minimiza) que inverte a contrária no ponto em
     /// que ela está: a nova começa "no passado", no instante em que o desenho é o mesmo.
     /// Sem a contrária em andamento, agora.
-    fn reverse_start(&self, surface: &WlSurface, hiding: bool) -> Instant {
+    fn reverse_start(&self, id: u64, hiding: bool) -> Instant {
         let now = Instant::now();
         // Só a de minimizar ou restaurar (a janela encolhida numa ponta), não a de
         // maximizar ou encaixar.
         let dock_like = |a: &WindowAnimation| a.zoom_to == MINIMIZE_SCALE || a.zoom_from == MINIMIZE_SCALE;
-        let Some(running) = self.animations.iter().find(|a| &a.surface == surface && a.hide_at_end == hiding && dock_like(a) && !a.finished(now)) else {
+        let Some(running) = self.animations.iter().find(|a| a.window_id == id && a.hide_at_end == hiding && dock_like(a) && !a.finished(now)) else {
             return now;
         };
         // Quanto da ida já aconteceu (0 a 1, na curva) e o ponto da volta com o mesmo
@@ -1223,13 +1223,12 @@ impl State {
 
     /// Move a janela de `from` a `to`, deslizando se as animações estão ligadas.
     fn slide_window(&mut self, window: &Window, from: Point<i32, Logical>, to: Point<i32, Logical>) {
-        if let (Some(toplevel), true) = (window.toplevel(), self.config.effects.animations) {
-            let surface = toplevel.wl_surface().clone();
+        if let (true, true) = (window.toplevel().is_some(), self.config.effects.animations) {
             let size = window.geometry().size;
-            self.animations.retain(|a| a.surface != surface);
+            self.animations.retain(|a| a.window_id != window_id(window));
             self.animations.push(WindowAnimation {
                 window: window.clone(),
-                surface,
+                window_id: window_id(window),
                 from_loc: from,
                 from_size: size,
                 to_loc: to,

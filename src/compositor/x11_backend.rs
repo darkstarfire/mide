@@ -5,9 +5,11 @@
 //! composicao, renderiza sobre X11 via XPutImage e integra com o event loop
 //! calloop ja usado pelo mide.
 
+use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::{
-    generic::Generic, timer::Timer, Interest, LoopHandle, Mode, PostAction,
+    generic::Generic, timer::Timer, Interest, LoopHandle, Mode as LoopMode, PostAction,
 };
+use smithay::utils::Transform;
 use std::{
     collections::HashMap,
     error::Error,
@@ -551,6 +553,25 @@ impl X11Backend {
             s.set_output_scale(scale);
             tracing::info!("escala de saida X11: {scale}");
         }
+        // Saída X11 única, do tamanho da janela de composição: é ela que o resto do
+        // compositor enxerga (`screenshot`, `outputs`, Configurações). Sem ela, a captura
+        // de tela responde "nenhuma tela" no backend X11.
+        let output_scale = scene.lock().map(|s| f64::from(s.output_scale)).unwrap_or(1.0);
+        let output = Output::new(
+            "X11-1".into(),
+            PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "mide".into(), model: "X11".into() },
+        );
+        let _output_global = output.create_global::<State>(&state.display_handle);
+        let mode = Mode { size: (width as i32, height as i32).into(), refresh: 60_000 };
+        output.change_current_state(
+            Some(mode),
+            Some(Transform::Normal),
+            Some(crate::backend_udev::output_scale(output_scale)),
+            Some((0, 0).into()),
+        );
+        output.set_preferred(mode);
+        state.space.map_output(&output, (0, 0));
+        let shot_output_name = output.name();
         let layout = Arc::new(Mutex::new(LayoutState {
             work_area: WorkArea {
                 x: 0,
@@ -626,27 +647,54 @@ impl X11Backend {
         let raw_fd = conn.stream().as_raw_fd();
         let shared_dispatch = shared.clone();
         loop_handle.insert_source(
-            Generic::new(FdWrapper(raw_fd), Interest::READ, Mode::Level),
+            Generic::new(FdWrapper(raw_fd), Interest::READ, LoopMode::Level),
             move |_, _, state: &mut State| {
                 shared_dispatch.dispatch(state)?;
                 Ok(PostAction::Continue)
             },
         )?;
 
-        // Timer de renderizacao: dispara a cada 16 ms (~60 FPS) para manter a
-        // tela atualizada.
+        // Timer de renderizacao: a cada 33 ms (~30 FPS, leve para CPUs antigas). Só
+        // redesenha quando a cena marcou algo sujo (`draw_frame` sai cedo se nada mudou).
         let render_conn = conn.clone();
         let render_clone = render.clone();
         let scene_clone = scene.clone();
+        let root_clone = root;
+        let (shot_width, shot_height) = (width, height);
         let mut frame_count: u64 = 0;
         loop_handle.insert_source(
             Timer::from_duration(Duration::from_millis(33)),
             move |_, _, state: &mut State| {
-                let _ = state;
                 // Desenha o quadro completo usando a cena X11.
                 if let Ok(mut render) = render_clone.lock() {
                     if let Err(err) = scene_clone.lock().unwrap().draw_frame(&render_conn, &mut render) {
                         tracing::warn!("erro ao desenhar cena X11: {err}");
+                    }
+                }
+                // Capturas de tela pedidas para esta saída: lê a tela pelo servidor X
+                // (XGetImage na raiz, que já tem o quadro desenhado acima) e grava em
+                // outra thread, para o PNG não travar o laço.
+                let mut paths = Vec::new();
+                state.screenshot_requests.retain(|(name, path)| {
+                    if *name == shot_output_name {
+                        paths.push(path.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if !paths.is_empty() {
+                    match crate::x11_render::capture_root(&render_conn, root_clone, shot_width, shot_height) {
+                        Some(img) => {
+                            std::thread::spawn(move || {
+                                for path in paths {
+                                    if let Err(err) = img.save(&path) {
+                                        tracing::warn!("captura X11 não salva em {}: {err}", path.display());
+                                    }
+                                }
+                            });
+                        }
+                        None => tracing::warn!("captura X11: o servidor não devolveu a tela"),
                     }
                 }
                 frame_count = frame_count.wrapping_add(1);

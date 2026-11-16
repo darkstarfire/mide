@@ -313,7 +313,7 @@ pub(crate) fn windows_on(
                 return None;
             }
             let maximized = w.toplevel().is_some_and(|t| t.current_state().states.contains(XdgState::Maximized));
-            let tiled = w.toplevel().is_some_and(|t| state.tiled.contains(t.wl_surface()));
+            let tiled = w.toplevel().is_some_and(|t| state.tiled.contains(&crate::state::toplevel_id(t)));
             let fit = if maximized {
                 Fit::Maximized
             } else if tiled {
@@ -351,7 +351,7 @@ fn bring_back(state: &mut crate::state::State, live: &[smithay::output::Output],
         };
         let toplevel = d.window.toplevel().cloned();
         let maximized = toplevel.as_ref().is_some_and(|t| t.current_state().states.contains(XdgState::Maximized));
-        let tiled = toplevel.as_ref().is_some_and(|t| state.tiled.contains(t.wl_surface()));
+        let tiled = toplevel.as_ref().is_some_and(|t| state.tiled.contains(&crate::state::toplevel_id(t)));
         let untouched = match d.fit {
             Fit::Free => (loc.x, loc.y) == d.placed_at && !maximized && !tiled,
             Fit::Maximized => maximized,

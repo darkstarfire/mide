@@ -54,6 +54,31 @@ pub(crate) fn put_rgb_frame(
     Ok(())
 }
 
+/// Lê a tela inteira da janela `root` pelo servidor X (XGetImage) e devolve a imagem
+/// opaca. Usado pelas capturas de tela do backend X11, depois do quadro desenhado.
+pub(crate) fn capture_root(
+    conn: &RustConnection,
+    root: xproto::Window,
+    width: u32,
+    height: u32,
+) -> Option<image::RgbaImage> {
+    // Profundidade 24 em 32 bits por pixel (BGRX), como no resto do backend.
+    let reply = conn
+        .get_image(xproto::ImageFormat::Z_PIXMAP, root, 0, 0, width as u16, height as u16, u32::MAX)
+        .ok()?
+        .reply()
+        .ok()?;
+    let pixels = (width as usize) * (height as usize);
+    if reply.data.len() < pixels * 4 {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity(pixels * 4);
+    for px in reply.data[..pixels * 4].chunks_exact(4) {
+        rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
+    }
+    image::RgbaImage::from_raw(width, height, rgba)
+}
+
 impl X11Render {
     /// Cria o contexto de renderizacao associado a janela X11 existente.
     pub fn new(

@@ -97,7 +97,7 @@ pub const LAUNCHER_CLOSE: Duration = mide::motion::LAUNCHER_CLOSE;
 #[derive(Debug, Clone)]
 pub struct WindowAnimation {
     pub window: Window,
-    pub surface: WlSurface,
+    pub window_id: u64,
     pub from_loc: Point<i32, Logical>,
     pub from_size: Size<i32, Logical>,
     pub to_loc: Point<i32, Logical>,
@@ -182,11 +182,11 @@ pub struct State {
     /// proporção da barra (A27). Vale também se o botão já foi solto (apps X11 demoram).
     pub unsnap_fix: Option<UnsnapFix>,
     /// Posição de cada janela antes de maximizar, para restaurar depois.
-    pub restore_positions: Vec<(WlSurface, Point<i32, Logical>)>,
+    pub restore_positions: Vec<(u64, Point<i32, Logical>)>,
     /// Tamanho de cada janela antes de maximizar, para pedir de volta ao restaurar.
-    pub restore_sizes: Vec<(WlSurface, Size<i32, Logical>)>,
+    pub restore_sizes: Vec<(u64, Size<i32, Logical>)>,
     /// Janelas numa metade da tela (Super+← e Super+→).
-    pub tiled: Vec<WlSurface>,
+    pub tiled: Vec<u64>,
     /// Janelas em tela cheia e como estavam antes (`crate::fullscreen`).
     pub fullscreen: Vec<crate::fullscreen::Entry>,
     /// Barra superior revelada no topo de uma tela em tela cheia.
@@ -705,8 +705,8 @@ impl State {
     }
 
     /// Animação em andamento da superfície, se houver.
-    pub fn animation_for(&self, surface: &WlSurface) -> Option<&WindowAnimation> {
-        self.animations.iter().find(|a| &a.surface == surface)
+    pub fn animation_for(&self, id: u64) -> Option<&WindowAnimation> {
+        self.animations.iter().find(|a| a.window_id == id)
     }
 
     /// Janela mapeada cuja superfície raiz é `surface`, se existir.
@@ -1381,6 +1381,11 @@ pub const CLOSE_FADE: std::time::Duration = mide::motion::CLOSE_FADE;
 pub struct WindowId(pub u64);
 
 /// Número da janela (0 se não tiver).
+/// Número da janela de um toplevel (0 se ainda não tiver).
+pub fn toplevel_id(toplevel: &ToplevelSurface) -> u64 {
+    with_states(toplevel.wl_surface(), |s| s.data_map.get::<WindowId>().map(|id| id.0)).unwrap_or(0)
+}
+
 pub fn window_id(window: &Window) -> u64 {
     window
         .toplevel()

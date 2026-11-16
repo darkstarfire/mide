@@ -26,7 +26,7 @@ use smithay::{
 };
 
 use crate::decorations::BAR_HEIGHT;
-use crate::state::{State, WindowAnimation, ANIMATION_DURATION};
+use crate::state::{toplevel_id, State, WindowAnimation, ANIMATION_DURATION};
 
 /// Janela em tela cheia e como ela estava antes (para voltar ao sair).
 #[derive(Debug, Clone)]
@@ -342,7 +342,7 @@ impl State {
         };
         let (maximized, tiled) = surface.with_pending_state(|s| {
             let st = &s.states;
-            let tiled = self.tiled.contains(surface.wl_surface()).then(|| {
+            let tiled = self.tiled.contains(&toplevel_id(surface)).then(|| {
                 [st.contains(XdgState::TiledLeft), st.contains(XdgState::TiledRight), st.contains(XdgState::TiledTop), st.contains(XdgState::TiledBottom)]
             });
             (st.contains(XdgState::Maximized), tiled)
@@ -355,14 +355,14 @@ impl State {
             maximized,
             tiled,
         });
-        self.tiled.retain(|s| s != surface.wl_surface());
+        self.tiled.retain(|s| *s != toplevel_id(surface));
         self.unsnap_fix = None;
         self.displaced.retain(|d| d.window != window);
         if let (Some(from_loc), true, true) = (from_loc, from_size.w > 0, self.config.effects.animations) {
-            self.animations.retain(|a| &a.surface != surface.wl_surface());
+            self.animations.retain(|a| a.window_id != toplevel_id(surface));
             self.animations.push(WindowAnimation {
                 window: window.clone(),
-                surface: surface.wl_surface().clone(),
+                window_id: toplevel_id(surface),
                 from_loc,
                 from_size,
                 to_loc: screen.loc,
@@ -452,7 +452,7 @@ impl State {
                             }
                         }
                     });
-                    self.tiled.push(surface.wl_surface().clone());
+                    self.tiled.push(toplevel_id(surface));
                 }
                 (loc, size)
             }
@@ -460,10 +460,10 @@ impl State {
         surface.with_pending_state(|s| s.size = Some(to_size));
         surface.send_configure();
         if let (Some(from_loc), true) = (from_loc, self.config.effects.animations) {
-            self.animations.retain(|a| &a.surface != surface.wl_surface());
+            self.animations.retain(|a| a.window_id != toplevel_id(surface));
             self.animations.push(WindowAnimation {
                 window: window.clone(),
-                surface: surface.wl_surface().clone(),
+                window_id: toplevel_id(surface),
                 from_loc,
                 from_size,
                 to_loc,

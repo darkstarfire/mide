@@ -240,7 +240,7 @@ fn relayout(state: &mut State, windows: Vec<crate::outputs::Displaced<Window>>, 
         let Some(toplevel) = window.toplevel().cloned() else {
             continue;
         };
-        moved.push(toplevel.wl_surface().clone());
+        moved.push(crate::state::toplevel_id(&toplevel));
         // Modo tablet com os apps em tela inteira: toda janela que dá ocupa a área.
         let fit = if crate::touch::maximize_windows(state) && !crate::state::fixed_size(&window) { Fit::Maximized } else { d.fit };
         match fit {
@@ -264,7 +264,7 @@ fn relayout(state: &mut State, windows: Vec<crate::outputs::Displaced<Window>>, 
         }
     }
     // A animação do giro já mostra a mudança: as janelas vão direto ao lugar novo.
-    state.animations.retain(|a| !moved.contains(&a.surface));
+    state.animations.retain(|a| !moved.contains(&a.window_id));
 }
 
 /// Tamanho de uma janela solta na tela girada: encolhe só o que passa da área útil.

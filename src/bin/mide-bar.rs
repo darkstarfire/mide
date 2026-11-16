@@ -1294,7 +1294,13 @@ impl Bar {
     /// O fundo atrás da barra é escuro? O que o compositor mediu ou, sem a medida
     /// (compositor antigo), o alto do papel de parede.
     fn behind_dark(&self) -> bool {
-        self.tone_dark.unwrap_or_else(wallpaper_top_dark)
+        match self.tone_dark {
+            Some(dark) => dark,
+            // No X11 o compositor não mede o fundo, e a barra pinta o próprio fundo
+            // (claro ou escuro, pelo tema): o texto segue o tema, não o papel de parede.
+            None if self.x.is_some() => pal().dark,
+            None => wallpaper_top_dark(),
+        }
     }
 
     /// Um passo da troca de cor do texto da barra sem fundo (claro ↔ escuro), com a

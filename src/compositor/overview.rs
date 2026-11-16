@@ -488,15 +488,14 @@ pub fn cycle(state: &mut State, dir: i32) {
     crate::control::handle(state, &format!("focus {id}"));
     // Transição curta: a janela que vem cresce um pouco até o tamanho dela.
     if state.config.effects.animations
-        && let (Some(loc), Some(toplevel)) = (state.space.element_location(&window), window.toplevel())
+        && let (Some(loc), true) = (state.space.element_location(&window), window.toplevel().is_some())
     {
         let size = window.geometry().size;
-        let surface = toplevel.wl_surface().clone();
-        state.animations.retain(|a| a.surface != surface);
+        state.animations.retain(|a| a.window_id != crate::state::window_id(&window));
         let inset = Point::from(((size.w as f64 * 0.02).round() as i32, (size.h as f64 * 0.02).round() as i32));
         state.animations.push(crate::state::WindowAnimation {
             window: window.clone(),
-            surface,
+            window_id: crate::state::window_id(&window),
             from_loc: loc + inset,
             from_size: (size.w - 2 * inset.x, size.h - 2 * inset.y).into(),
             to_loc: loc,

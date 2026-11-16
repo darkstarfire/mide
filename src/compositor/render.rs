@@ -401,7 +401,7 @@ impl Scene {
         }
         // Janela que tem esta tela só para ela: a cena leva só ela (e o que está por cima
         // dela). Durante a animação de entrar, a cena inteira (o que está atrás aparece).
-        let game = state.game_window(output).filter(|w| w.toplevel().is_some_and(|t| state.animation_for(t.wl_surface()).is_none()));
+        let game = state.game_window(output).filter(|w| w.toplevel().is_some_and(|t| state.animation_for(crate::state::toplevel_id(t)).is_none()));
         tracing::debug!("frame: {} janela(s) mapeada(s)", state.space.elements().count());
         // Da frente para trás: prévias das janelas, popups, camadas (barra, dock) e
         // depois as janelas.
@@ -696,7 +696,7 @@ fn window_elements(
         // Visão de todas as janelas: entre o lugar dela e o do mosaico (vale mais que
         // uma animação em andamento, como a de abrir).
         let overview = crate::overview::place(state, window, loc, geo.size);
-        let (draw_loc, zoom, frame_w, frame_h, alpha) = match state.animation_for(toplevel.wl_surface()).filter(|_| overview.is_none()) {
+        let (draw_loc, zoom, frame_w, frame_h, alpha) = match state.animation_for(crate::state::toplevel_id(toplevel)).filter(|_| overview.is_none()) {
             Some(anim) => {
                 let e = anim.eased(now);
                 let lerp = |a: f32, b: f32| a + (b - a) * e;
@@ -723,7 +723,7 @@ fn window_elements(
         let visible = visible - origin;
         let draw_loc = draw_loc - origin;
         let frame = Rectangle::new((visible.x, visible.y - bar_h).into(), (frame_w, bar_h + frame_h).into());
-        let genie_info = state.animation_for(toplevel.wl_surface()).filter(|a| a.genie).map(|a| {
+        let genie_info = state.animation_for(crate::state::toplevel_id(toplevel)).filter(|a| a.genie).map(|a| {
             let e = a.eased(now);
             let from = Rectangle::new(a.from_loc - origin, a.from_size);
             let to = Rectangle::new(a.to_loc - origin, a.to_size);
@@ -738,7 +738,7 @@ fn window_elements(
             frame,
             focused,
             maximized,
-            animating: state.animation_for(toplevel.wl_surface()).is_some(),
+            animating: state.animation_for(crate::state::toplevel_id(toplevel)).is_some(),
         alpha,
             // Sem foco pelo teclado de verdade (o "ativo" do xdg só muda quando o app
             // confirma, e alguns só confirmam quando redesenham).
