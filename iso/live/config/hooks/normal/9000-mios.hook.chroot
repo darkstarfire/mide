@@ -25,6 +25,10 @@ command = "env XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=mide XDG_CURRENT_DES
 user = "mios"
 CONF
 systemctl enable greetd.service
+# O greetd só depois do live-config (que cria o usuário mios no modo live); no sistema
+# instalado, a unidade do live-config não existe e a ordem não muda nada.
+install -d /etc/systemd/system/greetd.service.d
+printf '[Unit]\nAfter=live-config.service systemd-user-sessions.service\n' >/etc/systemd/system/greetd.service.d/mios.conf
 systemctl set-default graphical.target
 
 echo mios >/etc/hostname

@@ -5,6 +5,8 @@
 live-boot
 live-config
 live-config-systemd
+# Cria o usuário do modo live (o live-config usa o user-setup).
+user-setup
 systemd-sysv
 systemd-timesyncd
 linux-image-amd64
