@@ -3042,3 +3042,26 @@ Decisão do usuário: o repositório fica nos Releases do próprio `mide` (sem t
 - O `mios-release` passa a ter a versão "1.0+<versão do mide>": sobe a cada versão e o
   apt atualiza a identidade, os temas e a fonte junto com o mide. Arquivos dos pacotes
   sem escrita para o grupo (o umask de quem gera não importa mais).
+
+## v0.10.99 (2026-11-16): Discos (M8)
+
+App novo `mide-disks` ("Disks"/"Discos"), como o Utilitário de Disco do Mac:
+- Barra lateral com os discos (internos primeiro, depois os removíveis); cabeçalho com
+  ícone, nome, tamanho, ligação, dispositivo e tabela de partições (GPT, MBR ou
+  nenhuma); barra com as partições em proporção (e os espaços livres), clicável, e a
+  legenda em cápsulas.
+- Partição escolhida: formato, capacidade, uso (quando montada), onde está montada e o
+  dispositivo; Montar/Desmontar, Abrir (no Arquivos), Formatar… (nome e ExFAT, FAT32,
+  NTFS, ext4 ou Btrfs) e Apagar partição…; espaço livre: Nova partição… (tamanho, nome e
+  formato).
+- Disco: Apagar… (tabela GPT ou MBR nova e uma partição), Ejetar e **Pendrive de
+  boot…**: Linux (a ISO híbrida gravada no disco inteiro pelo `OpenForRestore` do UDisks,
+  inicia em UEFI e em BIOS) e Windows (tabela MBR, partição FAT32, a ISO montada como
+  loop e os arquivos copiados, com o `install.wim` maior que 4 GB dividido pelo
+  `wimlib-imagex`; inicia em UEFI), com barra de progresso.
+- O disco do sistema que está rodando fica protegido (sem apagar nem formatar).
+- Núcleo novo `mide::disks`: cliente do UDisks2 (discos e partições pelo
+  `GetManagedObjects`, montar, desmontar, formatar, tabela nova, criar e apagar
+  partição, rótulo, ejetar/desligar, gravar imagem e montar imagens), que o instalador
+  do mios (M9) também vai usar. O polkit pede a senha nas operações de administrador.
+- A ISO leva o `wimtools`; o pacote do mide o recomenda.

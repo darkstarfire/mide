@@ -32,4 +32,4 @@ pub use applications::{appimage, apps, appstream, default_apps, icons, programs,
 pub use documents::{annotate, markup, richtext, spell};
 pub use platform::{accounts, battery, packages, processes, logging, appearance, audio, network, control_client, displays, elevate, keyboard_layouts, login_items, portal, settings_file, sounds, sysinfo, system};
 pub use shell::{appmenu, backdrop, calendar, gmenu, keycaps, launcher_layout, lockscreen, motion, notify, search, tray, widgets, xmenu};
-pub use storage::{files, files_info, files_view, places, templates, thumbnails};
+pub use storage::{disks, files, files_info, files_view, places, templates, thumbnails};

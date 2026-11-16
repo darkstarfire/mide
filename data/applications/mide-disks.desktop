@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Disks
+Name[pt_BR]=Discos
+Comment=Format and partition disks and create bootable drives
+Comment[pt_BR]=Formate e particione discos e crie pendrives de boot
+Exec=mide-disks
+Icon=drive-harddisk
+Categories=System;Utility;Filesystem;
+Keywords=disk;partition;format;usb;bootable;iso;disco;partição;formatar;pendrive;boot;
+StartupWMClass=mide-disks
+OnlyShowIn=mide;

@@ -55,7 +55,7 @@ Section: x11
 Priority: optional
 Homepage: https://github.com/fabioaacarneiro/mide
 Depends: $depende
-Recommends: greetd, qt5-gtk-platformtheme, qt6-gtk-platformtheme, plymouth, plymouth-themes
+Recommends: greetd, wimtools, qt5-gtk-platformtheme, qt6-gtk-platformtheme, plymouth, plymouth-themes
 Description: mide, the Mac Inspired Desktop Environment
  Wayland compositor with its own top bar, dock, launcher, file manager, settings,
  terminal, code editor, writer, calculator, resource monitor and screenshot tools,

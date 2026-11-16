@@ -1301,3 +1301,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   `apt-publish.sh`; o `apt-get update` (como usuário, com `Dir::State`/`Dir::Cache`
   próprios e `signed-by` com a chave do mios) aceita a assinatura e o `apt-cache policy`
   mostra o `mide` e o `mios-release`.
+
+## v0.10.99 (2026-11-16): Discos
+
+- Seção nova `55-discos`: a janela abre e os discos vêm do UDisks2 (só leitura).
+- Capturas com o SSD desta máquina: três partições na barra, a principal com ext4,
+  965 GB, 767 GB usados e montada em `/`; o disco do sistema protegido.
+- Testes `espacos_livres_entre_as_particoes`, `le_os_discos_do_computador` e
+  `particiona_e_formata_um_disco_de_teste` (os dois últimos com `--ignored`; o de
+  particionar usa um arquivo ligado como loop pelo próprio UDisks, sem senha, e precisa
+  do `/dev/loop-control`, que não existe nesta máquina sem o módulo `loop`).
+- Formatar, particionar e criar pendrives de verdade: falta conferir com o usuário (com
+  um pendrive).

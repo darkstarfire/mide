@@ -1,0 +1,184 @@
+# Tradução do mide para o português do Brasil: Discos (mide-disks) e mide::disks.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Available"
+msgstr "Disponível"
+
+msgid "Bootable Drive…"
+msgstr "Pendrive de boot…"
+
+msgid "Capacity"
+msgstr "Capacidade"
+
+msgid "Choose Image"
+msgstr "Escolher imagem"
+
+msgid "Choose Image…"
+msgstr "Escolher imagem…"
+
+msgid "Choose a partition in the bar above."
+msgstr "Escolha uma partição na barra acima."
+
+msgid "Copying… {done} of {total}"
+msgstr "Copiando… {done} de {total}"
+
+msgid "Couldn’t read the disks: {err}"
+msgstr "Não foi possível ler os discos: {err}"
+
+msgid "Create a Bootable Drive"
+msgstr "Criar um pendrive de boot"
+
+msgid "Create the bootable drive?"
+msgstr "Criar o pendrive de boot?"
+
+msgid "Creating the partition…"
+msgstr "Criando a partição…"
+
+msgid "Delete Partition…"
+msgstr "Apagar partição…"
+
+msgid "Delete the partition?"
+msgstr "Apagar a partição?"
+
+msgid "Deleting…"
+msgstr "Apagando…"
+
+msgid "Device"
+msgstr "Dispositivo"
+
+msgid "Disks"
+msgstr "Discos"
+
+msgid "Ejecting…"
+msgstr "Ejetando…"
+
+msgid "Erase"
+msgstr "Apagar"
+
+msgid "Erase Disk"
+msgstr "Apagar disco"
+
+msgid "Erase and Create"
+msgstr "Apagar e criar"
+
+msgid "Erase…"
+msgstr "Apagar…"
+
+msgid "Erasing…"
+msgstr "Apagando…"
+
+msgid "Everything on the disk will be erased and a single partition will be created."
+msgstr "Tudo no disco será apagado e uma partição única será criada."
+
+msgid "Everything on this partition will be erased."
+msgstr "Tudo nesta partição será apagado."
+
+msgid "Everything on “{name}” will be erased."
+msgstr "Tudo em “{name}” será apagado."
+
+msgid "Formatting…"
+msgstr "Formatando…"
+
+msgid "Format…"
+msgstr "Formatar…"
+
+msgid "Free"
+msgstr "Livre"
+
+msgid "Free space: create a partition with “New Partition…”."
+msgstr "Espaço livre: crie uma partição com “Nova partição…”."
+
+msgid "GUID (GPT)"
+msgstr "GUID (GPT)"
+
+msgid "GUID partition table (GPT)"
+msgstr "Tabela de partições GUID (GPT)"
+
+msgid "Linux images are written as they are (they start in UEFI and BIOS). For Windows, the files are copied to a FAT32 drive (starts in UEFI)."
+msgstr "As imagens de Linux são gravadas como são (iniciam em UEFI e em BIOS). Para o Windows, os arquivos são copiados para um pendrive FAT32 (inicia em UEFI)."
+
+msgid "MBR (old computers)"
+msgstr "MBR (computadores antigos)"
+
+msgid "Master Boot Record (MBR)"
+msgstr "Registro mestre de inicialização (MBR)"
+
+msgid "Mount"
+msgstr "Montar"
+
+msgid "Mounted at"
+msgstr "Montado em"
+
+msgid "Mounting…"
+msgstr "Montando…"
+
+msgid "New Partition"
+msgstr "Nova partição"
+
+msgid "New Partition…"
+msgstr "Nova partição…"
+
+msgid "No image chosen"
+msgstr "Nenhuma imagem escolhida"
+
+msgid "No partition table"
+msgstr "Sem tabela de partições"
+
+msgid "Not mounted"
+msgstr "Não montado"
+
+msgid "Opening the image…"
+msgstr "Abrindo a imagem…"
+
+msgid "Preparing…"
+msgstr "Preparando…"
+
+msgid "Quit Disks"
+msgstr "Sair dos Discos"
+
+msgid "Reading the disks…"
+msgstr "Lendo os discos…"
+
+msgid "Size (GB)"
+msgstr "Tamanho (GB)"
+
+msgid "Splitting install.wim…"
+msgstr "Dividindo o install.wim…"
+
+msgid "The Windows bootable drive is ready (UEFI)."
+msgstr "O pendrive de boot do Windows está pronto (UEFI)."
+
+msgid "The bootable drive is ready."
+msgstr "O pendrive de boot está pronto."
+
+msgid "This is the disk of the running system: erasing it is not allowed here."
+msgstr "Este é o disco do sistema que está rodando: apagá-lo não é permitido aqui."
+
+msgid "Unknown"
+msgstr "Desconhecido"
+
+msgid "Unmount"
+msgstr "Desmontar"
+
+msgid "Unmounting…"
+msgstr "Desmontando…"
+
+msgid "Used"
+msgstr "Usado"
+
+msgid "Writing… {done} of {total}"
+msgstr "Gravando… {done} de {total}"
+
+msgid "install.wim is larger than 4 GB and wimlib-imagex (package wimtools) isn’t installed to split it."
+msgstr "O install.wim tem mais de 4 GB e o wimlib-imagex (pacote wimtools) não está instalado para dividi-lo."
+
+msgid "“{name}” and everything on it will be erased."
+msgstr "“{name}” e tudo nela serão apagados."
+
+msgctxt "disk"
+msgid "Format"
+msgstr "Formato"

@@ -60,6 +60,8 @@ exfatprogs
 cryptsetup
 udisks2
 rsync
+# Pendrive de boot do Windows (dividir o install.wim maior que 4 GB).
+wimtools
 
 # Fontes e navegador
 fonts-noto-core
