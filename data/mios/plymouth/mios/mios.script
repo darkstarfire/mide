@@ -1,0 +1,92 @@
+# Tela de início do mios: o fundo com o logo (cobrindo a tela, centrado), a barra de
+# progresso fina embaixo do logo, como no Mac, e o campo de senha para discos
+# criptografados. Desenho próprio do mide; nada da Apple.
+
+W = Window.GetWidth();
+H = Window.GetHeight();
+Window.SetBackgroundTopColor(0.04, 0.06, 0.18);
+Window.SetBackgroundBottomColor(0.04, 0.06, 0.18);
+
+# Fundo cobrindo a tela inteira (corta as sobras, o logo fica no meio).
+bg_image = Image("background.png");
+k = W / bg_image.GetWidth();
+if (H / bg_image.GetHeight() > k)
+    k = H / bg_image.GetHeight();
+bg = Sprite(bg_image.Scale(bg_image.GetWidth() * k, bg_image.GetHeight() * k));
+bg.SetX(Math.Int((W - bg_image.GetWidth() * k) / 2));
+bg.SetY(Math.Int((H - bg_image.GetHeight() * k) / 2));
+bg.SetZ(-100);
+
+# Barra de progresso embaixo do logo (o logo ocupa ~1/5 da altura, no meio).
+track_image = Image("progress-track.png");
+fill_image = Image("progress-fill.png");
+bar_x = Math.Int((W - track_image.GetWidth()) / 2);
+bar_y = Math.Int(H * 0.5 + H * 0.16);
+track = Sprite(track_image);
+track.SetPosition(bar_x, bar_y, 10);
+fill = Sprite();
+fill.SetPosition(bar_x, bar_y, 11);
+
+fun progress_callback(duration, progress) {
+    w = Math.Int(fill_image.GetWidth() * progress);
+    if (w < 6)
+        w = 6;
+    fill.SetImage(fill_image.Crop(0, 0, w, fill_image.GetHeight()));
+}
+Plymouth.SetBootProgressFunction(progress_callback);
+
+# Senha do disco criptografado: cadeado, o pedido e um ponto por letra.
+entry_image = Image("entry.png");
+bullet_image = Image("bullet.png");
+lock_image = Image("lock.png");
+entry = Sprite();
+lock = Sprite();
+prompt = Sprite();
+bullets = [];
+
+fun show_password(text, count) {
+    track.SetOpacity(0);
+    fill.SetOpacity(0);
+    ex = Math.Int((W - entry_image.GetWidth()) / 2);
+    ey = bar_y - 10;
+    entry.SetImage(entry_image);
+    entry.SetPosition(ex, ey, 20);
+    lock.SetImage(lock_image);
+    lock.SetPosition(ex - lock_image.GetWidth() - 14, ey + Math.Int((entry_image.GetHeight() - lock_image.GetHeight()) / 2), 20);
+    prompt.SetImage(Image.Text(text, 0.85, 0.88, 1.0, 1, "Sans 12"));
+    prompt.SetPosition(Math.Int((W - prompt.GetImage().GetWidth()) / 2), ey + entry_image.GetHeight() + 12, 20);
+    for (i = 0; bullets[i] || i < count; i++) {
+        if (!bullets[i])
+            bullets[i] = Sprite(bullet_image);
+        bullets[i].SetPosition(ex + 18 + i * 16, ey + Math.Int((entry_image.GetHeight() - bullet_image.GetHeight()) / 2), 21);
+        if (i < count)
+            bullets[i].SetOpacity(1);
+        else
+            bullets[i].SetOpacity(0);
+    }
+}
+
+fun display_password_callback(text, count) {
+    show_password(text, count);
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+fun display_normal_callback() {
+    entry.SetImage(Image.Text("", 0, 0, 0, 0));
+    lock.SetImage(Image.Text("", 0, 0, 0, 0));
+    prompt.SetImage(Image.Text("", 0, 0, 0, 0));
+    for (i = 0; bullets[i]; i++)
+        bullets[i].SetOpacity(0);
+    track.SetOpacity(1);
+    fill.SetOpacity(1);
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+# Mensagens do sistema (fsck, avisos) embaixo de tudo.
+message = Sprite();
+message.SetPosition(0, Math.Int(H * 0.9), 30);
+fun message_callback(text) {
+    message.SetImage(Image.Text(text, 0.7, 0.75, 0.95, 1, "Sans 11"));
+    message.SetX(Math.Int((W - message.GetImage().GetWidth()) / 2));
+}
+Plymouth.SetMessageFunction(message_callback);

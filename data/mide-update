@@ -78,6 +78,12 @@ fontes="${XDG_DATA_HOME:-$HOME/.local/share}/mide/fonts"
 mkdir -p "$fontes"
 cp -u data/fonts/*.ttf data/fonts/OFL.txt "$fontes/"
 
+# Papéis de parede do mios (claro, escuro e o par automático): aparecem em
+# Configurações → Papel de parede.
+fundos="${XDG_DATA_HOME:-$HOME/.local/share}/mide/backgrounds"
+mkdir -p "$fundos"
+cp -u data/mios/backgrounds/*.jpg "$fundos/"
+
 # Gravar a tela (OBS e outros): o portal wlr usa a janela do mide para escolher o
 # monitor. O arquivo leva o nome do desktop ("mide"): só vale na sessão do mide.
 portal_wlr="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal-wlr/mide"

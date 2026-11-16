@@ -347,6 +347,11 @@ impl Settings {
 
     fn set_wallpaper(&self, path: Option<PathBuf>) {
         let value = path.as_ref().map(|p| Value::Text(p.to_string_lossy().into_owned()));
+        // Par claro/escuro: automático (o escuro vale na aparência escura).
+        let dark = path.as_deref().and_then(mide::backdrop::dark_sibling).map(|p| Value::Text(p.to_string_lossy().into_owned()));
+        if let Err(err) = settings_file::set("desktop", "wallpaper_dark", dark) {
+            tracing::warn!("papel de parede escuro não gravado: {err}");
+        }
         match settings_file::set("desktop", "wallpaper", value) {
             Ok(()) => {
                 tracing::info!("papel de parede escolhido: {}", path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "padrão do mide".into()));
@@ -880,7 +885,7 @@ impl Settings {
             for path in &wallpapers {
                 let name = match path {
                     None => tr!("mide default").into_owned(),
-                    Some(p) => p.file_stem().map(|s| s.to_string_lossy().replace(['-', '_'], " ")).unwrap_or_default(),
+                    Some(p) => wallpaper_name(p),
                 };
                 let thumb = self.thumbs.get(path).cloned().flatten();
                 let image = match &thumb {
@@ -2279,7 +2284,8 @@ fn current_wallpaper() -> Option<PathBuf> {
 fn wallpaper_list() -> Vec<Option<PathBuf>> {
     let mut list = vec![None];
     let system = std::env::var_os("MIDE_BACKGROUNDS_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/usr/share/backgrounds"));
-    let dirs = [system, mide::places::user_backgrounds_dir()];
+    // Os do sistema, os que vêm com o mide (os do mios) e os adicionados pelo usuário.
+    let dirs: Vec<PathBuf> = std::iter::once(system).chain(mide::backdrop::mide_backgrounds_dirs()).chain([mide::places::user_backgrounds_dir()]).collect();
     let mut files: Vec<PathBuf> = dirs
         .iter()
         .filter_map(|d| fs::read_dir(d).ok())
@@ -2291,12 +2297,47 @@ fn wallpaper_list() -> Vec<Option<PathBuf>> {
     list
 }
 
+/// Nome de um papel de parede: o do arquivo, e o par claro/escuro como "nome
+/// (Automático)" e "nome (Escuro)".
+fn wallpaper_name(path: &std::path::Path) -> String {
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    if mide::backdrop::dark_sibling(path).is_some() {
+        let base = stem.trim_end_matches("-light").replace(['-', '_'], " ");
+        return tr!("{name} (Automatic)", name = base);
+    }
+    if let Some(base) = stem.strip_suffix("-dark")
+        && path.with_file_name(format!("{base}-light.{}", path.extension().and_then(|e| e.to_str()).unwrap_or("jpg"))).is_file()
+    {
+        return tr!("{name} (Dark)", name = base.replace(['-', '_'], " "));
+    }
+    stem.replace(['-', '_'], " ")
+}
+
+/// Miniatura do papel de parede automático: o claro e o escuro divididos na diagonal
+/// (como a do Mac).
+fn diagonal_thumb(light: &image::RgbaImage, dark: &image::RgbaImage) -> image::RgbaImage {
+    let (w, h) = (light.width(), light.height());
+    let mut out = light.clone();
+    for (x, y, px) in out.enumerate_pixels_mut() {
+        if x as f32 / w as f32 + y as f32 / h as f32 > 1.0 && x < dark.width() && y < dark.height() {
+            *px = *dark.get_pixel(x, y);
+        }
+    }
+    out
+}
+
 /// Miniaturas carregadas numa thread, uma por mensagem.
 fn load_thumbs(tx: Sender<Thumb>, paths: Vec<Option<PathBuf>>) {
     std::thread::spawn(move || {
         for path in paths {
             let thumb = match &path {
-                Some(path) => image::open(path).ok().map(|img| to_pixmap(&mide::backdrop::cover(&img.to_rgba8(), THUMB.0, THUMB.1))),
+                Some(path) => image::open(path).ok().map(|img| {
+                    let light = mide::backdrop::cover(&img.to_rgba8(), THUMB.0, THUMB.1);
+                    match mide::backdrop::dark_sibling(path).and_then(|d| image::open(d).ok()) {
+                        Some(dark) => to_pixmap(&diagonal_thumb(&light, &mide::backdrop::cover(&dark.to_rgba8(), THUMB.0, THUMB.1))),
+                        None => to_pixmap(&light),
+                    }
+                }),
                 None => Some(to_pixmap(&mide::backdrop::default_gradient(THUMB.0, THUMB.1))),
             };
             if tx.send((path, thumb)).is_err() {

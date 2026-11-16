@@ -1253,3 +1253,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   cortado pelo kernel, CPU entre duas leituras, memória, disco, rede, pressão, tamanhos
   e uma leitura do `/proc` de verdade).
 - Capturas das cinco abas em 1366x768.
+
+## v0.10.94 (2026-11-16): boot e papéis de parede
+
+- GRUB: `grub-mkstandalone` (x86_64-efi) com o tema e um `grub.cfg` de teste, boot no
+  `qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd` com o disco `fat:rw:`, captura pelo
+  monitor do QEMU (`screendump`, monitor por TCP: o caminho do socket Unix passava de
+  108 caracteres). Fontes, acentos, pílula e o tempo ("19s remaining.") conferidos.
+- Seção 11: escolher "mios (Automático)" grava `wallpaper` e `wallpaper_dark`; com
+  `[appearance] theme = "dark"` o fundo na tela é o escuro.
+- Testes de unidade: `par_claro_e_escuro_vira_automatico` e o automático no
+  `papel_de_parede_lido_e_til_expandido`.
+- `cargo test` (627), `tests/ui.sh configuracoes barra` (81 ok).

@@ -258,3 +258,27 @@ fi
 export XDG_CONFIG_HOME="$OLD_SCFG"
 unset MIDE_BACKGROUNDS_DIR
 rm -rf "$SCFG"
+
+# Papel de parede automático (M2): o par mios-light/mios-dark vira "mios (Automático)"
+# (a terceira miniatura, em (721, 250)); escolher grava os dois e, na aparência escura,
+# o compositor mostra o escuro (pixel (1200, 500) do fundo).
+WP="$(mktemp -d)"
+mkdir -p "$WP/c/mide" "$WP/data/mide/backgrounds" "$WP/sys"
+cp data/mios/backgrounds/*.jpg "$WP/data/mide/backgrounds/"
+: >"$WP/c/mide/config.toml"
+XDG_CONFIG_HOME="$WP/c" XDG_DATA_HOME="$WP/data" MIDE_BACKGROUNDS_DIR="$WP/sys" SCENARIO_OUT="$WP/o" \
+    timeout 150 "$SCEN" "600 click 721 250; 800 list" -- "$PWD/target/debug/mide-settings wallpaper" >/dev/null 2>&1
+if grep -q 'wallpaper_dark = ".*mios-dark.jpg"' "$WP/c/mide/config.toml" && grep -q '^wallpaper = ".*mios-light.jpg"' "$WP/c/mide/config.toml"; then
+    echo "ok    papel de parede automático grava o claro e o escuro"; PASS=$((PASS + 1))
+else
+    echo "FALHA papel de parede automático grava o claro e o escuro"; FAIL=$((FAIL + 1))
+fi
+printf '[appearance]\ntheme = "dark"\n' >>"$WP/c/mide/config.toml"
+XDG_CONFIG_HOME="$WP/c" SCENARIO_OUT="$WP/o2" timeout 150 "$SCEN" "400 list" 400 >/dev/null 2>&1
+DARK_PX="$(python3 -c "import sys; from PIL import Image; print(sum(Image.open(sys.argv[1]).convert('RGB').getpixel((1200, 500))))" "$WP/o2/frame.png" 2>/dev/null)"
+if [ -n "$DARK_PX" ] && [ "$DARK_PX" -lt 200 ]; then
+    echo "ok    na aparência escura, o papel de parede automático fica escuro"; PASS=$((PASS + 1))
+else
+    echo "FALHA na aparência escura, o papel de parede automático fica escuro (soma do pixel: $DARK_PX)"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$WP"

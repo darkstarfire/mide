@@ -1042,7 +1042,8 @@ fn window_elements(
     // Fundo do desktop (papel de parede) com as sombras de todas as janelas, atrás
     // de tudo (fim da lista). Se a textura falhar, usa a cor lisa.
     // A configuração pode ter mudado (comando `reload`): segue o papel de parede dela.
-    wallpaper.follow(state.config.desktop.wallpaper_path());
+    // Papel de parede automático: o escuro na aparência escura (troca esmaecendo).
+    wallpaper.follow(state.config.desktop.wallpaper_path_for(decorations::dark()));
     let layers = wallpaper.element(renderer, output_rect, &casters);
     if layers.is_empty() {
         elements.push(MideRenderElement::from(decorations::desktop_element(shaders, output_rect, BACKGROUND, &casters)));

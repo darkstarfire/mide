@@ -1016,9 +1016,10 @@ fn wallpaper_top_dark() -> bool {
     thread_local! {
         static CACHE: std::cell::RefCell<Option<(String, Option<std::time::SystemTime>, bool)>> = const { std::cell::RefCell::new(None) };
     }
-    let path = match mide::settings_file::cached("desktop", "wallpaper") {
-        Some(mide::settings_file::Value::Text(p)) if !p.trim().is_empty() => p,
-        _ => return true,
+    // O em uso agora (no automático, o escuro na aparência escura).
+    let path = match mide::backdrop::current_wallpaper(mide::kit::system_dark()) {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => return true,
     };
     let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     if let Some(dark) = CACHE.with(|c| c.borrow().as_ref().filter(|(p, m, _)| *p == path && *m == mtime).map(|(_, _, d)| *d)) {

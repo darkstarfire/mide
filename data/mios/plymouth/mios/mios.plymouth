@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=mios
+Description=Boot screen of mios (Mac Inspired Operational System)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/mios
+ScriptFile=/usr/share/plymouth/themes/mios/mios.script

@@ -443,6 +443,9 @@ montar() {
     cp -r data/applications data/xdg-desktop-portal "$PALCO$P/share/mide/"
     install -d "$PALCO$P/share/mide/fonts"
     install -m644 data/fonts/*.ttf data/fonts/OFL.txt "$PALCO$P/share/mide/fonts/"
+    # Papéis de parede do mios (Configurações → Papel de parede).
+    install -d "$PALCO$P/share/mide/backgrounds"
+    install -m644 data/mios/backgrounds/*.jpg "$PALCO$P/share/mide/backgrounds/"
     echo "$VERSAO" > "$PALCO$P/share/mide/version"
     # A entrada "mide" das telas de login (GDM, LightDM, SDDM, greetd).
     sed "s|^Exec=.*|Exec=$P/bin/mide-session|" data/wayland-sessions/mide.desktop \

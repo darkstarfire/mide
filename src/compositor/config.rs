@@ -490,6 +490,9 @@ pub struct Desktop {
     /// Imagem do papel de parede (PNG ou JPEG). `~/` é o diretório do usuário.
     /// Sem imagem, o fundo é um gradiente próprio do mide.
     pub wallpaper: Option<String>,
+    /// Imagem para a aparência escura (papel de parede automático, como os do Mac):
+    /// com ela, `wallpaper` vale no claro e esta no escuro.
+    pub wallpaper_dark: Option<String>,
     /// Clicar no papel de parede afasta as janelas para mostrar a mesa (como no
     /// macOS). Padrão: ligado.
     pub click_reveal: Option<bool>,
@@ -503,14 +506,28 @@ impl Desktop {
 
     /// Caminho do papel de parede com `~/` expandido.
     pub fn wallpaper_path(&self) -> Option<PathBuf> {
-        let raw = self.wallpaper.as_deref()?.trim();
-        if raw.is_empty() {
-            return None;
+        expand_home(self.wallpaper.as_deref()?)
+    }
+
+    /// Papel de parede para a aparência atual: o escuro, quando há um e a aparência é
+    /// escura; senão, o de sempre.
+    pub fn wallpaper_path_for(&self, dark: bool) -> Option<PathBuf> {
+        if dark && let Some(path) = self.wallpaper_dark.as_deref().and_then(expand_home) {
+            return Some(path);
         }
-        match raw.strip_prefix("~/") {
-            Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest)),
-            None => Some(PathBuf::from(raw)),
-        }
+        self.wallpaper_path()
+    }
+}
+
+/// `~/` expandido para a pasta do usuário; vazio é nenhum.
+fn expand_home(raw: &str) -> Option<PathBuf> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    match raw.strip_prefix("~/") {
+        Some(rest) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest)),
+        None => Some(PathBuf::from(raw)),
     }
 }
 
@@ -1119,9 +1136,14 @@ mod tests {
         )
         .unwrap();
         let path = file.desktop.wallpaper_path().unwrap();
+        assert_eq!(file.desktop.wallpaper_path_for(true), Some(path.clone()));
         assert!(path.ends_with("Imagens/fundo.jpg"));
         assert!(!path.starts_with("~"));
         assert_eq!(file.all_bindings().len(), 1);
+        // Automático: o escuro só na aparência escura.
+        let file: FileConfig = toml::from_str("[desktop]\nwallpaper = \"/f/mios-light.jpg\"\nwallpaper_dark = \"/f/mios-dark.jpg\"\n").unwrap();
+        assert_eq!(file.desktop.wallpaper_path_for(false), Some(PathBuf::from("/f/mios-light.jpg")));
+        assert_eq!(file.desktop.wallpaper_path_for(true), Some(PathBuf::from("/f/mios-dark.jpg")));
     }
 
     #[test]

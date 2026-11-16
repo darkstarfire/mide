@@ -1,0 +1,46 @@
+# Tema do GRUB do mios (Mac Inspired Operational System). Imagens e desenho próprios;
+# fonte Noto Sans (OFL), convertida para .pf2 na instalação (data/mios/install-boot-theme).
+title-text: ""
+desktop-image: "background.jpg"
+desktop-image-scale-method: "crop"
+desktop-color: "#0a0f2e"
+terminal-font: "Noto Sans Regular 16"
+terminal-box: "menu_*.png"
+
++ boot_menu {
+    left = 32%
+    width = 36%
+    top = 62%
+    height = 25%
+    menu_pixmap_style = "menu_*.png"
+    item_font = "Noto Sans Regular 18"
+    item_color = "#c9d1ff"
+    selected_item_font = "Noto Sans Bold 18"
+    selected_item_color = "#ffffff"
+    selected_item_pixmap_style = "select_*.png"
+    # A pílula do escolhido passa 8 px do item em cima e embaixo (os cantos da
+    # imagem): o espaço entre os itens é maior que isso, para ela não encostar.
+    item_height = 30
+    item_padding = 12
+    item_spacing = 20
+    item_icon_space = 0
+    icon_width = 0
+    icon_height = 0
+    scrollbar = false
+}
+
+# Tempo até iniciar: a barra de progresso do GRUB, invisível, só com o texto (a
+# mensagem traduzida pelo próprio GRUB, no idioma do sistema, só vale nela).
++ progress_bar {
+    id = "__timeout__"
+    left = 25%
+    top = 92%
+    width = 50%
+    height = 24
+    show_text = true
+    font = "Noto Sans Regular 14"
+    text_color = "#9aa6e0"
+    bar_style = "none_*.png"
+    highlight_style = "none_*.png"
+    text = "@TIMEOUT_NOTIFICATION_MIDDLE@"
+}

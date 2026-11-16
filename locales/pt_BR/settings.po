@@ -1490,3 +1490,9 @@ msgstr "Alternar entre as janelas do app"
 
 msgid "Switch windows of the current app (backwards)"
 msgstr "Alternar entre as janelas do app (para trás)"
+
+msgid "{name} (Automatic)"
+msgstr "{name} (Automático)"
+
+msgid "{name} (Dark)"
+msgstr "{name} (Escuro)"

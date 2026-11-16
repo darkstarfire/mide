@@ -187,3 +187,68 @@ mod tests {
         }
     }
 }
+
+/// Pastas com os papéis de parede que vêm com o mide (os do mios): a do usuário
+/// (`~/.local/share/mide/backgrounds`, onde o `mide-update` os põe) e as do sistema
+/// (`XDG_DATA_DIRS`, onde o instalador os põe).
+pub fn mide_backgrounds_dirs() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share"));
+    let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let mut dirs: Vec<PathBuf> = std::iter::once(data_home).chain(data_dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from)).map(|d| d.join("mide/backgrounds")).collect();
+    dirs.dedup();
+    dirs
+}
+
+/// O par escuro de um papel de parede claro (`nome-light.jpg` → `nome-dark.jpg`, na
+/// mesma pasta), se existe: juntos, são um papel de parede automático (muda com a
+/// aparência, como os do Mac).
+pub fn dark_sibling(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let stem = path.file_stem()?.to_str()?;
+    let base = stem.strip_suffix("-light")?;
+    let ext = path.extension().and_then(|e| e.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+    let dark = path.with_file_name(format!("{base}-dark{ext}"));
+    dark.is_file().then_some(dark)
+}
+
+/// O papel de parede em uso na aparência atual (`[desktop] wallpaper` e, na escura,
+/// `wallpaper_dark` quando há), com `~/` expandido; `None` é o gradiente do mide.
+pub fn current_wallpaper(dark: bool) -> Option<std::path::PathBuf> {
+    use crate::settings_file::{cached, Value};
+    let expand = |raw: &str| -> Option<std::path::PathBuf> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        Some(match raw.strip_prefix("~/") {
+            Some(rest) => std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(rest),
+            None => std::path::PathBuf::from(raw),
+        })
+    };
+    if dark && let Some(Value::Text(p)) = cached("desktop", "wallpaper_dark") && let Some(path) = expand(&p) {
+        return Some(path);
+    }
+    match cached("desktop", "wallpaper") {
+        Some(Value::Text(p)) => expand(&p),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod pair_tests {
+    use super::dark_sibling;
+
+    #[test]
+    fn par_claro_e_escuro_vira_automatico() {
+        let dir = std::env::temp_dir().join(format!("mide-par-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["mios-light.jpg", "mios-dark.jpg", "solto-light.png"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(dark_sibling(&dir.join("mios-light.jpg")), Some(dir.join("mios-dark.jpg")));
+        assert_eq!(dark_sibling(&dir.join("solto-light.png")), None);
+        assert_eq!(dark_sibling(&dir.join("mios-dark.jpg")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

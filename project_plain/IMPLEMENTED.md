@@ -2934,3 +2934,27 @@ Atividade do Mac, no visual do Tahoe:
   `meminfo`, `pressure/memory`, `diskstats`, `net/dev`), com testes de unidade.
 - mide-ui: `Ui::history_graph` (gráfico de histórico, séries empilhadas ou em linha com
   área) e os símbolos `process-stop-symbolic` e `dialog-information-symbolic`.
+
+## v0.10.94 (2026-11-16): temas do boot e papéis de parede do mios (M2)
+
+Com as imagens enviadas pelo usuário (`/home/fabio/Imagens/imagens mide`, 3840x2160):
+- **Papéis de parede** em `data/mios/backgrounds` (JPEG 4K, ~400 KB cada): `mios-light`,
+  `mios-dark`, `mios-logo-light` e `mios-logo-dark`. O `mide-update` os copia para
+  `~/.local/share/mide/backgrounds` e o `install.sh` para `share/mide/backgrounds`; as
+  Configurações leem essas pastas (`mide::backdrop::mide_backgrounds_dirs`).
+- **Papel de parede automático**, como os do Mac: um par `nome-light`/`nome-dark` vira a
+  opção "nome (Automático)" (miniatura dividida na diagonal) e grava
+  `[desktop] wallpaper` e `wallpaper_dark`; o compositor usa o escuro na aparência
+  escura (`Desktop::wallpaper_path_for`), trocando com o esmaecimento de sempre; a barra
+  lê o fundo em uso para a cor do texto (`mide::backdrop::current_wallpaper`). O escuro
+  sozinho continua como "nome (Escuro)".
+- **GRUB** (`data/mios/grub/mios`): fundo do GRUB com o logo, menu numa caixa de vidro
+  escura com cantos arredondados, o escolhido em pílula de vidro claro, fonte Noto Sans
+  (convertida para `.pf2` na instalação) e o tempo com a mensagem traduzida pelo próprio
+  GRUB. Conferido dando boot num GRUB EFI no QEMU com o OVMF.
+- **Plymouth** (`data/mios/plymouth/mios`, tema `script`): o fundo com o logo cobrindo a
+  tela, a barra de progresso fina embaixo do logo e o campo de senha (cadeado e um ponto
+  por letra) para discos criptografados. Falta ver rodando (no boot da ISO, M4).
+- `data/mios/install-boot-theme` (root): instala os dois temas, gera as fontes do GRUB,
+  ajusta o `/etc/default/grub` (guardando o de antes) e atualiza o GRUB e o initramfs;
+  `--root` para o chroot da ISO, `--no-update` e `--uninstall`.

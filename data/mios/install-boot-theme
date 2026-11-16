@@ -1,0 +1,95 @@
+#!/bin/bash
+# Instala (ou remove) os temas de início do mios: o do GRUB e o do Plymouth.
+#
+# Uso (como root):
+#   data/mios/install-boot-theme               instala os dois e atualiza o GRUB e o initramfs
+#   data/mios/install-boot-theme --no-update   instala sem rodar update-grub/update-initramfs
+#                                              (montagem da ISO, que faz isso no fim)
+#   data/mios/install-boot-theme --root DIR    instala dentro de outra raiz (chroot da ISO)
+#   data/mios/install-boot-theme --uninstall   volta ao tema de antes
+#
+# As fontes do GRUB (.pf2) são geradas aqui, a partir da Noto Sans do mide (OFL), com o
+# grub-mkfont do sistema.
+set -euo pipefail
+
+aqui="$(cd "$(dirname "$0")" && pwd)"
+raiz=""
+atualizar=1
+remover=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --root) raiz="${2%/}"; shift 2 ;;
+        --no-update) atualizar=0; shift ;;
+        --uninstall) remover=1; shift ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+if [ "$(id -u)" -ne 0 ]; then
+    echo "run as root (sudo $0)" >&2
+    exit 1
+fi
+
+tema_grub="$raiz/boot/grub/themes/mios"
+tema_ply="$raiz/usr/share/plymouth/themes/mios"
+padrao="$raiz/etc/default/grub"
+copia="$raiz/var/lib/mide/grub-default.before-mios"
+
+# Roda um comando na raiz escolhida (no chroot quando há).
+na_raiz() {
+    if [ -n "$raiz" ]; then chroot "$raiz" "$@"; else "$@"; fi
+}
+
+if [ "$remover" -eq 1 ]; then
+    rm -rf "$tema_grub" "$tema_ply"
+    if [ -f "$copia" ]; then
+        cp "$copia" "$padrao"
+        rm -f "$copia"
+    fi
+    if [ "$atualizar" -eq 1 ]; then
+        command -v update-grub >/dev/null && na_raiz update-grub || true
+        if na_raiz plymouth-set-default-theme >/dev/null 2>&1; then
+            na_raiz plymouth-set-default-theme -R "$(na_raiz plymouth-set-default-theme --list | grep -vx mios | head -1)" || true
+        fi
+    fi
+    echo "mios boot themes removed"
+    exit 0
+fi
+
+# --- GRUB ---
+install -d "$tema_grub"
+cp "$aqui"/grub/mios/* "$tema_grub/"
+fonte="$aqui/../fonts/NotoSans-Regular.ttf"
+negrito="$aqui/../fonts/NotoSans-Bold.ttf"
+for t in 14 16 18; do
+    grub-mkfont -s "$t" -o "$tema_grub/noto-sans-$t.pf2" "$fonte"
+done
+grub-mkfont -s 18 -o "$tema_grub/noto-sans-bold-18.pf2" "$negrito"
+if [ -f "$padrao" ]; then
+    install -d "$(dirname "$copia")"
+    [ -f "$copia" ] || cp "$padrao" "$copia"
+    # Tira o que havia e põe o tema do mios (a imagem já está no tema).
+    sed -i -E '/^#?GRUB_THEME=/d; /^#?GRUB_BACKGROUND=/d; /^#?GRUB_GFXMODE=/d' "$padrao"
+    {
+        echo 'GRUB_THEME="/boot/grub/themes/mios/theme.txt"'
+        echo 'GRUB_GFXMODE="1920x1080,1366x768,auto"'
+    } >>"$padrao"
+fi
+
+# --- Plymouth ---
+install -d "$tema_ply"
+cp "$aqui"/plymouth/mios/* "$tema_ply/"
+
+if [ "$atualizar" -eq 1 ]; then
+    if na_raiz sh -c 'command -v update-grub' >/dev/null 2>&1; then
+        na_raiz update-grub
+    fi
+    if na_raiz sh -c 'command -v plymouth-set-default-theme' >/dev/null 2>&1; then
+        na_raiz plymouth-set-default-theme -R mios
+    fi
+else
+    if na_raiz sh -c 'command -v plymouth-set-default-theme' >/dev/null 2>&1; then
+        na_raiz plymouth-set-default-theme mios
+    fi
+fi
+echo "mios boot themes installed"
