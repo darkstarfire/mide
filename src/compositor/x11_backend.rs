@@ -829,8 +829,8 @@ impl Shared {
                     .unwrap_or(false);
                 if managed {
                     if let Ok(mut scene) = self.scene.lock() {
-                        if let Some(bar) = scene.take_bar(ev.window) {
-                            let _ = self.conn.destroy_window(bar);
+                        for deco in scene.take_decos(ev.window) {
+                            let _ = self.conn.destroy_window(deco);
                         }
                         scene.remove_window(ev.window);
                     }
@@ -1773,9 +1773,9 @@ impl Shared {
         Ok(())
     }
 
-    /// Cria a janela de barra de um cliente, filha da janela de composição. Ela é
-    /// empilhada logo acima do cliente por `sync_bars`.
-    fn create_bar(&self) -> Result<xproto::Window, Box<dyn Error>> {
+    /// Cria uma peça da decoração (barra ou borda), filha da janela de composição. Ela é
+    /// posicionada e empilhada logo acima do cliente por `sync_bars`.
+    fn create_deco(&self) -> Result<xproto::Window, Box<dyn Error>> {
         let bar = self.conn.generate_id()?;
         let aux = xproto::CreateWindowAux::new().backing_store(xproto::BackingStore::WHEN_MAPPED);
         self.conn.create_window(
@@ -1794,15 +1794,16 @@ impl Shared {
         Ok(bar)
     }
 
-    /// Mantém cada barra no lugar do cliente: mesma posição e tamanho, mapeada quando o
-    /// cliente está, e logo acima dele na pilha. Roda no fim de cada leva de eventos.
-    /// As próprias barras geram eventos, que são ignorados em `handle_event`; o laço
-    /// converge porque só mexe quando algo está fora do lugar.
+    /// Mantém cada peça da decoração no lugar do cliente: posição e tamanho, mapeada quando
+    /// o cliente está, e a cadeia de empilhamento logo acima dele (barra, esquerda, direita,
+    /// inferior, nessa ordem). Roda no fim de cada leva de eventos. As próprias peças geram
+    /// eventos, que são ignorados em `handle_event`; o laço converge porque só mexe quando
+    /// algo está fora do lugar.
     fn sync_bars(&self) {
         let Ok(mut guard) = self.scene.lock() else {
             return;
         };
-        if guard.bars.is_empty() {
+        if guard.decos.is_empty() {
             return;
         }
         let scene = &mut *guard;
@@ -1816,51 +1817,61 @@ impl Shared {
             // Filhos da janela de composição, do fundo para o topo.
             let order = tree.children;
             let k = scene.output_scale;
-            let items: Vec<(xproto::Window, xproto::Window, (i16, i16, u16, bool))> = scene
+            // Por cliente: suas peças, na ordem da cadeia, com a geometria e a visibilidade.
+            let clients: Vec<(xproto::Window, Vec<(xproto::Window, (i16, i16, u16, u16, bool))>)> = scene
                 .windows
                 .values()
-                .filter_map(|w| {
-                    let bar = w.bar?;
+                .filter(|w| !w.decos.is_empty())
+                .map(|w| {
                     let visible = w.mapped && !w.undecorated && !w.fullscreen;
-                    let geom = (
-                        (w.x as f32 * k) as i16,
-                        (w.y as f32 * k) as i16,
-                        ((w.width as f32 * k) as u16).max(1),
-                        visible,
-                    );
-                    Some((w.id, bar, geom))
+                    let pieces = w
+                        .decos
+                        .iter()
+                        .map(|(deco, kind)| {
+                            let (x, y, pw, ph) = super::x11_scene::X11Scene::deco_rect(w, *kind, k);
+                            (*deco, (x, y, pw, ph, visible))
+                        })
+                        .collect();
+                    (w.id, pieces)
                 })
                 .collect();
             let mut changed = false;
-            for (client, bar, (x, y, width, visible)) in items {
-                let state = (x, y, width, visible);
-                if scene.bar_state.get(&bar) != Some(&state) {
-                    let aux = xproto::ConfigureWindowAux::new()
-                        .x(x as i32)
-                        .y(y as i32)
-                        .width(width as u32)
-                        .height(super::x11_scene::TITLE_HEIGHT as u32);
-                    let _ = self.conn.configure_window(bar, &aux);
-                    if visible {
-                        let _ = self.conn.map_window(bar);
-                    } else {
-                        let _ = self.conn.unmap_window(bar);
-                    }
-                    scene.bar_state.insert(bar, state);
-                    changed = true;
-                }
-                if visible {
-                    let pos_client = order.iter().position(|w| *w == client);
-                    let pos_bar = order.iter().position(|w| *w == bar);
-                    if let (Some(pc), Some(pb)) = (pos_client, pos_bar) {
-                        if pb != pc + 1 {
-                            let aux = xproto::ConfigureWindowAux::new()
-                                .sibling(client)
-                                .stack_mode(xproto::StackMode::ABOVE);
-                            let _ = self.conn.configure_window(bar, &aux);
-                            changed = true;
+            for (client, pieces) in clients {
+                for (deco, state) in &pieces {
+                    if scene.deco_state.get(deco) != Some(state) {
+                        let (x, y, pw, ph, visible) = *state;
+                        let aux = xproto::ConfigureWindowAux::new()
+                            .x(x as i32)
+                            .y(y as i32)
+                            .width(pw as u32)
+                            .height(ph as u32);
+                        let _ = self.conn.configure_window(*deco, &aux);
+                        if visible {
+                            let _ = self.conn.map_window(*deco);
+                        } else {
+                            let _ = self.conn.unmap_window(*deco);
                         }
+                        scene.deco_state.insert(*deco, *state);
+                        changed = true;
                     }
+                }
+                // Cadeia: a peça i deve ficar logo acima de (cliente, peça i-1).
+                let Some(pos_client) = order.iter().position(|w| *w == client) else {
+                    continue;
+                };
+                let mut above = client;
+                let mut expected = pos_client + 1;
+                for (deco, _) in &pieces {
+                    let pos_deco = order.iter().position(|w| w == deco);
+                    if pos_deco != Some(expected) {
+                        let aux = xproto::ConfigureWindowAux::new()
+                            .sibling(above)
+                            .stack_mode(xproto::StackMode::ABOVE);
+                        let _ = self.conn.configure_window(*deco, &aux);
+                        changed = true;
+                    }
+                    above = *deco;
+                    expected += 1;
                 }
             }
             let _ = self.conn.flush();
@@ -1872,7 +1883,7 @@ impl Shared {
 
     /// A janela é uma barra de cliente (não é app nem camada).
     fn is_bar(&self, id: xproto::Window) -> bool {
-        self.scene.lock().map(|s| s.bars.contains_key(&id)).unwrap_or(false)
+        self.scene.lock().map(|s| s.decos.contains_key(&id)).unwrap_or(false)
     }
 
     /// Janela que recebe um clique num filho: a barra vira o cliente dela.
@@ -1918,13 +1929,21 @@ impl Shared {
             scene.set_undecorated(window, undecorated);
         }
         if !undecorated {
-            match self.create_bar() {
-                Ok(bar) => {
-                    if let Ok(mut scene) = self.scene.lock() {
-                        scene.attach_bar(window, bar);
-                    }
+            let kinds = [
+                super::x11_scene::DecoKind::Title,
+                super::x11_scene::DecoKind::Left,
+                super::x11_scene::DecoKind::Right,
+                super::x11_scene::DecoKind::Bottom,
+            ];
+            let mut decos = Vec::with_capacity(kinds.len());
+            for kind in kinds {
+                match self.create_deco() {
+                    Ok(deco) => decos.push((deco, kind)),
+                    Err(err) => tracing::warn!("decoração da janela X11 {window}: {err}"),
                 }
-                Err(err) => tracing::warn!("barra da janela X11 {window}: {err}"),
+            }
+            if let Ok(mut scene) = self.scene.lock() {
+                scene.attach_decos(window, decos);
             }
         }
         if let Ok(mut layout) = self.layout.lock() {

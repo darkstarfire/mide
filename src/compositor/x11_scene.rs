@@ -25,6 +25,17 @@ pub enum DecorationHit {
     Minimize,
 }
 
+/// Peça da decoração do compositor de uma janela X: a barra de título e as três bordas
+/// (esquerda, direita e inferior). Cada peça é uma janela própria, empilhada logo acima do
+/// cliente, para que outras janelas que passem por cima a cubram do jeito certo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecoKind {
+    Title,
+    Left,
+    Right,
+    Bottom,
+}
+
 /// Janela X11 cliente conhecida pela cena.
 #[derive(Debug, Clone)]
 pub struct X11Window {
@@ -54,15 +65,18 @@ pub struct X11Window {
     /// Sem decoração do gerenciador (dica Motif do app): a cena não desenha barra nem
     /// bordas, e o clique vai para o app.
     pub undecorated: bool,
-    /// Janela X da barra do compositor (filha da janela de composição, empilhada logo
-    /// acima do cliente). None quando a janela não tem barra do compositor.
-    pub bar: Option<xproto::Window>,
+    /// Peças da decoração do compositor (janelas-filhas da janela de composição, na ordem
+    /// da pilha: cada uma logo acima da anterior, a primeira logo acima do cliente). Vazio
+    /// quando a janela não tem decoração do compositor.
+    pub decos: Vec<(xproto::Window, DecoKind)>,
 }
 
 /// Altura da barra de desenho do servidor, em pontos (escala ja aplicada).
 pub const TITLE_HEIGHT: u16 = 30;
 /// Largura de cada boto da barra de titulo, em pontos.
 pub const BTN_SIZE: u16 = 28;
+/// Espessura das bordas laterais e inferior da decoração, em pontos.
+pub const BORDER_WIDTH: u16 = 3;
 /// Margem entre botoes e borda, em pontos.
 pub const BTN_MARGIN: u16 = 4;
 
@@ -126,12 +140,12 @@ pub struct X11Scene {
     /// A cena mudou desde o último quadro: só então desenha e envia à tela (economiza
     /// CPU em máquinas fracas quando nada se mexe).
     pub frame_dirty: bool,
-    /// Janelas de barra: barra -> cliente.
-    pub bars: HashMap<xproto::Window, xproto::Window>,
-    /// Última geometria e visibilidade aplicadas a cada barra (evita configurar à toa).
-    pub bar_state: HashMap<xproto::Window, (i16, i16, u16, bool)>,
-    /// Contextos de desenho das barras (buffer e gc de cada janela de barra).
-    pub bar_renders: HashMap<xproto::Window, X11Render>,
+    /// Peças da decoração: janela da peça -> (cliente, tipo da peça).
+    pub decos: HashMap<xproto::Window, (xproto::Window, DecoKind)>,
+    /// Última geometria e visibilidade aplicadas a cada peça (evita configurar à toa).
+    pub deco_state: HashMap<xproto::Window, (i16, i16, u16, u16, bool)>,
+    /// Contextos de desenho das peças (buffer e gc de cada janela).
+    pub deco_renders: HashMap<xproto::Window, X11Render>,
 }
 
 impl X11Scene {
@@ -144,70 +158,95 @@ impl X11Scene {
             output_height: 0,
             output_scale: 1.0,
             frame_dirty: true,
-            bars: HashMap::new(),
-            bar_state: HashMap::new(),
-            bar_renders: HashMap::new(),
+            decos: HashMap::new(),
+            deco_state: HashMap::new(),
+            deco_renders: HashMap::new(),
         }
     }
 
-    /// Liga a janela de barra `bar` ao cliente `client`.
-    pub fn attach_bar(&mut self, client: xproto::Window, bar: xproto::Window) {
+    /// Liga as peças da decoração `decos` ao cliente `client`, na ordem da pilha.
+    pub fn attach_decos(&mut self, client: xproto::Window, decos: Vec<(xproto::Window, DecoKind)>) {
+        for (deco, kind) in &decos {
+            self.decos.insert(*deco, (client, *kind));
+        }
         if let Some(win) = self.windows.get_mut(&client) {
-            win.bar = Some(bar);
-            self.bars.insert(bar, client);
-            self.frame_dirty = true;
+            win.decos = decos;
+        }
+        self.frame_dirty = true;
+    }
+
+    /// Solta as peças da decoração de um cliente (ao destruí-lo) e devolve as janelas.
+    pub fn take_decos(&mut self, client: xproto::Window) -> Vec<xproto::Window> {
+        let decos = self.windows.get_mut(&client).map(|w| std::mem::take(&mut w.decos)).unwrap_or_default();
+        for (deco, _) in &decos {
+            self.decos.remove(deco);
+            self.deco_state.remove(deco);
+            self.deco_renders.remove(deco);
+        }
+        decos.into_iter().map(|(deco, _)| deco).collect()
+    }
+
+    /// Cliente dono de uma peça da decoração (None se `deco` não é peça).
+    pub fn client_of_bar(&self, deco: xproto::Window) -> Option<xproto::Window> {
+        self.decos.get(&deco).map(|(client, _)| *client)
+    }
+
+    /// Geometria de uma peça da decoração, em pixels de saída: (x, y, largura, altura).
+    /// A barra de título fica no alto da janela; as bordas, ao longo dos lados e embaixo.
+    pub fn deco_rect(win: &X11Window, kind: DecoKind, k: f32) -> (i16, i16, u16, u16) {
+        let x = (win.x as f32 * k) as i16;
+        let y = (win.y as f32 * k) as i16;
+        let w = ((win.width as f32 * k) as u16).max(1);
+        let h = ((win.height as f32 * k) as u16).max(1);
+        let t = TITLE_HEIGHT;
+        let b = BORDER_WIDTH;
+        let side_h = h.saturating_sub(t).max(1);
+        match kind {
+            DecoKind::Title => (x, y, w, t),
+            DecoKind::Left => (x, y + t as i16, b, side_h),
+            DecoKind::Right => (x + w as i16 - b as i16, y + t as i16, b, side_h),
+            DecoKind::Bottom => (x, y + h as i16 - b as i16, w, b),
         }
     }
 
-    /// Solta a barra de um cliente (ao destruí-lo) e devolve a janela dela.
-    pub fn take_bar(&mut self, client: xproto::Window) -> Option<xproto::Window> {
-        let bar = self.windows.get_mut(&client)?.bar.take()?;
-        self.bars.remove(&bar);
-        self.bar_state.remove(&bar);
-        self.bar_renders.remove(&bar);
-        Some(bar)
-    }
-
-    /// Cliente dono de uma janela de barra (None se `bar` não é barra).
-    pub fn client_of_bar(&self, bar: xproto::Window) -> Option<xproto::Window> {
-        self.bars.get(&bar).copied()
-    }
-
-    /// Desenha a barra de cada cliente visível na própria janela da barra. Assim ela
-    /// fica na pilha junto com o cliente: some onde outra janela passa por cima, como
-    /// nos apps do mide.
+    /// Desenha as peças visíveis da decoração, cada uma na própria janela.
     fn draw_bars(&mut self, conn: &Arc<RustConnection>) {
         let k = self.output_scale;
-        let visible: Vec<(xproto::Window, u16, bool, bool)> = self
-            .windows
-            .values()
-            .filter_map(|w| match w.bar {
-                Some(bar) if w.mapped && !w.undecorated && !w.fullscreen => {
-                    Some((bar, w.width, w.maximized_vert, w.maximized_horz))
-                }
-                _ => None,
-            })
-            .collect();
-        for (bar, width, maximized_vert, maximized_horz) in visible {
-            let bw = ((width as f32 * k) as u32).max(1);
-            let bh = TITLE_HEIGHT as u32;
-            if self.bar_renders.get(&bar).is_none_or(|r| r.width != bw) {
-                match X11Render::new(conn.clone(), bar, bw, bh) {
+        let mut pieces: Vec<(xproto::Window, DecoKind, u16, u16, bool, bool)> = Vec::new();
+        for win in self.windows.values() {
+            if !(win.mapped && !win.undecorated && !win.fullscreen) {
+                continue;
+            }
+            for (deco, kind) in &win.decos {
+                let (_, _, w, h) = Self::deco_rect(win, *kind, k);
+                pieces.push((*deco, *kind, w, h, win.maximized_vert, win.maximized_horz));
+            }
+        }
+        for (deco, kind, bw, bh, maximized_vert, maximized_horz) in pieces {
+            let (bw, bh) = (bw as u32, bh as u32);
+            if self.deco_renders.get(&deco).is_none_or(|r| r.width != bw || r.height != bh) {
+                match X11Render::new(conn.clone(), deco, bw, bh) {
                     Ok(render) => {
-                        self.bar_renders.insert(bar, render);
+                        self.deco_renders.insert(deco, render);
                     }
                     Err(err) => {
-                        tracing::warn!("barra X11 {bar}: {err}");
+                        tracing::warn!("decoração X11 {deco}: {err}");
                         continue;
                     }
                 }
             }
-            let Some(render) = self.bar_renders.get_mut(&bar) else {
+            let Some(render) = self.deco_renders.get_mut(&deco) else {
                 continue;
             };
-            draw_title_bar(render, bw, bh, maximized_vert, maximized_horz);
-            if let Err(err) = put_rgb_frame(conn, bar, render.gc, bw, bh, &render.buffer) {
-                tracing::warn!("barra X11 {bar}: quadro não enviado ({err})");
+            match kind {
+                DecoKind::Title => draw_title_bar(render, bw, bh, maximized_vert, maximized_horz),
+                _ => {
+                    let color = X11Render::border_color(maximized_vert, maximized_horz, false);
+                    render.fill_rect(0, 0, bw, bh, color);
+                }
+            }
+            if let Err(err) = put_rgb_frame(conn, deco, render.gc, bw, bh, &render.buffer) {
+                tracing::warn!("decoração X11 {deco}: quadro não enviado ({err})");
             }
         }
     }
@@ -247,7 +286,7 @@ impl X11Scene {
                 content_dirty: true,
                 dirty_rects: Vec::new(),
                 undecorated: false,
-                bar: None,
+                decos: Vec::new(),
             },
         );
     }
