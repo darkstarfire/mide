@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Software Update
+Name[pt_BR]=Atualização de Software
+Comment=Check for and install system updates
+Comment[pt_BR]=Procure e instale as atualizações do sistema
+Exec=mide-updates
+Icon=system-software-update
+Categories=System;Settings;PackageManager;
+Keywords=update;upgrade;apt;packages;atualizar;atualização;pacotes;
+StartupWMClass=mide-updates
+OnlyShowIn=mide;

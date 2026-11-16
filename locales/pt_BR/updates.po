@@ -1,0 +1,98 @@
+# Tradução do mide para o português do Brasil: Atualização de Software (mide-updates) e
+# os pacotes do sistema (mide::packages).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "A notification appears when updates are available"
+msgstr "Uma notificação aparece quando há atualizações"
+
+msgid "Cancelled."
+msgstr "Cancelado."
+
+msgid "Check Now"
+msgstr "Verificar agora"
+
+msgid "Check for updates automatically"
+msgstr "Verificar atualizações automaticamente"
+
+msgid "Checking for updates…"
+msgstr "Procurando atualizações…"
+
+msgid "Couldn’t update"
+msgstr "Não foi possível atualizar"
+
+msgid "Downloading…"
+msgstr "Baixando…"
+
+msgid "Everything is up to date."
+msgstr "Tudo está atualizado."
+
+msgid "Finishing…"
+msgstr "Terminando…"
+
+msgid "Installing updates…"
+msgstr "Instalando as atualizações…"
+
+msgid "Installing…"
+msgstr "Instalando…"
+
+msgid "Keep the computer on until it finishes."
+msgstr "Mantenha o computador ligado até terminar."
+
+msgid "Last checked: {when}"
+msgstr "Última verificação: {when}"
+
+msgid "Quit Software Update"
+msgstr "Sair da Atualização de Software"
+
+msgid "Removing…"
+msgstr "Removendo…"
+
+msgid "Restart Now"
+msgstr "Reiniciar agora"
+
+msgid "Restart the computer to finish."
+msgstr "Reinicie o computador para terminar."
+
+msgid "Security"
+msgstr "Segurança"
+
+msgid "Software Update"
+msgstr "Atualização de Software"
+
+msgid "The administrator password is needed to update."
+msgstr "É preciso a senha de administrador para atualizar."
+
+msgid "The update service (PackageKit) isn’t available."
+msgstr "O serviço de atualização (PackageKit) não está disponível."
+
+msgid "Update Now"
+msgstr "Atualizar agora"
+
+msgid "Updates installed"
+msgstr "Atualizações instaladas"
+
+msgid "Waiting for the password…"
+msgstr "Esperando a senha…"
+
+msgid "Waiting…"
+msgstr "Esperando…"
+
+msgid "Working…"
+msgstr "Trabalhando…"
+
+msgid "Your system is up to date"
+msgstr "Seu sistema está atualizado"
+
+msgid "{n} update available"
+msgid_plural "{n} updates available"
+msgstr[0] "{n} atualização disponível"
+msgstr[1] "{n} atualizações disponíveis"
+
+msgid "+{n} other"
+msgid_plural "+{n} others"
+msgstr[0] "+{n} outra"
+msgstr[1] "+{n} outras"

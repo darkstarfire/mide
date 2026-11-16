@@ -2958,3 +2958,26 @@ Com as imagens enviadas pelo usuário (`/home/fabio/Imagens/imagens mide`, 3840x
 - `data/mios/install-boot-theme` (root): instala os dois temas, gera as fontes do GRUB,
   ajusta o `/etc/default/grub` (guardando o de antes) e atualiza o GRUB e o initramfs;
   `--root` para o chroot da ISO, `--no-update` e `--uninstall`.
+
+## v0.10.95 (2026-11-16): Atualização de Software (M6)
+
+App novo `mide-updates` ("Software Update"/"Atualização de Software"), como a Atualização
+de Software do Mac, tudo gráfico:
+- Ao abrir, atualiza a lista de pacotes e mostra quantas atualizações há, com o nome do
+  sistema (o `PRETTY_NAME` do `os-release`: "mios 1.0" no mios) e a hora da última
+  verificação; a lista mostra a versão instalada → a nova (as de segurança com selo e
+  primeiro), as oito primeiras e "+N outras"; "Mais informações…" abre a lista inteira
+  e as notas/changelog de cada pacote.
+- "Atualizar agora" instala tudo: o PackageKit pede a senha de administrador pelo polkit
+  (a janela do `mide-polkit-agent`) e roda o apt; barra de progresso com a fase
+  (esperando a senha, baixando, instalando, terminando). Cancelar a senha volta à lista
+  sem erro. No fim, "Reiniciar agora" quando entrou núcleo, firmware, systemd, libc,
+  dbus ou o mide.
+- "Verificar atualizações automaticamente" (`[updates] auto`, ligado por padrão):
+  `mide-updates --background`, iniciado com a sessão (`/etc/xdg/autostart`), procura a
+  cada 6 horas e avisa nas notificações.
+- Núcleo novo `mide::packages`: cliente do PackageKit no D-Bus do sistema (atualizar a
+  lista, atualizações, detalhes, versões instaladas, atualizar, buscar, resolver,
+  detalhes, instalar e remover), que a Loja (M7) também vai usar.
+- Também: `cmake` na lista de compilação do `install.sh` (o `wasmtime` do Code precisa;
+  numa máquina limpa a compilação falhava) e o tema de ícones só avisa se não instalar.

@@ -1265,3 +1265,12 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Testes de unidade: `par_claro_e_escuro_vira_automatico` e o automático no
   `papel_de_parede_lido_e_til_expandido`.
 - `cargo test` (627), `tests/ui.sh configuracoes barra` (81 ok).
+
+## v0.10.95 (2026-11-16): Atualização de Software
+
+- Seção nova `53-atualizacoes`: a janela abre e a verificação termina pelo PackageKit da
+  máquina (só leitura; atualizar a lista não pede senha numa sessão local). Nesta
+  máquina, 93 atualizações com a versão instalada e a nova.
+- Testes `partes_do_id_do_pacote` e `resolve_um_pacote_instalado` (este com
+  `--ignored`, precisa do PackageKit).
+- Instalar as atualizações pede a senha do usuário: falta conferir na sessão.

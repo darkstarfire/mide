@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Software Update (background check)
+Name[pt_BR]=Atualização de Software (verificação em segundo plano)
+Exec=mide-updates --background
+NoDisplay=true
+OnlyShowIn=mide;
+X-GNOME-Autostart-enabled=true
