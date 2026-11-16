@@ -910,7 +910,14 @@ impl Shared {
                 );
                 // Clique no topo de uma janela cai na área do compositor (o app fica abaixo da
                 // barra): o alvo é a moldura sob o ponteiro.
-                let hit_id = if ev.child != 0 {
+                // Clique que chega pela janela de um cliente (ou por uma subjanela dele, como a
+                // do xclock): as coordenadas são relativas a essa janela, não à composição. O
+                // alvo é a janela de cliente de cima sob o ponteiro, achada pelas coordenadas
+                // absolutas do clique.
+                let via_client = ev.event != self.comp_window;
+                let hit_id = if via_client {
+                    self.topmost_client_at(ev.root_x, ev.root_y).unwrap_or(0)
+                } else if ev.child != 0 {
                     self.client_for_child(ev.child)
                 } else {
                     self.frame_at(ev.event_x, ev.event_y).unwrap_or(0)
@@ -925,8 +932,13 @@ impl Shared {
                                 // composicao (0,0) => coordenadas de saida.
                                 // Converte para pixels brutos e depois para
                                 // coordenadas relativas à janela cliente.
-                                let wx = (ev.event_x as f32 / k) as i16 - win.x;
-                                let wy = (ev.event_y as f32 / k) as i16 - win.y;
+                                // Clique no conteúdo do cliente: a moldura começa na posição
+                                // do cliente menos a barra; o ponto vira relativo à moldura.
+                                let (wx, wy) = if via_client {
+                                    (ev.root_x - win.x, ev.root_y - win.y)
+                                } else {
+                                    ((ev.event_x as f32 / k) as i16 - win.x, (ev.event_y as f32 / k) as i16 - win.y)
+                                };
                                 match win.hit_test(wx, wy) {
                                     DecorationHit::Close => {
                                         drop(scene);
@@ -1884,6 +1896,23 @@ impl Shared {
     /// A janela é uma barra de cliente (não é app nem camada).
     fn is_bar(&self, id: xproto::Window) -> bool {
         self.scene.lock().map(|s| s.decos.contains_key(&id)).unwrap_or(false)
+    }
+
+    /// Janela de cliente de cima (na pilha) cuja moldura contém o ponto (coordenadas da
+    /// saída, iguais às da raiz porque a composição cobre a tela a partir de (0, 0)).
+    fn topmost_client_at(&self, x: i16, y: i16) -> Option<xproto::Window> {
+        let cookie = self.conn.query_tree(self.comp_window).ok()?;
+        let tree = cookie.reply().ok()?;
+        let scene = self.scene.lock().ok()?;
+        tree.children.iter().rev().find_map(|id| {
+            let win = scene.windows.get(id)?;
+            let inside = win.mapped
+                && x >= win.x
+                && x < win.x + win.width as i16
+                && y >= win.y
+                && y < win.y + win.height as i16;
+            inside.then_some(*id)
+        })
     }
 
     /// Janela que recebe um clique num filho: a barra vira o cliente dela.
