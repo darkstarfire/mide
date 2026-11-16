@@ -443,6 +443,9 @@ montar() {
     cp -r data/applications data/xdg-desktop-portal "$PALCO$P/share/mide/"
     install -d "$PALCO$P/share/mide/fonts"
     install -m644 data/fonts/*.ttf data/fonts/OFL.txt "$PALCO$P/share/mide/fonts/"
+    # Início automático da sessão do mide (a verificação de atualizações em segundo plano).
+    install -d "$PALCO/etc/xdg/autostart"
+    install -m644 data/autostart/*.desktop "$PALCO/etc/xdg/autostart/"
     # Papéis de parede do mios (Configurações → Papel de parede).
     install -d "$PALCO$P/share/mide/backgrounds"
     install -m644 data/mios/backgrounds/*.jpg "$PALCO$P/share/mide/backgrounds/"
@@ -489,7 +492,8 @@ montar_icones() {
     git -C "$fonte" fetch -q origin || true
     git -C "$fonte" checkout -q "$versao"
     install -d "$destino"
-    (cd "$fonte" && ./install.sh -n mide -d "$destino" >/dev/null 2>&1)
+    (cd "$fonte" && ./install.sh -n mide -d "$destino" >/dev/null 2>&1) ||
+        { aviso "$(t "icon theme not installed (missing gtk-update-icon-cache?)" "tema de ícones não instalado (falta o gtk-update-icon-cache?)")"; return 0; }
     echo "$versao" > "$destino/mide/.versao-mide-icons"
     # Os apps do mide também no hicolor: aparecem em qualquer tema.
     install -d "$destino/hicolor/scalable/apps"
