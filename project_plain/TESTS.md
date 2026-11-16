@@ -1231,3 +1231,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Lista com o ponteiro passando pela barra lateral (pasta com 211 itens): nada muda de
   lugar no teste; falta o usuário mostrar o caso dele.
 - `tests/ui.sh arquivos`.
+
+## v0.10.92 (2026-11-16): arrastar (M11)
+
+- Seção 33: arrastar um arquivo da lista do Arquivos até Downloads na barra lateral o
+  move para lá (pasta pessoal de teste em `HOME`); um arquivo da mesa solto na janela
+  do Terminal vira o caminho no terminal (log "caminhos soltos no terminal: 1"; na
+  captura, `'…/Relatório final.pdf'` entre aspas na linha de comando).
+- Captura do arrasto na mesa em 1,5 (2049x1152): nome embaixo do ícone, do tamanho
+  certo e nítido.
+- Teste de unidade `caminho_solto_entre_aspas_quando_precisa`.
+- `cargo test` (626 aprovados), `tests/ui.sh area-de-trabalho terminal arquivos
+  captura-miniatura arrastar-entre` (71 ok).

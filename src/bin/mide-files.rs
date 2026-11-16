@@ -205,6 +205,9 @@ struct Files {
     /// Pasta sob um arrasto e desde quando (pasta de mola: segurando, a janela entra
     /// nela, como no Finder).
     spring: Option<(PathBuf, std::time::Instant)>,
+    /// Lugar da barra lateral sob um arrasto neste quadro (pasta ou Lixeira): soltar ali
+    /// move (ou copia, com Ctrl) para ele, como nos atalhos da barra lateral do Finder.
+    side_drop: Option<Place>,
     /// Larguras das colunas Modificado, Tamanho e Tipo da lista (arrastáveis no
     /// cabeçalho, lembradas entre as janelas) e as últimas gravadas.
     list_widths: [f32; 3],
@@ -444,6 +447,7 @@ impl Files {
             focus_rename: false,
             inline: None,
             spring: None,
+            side_drop: None,
             list_widths: ViewMemory::load().list_widths(),
             list_widths_saved: ViewMemory::load().list_widths(),
             sidebar_width: ViewMemory::load().sidebar_width(),
@@ -550,7 +554,10 @@ impl Files {
     /// Devolve o item clicado.
     /// Barra lateral: devolve o item escolhido e o disco a ejetar (botão ⏏ da linha).
     /// Ícone `tag:N` desenha a bolinha da etiqueta N; `ejectable[i]` mostra o ⏏.
-    fn sidebar(&mut self, ui: &mut Ui, items: &[(String, &str)], ejectable: &[bool], current: usize, rect: (f32, f32, f32, f32)) -> (Option<usize>, Option<usize>) {
+    /// Barra lateral: devolve a linha clicada, a do ⏏ apertado e, com `dragging`, a
+    /// linha sob o arrasto (destacada na cor de destaque).
+    #[allow(clippy::too_many_arguments)]
+    fn sidebar(&mut self, ui: &mut Ui, items: &[(String, &str)], ejectable: &[bool], droppable: &[bool], dragging: bool, current: usize, rect: (f32, f32, f32, f32)) -> (Option<usize>, Option<usize>, Option<usize>) {
         use mide::ui::draw;
         let (x, y0, sw, h) = rect;
         let t = ui.theme().clone();
@@ -576,6 +583,7 @@ impl Files {
         let list_h = (panel.1 + panel.3 - 8.0 - top).max(1.0);
         let mut chosen = None;
         let mut eject = None;
+        let mut drop_row = None;
         let mut row_hovered = false;
         let icons = &self.sidebar_icons;
         ui.at(panel.0, top, panel.2, |ui| {
@@ -616,7 +624,14 @@ impl Files {
                     if r.clicked() && eject.is_none() {
                         chosen = Some(i);
                     }
-                    let fill = if i == current {
+                    // Arrastando por cima de uma pasta ou da Lixeira: ela recebe os itens.
+                    let drop_here = dragging && droppable.get(i).copied().unwrap_or(false) && ui.over(row);
+                    if drop_here {
+                        drop_row = Some(i);
+                    }
+                    let fill = if drop_here {
+                        Some([t.accent[0], t.accent[1], t.accent[2], 70])
+                    } else if i == current {
                         Some(t.shade(if t.dark { 40 } else { 22 }))
                     } else if r.hovered {
                         Some(t.control)
@@ -672,7 +687,7 @@ impl Files {
         if !row_hovered && self.sidebar_drag.is_none() {
             ui.window_drag_area((panel.0, panel.1, panel.2 - 6.0, panel.3));
         }
-        (chosen, eject)
+        (chosen, eject, drop_row)
     }
 
     /// Chave da pasta atual na memória das visualizações.
@@ -1783,7 +1798,9 @@ impl Files {
     /// Imagem que segue o ponteiro num arrasto para fora: a miniatura (ou o ícone) do
     /// primeiro item e, com vários, a contagem num selo.
     fn drag_icon(&mut self, paths: &[PathBuf]) -> Option<Pixmap> {
-        const SIZE: u32 = 72;
+        // Em pixels da tela (pontos vezes a escala), como o `start_drag` pede.
+        const SIZE: f32 = 72.0;
+        let k = mide::ui::draw::scale();
         let first = paths.first()?;
         let entry = self.entries.iter().find(|e| &e.path == first).cloned();
         let base = self
@@ -1797,19 +1814,22 @@ impl Files {
                     Some(e) => self.label(e).1,
                     None => (if first.is_dir() { "folder" } else { "text-x-generic" }).to_string(),
                 };
-                mide::icons::load_icon(&name, 64).or_else(|| mide::icons::load_themed_icon(&[&name, "text-x-generic"], 64))
+                let px = (64.0 * k).round() as u32;
+                mide::icons::load_icon(&name, px).or_else(|| mide::icons::load_themed_icon(&[&name, "text-x-generic"], px))
             })?;
-        let mut canvas = Pixmap::new(SIZE, SIZE)?;
-        let scale = (60.0 / base.width().max(base.height()) as f32).min(1.0);
+        let side = (SIZE * k).round() as u32;
+        let mut canvas = Pixmap::new(side, side)?;
+        let scale = (60.0 * k / base.width().max(base.height()) as f32).min(k);
         let (w, h) = (base.width() as f32 * scale, base.height() as f32 * scale);
         let paint = tiny_skia::PixmapPaint { opacity: 0.85, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-        let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate((SIZE as f32 - w) / 2.0, (SIZE as f32 - h) / 2.0);
+        let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate((side as f32 - w) / 2.0, (side as f32 - h) / 2.0);
         canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tf, None);
         if paths.len() > 1 {
+            // Selo em pontos (as funções do `draw` e o texto já multiplicam pela escala).
             let label = paths.len().to_string();
             let mut text = mide::ui::text::Text::new();
             let tw = text.measure(&label, 12.0, mide::ui::text::FontWeight::Semibold).max(8.0) + 12.0;
-            let x = SIZE as f32 - tw - 1.0;
+            let x = SIZE - tw - 1.0;
             mide::ui::draw::fill_rounded(&mut canvas, x, 1.0, tw, 20.0, 10.0, tiny_skia::Color::from_rgba8(255, 59, 48, 255));
             text.draw(&mut canvas, &label, x + 6.0, 3.5, 12.0, mide::ui::text::FontWeight::Semibold, [255, 255, 255, 255]);
         }
@@ -3606,7 +3626,11 @@ impl Files {
         // Arquivos, move (com Ctrl, copia), como dentro da janela; de outro app, copia.
         if let Some(paths) = ui.input().dropped.clone() {
             let own = self.drag_out.as_ref().is_some_and(|out| *out == paths);
-            let dir = drop_target.clone().or_else(|| match &self.place {
+            let side = match &self.side_drop {
+                Some(Place::Dir(dir)) => Some(dir.clone()),
+                _ => None,
+            };
+            let dir = drop_target.clone().or(side).or_else(|| match &self.place {
                 Place::Dir(dir) => Some(dir.clone()),
                 _ => None,
             });
@@ -3622,9 +3646,21 @@ impl Files {
         }
         if released || !down {
             if let Some(paths) = self.drag.take() {
-                match drop_target {
-                    Some(dir) => self.drop_into(&paths, &dir, ctrl_now),
-                    None => tracing::info!("arrasto solto fora de uma pasta"),
+                match (drop_target, self.side_drop.take()) {
+                    (Some(dir), _) => self.drop_into(&paths, &dir, ctrl_now),
+                    // Num atalho da barra lateral: a pasta dele, ou a Lixeira.
+                    (None, Some(Place::Dir(dir))) => {
+                        tracing::info!("arrasto solto na barra lateral: {}", dir.display());
+                        self.drop_into(&paths, &dir, ctrl_now);
+                    }
+                    (None, Some(Place::Trash)) => {
+                        tracing::info!("arrasto solto na Lixeira da barra lateral");
+                        for path in &paths {
+                            self.move_to_trash(path);
+                        }
+                        self.reload();
+                    }
+                    _ => tracing::info!("arrasto solto fora de uma pasta"),
                 }
                 ui.request_repaint();
             }
@@ -4734,7 +4770,11 @@ impl App for Files {
         let y0 = region.1 + region.3 - ui.remaining_height();
         let area = (region.0, y0, region.2, ui.remaining_height());
         let side_w = self.sidebar_resize(ui, area);
-        let (chosen, eject) = self.sidebar(ui, &item_refs, &ejectable, current, (area.0, area.1, side_w, area.3));
+        // Arrasto de itens daqui (ou de outro app) por cima da barra lateral.
+        let dragging = self.drag.is_some() || ui.input().drop_hover;
+        let droppable: Vec<bool> = targets.iter().map(|t| matches!(t, Some(Place::Dir(_) | Place::Trash))).collect();
+        let (chosen, eject, drop_row) = self.sidebar(ui, &item_refs, &ejectable, &droppable, dragging, current, (area.0, area.1, side_w, area.3));
+        self.side_drop = drop_row.and_then(|i| targets.get(i).cloned().flatten());
         let chosen = chosen.unwrap_or(current);
         if let Some(d) = eject.and_then(|i| self.drives.get(i - first_drive)).cloned() {
             // Saindo do disco ejetado: volta à pasta pessoal.
@@ -4766,7 +4806,8 @@ impl App for Files {
             let (w, h) = (pix.width() as f32, pix.height() as f32);
             ui.paint(|canvas, _| {
                 let paint = tiny_skia::PixmapPaint { opacity: 0.85, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-                let tf = tiny_skia::Transform::from_translate(px - w / 2.0, py - h / 2.0).post_scale(k, k);
+                // A imagem já está em pixels da tela: só vai para o ponteiro.
+                let tf = tiny_skia::Transform::from_translate(px * k - w / 2.0, py * k - h / 2.0);
                 canvas.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, None);
             });
         }

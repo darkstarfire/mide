@@ -113,12 +113,14 @@ fn dismiss_drag(start_x: f32, layer_w: f32) -> f32 {
 /// Imagem que segue o ponteiro ao arrastar a captura: a própria captura, reduzida a
 /// no máximo 160 pixels, com cantos arredondados.
 fn drag_image(image: &Pixmap) -> Option<Pixmap> {
+    // Em pixels da tela (160 pontos vezes a escala), como o `start_drag` pede.
+    let scale = mide::ui::draw::scale();
     let (w, h) = (image.width() as f32, image.height() as f32);
-    let k = (160.0 / w.max(h)).min(1.0);
+    let k = (160.0 * scale / w.max(h)).min(1.0);
     let (dw, dh) = ((w * k).round().max(1.0), (h * k).round().max(1.0));
     let mut out = Pixmap::new(dw as u32, dh as u32)?;
     let mask = tiny_skia::Mask::new(dw as u32, dh as u32).and_then(|mut m| {
-        let path = mide::ui::draw::rounded_rect(0.0, 0.0, dw, dh, 8.0)?;
+        let path = mide::ui::draw::rounded_rect(0.0, 0.0, dw, dh, 8.0 * scale)?;
         m.fill_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
         Some(m)
     });

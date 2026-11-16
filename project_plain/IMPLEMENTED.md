@@ -2889,3 +2889,21 @@ espaçamento que deixa o visual feio".
 - **Faixa das miniaturas:** de borda a borda do conteúdo e encostada na barra do
   caminho (a página da galeria não tem mais a margem de 24 pontos em volta; a imagem e
   a tira têm as margens delas).
+
+## v0.10.92 (2026-11-16): arrastar para o Terminal, para a barra lateral do Arquivos e o nome na mesa (M11)
+
+Pedidos do usuário junto do plano do mios:
+- **Terminal:** arquivos e pastas soltos na janela viram o caminho completo na linha de
+  comando do painel sob o ponteiro, entre aspas simples quando o caminho tem espaço,
+  acento ou símbolo (como no Terminal do Mac), separados por espaço e com um espaço no
+  fim; a janela (e o terminal de atalho) aceitam arquivos arrastados.
+- **Arquivos:** soltar itens sobre um atalho da barra lateral (Favoritos, Computador,
+  discos) move para a pasta dele (com Ctrl, copia) e sobre a Lixeira manda para a
+  Lixeira; a linha fica na cor de destaque enquanto o arrasto está por cima; arquivos de
+  outros apps soltos num atalho são copiados para a pasta dele.
+- **Mesa:** em telas com escala (o Chromebook em 150%), o nome do ícone arrastado saía
+  deslocado e maior que o ícone: a imagem do arrasto era montada em pontos, mas o nome
+  e o selo eram desenhados por funções que já multiplicam pela escala. Agora a imagem
+  do arrasto é montada em pixels da tela (mesa, Arquivos e miniatura da captura) e o
+  mide-ui a entrega ao compositor no tamanho em pontos (`wp_viewporter`), nítida em
+  125, 150 e 200%.

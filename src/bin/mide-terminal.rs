@@ -1173,6 +1173,30 @@ impl TerminalApp {
             }
         }
         let gateway = self.focused().is_some_and(|id| self.tmux.iter().any(|s| s.gateway == id));
+        // Arquivos e pastas soltos na janela: o caminho completo de cada um vai para a
+        // linha de comando (entre aspas quando precisa, separados por espaço), como no
+        // Terminal do Mac. Vai para o painel sob o ponteiro.
+        if let Some(paths) = &input.dropped
+            && !paths.is_empty()
+            && self.dialog.is_none()
+            && !gateway
+        {
+            let under = input.pointer.and_then(|(px, py)| {
+                self.pane_rects(area).into_iter().find(|(_, r)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(id, _)| id)
+            });
+            if let Some(id) = under.or_else(|| self.focused()) {
+                if let Some(tab) = self.tabs.get_mut(self.active) {
+                    tab.focus = id;
+                }
+                if let Some(pane) = self.panes.get_mut(&id) {
+                    let mut text = paths.iter().map(|p| shell_quote(&p.to_string_lossy())).collect::<Vec<_>>().join(" ");
+                    text.push(' ');
+                    tracing::info!("caminhos soltos no terminal: {}", paths.len());
+                    pane.scroll = 0;
+                    pane.write(paste_bytes(&text, pane.term.modes.bracketed_paste));
+                }
+            }
+        }
         if let Some(text) = &input.paste {
             if !typing && self.dialog.is_none() && !gateway {
                 if let Some(pane) = self.focused().and_then(|id| self.panes.get_mut(&id)) {
@@ -2909,7 +2933,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if options.hotkey {
         return run_hotkey(options);
     }
-    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).full_size_content();
+    let window = Window::new(TITLE).app_id("mide-terminal").size(700, 500).min_size(240, 120).full_size_content().accepts_files();
     run(window, TerminalApp::new(options))
 }
 
@@ -2950,7 +2974,7 @@ fn run_hotkey(options: Options) -> Result<(), Box<dyn Error>> {
     });
     let mut app = TerminalApp::new(options);
     app.hotkey = Some(Hotkey { toggles, waker, visible: true });
-    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho");
+    let window = Window::new(TITLE).app_id("mide-terminal").dropdown("mide-terminal-atalho").accepts_files();
     let result = run(window, app);
     let _ = std::fs::remove_file(&path);
     result
@@ -3050,4 +3074,23 @@ mod tests {
 fn accent_rgb() -> [u8; 3] {
     let [r, g, b, _] = mide::kit::system_accent(mide::kit::system_dark());
     [r, g, b]
+}
+
+/// Caminho pronto para a linha de comando: como está quando só tem letras, números e
+/// `/._-+,:=@%`; senão, entre aspas simples (a aspa simples de dentro vira `'\''`).
+fn shell_quote(path: &str) -> String {
+    let plain = !path.is_empty() && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+,:=@%".contains(c));
+    if plain { path.to_string() } else { format!("'{}'", path.replace('\'', "'\\''")) }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::shell_quote;
+
+    #[test]
+    fn caminho_solto_entre_aspas_quando_precisa() {
+        assert_eq!(shell_quote("/home/fabio/foto.png"), "/home/fabio/foto.png");
+        assert_eq!(shell_quote("/home/fabio/Área de trabalho"), "'/home/fabio/Área de trabalho'");
+        assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
+    }
 }

@@ -818,16 +818,20 @@ impl Desktop {
     /// selo vermelho. O kit centra a imagem no ponteiro: o ícone é posto de modo que o
     /// ponto apertado (`grab`, relativo à célula) caia no centro, sem pulo ao começar.
     fn drag_icon(icon: &str, name: &str, count: usize, grab: (f32, f32)) -> Option<Pixmap> {
-        let base = mide::icons::load_icon(icon, ICON).or_else(|| mide::icons::load_themed_icon(&[icon, "application-x-executable", "text-x-generic"], ICON))?;
+        // Em pixels da tela (pontos vezes a escala), como o `start_drag` pede; o nome e o
+        // selo vão em pontos (as funções do `draw` e o texto já multiplicam pela escala).
+        let k = mide::ui::draw::scale();
+        let icon_px = (ICON as f32 * k).round() as u32;
+        let base = mide::icons::load_icon(icon, icon_px).or_else(|| mide::icons::load_themed_icon(&[icon, "application-x-executable", "text-x-generic"], icon_px))?;
         let (cw, ch) = (CELL.0 * 2.0, CELL.1 * 2.0);
-        let mut canvas = Pixmap::new(cw as u32, ch as u32)?;
-        // Canto da célula na imagem.
+        let mut canvas = Pixmap::new((cw * k).round() as u32, (ch * k).round() as u32)?;
+        // Canto da célula na imagem (em pontos).
         let (ox, oy) = (cw / 2.0 - grab.0, ch / 2.0 - grab.1);
-        let scale = (ICON as f32 / base.width().max(base.height()) as f32).min(1.0);
-        let (w, h) = (base.width() as f32 * scale, base.height() as f32 * scale);
+        let scale = (ICON as f32 * k / base.width().max(base.height()) as f32).min(k);
+        let (w, h) = (base.width() as f32 * scale / k, base.height() as f32 * scale / k);
         let (ix, iy) = (ox + (CELL.0 - w) / 2.0, oy + 8.0 + (ICON as f32 - h) / 2.0);
         let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-        canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tiny_skia::Transform::from_scale(scale, scale).post_translate(ix, iy), None);
+        canvas.draw_pixmap(0, 0, base.as_ref(), &paint, tiny_skia::Transform::from_scale(scale, scale).post_translate(ix * k, iy * k), None);
         // Nome na cápsula de escolhido (cortado com reticências se não couber). O medidor
         // de texto é criado uma vez só: criar e medir a primeira vez leva ~100 ms.
         DRAG_TEXT.with(|text| Self::paint_drag_label(&mut text.borrow_mut(), &mut canvas, name, count, (ox, oy), (ix, iy, w)));
