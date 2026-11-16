@@ -1274,3 +1274,12 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Testes `partes_do_id_do_pacote` e `resolve_um_pacote_instalado` (este com
   `--ignored`, precisa do PackageKit).
 - Instalar as atualizações pede a senha do usuário: falta conferir na sessão.
+
+## v0.10.96 (2026-11-16): Loja
+
+- Seção nova `54-loja`: a janela abre e o catálogo do sistema é lido (1.843 apps nesta
+  máquina).
+- Testes `le_um_app_do_catalogo` (YAML de exemplo com bloco `>-`, listas, mapas,
+  capturas e ícones) e `le_o_catalogo_do_sistema` (`--ignored`).
+- Capturas: Descobrir com os ícones e a página do Inkscape em português.
+- Instalar e remover pedem a senha: falta conferir com o usuário.

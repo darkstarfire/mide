@@ -2981,3 +2981,21 @@ de Software do Mac, tudo gráfico:
   detalhes, instalar e remover), que a Loja (M7) também vai usar.
 - Também: `cmake` na lista de compilação do `install.sh` (o `wasmtime` do Code precisa;
   numa máquina limpa a compilação falhava) e o tema de ícones só avisa se não instalar.
+
+## v0.10.96 (2026-11-16): Loja (M7)
+
+App novo `mide-store` ("Store"/"Loja"), como a App Store do Mac, com os apps da própria
+distribuição (o apt do mios), sem catálogo próprio:
+- Barra lateral com busca, Descobrir (destaques: GIMP, Inkscape, Krita, Blender,
+  LibreOffice, Thunderbird, VLC, OBS e outros que existirem), Criar, Trabalhar, Jogar,
+  Desenvolver, Internet, Música e vídeo, Utilitários, Educação e ciência e Instalados;
+  grade de ícones com ✓ nos instalados.
+- Página do app: ícone, nome, resumo, desenvolvedor, Obter/Abrir/Remover com progresso
+  (o PackageKit pede a senha pelo polkit), a primeira captura de tela (baixada para
+  `~/.cache/mide/store`), a descrição em parágrafos e versão, instalada, tamanho,
+  licença, pacote e site.
+- Núcleo novo `mide::appstream`: lê o catálogo AppStream do Debian (DEP-11,
+  `/var/lib/swcatalog/yaml/*.yml.gz`) com um leitor próprio do pedaço de YAML que ele
+  usa, no idioma da sessão, e os ícones já em cache (o maior tamanho baixado); os
+  instalados pelo estado do dpkg.
+- Seções com contexto de tradução próprio (`store`): "Play" é "Jogar" aqui.

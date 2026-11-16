@@ -28,7 +28,7 @@ pub mod terminal;
 // O mide-ui (framework de apps, github.com/fabioaacarneiro/mide-ui) e o desenho de baixo nível.
 pub use mide_ui::{kit, ui};
 
-pub use applications::{appimage, apps, default_apps, icons, programs, xpm};
+pub use applications::{appimage, apps, appstream, default_apps, icons, programs, xpm};
 pub use documents::{annotate, markup, richtext, spell};
 pub use platform::{accounts, battery, packages, processes, logging, appearance, audio, network, control_client, displays, elevate, keyboard_layouts, login_items, portal, settings_file, sounds, sysinfo, system};
 pub use shell::{appmenu, backdrop, calendar, gmenu, keycaps, launcher_layout, lockscreen, motion, notify, search, tray, widgets, xmenu};

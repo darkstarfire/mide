@@ -1,0 +1,91 @@
+# Tradução do mide para o português do Brasil: Loja (mide-store) e o catálogo AppStream.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Couldn’t finish: {err}"
+msgstr "Não foi possível terminar: {err}"
+
+msgid "Get"
+msgstr "Obter"
+
+msgid "Installed"
+msgstr "Instalado"
+
+msgid "License"
+msgstr "Licença"
+
+msgid "Loading the catalog…"
+msgstr "Carregando o catálogo…"
+
+msgid "No catalog found. Install the appstream package and update the package list."
+msgstr "Nenhum catálogo encontrado. Instale o pacote appstream e atualize a lista de pacotes."
+
+msgid "Nothing here."
+msgstr "Nada por aqui."
+
+msgid "Package"
+msgstr "Pacote"
+
+msgid "Quit Store"
+msgstr "Sair da Loja"
+
+msgid "Software Update…"
+msgstr "Atualização de Software…"
+
+msgid "Store"
+msgstr "Loja"
+
+msgid "This app has no window to open."
+msgstr "Este app não tem janela para abrir."
+
+msgid "Version"
+msgstr "Versão"
+
+msgid "Website"
+msgstr "Site"
+
+msgid "Working on {name}…"
+msgstr "Trabalhando em {name}…"
+
+msgctxt "store"
+msgid "Discover"
+msgstr "Descobrir"
+
+msgctxt "store"
+msgid "Create"
+msgstr "Criar"
+
+msgctxt "store"
+msgid "Work"
+msgstr "Trabalhar"
+
+msgctxt "store"
+msgid "Play"
+msgstr "Jogar"
+
+msgctxt "store"
+msgid "Develop"
+msgstr "Desenvolver"
+
+msgctxt "store"
+msgid "Internet"
+msgstr "Internet"
+
+msgctxt "store"
+msgid "Music and Video"
+msgstr "Música e vídeo"
+
+msgctxt "store"
+msgid "Utilities"
+msgstr "Utilitários"
+
+msgctxt "store"
+msgid "Education and Science"
+msgstr "Educação e ciência"
+
+msgctxt "store"
+msgid "Installed"
+msgstr "Instalados"

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Store
+Name[pt_BR]=Loja
+Comment=Find, install and remove apps
+Comment[pt_BR]=Encontre, instale e remova apps
+Exec=mide-store
+Icon=system-software-install
+Categories=System;PackageManager;
+Keywords=apps;install;software;store;loja;instalar;programas;
+StartupWMClass=mide-store
+OnlyShowIn=mide;

@@ -243,7 +243,7 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - [ ] M4. **ISO pelo CI do GitHub**: workflow que gera a ISO do mios em cima do Debian 13 (live-build), com o mide compilado no próprio CI, modo live (UEFI e legado) e o instalador do mios; a ISO como artefato e nas releases.
 - [ ] M5. **Repositório apt do mios**: pacotes `.deb` do mide gerados no CI, assinados (chave GPG guardada nos segredos do GitHub) e publicados num repositório apt (GitHub Pages), já configurado no mios para as atualizações.
 - [x] M6. (feito em 2026-11-16, v0.10.95; falta o usuário instalar atualizações de verdade na sessão) **Atualizações** (`mide-updates`, como Atualização de Software do Mac): tudo gráfico, nada de terminal; pede a senha (polkit) e roda `apt update`/`upgrade` por baixo (PackageKit ou apt); mostra o que muda (pacotes, versão atual → nova, notas do mide) e o progresso; aviso nas notificações quando há atualização.
-- [ ] M7. **Loja de apps** (E7) usando o apt do sistema (PackageKit + AppStream), no visual do Tahoe.
+- [x] M7. (feito em 2026-11-16, v0.10.96; Flathub e instalar de verdade ficam para conferir/depois) **Loja de apps** (E7) usando o apt do sistema (PackageKit + AppStream), no visual do Tahoe.
 - [ ] M8. **Discos** (`mide-disks`, como o Utilitário de Disco): ver discos e partições, formatar, particionar (criar, apagar, redimensionar), montar/desmontar, e gravar pendrives de boot de Linux e de Windows (UEFI e legado); funciona no modo live para preparar o disco da instalação.
 - [ ] M9. **Boas-vindas e instalador do mios** feitos do zero com o mide-ui (`mios-welcome`, `mios-installer`): idioma, teclado, fuso, usuário, disco (usando o M8), cópia do sistema, GRUB, primeiro login.
 - [ ] M10. **Code com agentes**: painel de chat embutido e ativável do Claude Code dentro do `mide-code`, entrando com a conta do Claude (login da sessão, pela assinatura, sem chave de API, que custa mais), conversando com o `claude` instalado na máquina; depois, outros agentes.
@@ -381,3 +381,4 @@ Não fazem parte do DE nem do plano acima: são produtos próprios, feitos depoi
 - v0.10.93 (2026-11-16): Monitor de Recursos (`mide-monitor`, M1). Pendente visto nele: o `mide-lock` gasta 15–19% de CPU com a tela bloqueada e apagada.
 - v0.10.94 (2026-11-16): temas do GRUB e do Plymouth do mios, papéis de parede do mios e o papel de parede automático (claro/escuro com a aparência).
 - v0.10.95 (2026-11-16): Atualização de Software (`mide-updates`, M6) e o cliente do PackageKit (`mide::packages`); a ISO (M4) está em teste no CI.
+- v0.10.96 (2026-11-16): Loja (`mide-store`, M7) com o catálogo AppStream do Debian (`mide::appstream`).
