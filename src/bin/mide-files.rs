@@ -333,6 +333,10 @@ struct Files {
     gallery_pan: (f32, f32),
     gallery_item: Option<PathBuf>,
     gallery_drag: Option<((f32, f32), (f32, f32))>,
+    /// Pedaço da imagem grande da galeria já ampliado (a parte à vista com uma margem):
+    /// mover e passar o ponteiro só copiam linhas; ampliar de novo só ao mudar o zoom ou
+    /// sair da margem.
+    gallery_cache: Option<GalleryCache>,
     /// Quanto a tira de miniaturas da galeria está rolada (pontos); `None` até a
     /// primeira vez (aí ela começa com o escolhido no meio).
     gallery_strip: Option<f32>,
@@ -478,6 +482,7 @@ impl Files {
             gallery_strip: None,
             gallery_item: None,
             gallery_drag: None,
+            gallery_cache: None,
             group: 0,
             extensions: !matches!(mide::settings_file::get("files", "extensions"), Some(mide::settings_file::Value::Bool(false))),
             thumbs: HashMap::new(),
@@ -2611,8 +2616,6 @@ impl Files {
         }
         // Galeria: a página não rola (tudo cabe); a roda é o zoom da imagem grande.
         let gallery_wheel = if mode == 3 { ui.take_scroll() } else { 0.0 };
-        let (mut g_zoom, mut g_pan, mut g_drag, g_item) = (self.gallery_zoom, self.gallery_pan, self.gallery_drag, self.gallery_item.clone());
-        let mut g_strip = self.gallery_strip;
         let mut g_changed = false;
         let mut g_now: Option<PathBuf> = None;
         let size = self.icon_size;
@@ -2648,6 +2651,11 @@ impl Files {
         };
         // Galeria: uma fileira só (← e → andam pela tira).
         self.keys(ui, &key_list, if mode == 3 { shown.len().max(1) } else { columns }, mode != 0 && mode != 3);
+        // Depois das teclas: o zoom pelo teclado (Ctrl +/−/0) já vale neste quadro (antes,
+        // a cópia feita antes das teclas voltava o zoom no fim do quadro).
+        let (mut g_zoom, mut g_pan, mut g_drag, g_item) = (self.gallery_zoom, self.gallery_pan, self.gallery_drag, self.gallery_item.clone());
+        let mut g_strip = self.gallery_strip;
+        let mut g_cache = if mode == 3 { self.gallery_cache.take() } else { None };
         if mode == 2 && !ui.typing() && self.dialog.is_none() {
             self.column_keys(ui, &col_dirs);
         }
@@ -2725,8 +2733,11 @@ impl Files {
         let inline_was_focusing = inline.as_ref().is_some_and(|(_, _, f)| *f);
         let mut inline_done: Option<bool> = None;
         let ctrl_shift = ctrl || shift;
+        // Na galeria, a página sem margem: a faixa das miniaturas vai de borda a borda
+        // (a imagem grande e a tira têm as margens delas).
+        let page_pad = if mode == 3 { 0.0 } else { ui.theme().padding };
         ui.at(region.0, top, region.2 - preview_w, |ui| {
-        ui.page_sized(body_h, |ui| {
+        ui.scroll_area_padded(body_h, page_pad, |ui| {
             if let Some(message) = &self.message {
                 ui.note(message);
             }
@@ -2931,10 +2942,13 @@ impl Files {
             } else if mode == 3 {
                 // Galeria (como no Finder): o item escolhido grande, com o nome e as
                 // informações embaixo, e a tira de miniaturas para escolher.
+                // Respiro em cima (a página da galeria não tem margem).
+                ui.space(ui.theme().padding);
                 let r = ui.region();
                 let g_top = r.1 + r.3 - ui.remaining_height();
-                // Cabe na página sem rolar (a página não pode crescer com o zoom).
-                let g_h = (r.1 + r.3 - g_top - 8.0).max(160.0);
+                // Cabe na página sem rolar (a página não pode crescer com o zoom); a faixa
+                // das miniaturas desce até a barra do caminho.
+                let g_h = (r.1 + r.3 - g_top).max(160.0);
                 // Faixa de baixo: as miniaturas (64), o espaço em volta e a barra de rolagem.
                 let strip_h = 112.0;
                 let big_h = (g_h - strip_h - 64.0).max(80.0);
@@ -2971,7 +2985,7 @@ impl Files {
                             // Sem zoom, nunca maior que a imagem (miniatura pequena fica pequena).
                             let base = if pix.width() >= fit_side.max(1) || pix.height() >= fit_side.max(1) { base } else { base.min(1.0) };
                             let (bw, bh) = (pw * base, ph * base);
-                            let pointer = ui.input().pointer;
+                            let pointer = ui.pointer();
                             let over_area = pointer.is_some_and(|p| p.0 >= area.0 && p.0 < area.0 + area.2 && p.1 >= area.1 && p.1 < area.1 + area.3);
                             // Roda sobre a imagem: zoom em torno do ponteiro.
                             if gallery_wheel.abs() > 0.5 && over_area && let Some(p) = pointer {
@@ -3007,15 +3021,13 @@ impl Files {
                             g_pan = (g_pan.0.clamp(-lim.0, lim.0), g_pan.1.clamp(-lim.1, lim.1));
                             let (x, y) = (area.0 + (area.2 - dw) / 2.0 + g_pan.0, area.1 + (area.3 - dh) / 2.0 + g_pan.1);
                             let scale = base * g_zoom;
+                            let key = (entry.path.clone(), pix.width(), pix.height(), scale.to_bits());
+                            let cache = &mut g_cache;
                             ui.paint(|canvas, _| {
-                                let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-                                let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate(x * k, y * k);
-                                let mask = tiny_skia::Rect::from_xywh(area.0 * k, area.1 * k, area.2 * k, area.3 * k).and_then(|rect| {
-                                    let mut mask = tiny_skia::Mask::new(canvas.width(), canvas.height())?;
-                                    mask.fill_path(&tiny_skia::PathBuilder::from_rect(rect), tiny_skia::FillRule::Winding, false, tiny_skia::Transform::identity());
-                                    Some(mask)
-                                });
-                                canvas.draw_pixmap(0, 0, Pixmap::as_ref(&pix), &paint, tf, mask.as_ref());
+                                let place = ((x * k).round() as i32, (y * k).round() as i32);
+                                let size = ((dw * k).ceil() as i32, (dh * k).ceil() as i32);
+                                let view = ((area.0 * k).round() as i32, (area.1 * k).round() as i32, (area.2 * k).round() as i32, (area.3 * k).round() as i32);
+                                GalleryCache::draw(cache, canvas, &pix, key, scale, place, size, view);
                             });
                         }
                         // Pasta ou documento: o ícone grande no meio (sem ladrilho, que
@@ -3051,20 +3063,21 @@ impl Files {
                     let t = ui.theme().clone();
                     let rgba = |c: [u8; 4]| tiny_skia::Color::from_rgba8(c[0], c[1], c[2], c[3]);
                     let band = if t.dark { [255, 255, 255, 10] } else { [0, 0, 0, 8] };
+                    let (bx, bw) = (r.0, r.2);
                     ui.paint(move |canvas, _| {
-                        mide::ui::draw::fill_rounded(canvas, r.0, band_y, r.2, strip_h, 0.0, rgba(band));
-                        mide::ui::draw::fill_rounded(canvas, r.0, band_y, r.2, 1.0, 0.0, rgba(t.line));
+                        mide::ui::draw::fill_rounded(canvas, bx, band_y, bw, strip_h, 0.0, rgba(band));
+                        mide::ui::draw::fill_rounded(canvas, bx, band_y, bw, 1.0, 0.0, rgba(t.line));
                     });
                 }
                 // Recuo dos dois lados (o contorno do escolhido não encosta na borda).
-                let pad = 16.0;
+                let pad = ui.theme().padding;
                 let (sx, sw) = (r.0 + pad, r.2 - 2.0 * pad);
                 // A tira anda de miniatura em miniatura (`g_strip` é a primeira à vista):
                 // as que aparecem ficam inteiras e centralizadas, sem um pedaço cortado.
                 let len = shown.len();
                 let n_vis = (((sw + 10.0) / step).floor() as usize).max(1);
                 let max_first = len.saturating_sub(n_vis) as f32;
-                let pointer = ui.input().pointer;
+                let pointer = ui.pointer();
                 let over_strip = pointer.is_some_and(|p| p.1 >= band_y && p.1 < band_y + strip_h && p.0 >= r.0 && p.0 < r.0 + r.2);
                 let mut first = match g_strip {
                     Some(f) => f,
@@ -3425,6 +3438,9 @@ impl Files {
             self.gallery_drag = g_drag;
             self.gallery_item = g_now;
             self.gallery_strip = g_strip;
+            self.gallery_cache = g_cache;
+        } else {
+            self.gallery_cache = None;
         }
         for path in wanted {
             self.thumb(&path, size);
@@ -5080,4 +5096,82 @@ fn fit_inside(pix: tiny_skia::Pixmap, side: u32) -> tiny_skia::Pixmap {
     let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
     out.draw_pixmap(0, 0, pix.as_ref(), &paint, tiny_skia::Transform::from_scale(k, k), None);
     out
+}
+
+/// Pedaço já ampliado da imagem grande da galeria. Reamostrar a imagem inteira com
+/// filtro bilinear (e uma máscara do tamanho da janela) a cada quadro deixava o zoom e
+/// o arrasto pesados; com o pedaço guardado, cada quadro só copia linhas.
+struct GalleryCache {
+    /// Item, tamanho da miniatura usada e escala (bits do `f32`): mudou, refaz.
+    key: (PathBuf, u32, u32, u32),
+    /// Onde o pedaço começa, nos pixels da imagem já ampliada (0, 0 = canto da imagem).
+    origin: (i32, i32),
+    pix: Pixmap,
+}
+
+impl GalleryCache {
+    /// Desenha a imagem `pix` ampliada por `scale` com o canto em `place` (pixels da
+    /// janela) e tamanho `size`, só dentro de `view` (x, y, largura, altura), refazendo o
+    /// pedaço guardado em `cache` quando não serve mais.
+    #[allow(clippy::too_many_arguments)]
+    fn draw(cache: &mut Option<Self>, canvas: &mut Pixmap, pix: &Pixmap, key: (PathBuf, u32, u32, u32), scale: f32, place: (i32, i32), size: (i32, i32), view: (i32, i32, i32, i32)) {
+        // A parte à vista, nos pixels da imagem ampliada.
+        let x0 = (view.0 - place.0).max(0);
+        let y0 = (view.1 - place.1).max(0);
+        let x1 = (view.0 + view.2 - place.0).min(size.0);
+        let y1 = (view.1 + view.3 - place.1).min(size.1);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let fits = cache.as_ref().is_some_and(|c| {
+            c.key == key && c.origin.0 <= x0 && c.origin.1 <= y0 && c.origin.0 + c.pix.width() as i32 >= x1 && c.origin.1 + c.pix.height() as i32 >= y1
+        });
+        if !fits {
+            // Um quarto da área à vista de margem de cada lado (o arrasto anda um bom
+            // pedaço antes de precisar ampliar de novo), sem passar da imagem.
+            let (mx, my) = (view.2 / 4, view.3 / 4);
+            let (ox, oy) = ((x0 - mx).max(0), (y0 - my).max(0));
+            let (ex, ey) = ((x1 + mx).min(size.0), (y1 + my).min(size.1));
+            let Some(mut part) = Pixmap::new((ex - ox).max(1) as u32, (ey - oy).max(1) as u32) else {
+                return;
+            };
+            let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+            let tf = tiny_skia::Transform::from_scale(scale, scale).post_translate(-ox as f32, -oy as f32);
+            part.draw_pixmap(0, 0, pix.as_ref(), &paint, tf, None);
+            *cache = Some(Self { key, origin: (ox, oy), pix: part });
+        }
+        let Some(c) = cache.as_ref() else {
+            return;
+        };
+        // Cópia das linhas à vista (com transparência, por cima do fundo).
+        let (cw, ch) = (canvas.width() as i32, canvas.height() as i32);
+        let dx0 = (place.0 + x0).max(0);
+        let dx1 = (place.0 + x1).min(cw);
+        if dx1 <= dx0 {
+            return;
+        }
+        let n = (dx1 - dx0) as usize;
+        let sw = c.pix.width() as usize;
+        let src = c.pix.pixels();
+        let dst = canvas.pixels_mut();
+        for dy in (place.1 + y0).max(0)..(place.1 + y1).min(ch) {
+            let sy = (dy - place.1 - c.origin.1) as usize;
+            let sx = (dx0 - place.0 - c.origin.0) as usize;
+            let s = &src[sy * sw + sx..sy * sw + sx + n];
+            let d0 = dy as usize * cw as usize + dx0 as usize;
+            let d = &mut dst[d0..d0 + n];
+            for (dp, sp) in d.iter_mut().zip(s) {
+                let a = sp.alpha();
+                if a == 255 {
+                    *dp = *sp;
+                } else if a != 0 {
+                    let inv = 255 - a as u32;
+                    let mix = |s: u8, d: u8| (s as u32 + (d as u32 * inv + 127) / 255).min(255) as u8;
+                    if let Some(m) = tiny_skia::PremultipliedColorU8::from_rgba(mix(sp.red(), dp.red()), mix(sp.green(), dp.green()), mix(sp.blue(), dp.blue()), mix(a, dp.alpha())) {
+                        *dp = m;
+                    }
+                }
+            }
+        }
+    }
 }

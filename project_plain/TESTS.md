@@ -1220,3 +1220,14 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   em (994, 584), "Só leitura" em (1018, 542)). Seção 15 (editor): o Code não recebia as
   teclas ao abrir, defeito antigo (falha igual com o mide-ui anterior), corrigido no
   mide-ui (identidade da divisória).
+
+## v0.10.91 (2026-11-16): galeria
+
+- Foto de 4000x3000 em `tests/scenario.sh`: Ctrl+= amplia (125%, antes voltava a 100%),
+  a roda sobre a imagem amplia (175%) e o arrasto move a imagem; com o log do mide-ui
+  (`RUST_LOG=mide_ui::kit=debug`), o quadro inteiro do Arquivos durante o arrasto fica em
+  ~15 ms de mediana e 22 ms no máximo (build de desenvolvimento, máquina ocupada).
+- Captura da galeria: faixa das miniaturas de borda a borda e sem o vão embaixo.
+- Lista com o ponteiro passando pela barra lateral (pasta com 211 itens): nada muda de
+  lugar no teste; falta o usuário mostrar o caso dele.
+- `tests/ui.sh arquivos`.

@@ -2869,3 +2869,23 @@ de um defeito antigo do Code, nada do desempenho. Corrigidos junto:
 - Coordenadas da bateria atualizadas: seletor de arquivos no visual do Tahoe (v0.10.86),
   teclado na tela embaixo com a dock escondida (v0.10.40) e janela sem barra de título
   no modo tablet (v0.10.41).
+
+## v0.10.91 (2026-11-16): galeria do Arquivos leve no zoom e no arrasto
+
+Pedidos do usuário depois de instalar a v0.10.90: "dar zoom na imagem pelo finder e
+movimentar ela é muito pesado e lento" e "no modo galeria, na parte de baixo, há um
+espaçamento que deixa o visual feio".
+- **Zoom e arrasto leves:** a imagem grande era reamostrada inteira (filtro bilinear do
+  tiny-skia, com uma máscara do tamanho da janela criada a cada quadro) em todo quadro,
+  até a cada movimento do ponteiro. Agora o Arquivos guarda o pedaço já ampliado (a
+  parte à vista com um quarto de margem de cada lado, `GalleryCache`): arrastar e passar
+  o ponteiro só copiam linhas; ampliar de novo só quando o zoom muda ou o arrasto sai da
+  margem.
+- **Zoom pelo teclado (Ctrl +/−) voltava sozinho:** as teclas eram lidas depois da cópia
+  do zoom do quadro, e a cópia antiga voltava no fim. A cópia passou para depois das
+  teclas.
+- **Zoom em volta do ponteiro e a tira:** usavam o ponteiro nas coordenadas da janela e
+  a área nas da página; agora as duas nas da página (`ui.pointer()`).
+- **Faixa das miniaturas:** de borda a borda do conteúdo e encostada na barra do
+  caminho (a página da galeria não tem mais a margem de 24 pontos em volta; a imagem e
+  a tira têm as margens delas).
