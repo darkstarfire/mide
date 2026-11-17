@@ -788,16 +788,16 @@ impl Capture {
                     let mut paint = Paint::default();
                     paint.anti_alias = true;
                     paint.set_color(Color::from_rgba8(r, g, b, 255));
-                    canvas.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                    canvas.fill_path(&path, &paint, FillRule::Winding, mide::ui::draw::tf(), None);
                     paint.set_color(Color::from_rgba8(0, 0, 0, 70));
-                    canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, Transform::identity(), None);
+                    canvas.stroke_path(&path, &paint, &Stroke { width: 1.0, ..Default::default() }, mide::ui::draw::tf(), None);
                 }
                 if i == chosen {
                     if let Some(ring) = PathBuilder::from_circle(center.0, center.1, w / 2.0 + 1.5) {
                         let mut paint = Paint::default();
                         paint.anti_alias = true;
                         paint.set_color(Color::from_rgba8(accent[0], accent[1], accent[2], 255));
-                        canvas.stroke_path(&ring, &paint, &Stroke { width: 2.0, ..Default::default() }, Transform::identity(), None);
+                        canvas.stroke_path(&ring, &paint, &Stroke { width: 2.0, ..Default::default() }, mide::ui::draw::tf(), None);
                     }
                 }
             }

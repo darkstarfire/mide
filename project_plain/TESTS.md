@@ -1366,3 +1366,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   outra versão, envia trocando, atualiza as notas), tag `v*` com a release (só troca) e tag
   `mios-*` (release própria com `--verify-tag`); a soma `.sha256` é gerada se faltar.
 - De verdade: o CI da tag v0.10.103 (montagem e publicação na release `iso`).
+
+## v0.10.104 (2026-11-17): deslizante do zoom em 150%
+
+- Arquivos numa tela de teste de 2049x1152 em escala 1,5 (`[monitors.outputs."HEADLESS-1"]
+  scale = 1.5`): antes, a bolinha no meio dos ícones e o deslizante sem o botão; depois, o
+  botão no deslizante e o ícone das colunas no lugar do "C".
+- mide-ui: `cargo test` (132 ok). Bateria: `tests/ui.sh captura arquivos` (90 ok).

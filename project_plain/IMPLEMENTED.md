@@ -3146,3 +3146,13 @@ rodava à mão e guardava a ISO como artefato por 14 dias. Agora:
   `./install.sh iso`): o apt publica a mesma versão ao mesmo tempo, e com o número igual a
   montagem parava num "downgrade".
 - README com a seção do mios e o link de download.
+
+## v0.10.104 (2026-11-17): bolinha branca no Arquivos
+
+Relato do usuário (com foto): uma bolinha branca solta no meio da área dos ícones do
+Arquivos, vista havia tempo. Era o botão do deslizante de zoom da barra de status
+(`mini_slider` do mide-ui): a faixa era desenhada na escala da tela e o botão não (em
+150% ele caía a 2/3 do lugar, longe do deslizante, que ficava sem botão). O botão agora
+usa a mesma escala. No mide-ui também: o símbolo `view-column-symbolic` embutido (fora do
+tema do mide, o botão das colunas mostrava a letra "C"). Na Captura, os círculos das cores
+passaram a usar a escala da tela (hoje ela roda em escala 1; não muda nada à vista).

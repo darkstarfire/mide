@@ -669,3 +669,6 @@
 - **Plymouth no boot:** sem `splash` no `GRUB_CMDLINE_LINUX_DEFAULT` a animação não aparece; o `install-boot-theme --splash` acrescenta `quiet splash` depois de guardar a cópia do `/etc/default/grub`.
 
 - **ISO nas releases (2026-11-17):** a release `iso` é fixa (como a `apt`): o arquivo é trocado com `gh release upload --clobber` e o endereço não muda; a tag `iso` fica no commit da primeira publicação (as notas dizem o commit de verdade). O GitHub aceita até 2 GiB por arquivo de release; a ISO tem ~1,5 GB (`iso/publish-release.sh` para com erro se passar). O workflow da ISO e o do apt rodam juntos em cada tag `v*`.
+
+- **Desenho com `fill_path`/`stroke_path` no mide-ui (2026-11-17):** a imagem é em pixels e as coordenadas da interface em pontos; `fill_rounded` e companhia escalam sozinhos, mas um caminho do tiny-skia precisa de `crate::ui::draw::tf()` (ou das coordenadas já multiplicadas por `scale()`). Com `Transform::identity()`, em 150% o desenho cai a 2/3 do lugar (a bolinha solta no Arquivos). Teste visual de escala: `MIDE_WINIT_SIZE=2049x1152` com `scale = 1.5` no `config.toml` do teste.
+- **`cargo update -p mide-ui` re-resolve outras dependências** (windows-sys, getrandom): para só subir o mide-ui, trocar o hash do `source` no `Cargo.lock` e conferir com `cargo metadata --locked`.
