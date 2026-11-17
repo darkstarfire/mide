@@ -1343,3 +1343,6 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   copiar, usuário, GRUB e initramfs em 216 s; o sistema instalado dá boot pelo disco e
   chega à tela de login do mios em português. A sessão não abria pelo `config.toml`
   (corrigido); falta repetir com a ISO nova.
+- 2026-11-17, ISO do CI do commit 648af90 (`+git` na versão dos pacotes): instalação
+  automática no QEMU (UEFI, 4 GB) em 198 s sem erro; boot só pelo disco: a entrada
+  automática abre a sessão do mide com a janela de Boas-vindas do mios, a barra e a dock.
