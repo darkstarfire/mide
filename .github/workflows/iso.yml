@@ -1,11 +1,29 @@
-# Gera a ISO do mios (Debian 13 por baixo, com o mide) e os pacotes .deb.
-# Roda à mão (Actions → mios ISO → Run workflow) e nas tags mios-*.
+# Gera a ISO do mios (Debian 13 por baixo, com o mide) e os pacotes .deb, e publica a ISO:
+#   - a cada versão (tags v*): na release "iso", sempre o mesmo endereço de download
+#     (https://github.com/fabioaacarneiro/mide/releases/download/iso/mios-<versão>-amd64.iso),
+#     com o arquivo trocado pelo novo;
+#   - nas tags mios-* (marcos do mios): numa release própria, que fica;
+#   - à mão (Actions → mios ISO → Run workflow): só como artefato, ou também na release
+#     "iso" com a opção "publish".
 name: mios ISO
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Also publish the ISO on the \"iso\" release"
+        type: boolean
+        default: false
   push:
-    tags: ["mios-*"]
+    tags: ["v*", "mios-*"]
+
+permissions:
+  contents: write
+
+# Uma versão nova torna a ISO da anterior inútil: a montagem antiga é cancelada.
+concurrency:
+  group: mios-iso
+  cancel-in-progress: true
 
 jobs:
   iso:
@@ -34,18 +52,18 @@ jobs:
       - name: Build packages and ISO (Debian 13 container)
         run: |
           mkdir -p .ci-cache/cargo
-          # Fora de uma tag, os pacotes da ISO levam o commit na versão (acima dos
-          # publicados no apt com o mesmo número; ver packaging/debian/build-deb.sh).
-          sufixo=""
-          [ "$GITHUB_REF_TYPE" = tag ] || sufixo="+git${GITHUB_SHA::7}"
+          # Os pacotes da ISO levam sempre o commit na versão, também nas tags: o
+          # workflow do apt publica a mesma versão ao mesmo tempo, e com o número igual o
+          # apt da montagem trocava o pacote do commit pelo da internet ("downgrade").
           docker run --rm --privileged \
-            -e MIDE_VERSION_SUFFIX="$sufixo" \
+            -e MIDE_VERSION_SUFFIX="+git${GITHUB_SHA::7}" \
             -v "$PWD:/src" -w /src \
             -v "$PWD/.ci-cache/cargo:/root/.cargo" \
             debian:trixie iso/ci.sh
           sudo chown -R "$(id -u):$(id -g)" target .ci-cache
+          ls -la target/iso/*.iso
 
-      - name: Upload ISO
+      - name: Upload ISO (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: mios-iso
@@ -55,9 +73,15 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-      - name: Upload packages
+      - name: Upload packages (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: mios-debs
           path: target/deb/*.deb
           retention-days: 14
+
+      - name: Publish the ISO on the releases
+        if: github.ref_type == 'tag' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: iso/publish-release.sh

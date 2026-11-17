@@ -26,6 +26,20 @@ O `pkexec` e os apps que pedem permissão pelo polkit usam a mesma janela na ses
 mide. O programa roda pelo X11 (XWayland), sem acesso ao Wayland nem à sessão D-Bus do
 usuário; use só com programas confiáveis.
 
+## mios: o sistema pronto, com o mide
+
+O **mios** (*Mac Inspired Operational System*) é um sistema completo com o mide, em cima
+do Debian 13: dá para experimentar sem instalar (modo ao vivo, por pendrive) e instalar
+pelo próprio instalador gráfico. A ISO é gerada pelo CI a cada versão:
+
+- Baixar: [mios-1.0-amd64.iso](https://github.com/fabioaacarneiro/mide/releases/download/iso/mios-1.0-amd64.iso)
+  e a soma [mios-1.0-amd64.iso.sha256](https://github.com/fabioaacarneiro/mide/releases/download/iso/mios-1.0-amd64.iso.sha256)
+  (release [`iso`](https://github.com/fabioaacarneiro/mide/releases/tag/iso), sempre a versão mais nova).
+- Gravar num pendrive pelo app Discos do mide, ou com
+  `sudo dd if=mios-1.0-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync` (apaga o pendrive).
+- Dá boot em UEFI e no modo BIOS legado. As atualizações chegam pelo app Atualizações
+  (repositório apt do mios).
+
 ## Instalação
 
 ```sh

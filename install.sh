@@ -764,6 +764,10 @@ fazer_iso() {
     local versao_iso destino
     versao_iso="$(cat iso/VERSION)"
     destino="$PROJETO/target/iso/mios-$versao_iso-amd64.iso"
+    # Os pacotes da ISO levam sempre o commit na versão (também numa tag): com o número
+    # igual ao do repositório apt do mios, o apt da montagem troca o pacote local pelo
+    # da internet e para ("downgrade").
+    export MIDE_VERSION_SUFFIX="${MIDE_VERSION_SUFFIX-+git$(usuario git -C "$PROJETO" rev-parse --short=7 HEAD 2>/dev/null || echo local)}"
     if host_trixie; then
         DISTRO=debian
         titulo "$(t "mios ISO (Debian 13 live-build; asks for the sudo password; 20 to 60 minutes, downloads about 1.5 GB)" "ISO do mios (live-build do Debian 13; pede a senha do sudo; de 20 a 60 minutos, baixa uns 1,5 GB)")"

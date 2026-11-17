@@ -1359,3 +1359,10 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   boot em UEFI pelo CD (bootindex 0) até a animação do Plymouth do mios (o M2 que faltava).
 - Não rodados de ponta a ponta (pedem a senha do sudo ou levam muito tempo): `iso` local,
   `boot-theme` de verdade nesta máquina e `deb` compilando.
+
+## v0.10.103 (2026-11-17): ISO publicada pelo CI
+
+- `iso/publish-release.sh` com um `gh` falso: tag `v*` sem a release (cria, tira a ISO de
+  outra versão, envia trocando, atualiza as notas), tag `v*` com a release (só troca) e tag
+  `mios-*` (release própria com `--verify-tag`); a soma `.sha256` é gerada se faltar.
+- De verdade: o CI da tag v0.10.103 (montagem e publicação na release `iso`).

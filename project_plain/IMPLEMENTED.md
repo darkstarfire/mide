@@ -3129,3 +3129,20 @@ o projeto do GitHub e instala tudo, inclusive os temas do GRUB e do Plymouth. O
 
 As compilações usam metade dos núcleos, no máximo 4, com `nice -n 19`
 (`CARGO_BUILD_JOBS=N` muda): antes o instalador usava todos e travava o computador.
+
+## v0.10.103 (2026-11-17): ISO do mios publicada pelo CI
+
+Pedido do usuário: "ainda não temos iso sendo feitas no ci". O workflow existia, mas só
+rodava à mão e guardava a ISO como artefato por 14 dias. Agora:
+
+- A cada versão (tag `v*`), o CI monta a ISO e a publica na release `iso`, trocando o
+  arquivo: o endereço de download é sempre o mesmo
+  (`releases/download/iso/mios-1.0-amd64.iso`, com o `.sha256` ao lado), e as notas da
+  release dizem de qual versão e commit ela saiu.
+- As tags `mios-*` (marcos do mios) ganham uma release própria, que fica.
+- À mão, a opção "publish" do Run workflow também publica.
+- Uma versão nova cancela a montagem da anterior, que já ficou velha.
+- Os pacotes da ISO levam sempre `+git<commit>` na versão (também nas tags, e também no
+  `./install.sh iso`): o apt publica a mesma versão ao mesmo tempo, e com o número igual a
+  montagem parava num "downgrade".
+- README com a seção do mios e o link de download.
