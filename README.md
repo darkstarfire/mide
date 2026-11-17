@@ -54,6 +54,22 @@ rode como root).
 - `./install.sh --help` mostra as opções (`--dry-run` mostra o que seria feito sem
   mudar nada).
 
+O mesmo `./install.sh` faz o resto, pelo menu ou por comandos:
+
+| Comando | O que faz |
+|---|---|
+| `./install.sh update` | atualiza a sessão do mide aberta a partir desta pasta (para quem desenvolve; dentro da sessão, reinicia o compositor e a tela de login) |
+| `./install.sh build` | só compila (`target/release`), apagando antes o que as compilações antigas deixaram |
+| `./install.sh deps` | só instala o que falta para compilar |
+| `./install.sh login [remove]` | tela de login do mide (greetd), ou volta à de antes |
+| `./install.sh boot-theme [remove]` | temas do boot do mios: menu do GRUB e animação do Plymouth (Debian/Ubuntu) |
+| `./install.sh deb` | pacotes `.deb` do `mide` e do `mios-release` em `target/deb` |
+| `./install.sh iso` | ISO do mios em `target/iso` (no Debian 13 pelo live-build do sistema; nos outros, num contêiner do docker ou do podman) |
+| `./install.sh iso-test [bios] [disk]` | liga a ISO numa máquina virtual (QEMU), com um disco virtual para testar o instalador |
+
+As compilações usam metade dos núcleos (no máximo 4) com prioridade baixa, para o
+computador continuar usável; `CARGO_BUILD_JOBS=8 ./install.sh build` usa outro número.
+
 Funciona com placa de vídeo Intel ou AMD (drivers Mesa); a placa da NVIDIA com o driver
 proprietário ainda não foi testada.
 

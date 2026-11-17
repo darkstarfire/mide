@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Instalador do mide (C3 e C6): interativo, para Debian/Ubuntu, Fedora, Arch/Manjaro e
-# Slackware. Instala as dependências pelo gerenciador de pacotes da distribuição,
-# compila o mide (como o usuário, nunca como root), monta os arquivos numa pasta à
-# parte e só então pergunta antes de copiar para o sistema. Também remove o que
-# instalou.
+# Ferramenta de instalação do mide e do mios (C3 e C6): interativa, para Debian/Ubuntu,
+# Fedora, Arch/Manjaro e Slackware. Instala as dependências pelo gerenciador de pacotes
+# da distribuição, compila o mide (como o usuário, nunca como root), monta os arquivos
+# numa pasta à parte e só então pergunta antes de copiar para o sistema. Também remove
+# o que instalou, atualiza a sessão aberta, troca a tela de login e os temas do boot
+# (GRUB e Plymouth), gera os pacotes .deb e a ISO do mios e liga a ISO numa máquina
+# virtual.
 #
-#   ./install.sh                 menu: instalar, remover ou sair
+#   ./install.sh                 menu com tudo
 #   ./install.sh --install       instala direto (ainda pergunta a distribuição e as partes)
 #   ./install.sh --remove        remove do sistema
+#   ./install.sh build|deps|update|login|boot-theme|deb|iso|iso-test   (veja --help)
 #   ./install.sh --help          todas as opções
 #
 # Onde fica cada coisa:
@@ -56,6 +59,14 @@ X11=
 ICONES=
 LOGIN=
 ENERGIA=
+BOOT=          # temas do boot (GRUB e Plymouth) do mios
+TIRAR=         # "remove" depois de login/boot-theme
+TESTE_BIOS=    # iso-test bios: modo legado em vez de UEFI
+TESTE_DISCO=   # iso-test disk: liga só pelo disco virtual (o sistema instalado)
+# Núcleos para compilar: metade da máquina e no máximo 4, com prioridade baixa (o
+# computador continua usável durante a compilação); CARGO_BUILD_JOBS escolhe outro número.
+JOBS="${CARGO_BUILD_JOBS:-$(( $(nproc 2>/dev/null || echo 2) / 2 ))}"
+[ -n "${CARGO_BUILD_JOBS:-}" ] || { [ "$JOBS" -ge 1 ] || JOBS=1; [ "$JOBS" -le 4 ] || JOBS=4; }
 
 ajuda() {
     cat <<EOF
@@ -76,6 +87,19 @@ $(t "Usage" "Uso"): ./install.sh [$(t "options" "opções")]
   --icons | --no-icons   $(t "mide icon theme" "tema de ícones do mide")
   --login | --no-login   $(t "mide login screen (greetd)" "tela de login do mide (greetd)")
   --power | --no-power   $(t "lid and power key handled by the mide" "tampa e botão de ligar com o mide")
+  --boot-theme | --no-boot-theme   $(t "mios GRUB and Plymouth themes" "temas do GRUB e do Plymouth do mios")
+
+$(t "Commands (also in the menu)" "Comandos (também no menu)"):
+  build                  $(t "only build (target/release)" "só compilar (target/release)")
+  deps                   $(t "only install what is needed to build" "só instalar o que falta para compilar")
+  update                 $(t "update the open mide session from this folder (developers)" "atualizar a sessão do mide aberta a partir desta pasta (desenvolvimento)")
+  login [remove]         $(t "mide login screen (greetd), or go back to the previous one" "tela de login do mide (greetd), ou voltar à de antes")
+  boot-theme [remove]    $(t "mios GRUB and Plymouth themes, or go back" "temas do GRUB e do Plymouth do mios, ou voltar")
+  deb                    $(t ".deb packages of the mide and mios-release (target/deb)" "pacotes .deb do mide e do mios-release (target/deb)")
+  iso                    $(t "mios ISO (target/iso)" "ISO do mios (target/iso)")
+  iso-test [bios] [disk] $(t "start the ISO in a virtual machine (QEMU)" "ligar a ISO numa máquina virtual (QEMU)")
+
+$(t "Builds use $JOBS cores (CARGO_BUILD_JOBS=N to change)." "As compilações usam $JOBS núcleos (CARGO_BUILD_JOBS=N para mudar).")
 EOF
 }
 
@@ -94,7 +118,19 @@ while [ $# -gt 0 ]; do
         --icons) ICONES=s ;; --no-icons) ICONES=n ;;
         --login) LOGIN=s ;; --no-login) LOGIN=n ;;
         --power) ENERGIA=s ;; --no-power) ENERGIA=n ;;
-        --help | -h) ajuda; exit 0 ;;
+        --boot-theme) BOOT=s ;; --no-boot-theme) BOOT=n ;;
+        build | compilar) ACAO=compilar ;;
+        deps | dependencies | dependencias) ACAO=dependencias ;;
+        update | atualizar) ACAO=sessao ;;
+        login) ACAO=login ;;
+        boot-theme | boot | grub | plymouth) ACAO=boot ;;
+        deb | packages | pacotes) ACAO=pacotes ;;
+        iso) ACAO=iso ;;
+        iso-test | iso-teste) ACAO=iso-teste ;;
+        remove | remover) if [ "$ACAO" = login ] || [ "$ACAO" = boot ]; then TIRAR=1; else ACAO=remover; fi ;;
+        bios) TESTE_BIOS=1 ;;
+        disk | disco) TESTE_DISCO=1 ;;
+        help | ajuda | --help | -h) ajuda; exit 0 ;;
         *) ajuda >&2; falha "$(t "unknown option" "opção desconhecida"): $1" ;;
     esac
     shift
@@ -408,11 +444,12 @@ garantir_rust() {
 # -------------------------------------------------------------------- compilar
 compilar() {
     titulo "$(t "Building the mide (a few minutes; runs as $USUARIO)" "Compilando o mide (alguns minutos; roda como $USUARIO)")"
-    usuario_muda nice -n 10 cargo build --release --locked
+    info "$(t "$JOBS cores (CARGO_BUILD_JOBS=N to change)" "$JOBS núcleos (CARGO_BUILD_JOBS=N para mudar)")"
+    usuario_muda nice -n 19 cargo build --release --locked -j "$JOBS"
     # Pronto pelo gerenciador de pacotes (Arch, Fedora novo): não precisa compilar.
     if [ "$X11" = s ] && [ ! -x /usr/bin/xwayland-satellite ]; then
         titulo "$(t "Building xwayland-satellite (X11 apps)" "Compilando o xwayland-satellite (apps X11)")"
-        usuario_muda nice -n 10 cargo install --locked --git "$SATELLITE_GIT" --root "$PROJETO/target/install/satellite"
+        usuario_muda nice -n 19 cargo install --locked -j "$JOBS" --git "$SATELLITE_GIT" --root "$PROJETO/target/install/satellite"
     fi
 }
 
@@ -599,11 +636,253 @@ instalar_login() {
     root bash "$PROJETO/data/mide-login-install"
 }
 
+# --------------------------------------------------------- temas do boot (mios)
+# GRUB e Plymouth do mios (data/mios/install-boot-theme). Só no GRUB do jeito do
+# Debian/Ubuntu (update-grub); no mios quem cuida deles é o pacote mios-release.
+# Programas de administração ficam em /usr/sbin, fora do PATH de quem não é root.
+tem_programa() { command -v "$1" >/dev/null 2>&1 || [ -x "/usr/sbin/$1" ] || [ -x "/sbin/$1" ]; }
+boot_tema_possivel() { [ -z "$DESTDIR" ] && tem_programa update-grub && ! dpkg -s mios-release >/dev/null 2>&1; }
+boot_tema_instalado() { [ -d "${DESTDIR}/boot/grub/themes/mios" ] && ! dpkg -s mios-release >/dev/null 2>&1; }
+
+instalar_tema_boot() {
+    titulo "$(t "mios boot themes (GRUB and Plymouth)" "Temas do boot do mios (GRUB e Plymouth)")"
+    if dpkg -s mios-release >/dev/null 2>&1; then
+        info "$(t "this is a mios system: the mios-release package already has them" "este sistema é o mios: o pacote mios-release já os tem")"
+        return 0
+    fi
+    tem_programa update-grub ||
+        falha "$(t "update-grub not found: for now the boot themes are installed only on Debian/Ubuntu-like systems with GRUB" "update-grub não encontrado: por enquanto os temas do boot só são instalados em sistemas do tipo Debian/Ubuntu com o GRUB")"
+    local faltam=() splash=()
+    tem_programa grub-mkfont || faltam+=(grub-common)
+    if ! tem_programa plymouth-set-default-theme; then
+        if pergunta "$(t "Plymouth (the boot animation) is not installed. Install it?" "O Plymouth (a animação do boot) não está instalado. Instalar?")" s; then
+            faltam+=(plymouth plymouth-themes)
+        fi
+    fi
+    if [ ${#faltam[@]} -gt 0 ]; then
+        DISTRO="${DISTRO:-debian}"
+        instalar_pacotes "${faltam[@]}"
+    fi
+    # Sem "splash" na linha do kernel, o Plymouth não aparece.
+    if ! grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=.*splash' /etc/default/grub 2>/dev/null; then
+        pergunta "$(t "Show the boot animation instead of the text messages (adds \"quiet splash\" to the kernel line)?" "Mostrar a animação no boot em vez das mensagens em texto (põe \"quiet splash\" na linha do kernel)?")" s &&
+            splash=(--splash)
+    fi
+    root bash "$PROJETO/data/mios/install-boot-theme" "${splash[@]}"
+    info "$(t "Go back with: ./install.sh boot-theme remove" "Para voltar: ./install.sh boot-theme remove")"
+}
+
+remover_tema_boot() {
+    titulo "$(t "Removing the mios boot themes" "Tirando os temas do boot do mios")"
+    root bash "$PROJETO/data/mios/install-boot-theme" --uninstall
+}
+
+# ---------------------------------------------------------------- só compilar
+# Apaga o que as compilações anteriores deixaram (o disco já encheu com 400 GB de
+# target/): a pasta de debug, os intermediários incrementais e as cópias antigas do
+# próprio mide e do mide-ui (o cargo guarda uma por versão e nunca apaga). As
+# dependências já compiladas ficam: nada é recompilado do zero.
+so_compilar() {
+    titulo "$(t "Cleaning old builds" "Limpando compilações antigas") ($(du -sh target 2>/dev/null | cut -f1))"
+    usuario_muda rm -rf target/debug target/release/incremental
+    usuario_muda cargo clean --release -p mide -p mide-ui >/dev/null 2>&1 || true
+    titulo "Rust"
+    garantir_rust
+    compilar
+    info "$(t "Programs in" "Programas em") $PROJETO/target/release ($(du -sh target 2>/dev/null | cut -f1) $(t "used by the build" "usados pela compilação"))"
+}
+
+so_dependencias() {
+    escolher_distro
+    local pacotes=()
+    read -ra pacotes <<< "$(pacotes_compilar) $(pacotes_rodar) $(pacotes_x11)"
+    titulo "$(t "Packages" "Pacotes")"
+    instalar_pacotes "${pacotes[@]}"
+    if [ "$DISTRO" = slackware ]; then sbo_instalar seatd; sbo_instalar xdg-desktop-portal-wlr; fi
+    titulo "Rust"
+    garantir_rust
+}
+
+# ------------------------------------------------- atualizar a sessão aberta
+# Para quem desenvolve: recompila e troca os programas da sessão do mide aberta, a
+# partir desta pasta (data/mide-update). Dentro da sessão, reinicia também o
+# compositor e a tela de login (--all).
+atualizar_sessao() {
+    [ "$(id -u)" != 0 ] || falha "$(t "run without sudo (it asks for the password when needed)" "rode sem sudo (ele pede a senha quando precisa)")"
+    local opcao=()
+    case ":${XDG_CURRENT_DESKTOP:-}:" in
+        *:mide:*)
+            opcao=(--all)
+            info "$(t "Inside the mide session: the compositor restarts at the end (open app windows close; save your work)." "Dentro da sessão do mide: o compositor reinicia no fim (as janelas dos apps fecham; salve o que estiver aberto).")"
+            pergunta "$(t "Continue?" "Continuar?")" s || exit 0
+            ;;
+        *) info "$(t "Outside the mide session: the programs are rebuilt and take effect the next time you log in." "Fora da sessão do mide: os programas são recompilados e valem ao entrar de novo na sessão.")" ;;
+    esac
+    titulo "data/mide-update ${opcao[*]}"
+    usuario_muda env CARGO_BUILD_JOBS="$JOBS" nice -n 19 "$PROJETO/data/mide-update" "${opcao[@]}"
+}
+
+# --------------------------------------------------------------- pacotes .deb
+# Montagens fora de uma versão marcada (tag) levam o commit na versão, como no CI:
+# ficam acima dos pacotes publicados com o mesmo número.
+sufixo_versao() {
+    if [ -n "${MIDE_VERSION_SUFFIX+x}" ]; then echo "$MIDE_VERSION_SUFFIX"; return; fi
+    if usuario git -C "$PROJETO" describe --exact-match --tags HEAD >/dev/null 2>&1 &&
+        [ -z "$(usuario git -C "$PROJETO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        echo ""
+    else
+        echo "+git$(usuario git -C "$PROJETO" rev-parse --short=7 HEAD 2>/dev/null || echo local)"
+    fi
+}
+
+fazer_pacotes() {
+    DISTRO="${DISTRO:-$(detectar_distro)}"
+    [ "$DISTRO" = debian ] ||
+        falha "$(t "the .deb packages are built on Debian/Ubuntu (for the ISO elsewhere, use docker or podman: ./install.sh iso)" "os pacotes .deb são gerados no Debian/Ubuntu (para a ISO em outro sistema, use o docker ou o podman: ./install.sh iso)")"
+    local sufixo pacotes=() extra=()
+    sufixo="$(sufixo_versao)"
+    titulo "$(t ".deb packages" "Pacotes .deb"): mide $VERSAO$sufixo, mios-release"
+    if [ -n "$DEPENDENCIAS" ]; then
+        read -ra pacotes <<< "$(pacotes_compilar) $(pacotes_x11) dpkg-dev grub-common"
+        instalar_pacotes "${pacotes[@]}"
+    fi
+    garantir_rust
+    [ -n "$COMPILAR" ] || extra=(--no-build)
+    usuario_muda env MIDE_VERSION_SUFFIX="$sufixo" CARGO_BUILD_JOBS="$JOBS" nice -n 19 "$PROJETO/packaging/debian/build-deb.sh" "${extra[@]}"
+    usuario_muda env MIDE_VERSION_SUFFIX="$sufixo" "$PROJETO/packaging/mios-release/build-deb.sh"
+    titulo "$(t "Done" "Pronto")"
+    [ -n "$SIMULAR" ] || ls -1 "$PROJETO"/target/deb/*"$VERSAO$sufixo"*.deb 2>/dev/null | sed 's/^/    /'
+}
+
+# ------------------------------------------------------------------------ ISO
+# No Debian 13 (o que está por baixo do mios), com o live-build do sistema; nos outros,
+# dentro de um contêiner debian:trixie (docker ou podman), como no CI.
+host_trixie() { [ "$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")" = trixie ]; }
+
+fazer_iso() {
+    [ "$ARQ" = x86_64 ] || falha "$(t "the ISO is x86_64 (amd64) only" "a ISO é só para x86_64 (amd64)")"
+    local versao_iso destino
+    versao_iso="$(cat iso/VERSION)"
+    destino="$PROJETO/target/iso/mios-$versao_iso-amd64.iso"
+    if host_trixie; then
+        DISTRO=debian
+        titulo "$(t "mios ISO (Debian 13 live-build; asks for the sudo password; 20 to 60 minutes, downloads about 1.5 GB)" "ISO do mios (live-build do Debian 13; pede a senha do sudo; de 20 a 60 minutos, baixa uns 1,5 GB)")"
+        [ -z "$DEPENDENCIAS" ] || instalar_pacotes live-build debootstrap squashfs-tools xorriso mtools dosfstools \
+            grub-pc-bin grub-efi-amd64-bin grub-efi-amd64-signed shim-signed grub-common dpkg-dev
+        fazer_pacotes
+        titulo "live-build"
+        root "$PROJETO/iso/build.sh"
+        # O chroot da montagem (alguns GB, de root) sai; o cache dos pacotes fica para a
+        # próxima vez, com a ISO, de volta para o usuário.
+        root sh -c "cd '$PROJETO/target/iso/work' && lb clean >/dev/null 2>&1; chown -R '$USUARIO:' '$PROJETO/target/iso'"
+    else
+        local motor=""
+        if command -v docker >/dev/null; then motor=docker; elif command -v podman >/dev/null; then motor=podman; fi
+        [ -n "$motor" ] || falha "$(t "outside Debian 13 the ISO is built in a container: install docker or podman" "fora do Debian 13 a ISO é montada num contêiner: instale o docker ou o podman")"
+        titulo "$(t "mios ISO in a debian:trixie container ($motor; 30 to 90 minutes)" "ISO do mios num contêiner debian:trixie ($motor; de 30 a 90 minutos)")"
+        local uid gid sufixo
+        uid="$(id -u "$USUARIO")"; gid="$(id -g "$USUARIO")"
+        sufixo="$(sufixo_versao)"
+        usuario_muda mkdir -p "$PROJETO/.ci-cache/cargo"
+        root "$motor" run --rm --privileged -v "$PROJETO:/src" -w /src -v "$PROJETO/.ci-cache/cargo:/root/.cargo" \
+            -e MIDE_VERSION_SUFFIX="$sufixo" -e CARGO_BUILD_JOBS="$JOBS" debian:trixie \
+            bash -c "iso/ci.sh; s=\$?; (cd target/iso/work && lb clean >/dev/null 2>&1); chown -R $uid:$gid target .ci-cache; exit \$s"
+    fi
+    titulo "$(t "ISO ready" "ISO pronta")"
+    info "$destino"
+    info "$(t "Try it in a virtual machine" "Para testar numa máquina virtual"): ./install.sh iso-test"
+    info "$(t "Write it to a USB stick (ERASES the stick): the Disks app, or" "Gravar num pendrive (APAGA o pendrive): o app Discos, ou") sudo dd if=$destino of=/dev/sdX bs=4M status=progress oflag=sync"
+}
+
+# Liga a ISO mais nova numa máquina virtual (QEMU), com um disco virtual de 32 GB para
+# experimentar o instalador. "bios": modo legado; "disk": só o disco (o sistema instalado).
+testar_iso() {
+    local iso disco firmware=() kvm=() midia=() tela
+    iso="$(ls -t "$PROJETO"/target/iso/mios-*.iso 2>/dev/null | head -1)"
+    [ -n "$iso" ] || [ -n "$TESTE_DISCO" ] || falha "$(t "no ISO in target/iso: run ./install.sh iso (or download one from the GitHub CI)" "nenhuma ISO em target/iso: rode ./install.sh iso (ou baixe uma do CI do GitHub)")"
+    if ! command -v qemu-system-x86_64 >/dev/null || ! command -v qemu-img >/dev/null; then
+        DISTRO="${DISTRO:-$(detectar_distro)}"
+        case "$DISTRO" in
+            debian) instalar_pacotes qemu-system-x86 qemu-utils ovmf ;;
+            fedora) instalar_pacotes qemu-system-x86 qemu-img edk2-ovmf ;;
+            arch) instalar_pacotes qemu-desktop edk2-ovmf ;;
+            *) falha "$(t "install QEMU (qemu-system-x86_64) and OVMF" "instale o QEMU (qemu-system-x86_64) e o OVMF")" ;;
+        esac
+    fi
+    [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || falha "$(t "the virtual machine opens a window: run it inside a graphical session" "a máquina virtual abre uma janela: rode dentro de uma sessão gráfica")"
+    disco="$PROJETO/target/iso/test-disk.qcow2"
+    usuario_muda mkdir -p "$PROJETO/target/iso"
+    if [ -f "$disco" ] && [ -z "$TESTE_DISCO" ] &&
+        pergunta "$(t "Start with a blank virtual disk (erases the previous test install)?" "Começar com o disco virtual em branco (apaga a instalação de teste anterior)?")" n; then
+        rm -f "$disco" "$PROJETO/target/iso/ovmf-vars.fd"
+    fi
+    [ -f "$disco" ] || usuario_muda qemu-img create -f qcow2 "$disco" 32G >/dev/null
+    if [ -z "$TESTE_BIOS" ]; then
+        local codigo vars
+        for codigo in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+            /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+            [ -f "$codigo" ] || continue
+            vars="$PROJETO/target/iso/ovmf-vars.fd"
+            if [ ! -f "$vars" ] && [ -z "$SIMULAR" ]; then
+                cp "$(dirname "$codigo")/$(basename "$codigo" | sed 's/CODE/VARS/')" "$vars" 2>/dev/null || true
+            fi
+            if { [ -f "$vars" ] || [ -n "$SIMULAR" ]; } && [ "$codigo" != /usr/share/ovmf/OVMF.fd ]; then
+                firmware=(-drive "if=pflash,format=raw,readonly=on,file=$codigo" -drive "if=pflash,format=raw,file=$vars")
+            else
+                firmware=(-bios "$codigo")
+            fi
+            break
+        done
+        [ ${#firmware[@]} -gt 0 ] || aviso "$(t "OVMF (UEFI) not found: starting in legacy BIOS mode" "OVMF (UEFI) não encontrado: ligando no modo BIOS legado")"
+    fi
+    [ -w /dev/kvm ] && kvm=(-enable-kvm -cpu host)
+    [ -n "$TESTE_DISCO" ] || midia=(-drive "file=$iso,if=none,id=cd,media=cdrom,readonly=on" -device ide-cd,drive=cd,bootindex=0)
+    tela=gtk
+    titulo "$(t "Starting the virtual machine (close the window to turn it off)" "Ligando a máquina virtual (feche a janela para desligar)")"
+    info "${iso:-$(t "virtual disk only" "só o disco virtual")}$( [ -n "$TESTE_BIOS" ] && echo " — BIOS")"
+    usuario_muda qemu-system-x86_64 "${kvm[@]}" -m 4096 -smp 2 "${firmware[@]}" \
+        -drive "file=$disco,if=none,id=hd,format=qcow2" -device virtio-blk-pci,drive=hd,bootindex=1 \
+        "${midia[@]}" -vga virtio -display "$tela" -nic user,model=virtio-net-pci
+}
+
+# ------------------------------------------------------------- submenus
+menu_login() {
+    if [ -z "$TIRAR" ] && [ "$ACAO" = menu-login ]; then
+        escolha "$(t "mide login screen (greetd)" "Tela de login do mide (greetd)")" 1 \
+            "$(t "Install it (or update it)" "Instalar (ou atualizar)")" \
+            "$(t "Go back to the previous login screen" "Voltar à tela de login de antes")" \
+            "$(t "Back" "Voltar")"
+        case "$ESCOLHA" in 2) TIRAR=1 ;; 3) return 0 ;; esac
+    fi
+    if [ -n "$TIRAR" ]; then
+        titulo "$(t "Login screen" "Tela de login")"
+        root bash "$PROJETO/data/mide-login-install" --uninstall
+        return
+    fi
+    DISTRO="${DISTRO:-$(detectar_distro)}"
+    if [ ! -x target/release/mide-login ]; then
+        titulo "Rust"; garantir_rust; compilar
+    fi
+    instalar_login
+}
+
+menu_boot() {
+    if [ -z "$TIRAR" ] && [ "$ACAO" = menu-boot ]; then
+        escolha "$(t "mios boot themes (GRUB and Plymouth)" "Temas do boot do mios (GRUB e Plymouth)")" 1 \
+            "$(t "Install them" "Instalar")" \
+            "$(t "Go back to the previous ones" "Voltar aos de antes")" \
+            "$(t "Back" "Voltar")"
+        case "$ESCOLHA" in 2) TIRAR=1 ;; 3) return 0 ;; esac
+    fi
+    if [ -n "$TIRAR" ]; then remover_tema_boot; else instalar_tema_boot; fi
+}
+
 # ------------------------------------------------------------------------ instalar
 instalar() {
     escolher_distro
     [ -n "$PREFIXO" ] || { if [ "$DISTRO" = slackware ]; then PREFIXO=/usr; else PREFIXO=/usr/local; fi; }
     [ -n "$DESTDIR" ] && [ -z "$LOGIN" ] && LOGIN=n
+    boot_tema_possivel || BOOT=n
 
     printf '\n%s%s%s\n' "$N" "$(t "What to install" "O que instalar")" "$Z"
     info "$(t "mide: compositor, bar, dock, launcher, apps and the login-screen session (always)" "mide: compositor, barra, dock, launcher, apps e a sessão na tela de login (sempre)")"
@@ -611,6 +890,7 @@ instalar() {
     [ -n "$ICONES" ] || { pergunta "$(t "The mide icon theme (needs internet)?" "O tema de ícones do mide (precisa de internet)?")" s && ICONES=s || ICONES=n; }
     [ -n "$ENERGIA" ] || { pergunta "$(t "Let the mide handle the lid and the power key (it asks before sleeping)?" "Deixar a tampa e o botão de ligar com o mide (ele pergunta antes de dormir)?")" s && ENERGIA=s || ENERGIA=n; }
     [ -n "$LOGIN" ] || { pergunta "$(t "Replace the login screen with the mide one (greetd)? You can go back with --remove" "Trocar a tela de login pela do mide (greetd)? Dá para voltar com --remove")" n && LOGIN=s || LOGIN=n; }
+    [ -n "$BOOT" ] || { pergunta "$(t "Also the mios boot screens (GRUB menu and Plymouth animation)? You can go back with --remove" "Também as telas do boot do mios (menu do GRUB e animação do Plymouth)? Dá para voltar com --remove")" n && BOOT=s || BOOT=n; }
 
     local pacotes=()
     read -ra pacotes <<< "$(pacotes_compilar) $(pacotes_rodar)"
@@ -654,6 +934,7 @@ instalar() {
         else root systemctl kill -s HUP systemd-logind || true; fi
     fi
     [ "$LOGIN" = s ] && [ -z "$DESTDIR" ] && instalar_login
+    [ "$BOOT" = s ] && [ -z "$DESTDIR" ] && instalar_tema_boot
     rm -rf "$PALCO"
 
     titulo "$(t "Done" "Pronto")"
@@ -672,7 +953,7 @@ remover() {
         pacote_slack="$(ls /var/lib/pkgtools/packages /var/log/packages 2>/dev/null | grep -E '^mide-[0-9][^-]*-[^-]+-[^-]+$' | head -1 || true)"
     fi
     lista="${DESTDIR}$MANIFESTO"
-    if [ -z "$pacote_slack" ] && [ ! -f "$lista" ] && ! login_instalado; then
+    if [ -z "$pacote_slack" ] && [ ! -f "$lista" ] && ! login_instalado && ! boot_tema_instalado; then
         info "$(t "The mide is not installed on this system (nothing to remove)." "O mide não está instalado neste sistema (nada para remover).")"
         exit 0
     fi
@@ -680,12 +961,16 @@ remover() {
     [ -n "$pacote_slack" ] && info "$(t "Slackware package" "pacote do Slackware"): $pacote_slack"
     [ -f "$lista" ] && info "$(wc -l < "$lista") $(t "files listed in" "arquivos listados em") $lista"
     login_instalado && info "$(t "the mide login screen (the previous one comes back)" "a tela de login do mide (a de antes volta)")"
+    boot_tema_instalado && info "$(t "the mios boot themes (the previous ones come back)" "os temas do boot do mios (os de antes voltam)")"
     info "$(t "Your settings (~/.config/mide) and files stay." "As suas configurações (~/.config/mide) e os seus arquivos ficam.")"
     pergunta "$(t "Remove?" "Remover?")" s || exit 0
 
     if login_instalado && [ -z "$DESTDIR" ]; then
         titulo "$(t "Login screen" "Tela de login")"
         root bash "$PROJETO/data/mide-login-install" --uninstall
+    fi
+    if boot_tema_instalado && [ -z "$DESTDIR" ]; then
+        remover_tema_boot
     fi
     if [ -n "$pacote_slack" ]; then
         titulo "removepkg"
@@ -706,7 +991,7 @@ remover() {
 }
 
 # --------------------------------------------------------------------------- início
-printf '%s%s%s\n' "$N" "mide $VERSAO — $(t "installer" "instalador")" "$Z"
+printf '%s%s%s\n' "$N" "mide $VERSAO — $(t "setup tool" "ferramenta de instalação") ($(nome_distro "$(detectar_distro)" || true), $ARQ)" "$Z"
 [ -n "$SIMULAR" ] && info "$(t "dry run: nothing will be changed" "simulação: nada será mudado")"
 if [ "$(id -u)" != 0 ] && [ -z "$DESTDIR" ] && [ -z "$SIMULAR" ] && ! command -v sudo >/dev/null; then
     falha "$(t "run as root (no sudo found)" "rode como root (não há sudo)")"
@@ -714,11 +999,31 @@ fi
 if [ -z "$ACAO" ]; then
     escolha "$(t "What do you want to do?" "O que você quer fazer?")" 1 \
         "$(t "Install the mide on the system (or update it)" "Instalar o mide no sistema (ou atualizar)")" \
+        "$(t "Update the open mide session from this folder (developers)" "Atualizar a sessão do mide aberta a partir desta pasta (desenvolvimento)")" \
+        "$(t "Only build (target/release)" "Só compilar (target/release)")" \
+        "$(t "Only install what is needed to build" "Só instalar o que falta para compilar")" \
+        "$(t "mide login screen (greetd)" "Tela de login do mide (greetd)")" \
+        "$(t "mios boot themes (GRUB menu and Plymouth animation)" "Temas do boot do mios (menu do GRUB e animação do Plymouth)")" \
+        "$(t ".deb packages (mide and mios-release)" "Pacotes .deb (mide e mios-release)")" \
+        "$(t "mios ISO (live system with the installer)" "ISO do mios (sistema ao vivo com o instalador)")" \
+        "$(t "Try the ISO in a virtual machine (QEMU)" "Testar a ISO numa máquina virtual (QEMU)")" \
         "$(t "Remove the mide from the system" "Remover o mide do sistema")" \
         "$(t "Quit" "Sair")"
-    case "$ESCOLHA" in 1) ACAO=instalar ;; 2) ACAO=remover ;; *) exit 0 ;; esac
+    case "$ESCOLHA" in
+        1) ACAO=instalar ;; 2) ACAO=sessao ;; 3) ACAO=compilar ;; 4) ACAO=dependencias ;;
+        5) ACAO=menu-login ;; 6) ACAO=menu-boot ;; 7) ACAO=pacotes ;; 8) ACAO=iso ;;
+        9) ACAO=iso-teste ;; 10) ACAO=remover ;; *) exit 0 ;;
+    esac
 fi
 case "$ACAO" in
     instalar) instalar ;;
     remover) remover ;;
+    sessao) atualizar_sessao ;;
+    compilar) so_compilar ;;
+    dependencias) so_dependencias ;;
+    login | menu-login) menu_login ;;
+    boot | menu-boot) menu_boot ;;
+    pacotes) fazer_pacotes ;;
+    iso) fazer_iso ;;
+    iso-teste) testar_iso ;;
 esac

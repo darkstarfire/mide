@@ -7,6 +7,8 @@
 #                                              (montagem da ISO, que faz isso no fim)
 #   data/mios/install-boot-theme --root DIR    instala dentro de outra raiz (chroot da ISO)
 #   data/mios/install-boot-theme --uninstall   volta ao tema de antes
+#   data/mios/install-boot-theme --splash      também põe "quiet splash" na linha do kernel
+#                                              (sem isso o Plymouth não aparece)
 #
 # As fontes do GRUB (.pf2) são geradas aqui, a partir da Noto Sans do mide (OFL), com o
 # grub-mkfont do sistema.
@@ -16,12 +18,14 @@ aqui="$(cd "$(dirname "$0")" && pwd)"
 raiz=""
 atualizar=1
 remover=0
+splash=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --root) raiz="${2%/}"; shift 2 ;;
         --no-update) atualizar=0; shift ;;
         --uninstall) remover=1; shift ;;
-        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        --splash) splash=1; shift ;;
+        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -74,6 +78,16 @@ if [ -f "$padrao" ]; then
         echo 'GRUB_THEME="/boot/grub/themes/mios/theme.txt"'
         echo 'GRUB_GFXMODE="1920x1080,1366x768,auto"'
     } >>"$padrao"
+    # A animação do Plymouth só aparece com "splash" na linha do kernel ("quiet" esconde
+    # as mensagens em texto por cima dela). A cópia acima devolve a linha de antes.
+    if [ "$splash" -eq 1 ]; then
+        linha="$(sed -nE 's/^GRUB_CMDLINE_LINUX_DEFAULT="([^"]*)".*/\1/p' "$padrao" | tail -1)"
+        for palavra in quiet splash; do
+            case " $linha " in *" $palavra "*) ;; *) linha="${linha:+$linha }$palavra" ;; esac
+        done
+        sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/d' "$padrao"
+        echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$linha\"" >>"$padrao"
+    fi
 fi
 
 # --- Plymouth ---

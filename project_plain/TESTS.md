@@ -1346,3 +1346,16 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - 2026-11-17, ISO do CI do commit 648af90 (`+git` na versão dos pacotes): instalação
   automática no QEMU (UEFI, 4 GB) em 198 s sem erro; boot só pelo disco: a entrada
   automática abre a sessão do mide com a janela de Boas-vindas do mios, a barra e a dock.
+
+## v0.10.102 (2026-11-17): `./install.sh` como ferramenta completa
+
+- `tests/install-test.sh`: 41 ok. Novas verificações por simulação (`--dry-run`): menu
+  com 11 opções, `build` (limpa o debug, `-j` até 4 com `nice -n 19`, `CARGO_BUILD_JOBS`),
+  `deps`, `login remove`, `boot-theme remove`, `deb` (sufixo de versão, mios-release, só no
+  Debian) e `iso` (live-build do sistema no Debian 13, `lb clean` e `chown` no fim).
+- `--splash` do `install-boot-theme`: a troca da linha do kernel conferida com
+  `"quiet"`, `""`, `"quiet splash"` e `"nomodeset"` (vira `nomodeset quiet splash`).
+- `iso-test`: o comando do QEMU da simulação rodado com `-display none` e a ISO do CI:
+  boot em UEFI pelo CD (bootindex 0) até a animação do Plymouth do mios (o M2 que faltava).
+- Não rodados de ponta a ponta (pedem a senha do sudo ou levam muito tempo): `iso` local,
+  `boot-theme` de verdade nesta máquina e `deb` compilando.

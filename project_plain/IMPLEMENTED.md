@@ -3101,3 +3101,31 @@ Claude ou Ctrl+Shift+L; o Ctrl+L continua indo para a linha), com a divisória a
   registra o erro (antes não abria, e a pessoa ficava presa na tela de login).
 - ISO do CI: os pacotes de um commit levam `+git<commit>` na versão, para o apt não
   trocá-los pelos publicados com o mesmo número.
+
+## v0.10.102 (2026-11-17): o `./install.sh` faz tudo
+
+Pedido do usuário: um script como o do Glove (`glove-setup-tool.sh`), que ajuda quem baixa
+o projeto do GitHub e instala tudo, inclusive os temas do GRUB e do Plymouth. O
+`./install.sh` já instalava e removia; agora o menu tem também:
+
+- **Atualizar a sessão aberta** (`update`): recompila e troca os programas da sessão do
+  mide a partir da pasta do projeto (o `data/mide-update`; dentro da sessão, com `--all`).
+- **Só compilar** (`build`): apaga a pasta de debug, os incrementais e as cópias antigas
+  do mide e do mide-ui (o cargo guarda uma por versão) e compila em release, mantendo as
+  dependências já compiladas.
+- **Só as dependências** (`deps`).
+- **Tela de login** (`login`, `login remove`).
+- **Temas do boot do mios** (`boot-theme`, `boot-theme remove`): GRUB e Plymouth pelo
+  `data/mios/install-boot-theme`, que ganhou `--splash` (põe "quiet splash" na linha do
+  kernel, sem o que o Plymouth não aparece; a remoção devolve o `/etc/default/grub` de
+  antes). Também perguntado na instalação e desfeito na remoção.
+- **Pacotes .deb** (`deb`): `mide` e `mios-release` em `target/deb`, com `+git<commit>` na
+  versão fora de uma tag (como no CI).
+- **ISO do mios** (`iso`): no Debian 13, os pacotes e o live-build do sistema (pede o
+  sudo; no fim o chroot da montagem sai e a ISO volta ao usuário); nos outros sistemas,
+  o mesmo `iso/ci.sh` do CI num contêiner `debian:trixie` (docker ou podman).
+- **Testar a ISO** (`iso-test`, `iso-test bios`, `iso-test disk`): QEMU com KVM, UEFI
+  (variáveis próprias) ou BIOS, e um disco virtual de 32 GB para o instalador.
+
+As compilações usam metade dos núcleos, no máximo 4, com `nice -n 19`
+(`CARGO_BUILD_JOBS=N` muda): antes o instalador usava todos e travava o computador.

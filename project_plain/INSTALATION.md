@@ -8,6 +8,18 @@ lista em `/var/lib/mide/installed-files`, ou, no Slackware, um pacote `.txz` em 
 (seatd, xdg-desktop-portal-wlr e greetd pelos SlackBuilds do SBo). `./install.sh --help`
 mostra as opções; `tests/install-test.sh` testa sem root.
 
+**Ferramenta completa (v0.10.102, pedido do usuário em 2026-11-17, "como a do Glove"):**
+o mesmo `./install.sh` virou o ponto de entrada de tudo, com menu e comandos:
+instalar/atualizar, atualizar a sessão aberta a partir da pasta do projeto
+(`update`, o `data/mide-update`), só compilar (`build`, limpando as compilações antigas),
+só as dependências (`deps`), tela de login (`login [remove]`), temas do boot do mios
+(`boot-theme [remove]`: GRUB e Plymouth, com "quiet splash" na linha do kernel), pacotes
+`.deb` (`deb`, em `target/deb`), ISO do mios (`iso`, em `target/iso`: live-build do
+sistema no Debian 13, contêiner `debian:trixie` pelo docker/podman nos outros), testar a
+ISO no QEMU (`iso-test [bios] [disk]`) e remover (que também devolve o GRUB e o Plymouth
+de antes). As compilações usam metade dos núcleos, no máximo 4, com `nice -n 19`
+(`CARGO_BUILD_JOBS=N` muda).
+
 Pedido original:
 
 - deve ter um script bash que deve ser rodado com sudo
