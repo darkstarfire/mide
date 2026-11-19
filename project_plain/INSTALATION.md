@@ -90,3 +90,14 @@ sudo data/mide-login-install --uninstall
 Se o login falhar, entre num terminal de texto (Ctrl+Alt+F3) e rode o `--uninstall`.
 As sessões listadas vêm de `/usr/share/wayland-sessions` e `/usr/share/xsessions` (as do
 X11 sobem pelo `startx`); a do mide é a padrão.
+
+**Pacote pronto no Debian/Ubuntu (v0.10.105, decisão do usuário em 2026-11-19):** no
+Debian e derivados (amd64, com a glibc que o pacote pede), o `./install.sh` oferece como
+padrão o pacote `mide` do repositório apt do mide (chave em
+`/usr/share/keyrings/mios-archive-keyring.gpg`, fonte em
+`/etc/apt/sources.list.d/mios.sources`): nada a compilar, e as atualizações chegam pelo app
+Atualização de Software. Uma instalação compilada ou de desenvolvimento anterior sai
+antes. `--apt`/`--source` escolhem sem perguntar; `--remove` tira o pacote, a fonte e a
+chave (o que ele pôs fica listado em `/var/lib/mide/apt-extras`). O pacote `.deb` passou a
+depender de `libc6 (>= a glibc que os binários pedem)`. Nos outros sistemas (e para quem
+desenvolve), a atualização pelo app compila a versão nova (próxima etapa).

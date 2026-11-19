@@ -61,6 +61,24 @@ if grep -q '^VERSION_CODENAME=trixie' /etc/os-release 2>/dev/null; then
     confere "iso: o chroot sai e a ISO volta ao usuário" "lb clean .*chown -R" "$s"
 fi
 
+if command -v dpkg >/dev/null; then
+    echo "== pacote pronto (repositório apt de teste)"
+    apt="$base/apt"
+    mkdir -p "$apt"
+    printf 'Package: mide\nVersion: 9.9\nDepends: libc6 (>= 2.0), libgcc-s1\n\n' > "$apt/Packages"
+    s="$(MIDE_APT_URL="file://$apt" roda --install --dry-run --yes --distro debian)"
+    confere "apt: oferecido e escolhido por padrão" "> 1" "$s"
+    confere "apt: chave e fonte do repositório" "install -D -m644 .*/etc/apt/sources.list.d/mios.sources" "$s"
+    confere "apt: instala o pacote mide" "apt-get install -y mide$" "$s"
+    printf 'Package: mide\nVersion: 9.9\nDepends: libc6 (>= 99.0)\n\n' > "$apt/Packages"
+    s="$(MIDE_APT_URL="file://$apt" roda --install --dry-run --yes --distro debian)"
+    confere "apt: glibc antiga demais compila" "cargo build --release --locked" "$s"
+    s="$(MIDE_APT_URL="file://$apt/nada" roda --install --dry-run --yes --distro debian --apt)"
+    confere "apt: --apt sem repositório para com aviso" "não serve a este sistema" "$s"
+    s="$(MIDE_APT_URL="file://$apt" roda --install --dry-run --yes --distro debian --no-build --no-icons)"
+    confere "apt: --no-build usa o compilado" "tar -C / -x" "$s"
+fi
+
 echo "== instalação numa pasta"
 d="$base/raiz"
 roda --install --yes --distro debian --no-build --no-deps --no-icons --destdir "$d" >/dev/null
@@ -72,6 +90,7 @@ for f in /usr/local/bin/mide /usr/local/bin/mide-session /usr/local/bin/mide-bar
 done
 confere "sessão aponta para o mide-session instalado" "^Exec=/usr/local/bin/mide-session$" "$(cat "$d/usr/share/wayland-sessions/mide.desktop")"
 confere "lista com os programas" "^/usr/local/bin/mide-files$" "$(cat "$d/var/lib/mide/installed-files")"
+confere "escolhas guardadas para as atualizações" "^PREFIXO=/usr/local$" "$(cat "$d/var/lib/mide/install-options")"
 touch "$d/usr/local/bin/mide-velho"
 echo /usr/local/bin/mide-velho >> "$d/var/lib/mide/installed-files"
 sort -o "$d/var/lib/mide/installed-files" "$d/var/lib/mide/installed-files"

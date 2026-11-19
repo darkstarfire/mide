@@ -3156,3 +3156,17 @@ Arquivos, vista havia tempo. Era o botão do deslizante de zoom da barra de stat
 usa a mesma escala. No mide-ui também: o símbolo `view-column-symbolic` embutido (fora do
 tema do mide, o botão das colunas mostrava a letra "C"). Na Captura, os círculos das cores
 passaram a usar a escala da tela (hoje ela roda em escala 1; não muda nada à vista).
+
+## v0.10.105 (2026-11-19): mide pronto pelo apt no Debian e no Ubuntu
+
+Primeira etapa das atualizações sem terminal fora do mios. No Debian e derivados, o
+`./install.sh` oferece o pacote pronto do repositório apt do mide como padrão ("as
+atualizações chegam pela Atualização de Software"), com compilar aqui como alternativa:
+põe a chave e a fonte do repositório, tira antes uma instalação compilada ou de
+desenvolvimento (os programas de `/usr/local` viriam antes no PATH), instala o pacote e,
+se escolhidos, a tampa e o botão de ligar, a tela de login e os temas do boot. Remover
+tira o pacote, a fonte e a chave. O `.deb` passou a pedir a glibc que os binários usam
+(hoje 2.39: serve ao Ubuntu 24.04 e ao Debian 13), e o instalador só oferece o pacote
+quando o sistema tem essa glibc. O `mide-login-install` reconhece o mide do pacote e copia
+os programas instalados para a tela de login. As instalações compiladas guardam as
+escolhas em `/var/lib/mide/install-options`, para a atualização pelo app repetir.

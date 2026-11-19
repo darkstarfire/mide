@@ -57,7 +57,11 @@ de ligar com o mide e a tela de login do mide (greetd). Ele instala os pacotes, 
 copia para o sistema depois de perguntar. Pede a senha de administrador pelo `sudo` (ou
 rode como root).
 
-- Debian, Fedora e Arch: os programas vão para `/usr/local`, com a lista do que foi
+- Debian, Ubuntu e derivados: o instalador oferece o **pacote pronto** do repositório
+  apt do mide (o mesmo do mios), sem compilar; as versões novas chegam pelo app
+  Atualização de Software, como qualquer pacote. Compilar aqui continua como opção
+  (`--source`).
+- Debian, Fedora e Arch compilando: os programas vão para `/usr/local`, com a lista do que foi
   copiado em `/var/lib/mide/installed-files`; rodar de novo atualiza.
 - Slackware: vira um pacote de verdade (`mide-VERSÃO-x86_64-1_mide.txz`, em `/usr`),
   instalado com o `upgradepkg`. O que não vem no Slackware (seatd,

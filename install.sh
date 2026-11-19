@@ -34,6 +34,12 @@ MANIFESTO=/var/lib/mide/installed-files
 SBO_VERSAO=15.0
 SATELLITE_GIT=https://github.com/Supreeeme/xwayland-satellite
 ICONES_GIT=https://github.com/fabioaacarneiro/mide-icons.git
+# Repositório apt do mide/mios (pacotes prontos, assinados; o CI publica a cada versão).
+APT_URL="${MIDE_APT_URL:-https://github.com/fabioaacarneiro/mide/releases/download/apt}"
+APT_FONTE=/etc/apt/sources.list.d/mios.sources
+APT_CHAVE=/usr/share/keyrings/mios-archive-keyring.gpg
+# O que a instalação pelo apt pôs além do pacote (fonte do apt, chave, tampa), para remover.
+APT_EXTRAS=/var/lib/mide/apt-extras
 
 # ---------------------------------------------------------------------------- textos
 # Inglês como base e português do Brasil quando o idioma da sessão é português (I1).
@@ -60,6 +66,7 @@ ICONES=
 LOGIN=
 ENERGIA=
 BOOT=          # temas do boot (GRUB e Plymouth) do mios
+FONTE=         # apt (pacote pronto do repositório do mide) ou codigo (compilar aqui)
 TIRAR=         # "remove" depois de login/boot-theme
 TESTE_BIOS=    # iso-test bios: modo legado em vez de UEFI
 TESTE_DISCO=   # iso-test disk: liga só pelo disco virtual (o sistema instalado)
@@ -88,6 +95,7 @@ $(t "Usage" "Uso"): ./install.sh [$(t "options" "opções")]
   --login | --no-login   $(t "mide login screen (greetd)" "tela de login do mide (greetd)")
   --power | --no-power   $(t "lid and power key handled by the mide" "tampa e botão de ligar com o mide")
   --boot-theme | --no-boot-theme   $(t "mios GRUB and Plymouth themes" "temas do GRUB e do Plymouth do mios")
+  --apt | --source       $(t "Debian/Ubuntu: ready package from the mide apt repository (updates through Software Update) or build here" "Debian/Ubuntu: pacote pronto do repositório apt do mide (atualiza pela Atualização de Software) ou compilar aqui")
 
 $(t "Commands (also in the menu)" "Comandos (também no menu)"):
   build                  $(t "only build (target/release)" "só compilar (target/release)")
@@ -119,6 +127,7 @@ while [ $# -gt 0 ]; do
         --login) LOGIN=s ;; --no-login) LOGIN=n ;;
         --power) ENERGIA=s ;; --no-power) ENERGIA=n ;;
         --boot-theme) BOOT=s ;; --no-boot-theme) BOOT=n ;;
+        --apt) FONTE=apt ;; --source | --build-here) FONTE=codigo ;;
         build | compilar) ACAO=compilar ;;
         deps | dependencies | dependencias) ACAO=dependencias ;;
         update | atualizar) ACAO=sessao ;;
@@ -513,6 +522,10 @@ montar() {
         install -m644 data/systemd/60-mide-sem-suspensao.conf "$PALCO$logind/"
     fi
     [ "$ICONES" = s ] && montar_icones
+    # As escolhas desta instalação: a atualização pelo app Atualização de Software
+    # (compilando a versão nova) repete as mesmas.
+    printf 'DISTRO=%s\nPREFIXO=%s\nX11=%s\nICONES=%s\nENERGIA=%s\nLOGIN=%s\n' \
+        "$DISTRO" "$P" "${X11:-n}" "${ICONES:-n}" "${ENERGIA:-n}" "${LOGIN:-n}" > "$PALCO/var/lib/mide/install-options"
     # A lista do que foi instalado (para remover e atualizar), dentro do próprio palco.
     (cd "$PALCO" && find . \( -type f -o -type l \) ! -path ./var/lib/mide/installed-files | sed 's|^\.||' | sort) \
         > "$PALCO$MANIFESTO"
@@ -881,11 +894,120 @@ menu_boot() {
     if [ -n "$TIRAR" ]; then remover_tema_boot; else instalar_tema_boot; fi
 }
 
+# ------------------------------------------------------- pacote pronto (apt)
+# No Debian e nos derivados (Ubuntu...), o mide vem pronto do repositório apt do mide,
+# o mesmo do mios: nada a compilar, e as versões novas chegam pelo app Atualização de
+# Software (PackageKit), como qualquer pacote.
+pacote_instalado() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
+
+# O repositório serve a este sistema? Precisa de rede e de uma glibc pelo menos igual à
+# que o pacote publicado pede.
+apt_possivel() {
+    [ "$DISTRO" = debian ] && [ "$ARQ" = x86_64 ] && [ -z "$DESTDIR" ] && [ -n "$COMPILAR" ] || return 1
+    command -v apt-get >/dev/null && command -v dpkg-query >/dev/null || return 1
+    local lista pedida tem
+    lista="$(curl -fsSL --max-time 20 "$APT_URL/Packages" 2>/dev/null)" || return 1
+    printf '%s\n' "$lista" | grep -q '^Package: mide$' || return 1
+    pedida="$(printf '%s\n' "$lista" | awk 'BEGIN { RS = "" } /^Package: mide\n/' |
+        sed -nE 's/^Depends:.*libc6 \(>= ([^)]+)\).*/\1/p' | head -1)"
+    # Pacotes publicados antes da dependência com versão: feitos no Debian 13.
+    pedida="${pedida:-2.41}"
+    tem="$(dpkg-query -W -f='${Version}' libc6 2>/dev/null)" || return 1
+    dpkg --compare-versions "${tem%%-*}" ge "$pedida"
+}
+
+instalar_apt() {
+    printf '\n%s%s%s\n' "$N" "$(t "What to install" "O que instalar")" "$Z"
+    info "$(t "the mide package from the mide apt repository (in /usr; apps X11 and the icon theme included)" "o pacote mide do repositório apt do mide (em /usr; apps X11 e tema de ícones incluídos)")"
+    [ -n "$ENERGIA" ] || { pergunta "$(t "Let the mide handle the lid and the power key (it asks before sleeping)?" "Deixar a tampa e o botão de ligar com o mide (ele pergunta antes de dormir)?")" s && ENERGIA=s || ENERGIA=n; }
+    [ -n "$LOGIN" ] || { pergunta "$(t "Replace the login screen with the mide one (greetd)? You can go back with --remove" "Trocar a tela de login pela do mide (greetd)? Dá para voltar com --remove")" n && LOGIN=s || LOGIN=n; }
+    boot_tema_possivel || BOOT=n
+    [ -n "$BOOT" ] || { pergunta "$(t "Also the mios boot screens (GRUB menu and Plymouth animation)? You can go back with --remove" "Também as telas do boot do mios (menu do GRUB e animação do Plymouth)? Dá para voltar com --remove")" n && BOOT=s || BOOT=n; }
+
+    # Outra instalação do mide (compilada ou de desenvolvimento) sai antes: os programas
+    # dela em /usr/local viriam antes dos do pacote no PATH.
+    local compilada="" desenvolvimento=""
+    [ -f "$MANIFESTO" ] && compilada=1
+    login_instalado && [ -z "$compilada" ] && ! pacote_instalado mide && desenvolvimento=1
+
+    printf '\n%s%s%s\n' "$N" "$(t "Summary" "Resumo")" "$Z"
+    info "$(t "repository" "repositório"): $APT_URL"
+    info "$(t "updates: the Software Update app (or sudo apt upgrade)" "atualizações: o app Atualização de Software (ou sudo apt upgrade)")"
+    [ -n "$compilada" ] && info "$(t "the mide built before (in /usr/local) is removed first" "o mide compilado antes (em /usr/local) sai antes")"
+    [ -n "$desenvolvimento" ] && info "$(t "the development install (/usr/local/lib/mide-login) is removed first" "a instalação de desenvolvimento (/usr/local/lib/mide-login) sai antes")"
+    info "$(t "Your settings (~/.config/mide) stay." "As suas configurações (~/.config/mide) ficam.")"
+    pergunta "$(t "Continue?" "Continuar?")" s || exit 0
+
+    if login_instalado; then
+        titulo "$(t "Login screen (removed for now)" "Tela de login (sai por enquanto)")"
+        root bash "$PROJETO/data/mide-login-install" --uninstall
+    fi
+    if [ -n "$compilada" ]; then
+        titulo "$(t "Removing the mide built before" "Tirando o mide compilado antes")"
+        local copia
+        PREFIXO="$(sed -n 's|^\(.*\)/bin/mide$|\1|p' "$MANIFESTO" | head -1)"
+        copia="$(mktemp)"
+        cp "$MANIFESTO" "$copia"
+        echo "$MANIFESTO" >> "$copia"
+        apagar_lista "$copia"
+        rm -f "$copia"
+    fi
+
+    titulo "$(t "mide apt repository" "Repositório apt do mide")"
+    local extras=()
+    if [ ! -f "$APT_CHAVE" ]; then
+        root install -D -m644 "$PROJETO/data/mios/apt/mios-archive-keyring.gpg" "$APT_CHAVE"
+        extras+=("$APT_CHAVE")
+    fi
+    if [ ! -f "$APT_FONTE" ]; then
+        local fonte
+        fonte="$(mktemp)"
+        printf 'Types: deb\nURIs: %s/\nSuites: ./\nSigned-By: %s\n' "$APT_URL" "$APT_CHAVE" > "$fonte"
+        root install -D -m644 "$fonte" "$APT_FONTE"
+        rm -f "$fonte"
+        extras+=("$APT_FONTE")
+    fi
+    root apt-get update
+    titulo "$(t "Installing the mide package" "Instalando o pacote do mide")"
+    root env DEBIAN_FRONTEND=noninteractive apt-get install -y mide
+    if [ "$ENERGIA" = s ]; then
+        root install -D -m644 "$PROJETO/data/systemd/60-mide-sem-suspensao.conf" /etc/systemd/logind.conf.d/60-mide-sem-suspensao.conf
+        extras+=(/etc/systemd/logind.conf.d/60-mide-sem-suspensao.conf)
+        root systemctl kill -s HUP systemd-logind || true
+    fi
+    if [ ${#extras[@]} -gt 0 ]; then
+        printf '%s\n' "${extras[@]}" | root sh -c "mkdir -p '$(dirname "$APT_EXTRAS")' && cat >> '$APT_EXTRAS'"
+    fi
+    [ "$LOGIN" = s ] && instalar_login
+    [ "$BOOT" = s ] && instalar_tema_boot
+
+    titulo "$(t "Done" "Pronto")"
+    info "$(t "Log out and choose the \"mide\" session on the login screen." "Saia da sessão e escolha a sessão \"mide\" na tela de login.")"
+    info "$(t "New versions arrive through the Software Update app." "As versões novas chegam pelo app Atualização de Software.")"
+    info "$(t "Remove it with" "Para remover"): ./install.sh --remove"
+}
+
 # ------------------------------------------------------------------------ instalar
 instalar() {
     escolher_distro
     [ -n "$PREFIXO" ] || { if [ "$DISTRO" = slackware ]; then PREFIXO=/usr; else PREFIXO=/usr/local; fi; }
     [ -n "$DESTDIR" ] && [ -z "$LOGIN" ] && LOGIN=n
+    # Debian e derivados: pacote pronto (recomendado) ou compilar aqui.
+    if [ -z "$FONTE" ]; then
+        FONTE=codigo
+        if apt_possivel; then
+            escolha "$(t "How to install?" "Como instalar?")" 1 \
+                "$(t "Ready package from the mide repository (recommended: updates arrive through Software Update)" "Pacote pronto do repositório do mide (recomendado: as atualizações chegam pela Atualização de Software)")" \
+                "$(t "Build here (slower; to develop or try changes)" "Compilar aqui (mais demorado; para desenvolver ou testar mudanças)")"
+            [ "$ESCOLHA" = 1 ] && FONTE=apt
+        fi
+    elif [ "$FONTE" = apt ] && ! apt_possivel; then
+        falha "$(t "the mide apt repository does not serve this system (Debian/Ubuntu amd64 with a recent enough glibc, network needed); use --source" "o repositório apt do mide não serve a este sistema (Debian/Ubuntu amd64 com glibc nova o bastante, e rede); use --source")"
+    fi
+    if [ "$FONTE" = apt ]; then
+        instalar_apt
+        return
+    fi
     boot_tema_possivel || BOOT=n
 
     printf '\n%s%s%s\n' "$N" "$(t "What to install" "O que instalar")" "$Z"
@@ -957,12 +1079,16 @@ remover() {
         pacote_slack="$(ls /var/lib/pkgtools/packages /var/log/packages 2>/dev/null | grep -E '^mide-[0-9][^-]*-[^-]+-[^-]+$' | head -1 || true)"
     fi
     lista="${DESTDIR}$MANIFESTO"
-    if [ -z "$pacote_slack" ] && [ ! -f "$lista" ] && ! login_instalado && ! boot_tema_instalado; then
+    # Pacote do apt instalado por aqui (no mios, o mide é parte do sistema e fica).
+    local pacote_apt=""
+    [ -z "$DESTDIR" ] && pacote_instalado mide && ! pacote_instalado mios-release && pacote_apt=1
+    if [ -z "$pacote_slack" ] && [ -z "$pacote_apt" ] && [ ! -f "$lista" ] && ! login_instalado && ! boot_tema_instalado; then
         info "$(t "The mide is not installed on this system (nothing to remove)." "O mide não está instalado neste sistema (nada para remover).")"
         exit 0
     fi
     titulo "$(t "Remove the mide from the system" "Remover o mide do sistema")"
     [ -n "$pacote_slack" ] && info "$(t "Slackware package" "pacote do Slackware"): $pacote_slack"
+    [ -n "$pacote_apt" ] && info "$(t "the mide package (apt) and its repository" "o pacote mide (apt) e o repositório dele")"
     [ -f "$lista" ] && info "$(wc -l < "$lista") $(t "files listed in" "arquivos listados em") $lista"
     login_instalado && info "$(t "the mide login screen (the previous one comes back)" "a tela de login do mide (a de antes volta)")"
     boot_tema_instalado && info "$(t "the mios boot themes (the previous ones come back)" "os temas do boot do mios (os de antes voltam)")"
@@ -975,6 +1101,14 @@ remover() {
     fi
     if boot_tema_instalado && [ -z "$DESTDIR" ]; then
         remover_tema_boot
+    fi
+    if [ -n "$pacote_apt" ]; then
+        titulo "apt-get remove mide"
+        root env DEBIAN_FRONTEND=noninteractive apt-get remove -y mide
+        if [ -f "$APT_EXTRAS" ]; then
+            root sh -c "xargs -r -d '\n' rm -f -- < '$APT_EXTRAS' && rm -f '$APT_EXTRAS'"
+            root systemctl kill -s HUP systemd-logind 2>/dev/null || true
+        fi
     fi
     if [ -n "$pacote_slack" ]; then
         titulo "removepkg"

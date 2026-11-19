@@ -29,7 +29,8 @@ falha() { printf 'erro: %s\n' "$*" >&2; exit 1; }
 # só a cópia do greeter; e a remoção da tela de login não apaga nada daquilo.
 SISTEMA=
 if [ -f /var/lib/mide/installed-files ] ||
-    ls /var/lib/pkgtools/packages /var/log/packages 2>/dev/null | grep -qE '^mide-[0-9][^-]*-[^-]+-[^-]+$'; then
+    ls /var/lib/pkgtools/packages /var/log/packages 2>/dev/null | grep -qE '^mide-[0-9][^-]*-[^-]+-[^-]+$' ||
+    [ "$(dpkg-query -W -f='${Status}' mide 2>/dev/null)" = "install ok installed" ]; then
     SISTEMA=1
 fi
 # Slackware: sem systemd; a tela de login sobe no runlevel 4 pelo /etc/rc.d/rc.4.local.
@@ -233,9 +234,18 @@ desinstalar() {
 [ -n "${1:-}" ] && falha "opção desconhecida: $1 (use --uninstall para remover ou --sync USUARIO)"
 
 BIN=""
-for d in target/release target/debug; do
-    [ -x "$d/mide" ] && [ -x "$d/mide-login" ] && { BIN="$d"; break; }
-done
+# Com o mide instalado no sistema (install.sh, pacote .deb ou do Slackware), a cópia vem
+# dos programas instalados: são eles que a sessão usa.
+if [ -n "$SISTEMA" ]; then
+    for d in /usr/local/bin /usr/bin; do
+        [ -x "$d/mide-login" ] && [ ! -L "$d/mide-login" ] && { BIN="$d"; break; }
+    done
+fi
+if [ -z "$BIN" ]; then
+    for d in target/release target/debug; do
+        [ -x "$d/mide" ] && [ -x "$d/mide-login" ] && { BIN="$d"; break; }
+    done
+fi
 [ -n "$BIN" ] || falha "compile antes: cargo build --release (faltam target/release/mide e mide-login)"
 
 passo "1/6 greetd (o serviço de login que confere a senha pelo PAM)"

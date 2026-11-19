@@ -672,3 +672,5 @@
 
 - **Desenho com `fill_path`/`stroke_path` no mide-ui (2026-11-17):** a imagem é em pixels e as coordenadas da interface em pontos; `fill_rounded` e companhia escalam sozinhos, mas um caminho do tiny-skia precisa de `crate::ui::draw::tf()` (ou das coordenadas já multiplicadas por `scale()`). Com `Transform::identity()`, em 150% o desenho cai a 2/3 do lugar (a bolinha solta no Arquivos). Teste visual de escala: `MIDE_WINIT_SIZE=2049x1152` com `scale = 1.5` no `config.toml` do teste.
 - **`cargo update -p mide-ui` re-resolve outras dependências** (windows-sys, getrandom): para só subir o mide-ui, trocar o hash do `source` no `Cargo.lock` e conferir com `cargo metadata --locked`.
+
+- **`install.sh` e o apt (2026-11-19):** `apt_possivel` lê o `Packages` do repositório (`MIDE_APT_URL`, que aceita `file://` nos testes) e compara a glibc pedida com a do sistema. Nada de `tee` com `root`: na simulação a saída ia para `/dev/null` e o comando sumia; escrever num temporário e `root install -D`. No mios (com `mios-release`), o `--remove` não tira o pacote `mide`.

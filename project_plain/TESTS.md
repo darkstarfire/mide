@@ -1373,3 +1373,13 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   scale = 1.5`): antes, a bolinha no meio dos ícones e o deslizante sem o botão; depois, o
   botão no deslizante e o ícone das colunas no lugar do "C".
 - mide-ui: `cargo test` (132 ok). Bateria: `tests/ui.sh captura arquivos` (90 ok).
+
+## v0.10.105 (2026-11-19): pacote pronto pelo apt
+
+- `tests/install-test.sh`: 48 ok. Novos (com um repositório apt de teste em `file://`):
+  pacote oferecido e escolhido por padrão, chave e fonte do repositório, `apt-get install
+  mide`, glibc antiga demais compila, `--apt` sem repositório para com aviso, `--no-build`
+  usa o compilado; escolhas guardadas em `install-options`.
+- Simulação nesta máquina com o repositório de verdade: oferece o pacote e tira antes a
+  instalação de desenvolvimento.
+- Não rodado de verdade: a instalação pelo apt numa máquina (pede sudo).

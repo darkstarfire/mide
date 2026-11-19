@@ -38,12 +38,17 @@ opcoes=(--install --yes --distro debian --no-deps --prefix /usr --destdir "$raiz
 
 # A lista de arquivos do install.sh é da instalação direta; no pacote, quem sabe os
 # arquivos é o dpkg.
-rm -f "$raiz/var/lib/mide/installed-files"
+rm -f "$raiz/var/lib/mide/installed-files" "$raiz/var/lib/mide/install-options"
 rmdir "$raiz/var/lib/mide" "$raiz/var/lib" "$raiz/var" 2>/dev/null || true
 
 # Programas que o mide usa ao rodar (os mesmos do install.sh) e as bibliotecas dos
 # binários.
-depende="libc6, libgcc-s1, libinput10, libseat1, libudev1, libgbm1, libdrm2, libxkbcommon0, libpam0g, \
+# A glibc mínima é a mais nova que os binários pedem (símbolos GLIBC_x.y): sem ela, o apt
+# instalaria o mide num sistema mais antigo e ele não abriria.
+glibc="$(find "$raiz/usr/bin" -type f -perm -u+x -exec objdump -T {} + 2>/dev/null |
+    grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)"
+[ -n "$glibc" ] || { echo "could not read the glibc version the programs need (objdump)" >&2; exit 1; }
+depende="libc6 (>= $glibc), libgcc-s1, libinput10, libseat1, libudev1, libgbm1, libdrm2, libxkbcommon0, libpam0g, \
 libwayland-client0, libwayland-server0, libegl1, libgles2, libglib2.0-0t64, libgudev-1.0-0, \
 xwayland, xdg-desktop-portal, xdg-desktop-portal-gtk, xdg-desktop-portal-wlr, pipewire, wireplumber, \
 ffmpeg, curl, adwaita-icon-theme, udisks2, util-linux, dbus-user-session, x11-xserver-utils, polkitd, \
