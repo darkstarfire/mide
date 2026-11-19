@@ -1416,3 +1416,15 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   cabeçalho; o log com "instalação Development" e "0.10.107 é a versão mais nova".
 - `cargo test --lib i18n` (2 ok, as duas frases novas traduzidas), clippy sem aviso no
   `mide-updates`, seção `53-atualizacoes` da bateria: 3 ok.
+
+## v0.10.109 (2026-11-19): troca da instalação de desenvolvimento pelo pacote
+
+- Simulação nesta máquina (`./install.sh --install --apt --dry-run --yes`): tira a tela de
+  login de desenvolvimento, põe a chave e a fonte, `apt-get install -y mide`, tira da pasta
+  pessoal o serviço do portal, a configuração do portal wlr, o tema de ícones e as 7 cópias
+  no `hicolor`, e instala a tela de login de novo (padrão "sim").
+- `tests/install-test.sh`: 58 ok, com os casos novos (pasta pessoal de teste: o que aponta
+  para o projeto sai, `~/.local/share/mide` fica, um serviço apontando para `/usr/bin` fica;
+  o caminho compilado também tira; com um `dpkg-query` falso dizendo que o pacote está
+  instalado, o `./install.sh update` e o `data/mide-update` param explicando).
+- Não feito: a troca de verdade (pede a senha e reinicia a sessão); fica com o usuário.

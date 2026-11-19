@@ -12,6 +12,15 @@
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."
 PATH="$HOME/.cargo/bin:$PATH"
+# Com o mide do pacote (repositório apt) instalado, a sessão usa os programas dele em /usr/bin:
+# o que fosse compilado aqui não entraria nela, e os arquivos da pasta pessoal voltariam a
+# apontar para a pasta do projeto.
+if [ "$(dpkg-query -W -f='${Status}' mide 2>/dev/null)" = "install ok installed" ]; then
+    echo "mide-update: o mide deste computador é o pacote do repositório apt (as versões novas chegam pela Atualização de Software)." >&2
+    echo "  Para testar o mide desta pasta: cargo build --release e a sessão \"mide (desenvolvimento)\" na tela de login (tests/session-dev.sh)." >&2
+    echo "  Para voltar à instalação de desenvolvimento: ./install.sh --remove e depois ./install.sh update." >&2
+    exit 1
+fi
 
 # Impressão digital de cada programa do mide (nome e soma do conteúdo), antes e depois
 # de compilar: o que mudou é o que muda de soma.

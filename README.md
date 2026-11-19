@@ -60,7 +60,8 @@ rode como root).
 - Debian, Ubuntu e derivados: o instalador oferece o **pacote pronto** do repositório
   apt do mide (o mesmo do mios), sem compilar; as versões novas chegam pelo app
   Atualização de Software, como qualquer pacote. Compilar aqui continua como opção
-  (`--source`).
+  (`--source`). Quem instalou compilando a pasta do projeto (`./install.sh update`) troca
+  para o pacote com `./install.sh --install --apt`.
 - Compilando (Fedora, Arch, Slackware, ou `--source`): as versões novas também chegam
   pelo app Atualização de Software, que compila a versão nova em segundo plano e pede a
   senha de administrador numa janela.

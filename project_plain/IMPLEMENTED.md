@@ -3215,3 +3215,31 @@ X.Y.Z" fica sempre no mesmo lugar: "Procurando uma versão nova do mide…" dura
 verificação e "O mide está atualizado. As versões novas aparecem aqui quando forem
 publicadas." depois. O log diz o tipo de instalação que o app achou (pacote, compilado,
 desenvolvimento ou desconhecido) e quando a versão instalada já é a mais nova.
+
+## v0.10.109 (2026-11-19): da instalação de desenvolvimento para o pacote do repositório
+
+O usuário quer as atualizações pelo repositório apt no Debian dele, onde o mide era a
+instalação de desenvolvimento (compilada da pasta do projeto e copiada pelo
+`data/mide-login-install`). O `./install.sh --install --apt` já tirava essa cópia antes de
+instalar o pacote; faltavam três coisas, vistas nesta máquina:
+
+- **Arquivos na pasta pessoal:** o `data/mide-update` deixa o serviço D-Bus do portal do mide
+  e a configuração do seletor de tela do portal wlr apontando para
+  `target/release` da pasta do projeto, e o tema de ícones na versão daquela compilação
+  (com cópias dos ícones dos apps no `hicolor`). Como os da pasta pessoal vêm antes dos do
+  sistema, o pacote rodaria o portal e o seletor da pasta do projeto, com ícones velhos.
+  Agora a instalação (pacote ou compilada) tira esses arquivos, só os criados pelo
+  `data/mide-update` (conferidos pelo conteúdo ou pela marca da versão dos ícones), e avisa
+  no resumo. Fontes, papéis de parede e dados dos apps (`~/.local/share/mide`) ficam.
+- **Tela de login:** a pergunta "Trocar a tela de login pela do mide?" vinha com "não" como
+  padrão; quem já usa a do mide passa a ter "sim" como padrão (antes, com `--yes`, a
+  máquina voltava ao LightDM).
+- **Compilar depois da troca:** com o pacote instalado, o `./install.sh update` e o
+  `data/mide-update` param com a explicação (as versões novas chegam pela Atualização de
+  Software; para testar a pasta do projeto, a sessão "mide (desenvolvimento)"; para voltar,
+  `./install.sh --remove` e `./install.sh update`). Antes, eles reescreviam os arquivos da
+  pasta pessoal apontando para o projeto e copiavam os programas do pacote para a tela de
+  login, sem efeito na sessão.
+
+O `install.sh` rodando como usuário passou a usar o `$HOME` dele como pasta pessoal (com
+`sudo`, continua a do `SUDO_USER`).

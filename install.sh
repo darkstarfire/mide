@@ -186,10 +186,11 @@ escolha() {
 # senha uma vez) ou com sudo (a compilação volta para quem chamou o sudo).
 if [ "$(id -u)" = 0 ]; then
     USUARIO="${SUDO_USER:-root}"
+    UHOME="$(getent passwd "$USUARIO" | cut -d: -f6)"
 else
     USUARIO="$(id -un)"
+    UHOME="$HOME"
 fi
-UHOME="$(getent passwd "$USUARIO" | cut -d: -f6)"
 UHOME="${UHOME:-$HOME}"
 
 mostra() { printf '    %s$ %s%s\n' "$A" "$*" "$Z"; }
@@ -729,6 +730,10 @@ so_dependencias() {
 # compositor e a tela de login (--all).
 atualizar_sessao() {
     [ "$(id -u)" != 0 ] || falha "$(t "run without sudo (it asks for the password when needed)" "rode sem sudo (ele pede a senha quando precisa)")"
+    # Com o pacote do repositório, a sessão usa os programas dele: compilar aqui não a muda.
+    if pacote_instalado mide; then
+        falha "$(t "the mide on this computer is the package from the mide repository: new versions arrive through the Software Update app. To try the mide of this folder, build it (./install.sh build) and choose the \"mide (desenvolvimento)\" session on the login screen (tests/session-dev.sh adds it); to go back to the development install: ./install.sh --remove and then ./install.sh update" "o mide deste computador é o pacote do repositório do mide: as versões novas chegam pelo app Atualização de Software. Para testar o mide desta pasta, compile (./install.sh build) e escolha a sessão \"mide (desenvolvimento)\" na tela de login (o tests/session-dev.sh cria a entrada); para voltar à instalação de desenvolvimento: ./install.sh --remove e depois ./install.sh update")"
+    fi
     local opcao=()
     case ":${XDG_CURRENT_DESKTOP:-}:" in
         *:mide:*)
@@ -923,11 +928,42 @@ apt_possivel() {
     dpkg --compare-versions "${tem%%-*}" ge "$pedida"
 }
 
+# Arquivos que o data/mide-update (instalação de desenvolvimento) deixa na pasta pessoal:
+# o portal e o seletor de tela apontando para os programas da pasta do projeto, e o tema
+# de ícones na versão daquela compilação. Com o mide instalado no sistema, eles passariam
+# na frente dos do sistema. Só os criados por ele, conferidos pelo conteúdo ou pela marca.
+restos_desenvolvimento() {
+    local dados="${XDG_DATA_HOME:-$UHOME/.local/share}" config="${XDG_CONFIG_HOME:-$UHOME/.config}" nome
+    [ "$(id -u)" = 0 ] && { dados="$UHOME/.local/share"; config="$UHOME/.config"; }
+    local servico="$dados/dbus-1/services/org.freedesktop.impl.portal.desktop.mide.service"
+    grep -qs '^Exec=.*/target/[a-z]*/mide-portal' "$servico" && echo "$servico"
+    grep -qs '^chooser_cmd=.*/target/[a-z]*/mide-screencast-picker' "$config/xdg-desktop-portal-wlr/mide" && echo "$config/xdg-desktop-portal-wlr/mide"
+    if [ -f "$dados/icons/mide/.versao-mide-icons" ]; then
+        echo "$dados/icons/mide"
+        for nome in mide-terminal mide-text mide-files mide-settings mide-screenshot mide-calculator mide-about; do
+            [ -f "$dados/icons/hicolor/scalable/apps/$nome.svg" ] && echo "$dados/icons/hicolor/scalable/apps/$nome.svg"
+        done
+    fi
+    return 0
+}
+
+tirar_restos_desenvolvimento() {
+    local restos f
+    restos="$(restos_desenvolvimento)"
+    [ -n "$restos" ] || return 0
+    titulo "$(t "Development files in your home folder" "Arquivos da instalação de desenvolvimento na pasta pessoal")"
+    while IFS= read -r f; do
+        usuario_muda rm -rf "$f"
+    done <<< "$restos"
+    [ -n "$SIMULAR" ] || usuario gtk-update-icon-cache -q -t "${XDG_DATA_HOME:-$UHOME/.local/share}/icons/hicolor" 2>/dev/null || true
+}
+
 instalar_apt() {
     printf '\n%s%s%s\n' "$N" "$(t "What to install" "O que instalar")" "$Z"
     info "$(t "the mide package from the mide apt repository (in /usr; apps X11 and the icon theme included)" "o pacote mide do repositório apt do mide (em /usr; apps X11 e tema de ícones incluídos)")"
     [ -n "$ENERGIA" ] || { pergunta "$(t "Let the mide handle the lid and the power key (it asks before sleeping)?" "Deixar a tampa e o botão de ligar com o mide (ele pergunta antes de dormir)?")" s && ENERGIA=s || ENERGIA=n; }
-    [ -n "$LOGIN" ] || { pergunta "$(t "Replace the login screen with the mide one (greetd)? You can go back with --remove" "Trocar a tela de login pela do mide (greetd)? Dá para voltar com --remove")" n && LOGIN=s || LOGIN=n; }
+    # Quem já usa a tela de login do mide continua com ela (resposta padrão "sim").
+    [ -n "$LOGIN" ] || { pergunta "$(t "Replace the login screen with the mide one (greetd)? You can go back with --remove" "Trocar a tela de login pela do mide (greetd)? Dá para voltar com --remove")" "$(login_instalado && echo s || echo n)" && LOGIN=s || LOGIN=n; }
     boot_tema_possivel || BOOT=n
     [ -n "$BOOT" ] || { pergunta "$(t "Also the mios boot screens (GRUB menu and Plymouth animation)? You can go back with --remove" "Também as telas do boot do mios (menu do GRUB e animação do Plymouth)? Dá para voltar com --remove")" n && BOOT=s || BOOT=n; }
 
@@ -942,6 +978,7 @@ instalar_apt() {
     info "$(t "updates: the Software Update app (or sudo apt upgrade)" "atualizações: o app Atualização de Software (ou sudo apt upgrade)")"
     [ -n "$compilada" ] && info "$(t "the mide built before (in /usr/local) is removed first" "o mide compilado antes (em /usr/local) sai antes")"
     [ -n "$desenvolvimento" ] && info "$(t "the development install (/usr/local/lib/mide-login) is removed first" "a instalação de desenvolvimento (/usr/local/lib/mide-login) sai antes")"
+    [ -n "$(restos_desenvolvimento)" ] && info "$(t "files of the development install in your home folder are removed (portal and screen picker of the project folder, icons of that build)" "saem da pasta pessoal os arquivos da instalação de desenvolvimento (portal e seletor de tela da pasta do projeto, ícones daquela compilação)")"
     info "$(t "Your settings (~/.config/mide) stay." "As suas configurações (~/.config/mide) ficam.")"
     pergunta "$(t "Continue?" "Continuar?")" s || exit 0
 
@@ -977,6 +1014,7 @@ instalar_apt() {
     root apt-get update
     titulo "$(t "Installing the mide package" "Instalando o pacote do mide")"
     root env DEBIAN_FRONTEND=noninteractive apt-get install -y mide
+    tirar_restos_desenvolvimento
     if [ "$ENERGIA" = s ]; then
         root install -D -m644 "$PROJETO/data/systemd/60-mide-sem-suspensao.conf" /etc/systemd/logind.conf.d/60-mide-sem-suspensao.conf
         extras+=(/etc/systemd/logind.conf.d/60-mide-sem-suspensao.conf)
@@ -1022,7 +1060,7 @@ instalar() {
     [ -n "$X11" ] || { pergunta "$(t "X11 apps inside the mide (xwayland-satellite)?" "Apps X11 dentro do mide (xwayland-satellite)?")" s && X11=s || X11=n; }
     [ -n "$ICONES" ] || { pergunta "$(t "The mide icon theme (needs internet)?" "O tema de ícones do mide (precisa de internet)?")" s && ICONES=s || ICONES=n; }
     [ -n "$ENERGIA" ] || { pergunta "$(t "Let the mide handle the lid and the power key (it asks before sleeping)?" "Deixar a tampa e o botão de ligar com o mide (ele pergunta antes de dormir)?")" s && ENERGIA=s || ENERGIA=n; }
-    [ -n "$LOGIN" ] || { pergunta "$(t "Replace the login screen with the mide one (greetd)? You can go back with --remove" "Trocar a tela de login pela do mide (greetd)? Dá para voltar com --remove")" n && LOGIN=s || LOGIN=n; }
+    [ -n "$LOGIN" ] || { pergunta "$(t "Replace the login screen with the mide one (greetd)? You can go back with --remove" "Trocar a tela de login pela do mide (greetd)? Dá para voltar com --remove")" "$(login_instalado && echo s || echo n)" && LOGIN=s || LOGIN=n; }
     [ -n "$BOOT" ] || { pergunta "$(t "Also the mios boot screens (GRUB menu and Plymouth animation)? You can go back with --remove" "Também as telas do boot do mios (menu do GRUB e animação do Plymouth)? Dá para voltar com --remove")" n && BOOT=s || BOOT=n; }
 
     local pacotes=()
@@ -1061,6 +1099,7 @@ instalar() {
         exit 0
     }
     if [ "$DISTRO" = slackware ] && [ -z "$DESTDIR" ]; then empacotar_slackware; else copiar_para_sistema; fi
+    [ -z "$DESTDIR" ] && tirar_restos_desenvolvimento
 
     if [ "$ENERGIA" = s ] && [ -z "$DESTDIR" ]; then
         if [ "$DISTRO" = slackware ] || ! command -v systemctl >/dev/null; then root pkill -HUP -x elogind-daemon || true

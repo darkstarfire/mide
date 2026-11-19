@@ -70,14 +70,50 @@ if command -v dpkg >/dev/null; then
     confere "apt: oferecido e escolhido por padrão" "> 1" "$s"
     confere "apt: chave e fonte do repositório" "install -D -m644 .*/etc/apt/sources.list.d/mios.sources" "$s"
     confere "apt: instala o pacote mide" "apt-get install -y mide$" "$s"
+    # Arquivos do data/mide-update (instalação de desenvolvimento) numa pasta pessoal de teste:
+    # saem os que apontam para a pasta do projeto e o tema de ícones dele; o resto fica.
+    casa="$base/casa"
+    mkdir -p "$casa/.local/share/dbus-1/services" "$casa/.config/xdg-desktop-portal-wlr" "$casa/.local/share/icons/mide" \
+        "$casa/.local/share/icons/hicolor/scalable/apps" "$casa/.local/share/mide/fonts"
+    printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.mide\nExec=/projeto/target/release/mide-portal --portal-only\n' \
+        > "$casa/.local/share/dbus-1/services/org.freedesktop.impl.portal.desktop.mide.service"
+    printf '[screencast]\nchooser_type=simple\nchooser_cmd=/projeto/target/release/mide-screencast-picker\n' > "$casa/.config/xdg-desktop-portal-wlr/mide"
+    echo 11f8484 > "$casa/.local/share/icons/mide/.versao-mide-icons"
+    touch "$casa/.local/share/icons/hicolor/scalable/apps/mide-files.svg"
+    s="$(HOME="$casa" XDG_DATA_HOME='' XDG_CONFIG_HOME='' MIDE_APT_URL="file://$apt" roda --install --apt --dry-run --yes --distro debian)"
+    confere "apt: avisa dos arquivos de desenvolvimento na pasta pessoal" "saem da pasta pessoal" "$s"
+    confere "apt: tira o portal da pasta do projeto" "rm -rf $casa/.local/share/dbus-1/services/org.freedesktop.impl.portal.desktop.mide.service$" "$s"
+    confere "apt: tira o seletor de tela da pasta do projeto" "rm -rf $casa/.config/xdg-desktop-portal-wlr/mide$" "$s"
+    confere "apt: tira o tema de ícones do mide-update" "rm -rf $casa/.local/share/icons/mide$" "$s"
+    confere "apt: tira a cópia do ícone no hicolor" "rm -rf $casa/.local/share/icons/hicolor/scalable/apps/mide-files.svg$" "$s"
+    if grep -q "rm -rf $casa/.local/share/mide" <<< "$s"; then falhou "apt: fontes e dados do mide ficam"; else ok "apt: fontes e dados do mide ficam"; fi
+    printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.mide\nExec=/usr/bin/mide-portal --portal-only\n' \
+        > "$casa/.local/share/dbus-1/services/org.freedesktop.impl.portal.desktop.mide.service"
+    rm -rf "$casa/.local/share/icons/mide"
+    s="$(HOME="$casa" XDG_DATA_HOME='' XDG_CONFIG_HOME='' MIDE_APT_URL="file://$apt" roda --install --apt --dry-run --yes --distro debian)"
+    if grep -q "dbus-1/services" <<< "$s"; then falhou "apt: arquivo que não aponta para o projeto fica"; else ok "apt: arquivo que não aponta para o projeto fica"; fi
     printf 'Package: mide\nVersion: 9.9\nDepends: libc6 (>= 99.0)\n\n' > "$apt/Packages"
     s="$(MIDE_APT_URL="file://$apt" roda --install --dry-run --yes --distro debian)"
     confere "apt: glibc antiga demais compila" "cargo build --release --locked" "$s"
     s="$(MIDE_APT_URL="file://$apt/nada" roda --install --dry-run --yes --distro debian --apt)"
     confere "apt: --apt sem repositório para com aviso" "não serve a este sistema" "$s"
-    s="$(MIDE_APT_URL="file://$apt" roda --install --dry-run --yes --distro debian --no-build --no-icons)"
+    s="$(HOME="$casa" XDG_DATA_HOME='' XDG_CONFIG_HOME='' MIDE_APT_URL="file://$apt" roda --install --dry-run --yes --distro debian --no-build --no-icons)"
     confere "apt: --no-build usa o compilado" "tar -C / -x" "$s"
+    confere "compilado: também tira os arquivos de desenvolvimento" "rm -rf $casa/.config/xdg-desktop-portal-wlr/mide$" "$s"
 fi
+
+echo "== com o pacote do repositório instalado"
+# dpkg-query falso dizendo que o pacote mide está instalado. O mide-update roda numa cópia
+# fora do projeto: se a proteção falhasse, ele não compilaria nem apagaria nada daqui.
+falso="$base/falso"
+mkdir -p "$falso" "$base/projeto/data"
+printf '#!/bin/sh\necho "install ok installed"\n' > "$falso/dpkg-query"
+chmod +x "$falso/dpkg-query"
+s="$(PATH="$falso:$PATH" XDG_CURRENT_DESKTOP='' roda update --dry-run)"
+confere "update: com o pacote, explica e não compila" "pacote do repositório do mide" "$s"
+cp data/mide-update "$base/projeto/data/"
+s="$(PATH="$falso:$PATH" sh "$base/projeto/data/mide-update" 2>&1)"
+confere "mide-update: com o pacote, explica e não compila" "pacote do repositório apt" "$s"
 
 echo "== instalação numa pasta"
 d="$base/raiz"

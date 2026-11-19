@@ -101,3 +101,14 @@ antes. `--apt`/`--source` escolhem sem perguntar; `--remove` tira o pacote, a fo
 chave (o que ele pôs fica listado em `/var/lib/mide/apt-extras`). O pacote `.deb` passou a
 depender de `libc6 (>= a glibc que os binários pedem)`. Nos outros sistemas (e para quem
 desenvolve), a atualização pelo app compila a versão nova (próxima etapa).
+
+**Trocar a instalação de desenvolvimento pelo pacote (v0.10.109):** `./install.sh --install
+--apt` tira a cópia de desenvolvimento (`/usr/local/lib/mide-login` e os atalhos em
+`/usr/local/bin`), instala o pacote e tira da pasta pessoal o que o `data/mide-update` deixou
+apontando para a pasta do projeto (o serviço D-Bus do portal, o seletor de tela do portal
+wlr e o tema de ícones daquela compilação), que passariam na frente dos do pacote. Quem já
+usa a tela de login do mide continua com ela (resposta padrão "sim"). Com o pacote
+instalado, o `./install.sh update` e o `data/mide-update` param com uma explicação: o que é
+compilado na pasta do projeto não entra na sessão do pacote (para testar, a sessão "mide
+(desenvolvimento)" do `tests/session-dev.sh`; para voltar: `./install.sh --remove` e depois
+`./install.sh update`).
