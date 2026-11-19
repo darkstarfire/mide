@@ -79,6 +79,8 @@ impl Updates {
     fn new() -> Self {
         let (tx, rx) = channel();
         let install = selfupdate::detect();
+        // No log, para saber depois por que o mide aparece (ou não) aqui.
+        tracing::info!("mide {}: instalação {install:?}", selfupdate::current());
         let mide = if install.from_source() { Mide::Checking } else { Mide::NotApplicable };
         Self { state: State::Checking, updates: Vec::new(), details: Vec::new(), show_details: false, checked_at: None, tx, rx, waker: None, started: false, install, mide, show_changes: false }
     }
@@ -205,7 +207,10 @@ impl Updates {
                     tracing::info!("mide: versão nova {latest} (instalada: {})", selfupdate::current());
                     self.mide = Mide::Available { latest, changes };
                 }
-                Msg::MideChecked(Ok(None)) => self.mide = Mide::UpToDate,
+                Msg::MideChecked(Ok(None)) => {
+                    tracing::info!("mide: {} é a versão mais nova", selfupdate::current());
+                    self.mide = Mide::UpToDate;
+                }
                 Msg::MideChecked(Err(err)) => {
                     tracing::warn!("mide: não foi possível ver a versão nova: {err}");
                     self.mide = Mide::Failed(tr!("Couldn’t check for a new mide version: {err}", err = err));
@@ -263,7 +268,21 @@ impl Updates {
     fn mide_card(&mut self, ui: &mut Ui) {
         let current = selfupdate::current();
         match &self.mide {
-            Mide::NotApplicable | Mide::Checking | Mide::UpToDate => {}
+            Mide::NotApplicable => {}
+            Mide::Checking | Mide::UpToDate => {
+                // Como o "Seu Mac está atualizado": a versão do mide sempre à vista, no
+                // mesmo lugar do cartão da versão nova (sem ele, parecia que o app nem
+                // olhava o mide).
+                let note = if matches!(self.mide, Mide::Checking) {
+                    tr!("Checking for a new version of mide…")
+                } else {
+                    tr!("mide is up to date. New versions appear here when they’re published.")
+                };
+                ui.card(|ui| {
+                    ui.strong(&tr!("mide {version}", version = current));
+                    ui.note(&note);
+                });
+            }
             Mide::Available { latest, changes } => {
                 let (latest, changes) = (*latest, changes.clone());
                 let mut update = false;

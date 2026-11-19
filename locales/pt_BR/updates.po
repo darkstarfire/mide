@@ -143,3 +143,9 @@ msgstr "Não foi possível atualizar o mide"
 
 msgid "mide {version} is available"
 msgstr "mide {version} está disponível"
+
+msgid "Checking for a new version of mide…"
+msgstr "Procurando uma versão nova do mide…"
+
+msgid "mide is up to date. New versions appear here when they’re published."
+msgstr "O mide está atualizado. As versões novas aparecem aqui quando forem publicadas."

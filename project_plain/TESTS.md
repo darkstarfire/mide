@@ -1408,3 +1408,11 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - O trecho do `build-deb.sh` rodado com `set -euo pipefail` numa pasta com um binário e o
   `mide-session` (script): glibc 2.39. `tests/install-test.sh`: 48 ok. De verdade: o CI da tag
   v0.10.107 (apt e ISO).
+
+## v0.10.108 (2026-11-19): cartão do mide atualizado
+
+- Cenário com o app (`MIDE_UPDATE_REPO` apontando para a pasta do projeto, versão 0.10.107
+  igual à tag mais nova): o cartão "mide 0.10.107" com "O mide está atualizado…" abaixo do
+  cabeçalho; o log com "instalação Development" e "0.10.107 é a versão mais nova".
+- `cargo test --lib i18n` (2 ok, as duas frases novas traduzidas), clippy sem aviso no
+  `mide-updates`, seção `53-atualizacoes` da bateria: 3 ok.

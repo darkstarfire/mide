@@ -3203,3 +3203,15 @@ mensagem: o `objdump` falha nos programas que são scripts (`mide-session`) e, c
 `set -o pipefail`, a falha do `find` encerrava o script. As versões 0.10.105 e 0.10.106 não
 chegaram ao repositório apt nem à release `iso` (ficaram na 0.10.104); agora o resultado da
 leitura é o que conta, e uma lista vazia para com a mensagem.
+
+## v0.10.108 (2026-11-19): o mide sempre à vista na Atualização de Software
+
+O usuário abriu a Atualização de Software no PC dele e não viu nada sobre o mide. O app
+instalado ali era o da 0.10.104 (de antes da atualização pelo código-fonte, que chegou na
+0.10.106): uma máquina precisa de uma última atualização à mão até uma versão que já tenha
+o recurso. E, mesmo com ele, o mide em dia não aparecia (o cartão só surgia com versão
+nova), o que parecia defeito. Agora, onde o mide é compilado na máquina, o cartão "mide
+X.Y.Z" fica sempre no mesmo lugar: "Procurando uma versão nova do mide…" durante a
+verificação e "O mide está atualizado. As versões novas aparecem aqui quando forem
+publicadas." depois. O log diz o tipo de instalação que o app achou (pacote, compilado,
+desenvolvimento ou desconhecido) e quando a versão instalada já é a mais nova.
