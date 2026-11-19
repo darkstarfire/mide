@@ -197,7 +197,14 @@ mostra() { printf '    %s$ %s%s\n' "$A" "$*" "$Z"; }
 # Comando como root (sudo quando preciso). Em --dry-run, só mostra.
 root() {
     if [ -n "$SIMULAR" ]; then mostra "$*"; return 0; fi
-    if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+    if [ "$(id -u)" = 0 ]; then
+        "$@"
+    elif [ -n "${SUDO_ASKPASS:-}" ] && [ ! -t 0 ]; then
+        # Sem terminal (o app Atualização de Software): a senha numa janela.
+        sudo -A "$@"
+    else
+        sudo "$@"
+    fi
 }
 
 # Comando como o usuário, com o Rust do usuário (~/.cargo/bin) no PATH.

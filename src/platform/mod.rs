@@ -15,6 +15,7 @@ pub mod battery;
 pub mod accounts;
 pub mod processes;
 pub mod packages;
+pub mod selfupdate;
 
 // No framework mide-ui (github.com/fabioaacarneiro/mide-ui), repassados aqui.
 pub use mide_ui::platform::{control_client, media, settings_file, sounds};

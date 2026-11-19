@@ -1383,3 +1383,22 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
 - Simulação nesta máquina com o repositório de verdade: oferece o pacote e tira antes a
   instalação de desenvolvimento.
 - Não rodado de verdade: a instalação pelo apt numa máquina (pede sudo).
+
+## v0.10.106 (2026-11-19): atualização do mide pelo app
+
+- `cargo test --lib selfupdate`: 6 ok (versões e sufixos, tags do `ls-remote`, escolhas da
+  instalação viram os argumentos do `install.sh`, tipo de instalação numa raiz de teste com
+  dpkg/install.sh/Slackware/desenvolvimento, contagem de partes e núcleos, e um
+  repositório git de verdade com tags: versão mais nova, mudanças, troca de versão e busca
+  de tag nova numa cópia que já existe). `cargo test --lib i18n`: 2 ok.
+  `tests/install-test.sh`: 48 ok. clippy sem avisos no código novo.
+- Cenário (1366x768) com `MIDE_UPDATE_CURRENT=0.1.0`, `MIDE_UPDATE_REPO=file://` (repositório
+  de teste com v0.1.0 a v0.1.3) e `MIDE_UPDATE_DIR` numa pasta de teste: o cartão "mide
+  0.1.3" com "Você tem a versão 0.1.0", as três mudanças da mais nova à mais velha, o texto
+  e o botão; o cabeçalho "1 atualização disponível"; clicar em "Atualizar o mide" troca a
+  cópia para a v0.1.3 e, sem `Cargo.toml`, mostra "Não foi possível atualizar o mide" com o
+  erro do cargo e "Tentar de novo" (sem pedir senha).
+- Não feito: uma atualização de verdade até o fim (compila o mide inteiro e pede a senha de
+  administrador); o passo de compilar com progresso e o de instalar não foram vistos na tela.
+- Defeito visto: um caminho muito longo na mensagem de erro passa da borda do cartão (o
+  texto não quebra no meio de uma palavra longa).

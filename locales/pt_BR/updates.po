@@ -96,3 +96,50 @@ msgid "+{n} other"
 msgid_plural "+{n} others"
 msgstr[0] "+{n} outra"
 msgstr[1] "+{n} outras"
+
+msgid "Couldn’t check for a new mide version: {err}"
+msgstr "Não foi possível ver se há uma versão nova do mide: {err}"
+
+msgid "mide {version}"
+msgstr "mide {version}"
+
+msgid "You have version {version}."
+msgstr "Você tem a versão {version}."
+
+msgid "+{n} other change"
+msgid_plural "+{n} other changes"
+msgstr[0] "+{n} outra mudança"
+msgstr[1] "+{n} outras mudanças"
+
+msgid "The new version is built on this computer, in the background (it can take 15 to 40 minutes). The administrator password is asked in a window."
+msgstr "A versão nova é compilada neste computador, em segundo plano (pode levar de 15 a 40 minutos). A senha de administrador é pedida numa janela."
+
+msgid "Update mide"
+msgstr "Atualizar o mide"
+
+msgid "Updating mide to {version}…"
+msgstr "Atualizando o mide para a {version}…"
+
+msgid "Building ({done} of about {total} parts)…"
+msgstr "Compilando ({done} de umas {total} partes)…"
+
+msgid "Installing… (enter the administrator password in the window)"
+msgstr "Instalando… (digite a senha de administrador na janela)"
+
+msgid "You can keep using the computer; the build runs at low priority."
+msgstr "Pode continuar usando o computador: a compilação roda com prioridade baixa."
+
+msgid "mide {version} installed"
+msgstr "mide {version} instalado"
+
+msgid "It takes effect the next time you log in, or now by restarting the session (open app windows close)."
+msgstr "Vale ao entrar de novo na sessão, ou agora, reiniciando a sessão (as janelas dos apps abertos fecham)."
+
+msgid "Restart Session Now"
+msgstr "Reiniciar a sessão agora"
+
+msgid "Couldn’t update mide"
+msgstr "Não foi possível atualizar o mide"
+
+msgid "mide {version} is available"
+msgstr "mide {version} está disponível"

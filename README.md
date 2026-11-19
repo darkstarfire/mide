@@ -61,6 +61,9 @@ rode como root).
   apt do mide (o mesmo do mios), sem compilar; as versões novas chegam pelo app
   Atualização de Software, como qualquer pacote. Compilar aqui continua como opção
   (`--source`).
+- Compilando (Fedora, Arch, Slackware, ou `--source`): as versões novas também chegam
+  pelo app Atualização de Software, que compila a versão nova em segundo plano e pede a
+  senha de administrador numa janela.
 - Debian, Fedora e Arch compilando: os programas vão para `/usr/local`, com a lista do que foi
   copiado em `/var/lib/mide/installed-files`; rodar de novo atualiza.
 - Slackware: vira um pacote de verdade (`mide-VERSÃO-x86_64-1_mide.txz`, em `/usr`),

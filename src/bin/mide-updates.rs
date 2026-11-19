@@ -5,12 +5,18 @@
 //!
 //! `mide-updates --background` não abre janela: procura atualizações a cada 6 horas e
 //! avisa nas notificações quando há (com "Verificar automaticamente" ligado).
+//!
+//! Fora do apt (Fedora, Arch, Slackware, o PC de desenvolvimento), o próprio mide também
+//! aparece aqui: a versão nova publicada, o que mudou e o botão de atualizar, que compila
+//! a versão nova numa cópia própria do projeto e instala com a senha numa janela
+//! (`mide::selfupdate`).
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, SystemTime};
 
 use mide::kit::{run, window_menu, App, MenuGroup, MenuItem, Ui, Window};
 use mide::packages::{self, Info, Package, Progress, Stage, UpdateDetail};
+use mide::selfupdate::{self, Install, Step, Version};
 use mide::settings_file::{self, Value};
 use mide::tr;
 
@@ -27,6 +33,21 @@ enum Msg {
     Details(Vec<UpdateDetail>),
     Progress(Progress),
     Installed(Result<bool, packages::Error>),
+    MideChecked(Result<Option<(Version, Vec<String>)>, String>),
+    MideStep(Step),
+    MideDone(Result<Version, String>),
+}
+
+/// O mide compilado nesta máquina (fora do apt): versão nova e atualização.
+enum Mide {
+    /// Pelo apt (o PackageKit cuida) ou rodando da pasta do projeto: nada aqui.
+    NotApplicable,
+    Checking,
+    UpToDate,
+    Available { latest: Version, changes: Vec<String> },
+    Updating { to: Version, step: Step },
+    Done(Version),
+    Failed(String),
 }
 
 /// Estado da tela.
@@ -49,12 +70,53 @@ struct Updates {
     rx: Receiver<Msg>,
     waker: Option<mide::kit::Waker>,
     started: bool,
+    install: Install,
+    mide: Mide,
+    show_changes: bool,
 }
 
 impl Updates {
     fn new() -> Self {
         let (tx, rx) = channel();
-        Self { state: State::Checking, updates: Vec::new(), details: Vec::new(), show_details: false, checked_at: None, tx, rx, waker: None, started: false }
+        let install = selfupdate::detect();
+        let mide = if install.from_source() { Mide::Checking } else { Mide::NotApplicable };
+        Self { state: State::Checking, updates: Vec::new(), details: Vec::new(), show_details: false, checked_at: None, tx, rx, waker: None, started: false, install, mide, show_changes: false }
+    }
+
+    /// Procura a versão nova do mide (só fora do apt).
+    fn check_mide(&mut self) {
+        if !self.install.from_source() || matches!(self.mide, Mide::Updating { .. }) {
+            return;
+        }
+        self.mide = Mide::Checking;
+        let (tx, waker) = (self.tx.clone(), self.waker.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::MideChecked(find_mide_update()));
+            if let Some(w) = waker {
+                w.wake();
+            }
+        });
+    }
+
+    /// Compila e instala a versão nova do mide (pede a senha no fim).
+    fn update_mide(&mut self, to: Version) {
+        self.mide = Mide::Updating { to, step: Step::Downloading };
+        let install = self.install.clone();
+        let (tx, waker) = (self.tx.clone(), self.waker.clone());
+        std::thread::spawn(move || {
+            let step_tx = tx.clone();
+            let step_waker = waker.clone();
+            let result = selfupdate::update(&install, to, move |step| {
+                let _ = step_tx.send(Msg::MideStep(step));
+                if let Some(w) = &step_waker {
+                    w.wake();
+                }
+            });
+            let _ = tx.send(Msg::MideDone(result.map(|_| to)));
+            if let Some(w) = waker {
+                w.wake();
+            }
+        });
     }
 
     /// Procura atualizações numa thread (atualiza a lista do apt antes).
@@ -139,18 +201,41 @@ impl Updates {
                     tracing::warn!("atualizações: falhou: {err}");
                     self.state = State::Failed(error_text(&err));
                 }
+                Msg::MideChecked(Ok(Some((latest, changes)))) => {
+                    tracing::info!("mide: versão nova {latest} (instalada: {})", selfupdate::current());
+                    self.mide = Mide::Available { latest, changes };
+                }
+                Msg::MideChecked(Ok(None)) => self.mide = Mide::UpToDate,
+                Msg::MideChecked(Err(err)) => {
+                    tracing::warn!("mide: não foi possível ver a versão nova: {err}");
+                    self.mide = Mide::Failed(tr!("Couldn’t check for a new mide version: {err}", err = err));
+                }
+                Msg::MideStep(step) => {
+                    if let Mide::Updating { step: cur, .. } = &mut self.mide {
+                        *cur = step;
+                    }
+                }
+                Msg::MideDone(Ok(to)) => {
+                    tracing::info!("mide: {to} instalado");
+                    self.mide = Mide::Done(to);
+                }
+                Msg::MideDone(Err(err)) => {
+                    tracing::warn!("mide: a atualização falhou: {err}");
+                    self.mide = Mide::Failed(err);
+                }
             }
         }
     }
 
     fn header(&self, ui: &mut Ui) {
+        // A versão nova do mide (fora do apt) conta como mais uma atualização.
+        let total = self.updates.len() + usize::from(matches!(self.mide, Mide::Available { .. }));
+        let count = || mide::kit::i18n::trn("{n} update available", "{n} updates available", total as u64).replace("{n}", &total.to_string());
         let (title, detail): (String, String) = match &self.state {
             State::Checking => (tr!("Checking for updates…").into_owned(), String::new()),
+            State::UpToDate if total > 0 => (count(), last_check(self.checked_at)),
             State::UpToDate => (tr!("Your system is up to date").into_owned(), last_check(self.checked_at)),
-            State::Available => (
-                mide::kit::i18n::trn("{n} update available", "{n} updates available", self.updates.len() as u64).replace("{n}", &self.updates.len().to_string()),
-                last_check(self.checked_at),
-            ),
+            State::Available => (count(), last_check(self.checked_at)),
             State::Installing(_) => (tr!("Installing updates…").into_owned(), tr!("Keep the computer on until it finishes.").into_owned()),
             State::Done { restart: true } => (tr!("Updates installed").into_owned(), tr!("Restart the computer to finish.").into_owned()),
             State::Done { restart: false } => (tr!("Updates installed").into_owned(), tr!("Everything is up to date.").into_owned()),
@@ -170,6 +255,104 @@ impl Updates {
                 },
             );
         });
+    }
+}
+
+impl Updates {
+    /// Cartão do mide compilado nesta máquina: versão nova, mudanças e o botão.
+    fn mide_card(&mut self, ui: &mut Ui) {
+        let current = selfupdate::current();
+        match &self.mide {
+            Mide::NotApplicable | Mide::Checking | Mide::UpToDate => {}
+            Mide::Available { latest, changes } => {
+                let (latest, changes) = (*latest, changes.clone());
+                let mut update = false;
+                ui.card(|ui| {
+                    ui.strong(&tr!("mide {version}", version = latest));
+                    ui.note(&tr!("You have version {version}.", version = current));
+                    let shown = if self.show_changes { changes.len() } else { changes.len().min(6) };
+                    for c in &changes[..shown] {
+                        ui.note(&format!("• {c}"));
+                    }
+                    let more = changes.len() - shown;
+                    if more > 0 && ui.button_styled(&mide::kit::i18n::trn("+{n} other change", "+{n} other changes", more as u64).replace("{n}", &more.to_string()), mide::kit::ButtonStyle::Plain).clicked() {
+                        self.show_changes = true;
+                    }
+                    ui.note(&tr!("The new version is built on this computer, in the background (it can take 15 to 40 minutes). The administrator password is asked in a window."));
+                    if ui.primary_button(&tr!("Update mide")).clicked() {
+                        update = true;
+                    }
+                });
+                if update {
+                    self.update_mide(latest);
+                }
+            }
+            Mide::Updating { to, step } => {
+                let (to, step) = (*to, step.clone());
+                ui.card(|ui| {
+                    ui.strong(&tr!("Updating mide to {version}…", version = to));
+                    let (value, text) = match step {
+                        Step::Downloading => (None, tr!("Downloading…").into_owned()),
+                        Step::Building { done, total } => (Some(done as f32 / total.max(1) as f32), tr!("Building ({done} of about {total} parts)…", done = done, total = total)),
+                        Step::Installing => (None, tr!("Installing… (enter the administrator password in the window)").into_owned()),
+                    };
+                    ui.progress_bar(value);
+                    ui.note(&text);
+                    ui.note(&tr!("You can keep using the computer; the build runs at low priority."));
+                });
+            }
+            Mide::Done(to) => {
+                let to = *to;
+                let mut restart = false;
+                ui.card(|ui| {
+                    ui.strong(&tr!("mide {version} installed", version = to));
+                    ui.note(&tr!("It takes effect the next time you log in, or now by restarting the session (open app windows close)."));
+                    if ui.primary_button(&tr!("Restart Session Now")).clicked() {
+                        restart = true;
+                    }
+                });
+                if restart {
+                    let _ = std::process::Command::new("mide-ctl").args(["restart", "all"]).spawn();
+                }
+            }
+            Mide::Failed(msg) => {
+                let msg = msg.clone();
+                let mut again = false;
+                ui.card(|ui| {
+                    ui.strong(&tr!("Couldn’t update mide"));
+                    // O fim da saída da compilação ou da instalação (o motivo costuma estar lá).
+                    let tail: Vec<&str> = msg.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
+                    ui.note(&tail.join("\n"));
+                    if ui.button(&tr!("Try Again")).clicked() {
+                        again = true;
+                    }
+                });
+                if again {
+                    self.check_mide();
+                }
+            }
+        }
+    }
+}
+
+/// Versão nova do mide publicada, com o que mudou desde a instalada (ou `None`).
+fn find_mide_update() -> Result<Option<(Version, Vec<String>)>, String> {
+    let current = selfupdate::current();
+    let repo = selfupdate::repo();
+    match selfupdate::latest(&repo)? {
+        Some(latest) if latest > current => {
+            // A cópia do projeto já fica pronta para a atualização (só o histórico).
+            let dir = selfupdate::source_dir();
+            let changes = match selfupdate::fetch(&dir, &repo) {
+                Ok(()) => selfupdate::changes(&dir, current, latest),
+                Err(err) => {
+                    tracing::warn!("mide: não deu para baixar o histórico: {err}");
+                    Vec::new()
+                }
+            };
+            Ok(Some((latest, changes)))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -239,11 +422,15 @@ impl App for Updates {
             self.started = true;
             self.waker = ui.waker();
             self.check();
+            self.check_mide();
         }
         self.receive();
         for action in ui.input().menu.clone() {
             match action.as_str() {
-                "check" => self.check(),
+                "check" => {
+                    self.check();
+                    self.check_mide();
+                }
                 "quit" => ui.close(),
                 _ => {}
             }
@@ -252,6 +439,7 @@ impl App for Updates {
         let busy = matches!(self.state, State::Checking | State::Installing(_));
         ui.page(|ui| {
             self.header(ui);
+            self.mide_card(ui);
             match &self.state {
                 State::Checking => ui.progress_bar(None),
                 State::Installing(p) => {
@@ -312,6 +500,7 @@ impl App for Updates {
                     _ => {
                         if !busy && ui.button(&tr!("Check Now")).clicked() {
                             self.check();
+                            self.check_mide();
                         }
                     }
                 }
@@ -343,7 +532,21 @@ impl App for Updates {
 /// Modo de fundo: procura atualizações a cada 6 horas e avisa nas notificações.
 fn background() {
     let mut last_count = 0;
+    let from_source = selfupdate::detect().from_source();
+    let mut told: Option<Version> = None;
     loop {
+        // Fora do apt, a versão nova do mide (um aviso por versão).
+        if auto_check() && from_source {
+            match find_mide_update() {
+                Ok(Some((latest, _))) if told != Some(latest) => {
+                    told = Some(latest);
+                    tracing::info!("mide: aviso da versão {latest}");
+                    mide::notify::send_and_wait("mide-updates", &tr!("Software Update"), &tr!("mide {version} is available", version = latest));
+                }
+                Ok(_) => {}
+                Err(err) => tracing::warn!("mide: verificação de fundo falhou: {err}"),
+            }
+        }
         if auto_check() {
             match find_updates() {
                 Ok(list) if !list.is_empty() && list.len() != last_count => {

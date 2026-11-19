@@ -3170,3 +3170,28 @@ tira o pacote, a fonte e a chave. O `.deb` passou a pedir a glibc que os binári
 quando o sistema tem essa glibc. O `mide-login-install` reconhece o mide do pacote e copia
 os programas instalados para a tela de login. As instalações compiladas guardam as
 escolhas em `/var/lib/mide/install-options`, para a atualização pelo app repetir.
+
+## v0.10.106 (2026-11-19): o mide compilado se atualiza pelo app Atualização de Software
+
+Segunda e terceira etapas das atualizações sem terminal (pedido do usuário em
+2026-11-19). Para quem tem o mide compilado (Fedora, Arch, Slackware e o PC de
+desenvolvimento; no Debian e no Ubuntu o pacote pronto já vem pelo apt):
+
+- **Núcleo `mide::selfupdate`:** descobre como o mide foi instalado (pacote do apt, pelo
+  `./install.sh` com as escolhas em `/var/lib/mide/install-options`, pacote do Slackware ou
+  a cópia de desenvolvimento da tela de login); a versão mais nova publicada pelas tags
+  `vX.Y.Z` do GitHub (`git ls-remote`, sem baixar o projeto); o que mudou desde a versão
+  instalada (os títulos dos commits entre as duas tags); e a atualização: numa cópia
+  própria do projeto em `~/.cache/mide/source` (clone só com o histórico; os arquivos
+  vêm na troca de versão), troca para a tag nova, compila com até 4 núcleos e prioridade
+  baixa e instala do mesmo jeito de antes (o `./install.sh` da versão nova com as mesmas
+  escolhas, ou o `data/mide-login-install` na cópia de desenvolvimento). A senha é pedida
+  na janela do mide (`sudo -A` com o `mide-askpass`; o `root()` do `install.sh` usa o
+  `-A` quando não há terminal). A pasta de trabalho de quem desenvolve não é tocada.
+- **App Atualização de Software:** um cartão "mide X.Y.Z" com a versão instalada, as
+  mudanças (as 6 primeiras, "+N outras mudanças" mostra o resto), o aviso de que compila
+  no computador e o botão "Atualizar o mide"; durante, a barra de progresso (baixando,
+  compilando N de umas M partes, instalando); no fim, "Reiniciar a sessão agora"; se
+  falhar, o fim da saída da compilação e "Tentar de novo". O cabeçalho conta o mide
+  como mais uma atualização, e a verificação em segundo plano avisa nas notificações
+  (uma vez por versão).
