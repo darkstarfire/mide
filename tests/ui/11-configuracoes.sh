@@ -233,7 +233,8 @@ fi
 # "Adicionar usuário…" em (723, 330); na folha, Senha em (537, 433), Confirmar em
 # (537, 475), "Criar usuário" em (628, 559).
 mkdir -p "$SCFG/login-lib"
-touch "$SCFG/login-lib/mide-login" "$SCFG/login-lib/mide-login-install"
+# Como com o mide do sistema (pacote): só o instalador na pasta da tela de login.
+touch "$SCFG/login-lib/mide-login-install"
 USERS_APP="MIDE_ACCOUNTS_TEST='fabio:Fabio Carneiro:admin:current;ana:Ana Souza:standard;bruno::admin' MIDE_LOGIN_LIB='$SCFG/login-lib' RUST_LOG=mide=info,mide_settings=info $SETTINGS users"
 timeout 150 "$SCEN" "400 click 723 330; 420 type Jose Silva; 450 click 537 433; 460 type abc; 480 click 537 475; 490 type abc; 520 click 628 559; 600 list" -- "$USERS_APP >'$SCFG/usuarios.log' 2>&1" >/dev/null 2>&1
 if grep -q "contas (teste): josesilva criado (padrão)" "$SCFG/usuarios.log" && grep -q "contas (teste): senha de josesilva definida" "$SCFG/usuarios.log"; then

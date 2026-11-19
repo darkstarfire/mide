@@ -199,12 +199,22 @@ desinstalar() {
             echo "   runlevel $(cat "$STATE/runlevel-anterior") de novo no /etc/inittab."
         fi
     elif command -v systemctl >/dev/null; then
-        systemctl disable greetd.service 2>/dev/null || true
-        if [ -n "$antes" ] && [ "$antes" != greetd ]; then
+        if [ -n "$antes" ] && [ "$antes" != greetd ] &&
+            [ "$(systemctl show -p LoadState --value "$antes.service" 2>/dev/null)" = loaded ]; then
+            systemctl disable greetd.service 2>/dev/null || true
             systemctl enable --force "$antes.service"
             echo "   $antes volta a ser o gerenciador de login (vale no próximo boot)."
         else
-            echo "   aviso: não sei qual era o gerenciador de antes; ative o seu com: sudo systemctl enable --force gdm (ou lightdm, sddm)"
+            # O de antes não existe mais (foi desinstalado depois) ou não foi registrado: o
+            # greetd continua, com a configuração de antes (abaixo), para o computador não
+            # ficar sem tela de login no próximo boot.
+            systemctl enable --force greetd.service 2>/dev/null || true
+            if [ -n "$antes" ] && [ "$antes" != greetd ]; then
+                echo "   aviso: o $antes (o gerenciador de antes) não está mais instalado; o greetd continua, com a configuração de antes."
+            else
+                echo "   aviso: não sei qual era o gerenciador de antes; o greetd continua, com a configuração de antes."
+            fi
+            echo "   para usar outro: instale-o e ative com sudo systemctl enable --force NOME (gdm3, lightdm, sddm)."
         fi
     fi
     passo "Restaurando a configuração do greetd"
@@ -266,21 +276,39 @@ GREETER="$(usuario_greeter)"
 getent passwd "$GREETER" >/dev/null || falha "o usuário do greeter ($GREETER) não existe; confira o pacote greetd"
 echo "   o greeter roda como o usuário '$GREETER'."
 
-passo "2/6 Programas do mide em $LIB, no PATH (/usr/local/bin) e a sessão"
-# Uma cópia própria: o usuário do greeter não lê a pasta pessoal, e o login continua
-# funcionando enquanto o projeto é recompilado. Todos os programas do mide vão juntos,
-# porque o compositor procura os auxiliares (barra, dock...) ao lado do próprio executável.
+passo "2/6 Programas do mide e a sessão"
 install -d -m755 "$LIB"
-for f in "$BIN"/mide "$BIN"/mide-*; do
-    case "$f" in *.d) continue ;; esac
-    [ -f "$f" ] && [ -x "$f" ] && install -m755 "$f" "$LIB/"
-done
-# O próprio instalador também: as Configurações rodam o --sync dele pelo pkexec, e ele
-# precisa estar num lugar só do root (não na pasta do projeto, que o usuário altera).
+# O próprio instalador fica em $LIB: as Configurações rodam o --sync dele pelo pkexec, e
+# ele precisa estar num lugar só do root (não na pasta do projeto, que o usuário altera).
 install -m755 data/mide-login-install "$LIB/"
 if [ -n "$SISTEMA" ]; then
-    echo "   programas copiados de $BIN para $LIB; o mide do sistema (install.sh) fica no PATH, com a sessão e os dados dele."
+    # Com o mide instalado no sistema (pacote do apt, install.sh), a tela de login usa os
+    # programas dele, sem cópia: ela se atualiza junto (com a cópia, ficava na versão do dia
+    # da instalação). Sobras de uma instalação de desenvolvimento anterior saem: as cópias
+    # em $LIB, os atalhos para elas no PATH (viriam antes dos do sistema) e, com o mide em
+    # /usr (o pacote), a sessão e os dados que ela pôs em /usr/local.
+    for f in "$LIB"/mide "$LIB"/mide-*; do
+        [ -e "$f" ] && [ "$(basename "$f")" != mide-login-install ] && rm -f "$f"
+    done
+    for f in /usr/local/bin/mide /usr/local/bin/mide-*; do
+        [ -L "$f" ] && case "$(readlink "$f")" in "$LIB"/*) rm -f "$f" ;; esac
+    done
+    if [ "$BIN" = /usr/bin ]; then
+        [ -f /usr/local/bin/mide-session ] && [ ! -L /usr/local/bin/mide-session ] && rm -f /usr/local/bin/mide-session
+        rm -rf "${DADOS:?}/applications" "${DADOS:?}/xdg-desktop-portal" "$FONTS"
+        rmdir "$DADOS" 2>/dev/null || true
+    fi
+    COMPOSITOR="$BIN/mide"
+    echo "   a tela de login usa o mide do sistema ($BIN), que se atualiza junto com ele."
 else
+    # Uma cópia própria: o usuário do greeter não lê a pasta pessoal, e o login continua
+    # funcionando enquanto o projeto é recompilado. Todos os programas do mide vão juntos,
+    # porque o compositor procura os auxiliares (barra, dock...) ao lado do próprio executável.
+    for f in "$BIN"/mide "$BIN"/mide-*; do
+        case "$f" in *.d) continue ;; esac
+        [ -f "$f" ] && [ -x "$f" ] && install -m755 "$f" "$LIB/"
+    done
+    COMPOSITOR="$LIB/mide"
     # Atalhos no PATH: `mide`, `mide-session` e os demais programas ficam em /usr/local/bin
     # (links para a cópia de $LIB, que não muda quando o projeto é recompilado ou movido).
     for f in "$LIB"/mide*; do
@@ -330,7 +358,7 @@ cat > "$GREETD_CONF" <<EOF
 vt = $vt
 
 [default_session]
-command = "env XDG_CONFIG_HOME=$CONF XDG_STATE_HOME=$STATE XDG_DATA_DIRS=/usr/local/share:/usr/share MIDE_BACKEND=drm $LIB/mide --login"
+command = "env XDG_CONFIG_HOME=$CONF XDG_STATE_HOME=$STATE XDG_DATA_DIRS=/usr/local/share:/usr/share MIDE_BACKEND=drm $COMPOSITOR --login"
 user = "$GREETER"
 EOF
 echo "   o greetd abre o compositor do mide em modo de login, no terminal virtual $vt."

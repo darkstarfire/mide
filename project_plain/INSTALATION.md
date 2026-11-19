@@ -112,3 +112,15 @@ instalado, o `./install.sh update` e o `data/mide-update` param com uma explica�
 compilado na pasta do projeto não entra na sessão do pacote (para testar, a sessão "mide
 (desenvolvimento)" do `tests/session-dev.sh`; para voltar: `./install.sh --remove` e depois
 `./install.sh update`).
+
+**Tela de login com o mide do sistema (v0.10.110):** com o mide instalado no sistema
+(pacote ou `./install.sh` compilando), o `data/mide-login-install` não copia mais os
+programas: o greetd abre o `mide --login` do sistema (`/usr/bin` no pacote), e a tela de
+login se atualiza junto com o mide; em `/usr/local/lib/mide-login` fica só o próprio
+instalador (para o `--sync` das Configurações). Sobras de uma instalação de
+desenvolvimento (cópias, atalhos em `/usr/local/bin`, `mide-session` e dados em
+`/usr/local/share/mide`) saem nessa hora. O `--uninstall` só volta ao gerenciador de antes
+se ele ainda existir; se foi desinstalado, o greetd continua ativo, com a configuração de
+antes, e o computador nunca fica sem tela de login. Trocando a instalação de
+desenvolvimento pelo pacote com a tela de login do mide, o greetd não é desligado em
+momento nenhum.

@@ -3000,9 +3000,11 @@ impl Settings {
         });
         self.users.login_message_on = message_on;
         // Levar as opções à tela de login de verdade (que roda como outro usuário).
+        // Instalada: o instalador fica na pasta dela. Com o mide do sistema (pacote), só
+        // ele: a tela de login usa os programas do sistema, sem cópia.
         let lib = login_lib();
-        if lib.join("mide-login").exists() {
-            let installer = lib.join("mide-login-install");
+        let installer = lib.join("mide-login-install");
+        if installer.exists() || lib.join("mide-login").exists() {
             if installer.exists() {
                 ui.row(|ui| {
                     if self.users.syncing {

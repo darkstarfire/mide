@@ -3243,3 +3243,28 @@ instalar o pacote; faltavam três coisas, vistas nesta máquina:
 
 O `install.sh` rodando como usuário passou a usar o `$HOME` dele como pasta pessoal (com
 `sudo`, continua a do `SUDO_USER`).
+
+## v0.10.110 (2026-11-19): a troca para o pacote não deixa mais o computador sem tela de login
+
+Na troca da instalação de desenvolvimento pelo pacote (v0.10.109), o `./install.sh` tirava
+a tela de login do mide (`mide-login-install --uninstall`) para pô-la de volta no fim. No PC
+do usuário, o gerenciador de antes registrado era o LightDM, que já tinha sido
+desinstalado: o `--uninstall` desativou o greetd, o `systemctl enable lightdm` falhou e o
+script parou. A sessão aberta continuou, mas o computador ficou sem tela de login para o
+próximo boot.
+
+- `--uninstall`: só desativa o greetd quando o gerenciador de antes ainda existe
+  (`systemctl show -p LoadState`); se não existe, o greetd continua ativo, com a
+  configuração de antes, e o aviso diz como ativar outro.
+- `./install.sh --install --apt` mantendo a tela de login do mide: nada de tirar e pôr de
+  volta; o pacote entra, e no fim o `mide-login-install` passa a usar os programas dele.
+- Com o mide instalado no sistema, o greetd abre o `mide --login` do sistema
+  (`/usr/bin/mide` no pacote), sem cópia em `/usr/local/lib/mide-login` (onde fica só o
+  instalador, para o `--sync` das Configurações): a tela de login se atualiza junto com o
+  pacote (antes, a cópia ficaria na versão do dia da instalação). As sobras da cópia de
+  desenvolvimento (programas, atalhos em `/usr/local/bin`, `mide-session` e dados em
+  `/usr/local/share/mide`) saem nessa hora.
+- Configurações → Usuários e grupos: a tela de login conta como instalada pelo instalador na
+  pasta dela (`/usr/local/lib/mide-login/mide-login-install`), não mais pela cópia do
+  `mide-login` (que não existe com o mide do sistema): o botão "Aplicar à tela de início de
+  sessão…" continua aparecendo.

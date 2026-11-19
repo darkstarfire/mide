@@ -1428,3 +1428,23 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   o caminho compilado também tira; com um `dpkg-query` falso dizendo que o pacote está
   instalado, o `./install.sh update` e o `data/mide-update` param explicando).
 - Não feito: a troca de verdade (pede a senha e reinicia a sessão); fica com o usuário.
+
+## v0.10.110 (2026-11-19): tela de login numa raiz de teste
+
+- `tests/login-install-test.sh` (novo, 13 ok): roda o `data/mide-login-install` como root de
+  mentira (`unshare -rm`), com overlay em `/etc`, `/usr/share` e `/usr/bin`, pastas de teste
+  em `/etc/greetd`, `/etc/mide`, `/var/lib` e `/usr/local`, e `systemctl`, `dpkg-query`,
+  `getent`, `install` e `chown` falsos. Casos: remover com o LightDM desinstalado (o greetd
+  continua ativo, a configuração de antes volta, a cópia e os atalhos saem, o resto de
+  `/usr/local` fica); remover com o LightDM instalado (greetd desativado, LightDM ativado);
+  instalar com o pacote sobre a cópia de desenvolvimento (greetd com `/usr/bin/mide --login`,
+  só o instalador em `/usr/local/lib/mide-login`, atalhos, `mide-session` e dados da cópia
+  fora).
+- `tests/install-test.sh`: 58 ok. Simulação nesta máquina: a troca não tira mais a tela de
+  login antes; no fim, o `mide-login-install` com o pacote.
+- O overlay sem root recusa pastas com outras montagens dentro (`/var`, `/var/lib` aqui,
+  por causa do docker): nelas, `mount --bind` de uma pasta de teste.
+- Seção `11-configuracoes` com a pasta da tela de login só com o instalador (como com o
+  pacote): "Aplicar roda o --sync pelo pkexec" ok. Na primeira rodada, os dois testes de
+  troca de layout falharam porque faltava o `target/debug/mide-code` (o `./install.sh update`
+  apaga `target/debug`); compilado, a seção foi repetida: 39 ok.

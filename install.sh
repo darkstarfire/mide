@@ -977,13 +977,21 @@ instalar_apt() {
     info "$(t "repository" "repositório"): $APT_URL"
     info "$(t "updates: the Software Update app (or sudo apt upgrade)" "atualizações: o app Atualização de Software (ou sudo apt upgrade)")"
     [ -n "$compilada" ] && info "$(t "the mide built before (in /usr/local) is removed first" "o mide compilado antes (em /usr/local) sai antes")"
-    [ -n "$desenvolvimento" ] && info "$(t "the development install (/usr/local/lib/mide-login) is removed first" "a instalação de desenvolvimento (/usr/local/lib/mide-login) sai antes")"
+    if [ -n "$desenvolvimento" ] && [ "$LOGIN" = s ]; then
+        info "$(t "the development install gives way to the package; the mide login screen stays, with the package programs" "a instalação de desenvolvimento dá lugar ao pacote; a tela de login do mide continua, com os programas do pacote")"
+    elif [ -n "$desenvolvimento" ]; then
+        info "$(t "the development install and the mide login screen are removed first" "a instalação de desenvolvimento e a tela de login do mide saem antes")"
+    fi
     [ -n "$(restos_desenvolvimento)" ] && info "$(t "files of the development install in your home folder are removed (portal and screen picker of the project folder, icons of that build)" "saem da pasta pessoal os arquivos da instalação de desenvolvimento (portal e seletor de tela da pasta do projeto, ícones daquela compilação)")"
     info "$(t "Your settings (~/.config/mide) stay." "As suas configurações (~/.config/mide) ficam.")"
     pergunta "$(t "Continue?" "Continuar?")" s || exit 0
 
-    if login_instalado; then
-        titulo "$(t "Login screen (removed for now)" "Tela de login (sai por enquanto)")"
+    # Mantendo a tela de login do mide, o greetd não é desligado em momento nenhum: no fim
+    # ela passa a usar os programas do pacote (e as sobras da cópia de desenvolvimento saem).
+    # Antes, ela saía e voltava, e o computador ficava sem tela de login se o gerenciador
+    # de antes já tivesse sido desinstalado ou se algo falhasse no meio.
+    if login_instalado && [ "$LOGIN" != s ]; then
+        titulo "$(t "mide login screen (removed)" "Tela de login do mide (sai)")"
         root bash "$PROJETO/data/mide-login-install" --uninstall
     fi
     if [ -n "$compilada" ]; then
