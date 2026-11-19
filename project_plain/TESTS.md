@@ -1402,3 +1402,9 @@ Para o usuário ou para um agente no outro PC (onde o mide roda como sessão de 
   administrador); o passo de compilar com progresso e o de instalar não foram vistos na tela.
 - Defeito visto: um caminho muito longo na mensagem de erro passa da borda do cartão (o
   texto não quebra no meio de uma palavra longa).
+
+## v0.10.107 (2026-11-19): glibc mínima com scripts entre os programas
+
+- O trecho do `build-deb.sh` rodado com `set -euo pipefail` numa pasta com um binário e o
+  `mide-session` (script): glibc 2.39. `tests/install-test.sh`: 48 ok. De verdade: o CI da tag
+  v0.10.107 (apt e ISO).

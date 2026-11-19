@@ -3195,3 +3195,11 @@ desenvolvimento; no Debian e no Ubuntu o pacote pronto já vem pelo apt):
   falhar, o fim da saída da compilação e "Tentar de novo". O cabeçalho conta o mide
   como mais uma atualização, e a verificação em segundo plano avisa nas notificações
   (uma vez por versão).
+
+## v0.10.107 (2026-11-19): pacote .deb e ISO voltam a sair do CI
+
+A leitura da glibc mínima (v0.10.105) derrubava o `packaging/debian/build-deb.sh` no CI sem
+mensagem: o `objdump` falha nos programas que são scripts (`mide-session`) e, com o
+`set -o pipefail`, a falha do `find` encerrava o script. As versões 0.10.105 e 0.10.106 não
+chegaram ao repositório apt nem à release `iso` (ficaram na 0.10.104); agora o resultado da
+leitura é o que conta, e uma lista vazia para com a mensagem.

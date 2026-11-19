@@ -914,7 +914,7 @@ apt_possivel() {
     command -v apt-get >/dev/null && command -v dpkg-query >/dev/null || return 1
     local lista pedida tem
     lista="$(curl -fsSL --max-time 20 "$APT_URL/Packages" 2>/dev/null)" || return 1
-    printf '%s\n' "$lista" | grep -q '^Package: mide$' || return 1
+    grep -q '^Package: mide$' <<< "$lista" || return 1
     pedida="$(printf '%s\n' "$lista" | awk 'BEGIN { RS = "" } /^Package: mide\n/' |
         sed -nE 's/^Depends:.*libc6 \(>= ([^)]+)\).*/\1/p' | head -1)"
     # Pacotes publicados antes da dependência com versão: feitos no Debian 13.
